@@ -9,9 +9,8 @@
 #   make render-long-day       build, then render with tickr-scene
 #   make debug SCENE=long-day DEFINE="DEBUG_STYLE=metro DEBUG_HOUR=18"
 #                              a build with constants overridden, in build/<scene>-debug/
-#   make dev SCENE=long-day    list the scene's dev entries and tests
-#   make dev SCENE=long-day ENTRY=journey ARGS=30 [DEFINE=...]
-#                              build one; run it under Node unless it is a scene
+#   make run SCENE=long-day TEST=journey ARGS=30 [DEFINE=...]
+#                              run one test with arguments, showing its output
 #   make clean / distclean
 #
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
@@ -31,7 +30,7 @@ node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-le
   $$(grep -oE '^import .* from "[^".][^"]*@[0-9][^"]*"' $(1) | sed -E 's/.*"(.+)@([^@"]+)"$$/--alias:\1@\2=\1/' | sort -u) \
   --outfile=$(2)
 
-.PHONY: all check clean distclean debug dev test list $(SCENES) \
+.PHONY: all check clean distclean debug run test list $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES))
 .SECONDEXPANSION:
 .DELETE_ON_ERROR:
@@ -92,26 +91,13 @@ debug: | $(DEPS)
 	@rsync -a --delete scenes/$(SCENE)/assets/ build/$(SCENE)-debug/assets/
 	@echo "$(SCENE) debug build -> build/$(SCENE)-debug/"
 
-# An entry from dev/ or test/. Node entries are bundled with esbuild (see node-bundle) and run.
-DEV_FILE = $(firstword $(wildcard scenes/$(SCENE)/dev/$(ENTRY).ts scenes/$(SCENE)/test/$(ENTRY).ts))
-dev: | $(DEPS)
-	@test -n "$(SCENE)" || { echo "usage: make dev SCENE=<scene> [ENTRY=<entry> ARGS=... DEFINE=...]" >&2; exit 2; }
-ifeq ($(ENTRY),)
-	@for f in $(wildcard scenes/$(SCENE)/dev/*.ts scenes/$(SCENE)/test/*.ts); do \
-	  printf '%-12s %s\n' "$$(basename $$f .ts)" "$$(head -1 $$f | sed 's#^// *##')"; done
-else
-	@test -n "$(DEV_FILE)" || { echo "no dev entry or test $(ENTRY) in scenes/$(SCENE)" >&2; exit 2; }
-	@mkdir -p build/$(SCENE)-$(ENTRY)
-	@$(FLATTEN) $(DEV_FILE) --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-$(ENTRY)/scene.ts
-	@set -e; out=build/$(SCENE)-$(ENTRY); \
-	if grep -q '^export default ' $$out/scene.ts; then \
-	  cp scenes/$(SCENE)/scene.json $$out/; rsync -a --delete scenes/$(SCENE)/assets/ $$out/assets/; \
-	  echo "$(SCENE): built scene $$out/ (render it with tickr-scene)"; \
-	else \
-	  $(call node-bundle,$$out/scene.ts,$$out/$(ENTRY).mjs); \
-	  node $$out/$(ENTRY).mjs $(ARGS); \
-	fi
-endif
+# One test, with arguments and constant overrides, its output shown.
+run: | $(DEPS)
+	@test -f "scenes/$(SCENE)/test/$(TEST).ts" || { echo "usage: make run SCENE=<scene> TEST=<test> [ARGS=... DEFINE=...]" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-$(TEST)
+	@$(FLATTEN) scenes/$(SCENE)/test/$(TEST).ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-$(TEST)/scene.ts
+	@$(call node-bundle,build/$(SCENE)-$(TEST)/scene.ts,build/$(SCENE)-$(TEST)/$(TEST).mjs)
+	@node build/$(SCENE)-$(TEST)/$(TEST).mjs $(ARGS)
 
 # Install dev dependencies when package-lock.json changes.
 $(DEPS): package-lock.json

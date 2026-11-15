@@ -32,13 +32,6 @@ back reproduces the state, the truck never jumps, halts abruptly or gets stuck, 
 match speed and heading, and it never crosses in front of a train. `make check` runs it. To run it with other arguments and see its report:
 
 ```bash
-make dev SCENE=long-day ENTRY=journey ARGS="30 '{\"seed\":2}'"
-make dev SCENE=long-day ENTRY=journey ARGS=30 DEFINE=DEBUG_CARGO=kegs
+make run SCENE=long-day TEST=journey ARGS="30 '{\"seed\":2}'"
+make run SCENE=long-day TEST=journey ARGS=30 DEFINE=DEBUG_CARGO=kegs
 ```
-
-## Debugging aids
-
-- `dev/garage.ts`: a scene of the vehicles on a turntable, for look development.
-  `make dev SCENE=long-day ENTRY=garage` builds it into `build/long-day-garage/` for tickr-scene.
-- `dev/style-sheet.sh <skip-min> <seconds> <every-ms> [seed] [view]`: renders every city style at
-  the same journey moment into `build/long-day-styles/<view>/<style>/`. Needs the toolkit.

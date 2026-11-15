@@ -21,14 +21,13 @@ make check-long-day       # the same, one scene
 make test                 # just run the tests; make test-long-day for one scene
 make render-long-day      # build, then render with tickr-scene
 make debug SCENE=long-day DEFINE="DEBUG_STYLE=metro DEBUG_HOUR=18"  # -> build/long-day-debug/
-make dev SCENE=long-day                                # list the scene's dev entries and tests
-make dev SCENE=long-day ENTRY=journey ARGS=30          # build one and run it under Node
+make run SCENE=long-day TEST=journey ARGS=30           # one test, with arguments and its output
 make clean                # remove build/
 make distclean            # also remove node_modules/
 ```
 
 `DEFINE` overrides the value of a top-level `const NAME = ...;` in the build, for debugging; it
-works with `debug` and `dev`. `ARGS` is split by the shell, so quote JSON for it:
+works with `debug` and `run`. `ARGS` is split by the shell, so quote JSON for it:
 `ARGS="70 '{\"seed\":2}'"`.
 
 ## Build output
@@ -41,8 +40,7 @@ Everything built goes under `build/`, which is git-ignored and safe to delete (`
 | `build/<scene>/dist/` | what tickr-scene writes there: render frames, bundle, thumbnail |
 | `build/<scene>/load.mjs` | the Node bundle `make check` loads |
 | `build/<scene>-debug/` | `make debug` |
-| `build/<scene>-<entry>/` | a test or `make dev` entry: its `scene.ts`, plus `<entry>.mjs` (and a test's `output.txt`) |
-| `build/long-day-styles/` | `scenes/long-day/dev/style-sheet.sh` frames |
+| `build/<scene>-<test>/` | a test: its `scene.ts`, the `<test>.mjs` bundle, and `output.txt` from `make check` |
 
 `build/<scene>/` is a plain tickr scene directory, so every `tickr-scene` command runs on it.
 
@@ -55,8 +53,7 @@ scenes/<scene>/
   src/              the scene's ES modules; src/main.ts is the entry
   scene.ts          ...or a single-file scene instead of src/
   test/             tests: Node programs that exit non-zero on failure, run by `make check`
-  dev/              debugging aids: debug scenes, scene-specific scripts
-  tsconfig.json     the scene's TypeScript project (src/, test/, dev/)
+  tsconfig.json     the scene's TypeScript project (src/ and test/)
 scripts/flatten.ts  joins a scene's modules into one TypeScript scene.ts
 types/              the tickr scene API declarations
 tsconfig.base.json  compiler settings shared by the scenes
@@ -89,10 +86,9 @@ Because the modules end up in one scope:
   The fix is to move what load-time code needs into a module outside the cycle (as
   `long-day/src/grid.ts` and `facadetiles.ts` are).
 
-Tests (`test/<name>.ts`) and dev entries (`dev/<name>.ts`) are built the same way, so each
-pulls in only the modules it imports. One with no `export default` is a Node program, bundled
-with esbuild and run; one that exports a scene factory is built for the toolkit. A test reports
-failure through its exit code (`process.exitCode = 1`); `make check` shows its output only then.
+A test (`test/<name>.ts`) is built the same way from its own imports, so it pulls in only the
+modules it uses; it is then bundled with esbuild and run under Node. It reports failure through
+its exit code (`process.exitCode = 1`), and `make check` shows its output only then.
 
 ## Adding a scene
 

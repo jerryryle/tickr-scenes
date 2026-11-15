@@ -1,6 +1,6 @@
 node_modules/
 
-# Build output (npm run build / dev / check) and tickr-scene's dist/
+# Build output (make) and tickr-scene's dist/
 /build/
 dist/
 
