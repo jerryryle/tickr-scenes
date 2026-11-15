@@ -1,4 +1,5 @@
-// Node: fast-forwards the journey and checks invariants. Args: minutes [env-json] [force-cargo]
+// Test: fast-forwards the journey and checks invariants; exits non-zero on a failure.
+// Args (all optional): minutes [env-json] [force-cargo]
 import { hash2 } from "../src/rng.ts";
 import { readConfig } from "../src/env.ts";
 import { slotEnd, TRUCK_SLOTS } from "../src/cargo.ts";
@@ -119,4 +120,5 @@ import { Journey } from "../src/journey.ts";
   console.log(`dock by truck ${JSON.stringify(dockBy)} kerb by truck ${JSON.stringify(kerbBy)}`);
   for (const e of arrivals.slice(0, Number((globalThis as any).process.env.JTLOG ?? 14))) console.log("  " + e);
   console.log(errs.length ? "ERRORS\n" + errs.join("\n") : "OK");
+  if (errs.length) (globalThis as any).process.exitCode = 1;
 }

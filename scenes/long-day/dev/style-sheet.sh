@@ -5,10 +5,10 @@
 set -e
 cd "$(dirname "$0")/../../.."
 TICKR="${TICKR:-$HOME/.tickr-scene/node_modules/.bin/tickr-scene}"
-T=build/long-day-test
+T=build/long-day-debug
 VIEW="${5:-}"
 for st in coastal metro desert brick mainstreet port; do
-  make -s test SCENE=long-day DEFINE="DEBUG_SKIP_MINUTES=$1 DEBUG_STYLE=$st DEBUG_VIEW=$VIEW" >/dev/null
+  make -s debug SCENE=long-day DEFINE="DEBUG_SKIP_MINUTES=$1 DEBUG_STYLE=$st DEBUG_VIEW=$VIEW" >/dev/null
   echo "{\"seed\": ${4:-1}, \"timeOfDay\": \"day\", \"debugHud\": false}" > "$T/env.json"
   (cd "$T" && rm -rf dist && "$TICKR" render . --seconds "$2" --every "$3" --env env.json >/dev/null)
   D="build/long-day-styles/${VIEW:-drive}/$st"
