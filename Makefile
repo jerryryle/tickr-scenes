@@ -17,7 +17,10 @@
 # into one TypeScript scene.ts. A scene with scenes/<scene>/scene.ts instead is copied as is.
 # A test is a Node program in scenes/<scene>/test/ that exits non-zero when it fails.
 
-TICKR   ?= $(HOME)/.tickr-scene/node_modules/.bin/tickr-scene
+# The tickr-scene toolkit, installed in the project (git-ignored); it runs on the Node it ships.
+TICKR_HOME ?= $(CURDIR)/.tickr-scene
+TICKR_BIN   = $(TICKR_HOME)/node_modules/.bin/tickr-scene
+TICKR       = PATH="$(TICKR_HOME)/node/bin:$$PATH" $(TICKR_BIN)
 BIN     := node_modules/.bin
 DEPS    := node_modules/.package-lock.json
 SCENES  := $(patsubst scenes/%/scene.json,%,$(wildcard scenes/*/scene.json))
@@ -29,6 +32,11 @@ DEFINES  = $(addprefix --define ,$(DEFINE))
 node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-level=error \
   $$(grep -oE '^import .* from "[^".][^"]*@[0-9][^"]*"' $(1) | sed -E 's/.*"(.+)@([^@"]+)"$$/--alias:\1@\2=\1/' | sort -u) \
   --outfile=$(2)
+
+# Copy a scene's assets for the toolkit, which finds each asset by its scene.json name with no
+# extension (assets/logo.png -> assets/logo). $(call copy-assets,src,dst)
+copy-assets = rm -rf $(2) && mkdir -p $(2) && \
+  for f in $(1)/*; do [ -f "$$f" ] && n=$$(basename "$$f") && cp "$$f" "$(2)/$${n%.*}"; done; true
 
 .PHONY: all check clean distclean debug run test list $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES))
@@ -43,7 +51,7 @@ list:
 # A scene: its scene.ts, scene.json and assets.
 $(SCENES): %: build/%/scene.ts
 	@cp scenes/$*/scene.json build/$*/scene.json
-	@rsync -a --delete scenes/$*/assets/ build/$*/assets/
+	@$(call copy-assets,scenes/$*/assets,build/$*/assets)
 	@echo "$* -> build/$*/"
 
 build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts) scripts/flatten.ts | $(DEPS)
@@ -63,8 +71,8 @@ $(addprefix check-,$(SCENES)): check-%: %
 	@$(call node-bundle,build/$*/scene.ts,build/$*/load.mjs) && \
 	 node --input-type=module -e 'await import("./build/$*/load.mjs")' && echo "ok   $*: loads (top-level code runs in order)"
 	@$(MAKE) --no-print-directory -s test-$*
-	@if [ -x "$(TICKR)" ]; then $(TICKR) check build/$*; \
-	 else echo "skip $*: tickr-scene check (no toolkit at $(TICKR); set TICKR=)"; fi
+	@if [ -x "$(TICKR_BIN)" ]; then $(TICKR) check build/$* && echo "ok   $*: tickr-scene check"; \
+	 else echo "skip $*: tickr-scene check (no toolkit in $(TICKR_HOME); see README)"; fi
 
 test: $(addprefix test-,$(SCENES))
 
@@ -80,7 +88,7 @@ $(addprefix test-,$(SCENES)): test-%: | $(DEPS)
 	done
 
 $(addprefix render-,$(SCENES)): render-%: %
-	@test -x "$(TICKR)" || { echo "tickr-scene not found at $(TICKR); install the toolkit or set TICKR=" >&2; exit 1; }
+	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
 	$(TICKR) render build/$*
 
 debug: | $(DEPS)
@@ -88,7 +96,7 @@ debug: | $(DEPS)
 	@mkdir -p build/$(SCENE)-debug
 	$(FLATTEN) scenes/$(SCENE)/src/main.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-debug/scene.ts
 	@cp scenes/$(SCENE)/scene.json build/$(SCENE)-debug/
-	@rsync -a --delete scenes/$(SCENE)/assets/ build/$(SCENE)-debug/assets/
+	@$(call copy-assets,scenes/$(SCENE)/assets,build/$(SCENE)-debug/assets)
 	@echo "$(SCENE) debug build -> build/$(SCENE)-debug/"
 
 # One test, with arguments and constant overrides, its output shown.

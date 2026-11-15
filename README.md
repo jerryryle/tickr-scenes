@@ -7,9 +7,17 @@ Sources for my non-trivial [tickr](https://tickr.baton.io) scenes, one folder pe
 Needs Node 22.18 or later and GNU Make. `make` installs the npm dev dependencies (TypeScript,
 esbuild, three.js and its types) on first use and whenever `package-lock.json` changes.
 
-The tickr-scene toolkit (`check`, `render`, `thumbnail`, `upload`) is separate: install it into
-`~/.tickr-scene` with the steps the tickr workspace's `toolkit_get` gives, never through
-`package.json`. Set `TICKR=/path/to/tickr-scene` to use one elsewhere.
+The tickr-scene toolkit (`check`, `render`, `thumbnail`, `pull`, `upload`) is separate. It lives
+in `.tickr-scene/` in this project (git-ignored) with the Node it runs on (26.7.0, the board's).
+Install or update it with the steps the tickr workspace's `toolkit_get` gives, putting
+`<project>/.tickr-scene` wherever they say `$HOME/.tickr-scene`; never install it through
+`package.json`. The Makefile runs it on its own Node; to run it by hand:
+
+```bash
+export PATH="$PWD/.tickr-scene/node_modules/.bin:$PWD/.tickr-scene/node/bin:$PATH"
+```
+
+`make check` skips the toolkit's own check when it isn't installed.
 
 ## Commands
 
@@ -36,7 +44,7 @@ Everything built goes under `build/`, which is git-ignored and safe to delete (`
 
 | path | what |
 | --- | --- |
-| `build/<scene>/` | the scene: `scene.ts`, `scene.json`, `assets/` |
+| `build/<scene>/` | the scene: `scene.ts`, `scene.json`, `assets/` (named without extensions, which the toolkit needs) |
 | `build/<scene>/dist/` | what tickr-scene writes there: render frames, bundle, thumbnail |
 | `build/<scene>/load.mjs` | the Node bundle `make check` loads |
 | `build/<scene>-debug/` | `make debug` |
