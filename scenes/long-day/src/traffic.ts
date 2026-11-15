@@ -31,6 +31,7 @@ interface Car {
   kind: VehicleKind; path: Path; s: number; v: number;
   dodge: number; dodgeTarget: number; dodgeV: number; holdT: number;   // lateral shift into the inner lane (negative = left), and its rate
   stillT: number; committed: number; color: number;   // committed: the signal (index on the path) it is going through
+  stopFor: number;                     // the signal (index on the path) it is stopping for, -1: none
   blockedBy: number; slowT: number; pedT: number; acc: number;   // acc: current acceleration (eased)
   lastO?: number; mergeUp?: boolean;   // the path's lane offset last step, and which way it last moved   // pedT: how long a pedestrian has held it up   // the vehicle it is held up close behind (-1: none, or not a vehicle), and how long it has crawled (< 0.5 m/s)
   x: number; z: number; h: number; px: number; pz: number; ph: number;   // pose now and one step ago
@@ -127,7 +128,7 @@ export class Traffic {
     const bx = Math.floor(focus.x / BLOCK), bz = Math.floor(focus.z / BLOCK);
     const d = plan.district(bx, bz);
     const want = d === "downtown" ? 30 : d === "commercial" ? 26 : d === "residential" ? 15 : 12;
-    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck);
+    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck, simTime, prs);
     // Drive.
     this.obstacles.length = 0;
     for (const c of this.cars) this.carCircles(c, this.obstacles);
@@ -137,7 +138,7 @@ export class Traffic {
     for (let i = this.cars.length - 1; i >= 0; i--) this.drive(this.cars[i], dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]);
   }
 
-  private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[]) {
+  private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[]) {
     const r = this.rnd;
     const ang = r() * Math.PI * 2, dist = TRAFFIC_SPAWN[0] + r() * (TRAFFIC_SPAWN[1] - TRAFFIC_SPAWN[0]);
     const px = focus.x + Math.cos(ang) * dist, pz = focus.z + Math.sin(ang) * dist;
@@ -165,9 +166,18 @@ export class Traffic {
     // Not on top of anything.
     for (const o of [...truck, ...this.obstacles]) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const c of this.cars) if (Math.hypot(c.x - this.pose.x, c.z - this.pose.z) < 14) return;
+    // Short of a light that isn't green: not past its stop line, and stopped there if it is too
+    // close to stop from speed.
+    let v = kind.vmax * 0.7;
+    const sg = path.signals[0];
+    if (sg && signalState(sg.ix, sg.iz, sg.axis, simTime, plan.seed, prs) !== "green") {
+      const dist = sg.sLine - 0.8 - kind.len / 2;
+      if (dist < 0.5) return;
+      if (dist < v * v / 9 + 1) v = 0;
+    }
     const color = kind.colors ? pick(r, kind.colors) : 0xffffff;
     const model: TruckModel | null = kind.id === "ryder" ? (r() < 0.5 ? "box16" : "box26") : null;
-    this.cars.push({ kind, path, s: 0, v: kind.vmax * 0.7, dodge: cable ? -3 : 0, dodgeTarget: cable ? -3 : 0, dodgeV: 0, holdT: 0, stillT: 0, committed: -1, blockedBy: -1, slowT: 0, pedT: 0, acc: 0,
+    this.cars.push({ kind, path, s: 0, v, dodge: cable ? -3 : 0, dodgeTarget: cable ? -3 : 0, dodgeV: 0, holdT: 0, stillT: 0, committed: -1, stopFor: -1, blockedBy: -1, slowT: 0, pedT: 0, acc: 0,
       color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model });
   }
   private count(id: string) { let n = 0; for (const c of this.cars) if (c.kind.id === id) n++; return n; }
@@ -217,18 +227,31 @@ export class Traffic {
   private drive(c: Car, dt: number, plan: CityPlan, simTime: number, prs: SignalPreempt[], truck: Obstacle[], truckHeading: number, peds: Obstacle[], index: number, ignoreId = -1) {
     const p = c.path, half = c.kind.len / 2;
     let limit = Math.min(c.kind.vmax, p.speedLimit(c.s, 2.5));
-    let hardStop = Infinity;
-    // Signals (the same rule as the truck: right on red after a pause).
-    for (let key = 0; key < p.signals.length; key++) {
-      const sg = p.signals[key], target = sg.sLine - 0.8 - half;
-      if (c.s > target + 0.5) continue;
+    let hardStop = Infinity, signalBrake = 0;
+    // Signals (the same rule as the truck: right on red after a pause). The next one ahead on this
+    // path, or past its end the next node's: a path ends 30 m beyond its last node, so the next
+    // stop line is only ~12 m into the next path, too late to stop from city speed. (Key
+    // p.signals.length stands for that one; it becomes key 0 on the next path.)
+    let sg: { ix: number; iz: number; axis: 0 | 1; sLine: number; move: string } | null = null, key = 0;
+    for (; key < p.signals.length; key++) if (c.s <= p.signals[key].sLine - 0.8 - half + 0.5) { sg = p.signals[key]; break; }
+    if (!sg) {
+      const d = p.endDir, [ex, ez] = p.endNode;
+      sg = { ix: ex + DIR_X[d], iz: ez + DIR_Z[d], axis: (d % 2) as 0 | 1, sLine: p.length + BLOCK - p.route.after - STREET / 2 - 4.1, move: "?" };
+    }
+    {
+      const target = sg.sLine - 0.8 - half, dist = target - c.s;
       const state = signalState(sg.ix, sg.iz, sg.axis, simTime, plan.seed, prs);
-      if (state === "green" || c.committed === key) break;
-      const dist = target - c.s;
-      if (state === "red" && sg.move === "R" && !c.cable && c.stillT > 1.2 && dist < 1.2) { c.committed = key; break; }
-      if (dist >= c.v * c.v / 9 - 0.5) { limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = target; }
-      else c.committed = key;
-      break;
+      if (state === "green") { if (c.stopFor === key) c.stopFor = -1; }
+      else if (c.committed !== key) {
+        if (state === "red" && sg.move === "R" && !c.cable && c.stillT > 1.2 && dist < 1.2) c.committed = key;
+        // Stop if it can (about 4.5 m/s^2 at most); once stopping for a light it never changes its
+        // mind and runs it.
+        else if (c.stopFor === key || dist >= c.v * c.v / 9 - 0.5) {
+          c.stopFor = key;
+          limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = target;
+          signalBrake = c.v * c.v / (2 * Math.max(dist, 0.1));
+        } else c.committed = key;   // too close to stop: go through
+      }
     }
     // What's ahead in this lane: other vehicles, the truck, pedestrians.
     // (Judged along the street, not the car's own heading: easing across lanes after a turn, that
@@ -304,6 +327,9 @@ export class Traffic {
       if (c.acc < 0 && c.v + c.acc * dt < limit && limit < c.v) c.acc = Math.max(c.acc, (limit - c.v) / dt);   // don't brake below the limit
       if (gap < 0.4 && c.v > 0) c.acc = Math.min(c.acc, -8);   // cut in on: a hard stop, but not a dead one
       if (c.acc > 0 && c.v + c.acc * dt > limit) c.acc = Math.max(0, (limit - c.v) / dt);   // nor speed up past it
+      // Stopping for a light: at least the braking that ends at the line (the eased limit above
+      // trails the stop and would reach it still rolling).
+      if (signalBrake > 1.5) c.acc = Math.min(c.acc, -Math.min(signalBrake, 7));
       c.v = Math.max(0, c.v + c.acc * dt);
       if (c.v === 0 && c.acc < 0) c.acc = 0;
     }
@@ -330,8 +356,9 @@ export class Traffic {
       const past = p.route.after - (p.length - c.s), d = p.endDir, [ex, ez] = p.endNode;
       const mv = this.validMove(ex + DIR_X[d], ez + DIR_Z[d], d, c.cable);
       if (!mv) { this.cars.splice(index, 1); return; }
+      const next = p.signals.length;   // the next node's signal, already judged from this path
       c.path = new Path({ ix: ex + DIR_X[d], iz: ez + DIR_Z[d], dir: d, before: BLOCK - past, moves: mv, after: 30 });
-      c.s = 0; c.committed = -1;
+      c.s = 0; c.committed = c.committed === next ? 0 : -1; c.stopFor = c.stopFor === next ? 0 : -1;
     }
     c.path.eval(c.s, this.pose);
     const h = this.pose.h;
