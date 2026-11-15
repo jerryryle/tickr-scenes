@@ -1,0 +1,18 @@
+{
+  // Shared compiler settings for scene code. The board's toolkit does its own check
+  // (`tickr-scene check`); this one runs without it and drives editor support.
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "types": [],
+    // tickr imports npm packages by pinned version; resolve those to the devDependency.
+    "paths": { "three@*": ["./node_modules/@types/three"] }
+  }
+}

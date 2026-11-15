@@ -1,0 +1,10 @@
+node_modules/
+
+# Build output (npm run build / dev / check) and tickr-scene's dist/
+/build/
+dist/
+
+# Local toolkit install, if kept beside the scenes
+.tickr-scene/
+
+.DS_Store

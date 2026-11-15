@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/*.ts", "dev/*.ts", "../../types/tickr-scene.d.ts"]
+}

@@ -1,0 +1,185 @@
+{
+  "id": "07d4b46826b34a00a940561973d9bec5",
+  "name": "Long Day",
+  "env_schema": [
+    {
+      "name": "seed",
+      "configurable": true,
+      "default": 0,
+      "type": "number"
+    },
+    {
+      "name": "timeOfDay",
+      "configurable": true,
+      "default": "cycle",
+      "options": [
+        "cycle",
+        "day",
+        "dusk",
+        "night"
+      ],
+      "type": "select"
+    },
+    {
+      "name": "weather",
+      "configurable": true,
+      "default": true,
+      "type": "boolean"
+    },
+    {
+      "name": "humorFrequency",
+      "configurable": true,
+      "default": 0.02,
+      "max": 0.1,
+      "min": 0,
+      "step": 0.01,
+      "type": "range"
+    },
+    {
+      "name": "cityMinutes",
+      "configurable": true,
+      "default": 30,
+      "max": 60,
+      "min": 5,
+      "step": 5,
+      "type": "range"
+    },
+    {
+      "name": "countrySeconds",
+      "configurable": true,
+      "default": 45,
+      "max": 60,
+      "min": 30,
+      "step": 5,
+      "type": "range"
+    },
+    {
+      "name": "debugHud",
+      "configurable": false,
+      "default": false,
+      "type": "boolean"
+    }
+  ],
+  "secret_keys": [],
+  "assets": [
+    {
+      "name": "logoColor",
+      "content_type": "image/png",
+      "size": 48855,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "logoReverse",
+      "content_type": "image/png",
+      "size": 51061,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "logoWhite",
+      "content_type": "image/png",
+      "size": 44775,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "markColor16",
+      "content_type": "image/png",
+      "size": 1185,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "markColor24",
+      "content_type": "image/png",
+      "size": 1868,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "markColor32",
+      "content_type": "image/png",
+      "size": 2588,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "markReverse16",
+      "content_type": "image/png",
+      "size": 1216,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "markReverse24",
+      "content_type": "image/png",
+      "size": 1926,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "markReverse32",
+      "content_type": "image/png",
+      "size": 2676,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "liverySide26",
+      "content_type": "image/png",
+      "size": 39828,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "liverySide16",
+      "content_type": "image/png",
+      "size": 44915,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "liverySideTrailer",
+      "content_type": "image/png",
+      "size": 58923,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "liveryRear",
+      "content_type": "image/png",
+      "size": 25894,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "liveryCabDoor",
+      "content_type": "image/png",
+      "size": 11905,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "facades",
+      "content_type": "image/png",
+      "size": 8039,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "batonWordmark",
+      "content_type": "image/png",
+      "size": 22939,
+      "type": "image",
+      "configurable": false
+    },
+    {
+      "name": "batonIcon",
+      "content_type": "image/png",
+      "size": 6061,
+      "type": "image",
+      "configurable": false
+    }
+  ]
+}
