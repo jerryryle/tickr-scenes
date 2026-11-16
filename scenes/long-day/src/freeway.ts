@@ -119,8 +119,11 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
     b.boxR((xa + xb) / 2 - ax, (ya + yb) / 2 + (lo + hi) / 2, (za + zb) / 2 - az, Math.hypot(run, yb - ya) + 0.04, hi - lo, wid, color, 0, Math.atan2(-(zb - za), xb - xa), Math.atan2(yb - ya, run));
   };
   const keep = b.dy; b.dy = 0;
-  for (let a = d0; a < d1 - 1e-6; a = Math.min(d1, (Math.floor(a / STEP + 1e-9) + 1) * STEP)) {
-    const a2 = Math.min(d1, (Math.floor(a / STEP + 1e-9) + 1) * STEP);
+  // (Finer where the deck swings across, so its pieces follow the bend without gaps.)
+  const stepAt = (a: number) => (a > -1 && a < FW_SHIFT_LEN + 1 && F.m(FW_SHIFT_LEN) !== 0 ? 2 : STEP);
+  const next = (a: number) => Math.min(d1, (Math.floor(a / stepAt(a) + 1e-9) + 1) * stepAt(a));
+  for (let a = d0; a < d1 - 1e-6; a = next(a)) {
+    const a2 = next(a);
     if (parts.main) {
       const ya = F.y(a), yb = F.y(a2), ma = F.m(a), mb = F.m(a2);
       if (ya > 0.05 || yb > 0.05) {
@@ -130,7 +133,8 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
           along(a, a2, ma + k * 4, mb + k * 4, ya, yb, -1.45, -0.55, 0.9, FW_GIRDER);
           along(a, a2, ma + k * (FW_HALF - 0.2), mb + k * (FW_HALF - 0.2), ya, yb, 0, 0.95, 0.4, FW_CONCRETE);
           // Lane lines, dashed.
-          if (Math.floor(a / STEP) % 2 === 0) along(a, Math.min(a2, a + 4), ma + k * 3.5, ma + k * 3.5, ya, ya + (yb - ya) * Math.min(1, 4 / (a2 - a)), 0, 0.025, 0.16, FW_WHITE);
+          { const k0 = Math.floor(a / STEP + 1e-9) * STEP, e = Math.min(a2, k0 + 4);
+            if (Math.floor(a / STEP + 1e-9) % 2 === 0 && e > a + 0.01) along(a, e, F.m(a) + k * 3.5, F.m(e) + k * 3.5, ya, ya + (yb - ya) * (e - a) / (a2 - a), 0, 0.025, 0.16, FW_WHITE); }
         }
         along(a, a2, ma, mb, ya, yb, 0, 0.8, 0.5, FW_CONCRETE);   // the median barrier
       }

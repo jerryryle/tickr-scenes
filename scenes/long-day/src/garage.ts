@@ -41,6 +41,7 @@ function car(b: Batch, x: number, y: number, z: number, yaw: number, color: numb
   b.box(x - Math.cos(yaw) * 0.3, y + 1.22, z + Math.sin(yaw) * 0.3, 2.0, 0.5, 1.5, 0x4a5868, yaw);
 }
 
+const my2 = (a: number, b: number) => (a + b) / 2;
 export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand, seed: number) {
   const H = GARAGE_H, h = heading(side);
   // The ground floor's slab and its painted bays.
@@ -62,21 +63,38 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
     }
   }
   // The ramps: the deck under each track, eased to the ground at its ends; low walls up the sides.
-  const { up, down } = garageTracks(side), p: Pose = { x: 0, z: 0, h: 0, k: 0 }, q: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  // One continuous surface along each track (sampled finely, so it follows the turns without
+  // gaps): the deck's top, sides and underside, a parapet along each edge once it is up, and
+  // under it a solid wall low down, columns higher up.
+  const { up, down } = garageTracks(side), p: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  type V = [number, number, number];
+  const quad = (a: V, b: V, c: V, d: V, color: number, face: V) => { solid.tri(...a, ...b, ...c, color, face); solid.tri(...a, ...c, ...d, color, face); };
   for (const t of [up, down]) {
-    const STEP = 1.5;
-    for (let s = 0; s < t.length - 0.01; s += STEP) {
-      const s1 = Math.min(t.length, s + STEP), ya = t.yAt(s), yb = t.yAt(s1);
-      if (Math.max(ya, yb) < 0.04) continue;
-      t.eval(s, p); t.eval(s1, q);
-      const run = Math.hypot(q.x - p.x, q.z - p.z), yaw = Math.atan2(-(q.z - p.z), q.x - p.x), pitch = Math.atan2(yb - ya, run);
-      const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2, my = (ya + yb) / 2;
-      solid.boxR(mx, my - 0.2, mz, Math.hypot(run, yb - ya) + 0.08, 0.38, 6.2, DECK, 0, yaw, pitch);
-      const rx = Math.sin(yaw), rz = Math.cos(yaw);
-      if (my > 0.6) for (const k of [-1, 1]) solid.boxR(mx + rx * k * 3.0, my + 0.4, mz + rz * k * 3.0, run + 0.08, 0.85, 0.22, RAIL, 0, yaw, pitch);
-      // Under it: a solid wall low down, columns higher up.
-      if (my < 2.2) solid.box(mx, (my - 0.39) / 2, mz, run + 0.08, Math.max(0.05, my - 0.39), 5.6, COLUMN, yaw);
-      else if (Math.round(s / STEP) % 4 === 0) solid.box(mx, (my - 0.39) / 2, mz, 0.6, my - 0.39, 0.6, COLUMN);
+    const STEP = 0.75, pts: { x: number; z: number; y: number; rx: number; rz: number }[] = [];
+    for (let s = 0; s <= t.length + 1e-6; s += STEP) { const ss = Math.min(s, t.length); t.eval(ss, p); pts.push({ x: p.x, z: p.z, y: t.yAt(ss), rx: Math.sin(p.h), rz: Math.cos(p.h) }); }
+    // The point n across from sample i, at height y above the deck's top.
+    const at = (i: number, n: number, dy: number): V => { const q = pts[i]; return [q.x + q.rx * n, q.y - 0.01 + dy, q.z + q.rz * n]; };
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (Math.max(a.y, b.y) < 0.04) continue;
+      const W = 3.1, T = 0.38, out: V = [b.x - a.x, 0, b.z - a.z], rx = (a.rx + b.rx) / 2, rz = (a.rz + b.rz) / 2;
+      quad(at(i, -W, 0), at(i, W, 0), at(i + 1, W, 0), at(i + 1, -W, 0), DECK_TOP, [0, 1, 0]);
+      quad(at(i, -W, -T), at(i, W, -T), at(i + 1, W, -T), at(i + 1, -W, -T), DECK, [0, -1, 0]);
+      for (const k of [-1, 1]) {
+        const side: V = [rx * k, 0, rz * k], my = (a.y + b.y) / 2;
+        // The deck's edge, down to the ground where it is low (a wall under it).
+        const lo = my < 2.2 ? -a.y + 0.01 : -T, lob = my < 2.2 ? -b.y + 0.01 : -T;
+        quad(at(i, k * W, lo), at(i + 1, k * W, lob), at(i + 1, k * W, 0), at(i, k * W, 0), my < 2.2 ? COLUMN : DECK, side);
+        if (Math.min(a.y, b.y) > 0.6) {
+          const n0 = k * (W - 0.22), n1 = k * W;
+          quad(at(i, n0, 0), at(i + 1, n0, 0), at(i + 1, n0, 0.85), at(i, n0, 0.85), RAIL, [-side[0], 0, -side[2]]);
+          quad(at(i, n1, 0), at(i + 1, n1, 0), at(i + 1, n1, 0.85), at(i, n1, 0.85), RAIL, side);
+          quad(at(i, n0, 0.85), at(i, n1, 0.85), at(i + 1, n1, 0.85), at(i + 1, n0, 0.85), RAIL, [0, 1, 0]);
+        }
+      }
+      // Its ends where it meets the ground or another deck: closed off.
+      if (i === 0 || Math.max(pts[i - 1].y, a.y) < 0.04) quad(at(i, -W, -T), at(i, W, -T), at(i, W, 0), at(i, -W, 0), DECK, [-out[0], 0, -out[2]]);
+      if (my2(a.y, b.y) >= 2.2 && i % 8 === 0) solid.box(a.x, (a.y - 0.39) / 2, a.z, 0.6, a.y - 0.39, 0.6, COLUMN);
     }
   }
   // The receiver's stair and lift tower on the roof, its door facing the lane.

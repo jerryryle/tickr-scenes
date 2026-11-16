@@ -98,13 +98,14 @@ export class Batch {
     this.n += 6;
   }
 
-  // One flat-shaded triangle facing up (wound so, whatever order its corners come in), as given: no dy.
-  tri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, color: number) {
+  // One flat-shaded triangle facing up (or towards `face`), wound so whatever order its corners
+  // come in, as given: no dy.
+  tri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, color: number, face: [number, number, number] = [0, 1, 0]) {
     if (BATCH.dry) return;
     this.reserve(3);
     const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const l = (ny < 0 ? -1 : 1) * (Math.hypot(nx, ny, nz) || 1); nx /= l; ny /= l; nz /= l;
+    const l = (nx * face[0] + ny * face[1] + nz * face[2] < 0 ? -1 : 1) * (Math.hypot(nx, ny, nz) || 1); nx /= l; ny /= l; nz /= l;
     if (l < 0) { [bx, by, bz, cx, cy, cz] = [cx, cy, cz, bx, by, bz]; }
     this.c.set(color);
     const { pos, nrm, col, auxArr } = this;
