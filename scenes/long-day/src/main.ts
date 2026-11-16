@@ -408,6 +408,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         rebase(tmpPose2.x - tmpPose.x, tmpPose2.z - tmpPose.z);
         presCity = journey.st.city;
         buildCity();
+        // Build what is in view of the new city at once, out on the road as far as it streams there:
+        // the view distance never reaches past what is built (placeCamera), so an empty streamer
+        // would pull the fog in to the camera and let it wash back out over the land.
+        const outside = cityDistance(Math.floor(journey.pose.x / BLOCK), Math.floor(journey.pose.z / BLOCK)) > 0;
+        if (outside) streamer.setRadius(5);
+        streamer.fill(new THREE.Vector3(journey.pose.x, 0, journey.pose.z));
       } else {
         if (!fresh) { director.reset(); puffs.clear(); lastX = NaN; }
         presCity = journey.st.city;
