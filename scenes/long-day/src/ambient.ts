@@ -3,24 +3,28 @@
 import * as THREE from "three@0.187.0";
 import { Batch, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
-import { ELEVATED_REACH, ELEVATED_Y, elevatedLine } from "./decor.ts";
+import { ELEVATED_REACH, elevatedLine } from "./decor.ts";
+import { elevatedTrackY } from "./elevated.ts";
 import { CITY_HI, CITY_LO, CityPlan } from "./city.ts";
 import { BLOCK } from "./grid.ts";
 import { signAtlas } from "./signs.ts";
 import { SIM_DT } from "./journey.ts";
 import { GLASS } from "./traffic.ts";
 
-const TRAINS = 4;
+const TRAINS = 4, EL_CARS = 4, EL_CAR_PITCH = 14.4;
 export class Ambient {
-  private trains: THREE.Group[] = [];
+  private trains: THREE.Mesh[][] = [];
+  readonly trainX: number[] = [];        // where each train's middle is (test renders follow one)   // each train's cars, placed one by one so they follow the ramps
   private blimp: THREE.Group;
   private blimpX = NaN; private blimpZ = 0; private blimpPX = NaN;   // stepped with the journey (StreetLife)
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
     const b = new Batch();
-    elevatedTrain(b);
-    const car = b.build(material)!;
-    for (let k = 0; k < TRAINS; k++) { const g = new THREE.Group(); g.add(k ? new THREE.Mesh(car.geometry, material) : car); g.visible = false; scene.add(g); this.trains.push(g); }
+    const cars = Array.from({ length: EL_CARS }, (_, i) => { elevatedCar(b, i); return b.build(material)!.geometry; });
+    for (let k = 0; k < TRAINS; k++) {
+      const train = cars.map((g) => { const m = new THREE.Mesh(g, material); m.visible = false; scene.add(m); return m; });
+      this.trains.push(train);
+    }
     // Blimp: a silver envelope, fins, a gondola, and the ad on both sides.
     const k = new Batch();
     k.ico(0, 0, 0, 1, 0xd8dadc); k.ico(0, -0.05, 0, 0.98, 0xc8ccd0);
@@ -60,11 +64,19 @@ export class Ambient {
     const lo = CITY_LO * BLOCK - ELEVATED_REACH + 80, hi = (CITY_HI + 1) * BLOCK + ELEVATED_REACH - 80, len = hi - lo;
     const half = len / 14, lap = 2 * half;
     for (let k = 0; k < this.trains.length; k++) {
-      const g = this.trains[k];
-      g.visible = shown;
-      if (!shown) continue;
       const t = (((time + (k * lap) / this.trains.length) % lap) + lap) % lap, east = t < half, u = (east ? t : t - half) / half;
-      g.position.set(east ? lo + len * u : hi - len * u, ELEVATED_Y + 0.55, z + (east ? 2.0 : -2.0));
+      const dir = east ? 1 : -1, x = east ? lo + len * u : hi - len * u;
+      this.trainX[k] = x;
+      this.trains[k].forEach((car, i) => {
+        car.visible = shown;
+        if (!shown) return;
+        // Each car on the track where it is (out of town the line ramps down to the ground and
+        // back up over roads), pitched to its slope, facing the way the train runs.
+        const cx = x + dir * (i - (EL_CARS - 1) / 2) * EL_CAR_PITCH, cy = elevatedTrackY(line, cx);
+        const slope = (elevatedTrackY(line, cx + 3) - elevatedTrackY(line, cx - 3)) / 6;
+        car.position.set(cx, cy + 0.05, z + dir * 2.0);
+        car.rotation.set(0, east ? 0 : Math.PI, Math.atan(slope * dir));
+      });
     }
     if (!active) return;
     this.blimp.position.set(this.blimpPX + (this.blimpX - this.blimpPX) * alpha, 62, this.blimpZ);
@@ -72,13 +84,13 @@ export class Ambient {
   }
 }
 
-// A four-car metro train, cars 14 m long, origin at the middle of the second car, running along
-// +x. Stainless bodies with a window band, three doors a side, a red stripe, bogies underneath,
-// gangways between the cars and a cab at each end.
-function elevatedTrain(b: Batch) {
+// Car i of a four-car metro train running along +x, 14 m long, its origin at the middle of its
+// floor-level base: stainless bodies with a window band, three doors a side, a red stripe, bogies
+// underneath, a gangway towards the next car and a cab on the first (-x) and last (+x).
+function elevatedCar(b: Batch, i: number) {
   const L = 14, W = 2.8, STEEL = 0xc8ccd2, DARK = 0x2a2d33, DOOR = 0x9aa2aa;
-  for (let i = 0; i < 4; i++) {
-    const x = -21 + i * 14.4;
+  {
+    const x = 0;
     b.box(x, 1.7, 0, L, 2.6, W, STEEL);                                   // body
     b.box(x, 3.08, 0, L - 0.3, 0.2, W - 0.4, STEEL); b.box(x, 3.22, 0, L - 0.8, 0.1, W - 1.0, 0xa8adb4);   // rounded roof
     b.box(x, 2.25, 0, L - 0.8, 0.85, W + 0.02, GLASS);                   // window band
@@ -94,7 +106,7 @@ function elevatedTrain(b: Batch) {
       b.box(x + dx, 0.45, 0, 2.6, 0.5, W - 0.5, DARK);
       for (const ax of [-0.8, 0.8]) for (const z of [-1, 1]) b.cyl(x + dx + ax, 0.35, z * (W / 2 - 0.4), 0.35, 0.12, 0x161616, 10, Math.PI / 2);
     }
-    if (i < 3) b.box(x + 7.2, 1.8, 0, 0.5, 2.3, 1.6, DARK);              // gangway to the next car
+    if (i < 3) b.box(x + 7.1, 1.8, 0, 0.3, 2.3, 1.6, DARK);              // gangway to the next car
     if (i === 0 || i === 3) {                                             // cab end
       const e = i === 0 ? -1 : 1, ex = x + e * (L / 2 + 0.05);
       b.box(ex, 1.7, 0, 0.12, 2.56, W - 0.1, 0xb4b9c0);   // (inside the body's top and bottom)

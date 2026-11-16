@@ -245,17 +245,36 @@ export function elevatedLine(style: CityStyle, cz: number) {
   return !!style.elevated && elevatedRow(cz) && cz >= CITY_LO && cz <= CITY_HI && !GATES.some((g) => (g.dir === 0 || g.dir === 2) && Math.abs(g.iz - cz) <= 1);
 }
 
-// One block's length of the line, from x0 (block-local x from 0 to BLOCK otherwise); `pier` says
-// whether a pier may stand at a given x (none on a road out in the country).
-export function buildElevated(s: Batch, x0 = 0, pier: ((x: number) => boolean) | null = null) {
-  const deck = 0x5a5e62, steel = 0x3a3d42, x1 = x0 + BLOCK;
-  s.span(x0, ELEVATED_Y, 5, x1, ELEVATED_Y + 0.5, 13, deck);
-  for (const z of [5.2, 12.8]) s.span(x0, ELEVATED_Y - 0.6, z - 0.2, x1, ELEVATED_Y, z + 0.2, steel);
-  for (const z of [5.1, 12.9]) s.span(x0, ELEVATED_Y + 0.5, z - 0.05, x1, ELEVATED_Y + 1.4, z + 0.05, steel);
-  for (const z of [6.4, 7.8, 10.2, 11.6]) s.span(x0, ELEVATED_Y + 0.5, z - 0.06, x1, ELEVATED_Y + 0.62, z + 0.06, 0x8a8f94);
-  for (const x of [26, 43]) {
-    if (pier && !pier(x0 + x)) continue;
-    s.box(x0 + x, ELEVATED_Y / 2, 9, 0.6, ELEVATED_Y, 0.6, steel); s.box(x0 + x, ELEVATED_Y - 0.5, 9, 0.5, 0.6, 7.6, steel);
+// One block's length of the line's deck, from x0 (block-local x from 0 to BLOCK otherwise): the
+// track's top is at ELEVATED_Y + 0.5. What holds it up is elevatedBent's, placed by the street
+// beneath (city.ts buildStreet) or out of town (elevated.ts).
+export const EL_DECK = 0x5a5e62, EL_STEEL = 0x4a5450, EL_RAIL = 0x8a8f94;
+export function buildElevated(s: Batch, x0 = 0) {
+  const x1 = x0 + BLOCK;
+  s.span(x0, ELEVATED_Y, 5, x1, ELEVATED_Y + 0.5, 13, EL_DECK);
+  for (const z of [5.2, 12.8]) s.span(x0, ELEVATED_Y - 0.6, z - 0.2, x1, ELEVATED_Y, z + 0.2, EL_STEEL);
+  for (const z of [5.1, 12.9]) s.span(x0, ELEVATED_Y + 0.5, z - 0.05, x1, ELEVATED_Y + 1.4, z + 0.05, EL_STEEL);
+  for (const z of [6.4, 7.8, 10.2, 11.6]) s.span(x0, ELEVATED_Y + 0.5, z - 0.06, x1, ELEVATED_Y + 0.62, z + 0.06, EL_RAIL);
+}
+// The across positions of a bent's two columns (block-local z): on each sidewalk, 0.5 m in from
+// the kerb face, so the road beneath stays clear.
+export const EL_COLUMNS = [2.5, 15.5] as const;
+// A bent at x under a deck whose top is at `top`: a column on each side of the street, with a
+// footing, knee braces and a crossbeam under the deck's girders, wider than the deck so that it
+// shows from above. Its feet are at y = 0.
+// Near the foot of a ramp, where there is no room for columns, it is just the crossbeam standing on
+// the ground under the girders.
+export function elevatedBent(s: Batch, x: number, top: number) {
+  const beamTop = top - 1.1, beamBot = beamTop - 0.7, steel = EL_STEEL;
+  if (beamBot < 1.2) { s.span(x - 0.35, 0, 4.6, x + 0.35, beamTop, 13.4, steel); return; }
+  s.span(x - 0.35, beamBot, EL_COLUMNS[0] - 0.4, x + 0.35, beamTop, EL_COLUMNS[1] + 0.4, steel);
+  for (const z of EL_COLUMNS) {
+    const inward = z < 9 ? 1 : -1;
+    s.box(x, beamBot / 2, z, 0.6, beamBot, 0.6, steel);
+    s.box(x, 0.25, z, 1.0, 0.5, 1.0, 0x8a8780);                                          // footing
+    s.box(x, beamBot + 0.05, z, 0.8, 0.3, 0.8, steel);                                      // cap
+    const k = 1.3, len = Math.hypot(k, k);                                                  // knee brace
+    s.boxR(x, beamBot - k / 2, z + (inward * k) / 2, 0.22, len, 0.22, steel, inward * Math.PI / 4, 0, 0);
   }
 }
 export function buildCableTracks(g: Batch) {

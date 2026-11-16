@@ -22,7 +22,8 @@ import type { LiveryName, TruckModel } from "./truck.ts";
 import { makeFacadeMaterial } from "./facade.ts";
 import { makeLampMaterial, setSignalPreempt, setSignalTime } from "./signals.ts";
 import { realSeason, weatherMix } from "./climate.ts";
-import { cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, pavementObstacles } from "./city.ts";
+import { CITY_HI, CITY_LO, cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, pavementObstacles } from "./city.ts";
+import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
 import type { CityMaterials } from "./city.ts";
 import { facilityAt, facilityName } from "./facilities.ts";
@@ -38,7 +39,7 @@ import { Crew } from "./crew.ts";
 import { DockFx, FrontDoorFx } from "./dockfx.ts";
 import { FleetBaker } from "./fleet.ts";
 import { COUNTRY_CLEAR, CountryWorld } from "./countryworld.ts";
-import { ElevatedReach } from "./elevated.ts";
+import { ElevatedReach, elevatedLift } from "./elevated.ts";
 import { Backdrop } from "./backdrop.ts";
 import { Traffic } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
@@ -130,7 +131,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   }
 
   // Test renders only: a tour camera on the downtown core nearest the start.
-  let tourT = 0;
+  let tourT = 0, tourTrain = -1;
   function tourCamera(dt: number): boolean {
     if (!DEBUG_VIEW || DEBUG_VIEW === "countryTop" || DEBUG_VIEW === "scrub") return false;
     tourT += dt;
@@ -150,6 +151,43 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const near = DEBUG_VIEW === "batonNear";
       cam.position.set(cx + Math.cos(a) * (near ? 28 : 70), near ? 40 : 24, cz + Math.sin(a) * (near ? 28 : 70));
       cam.lookAt(cx, near ? 38 : 18, cz);
+    } else if (DEBUG_VIEW.startsWith("elevated")) {
+      // The first elevated line: "elevated" pans east alongside it from inside town out over the
+      // ramp to the country; "elevatedStreet" looks east along the street beneath it.
+      let line = NaN;
+      for (let z = CITY_LO; z <= CITY_HI && Number.isNaN(line); z++) if (elevatedLine(plan.style, z)) line = z;
+      if (Number.isNaN(line)) line = 1;
+      const lz = line * BLOCK + 9, east = (CITY_HI + 1) * BLOCK;
+      if (DEBUG_VIEW === "elevatedBridge") {
+        // A bridge over a road out of town: the first place on any line, either side, where the
+        // line climbs again after reaching the ground.
+        let bx = NaN, bl = line;
+        for (let z = CITY_LO; z <= CITY_HI && Number.isNaN(bx); z++) {
+          if (!elevatedLine(plan.style, z)) continue;
+          for (const d of [1, -1]) {
+            let down = false;
+            for (let s = 0; s < 2500 && Number.isNaN(bx); s += 4) {
+              const x = d > 0 ? east + s : CITY_LO * BLOCK - s, f = elevatedLift(z, x);
+              if (f === 0) down = true; else if (down && f > 0.99) { bx = x; bl = z; }
+            }
+          }
+        }
+        if (Number.isNaN(bx)) bx = east + 300;
+        const a = tourT * 0.15, bz = bl * BLOCK + 9;
+        cam.position.set(bx + Math.cos(a) * 70, 22, bz + Math.sin(a) * 70); cam.lookAt(bx, 3, bz);
+      } else if (DEBUG_VIEW === "elevatedTrain" && ambient?.trainX.length) {
+        // The train that comes nearest the ramp east of town in the next 80 s.
+        if (tourTrain < 0) { let best = Infinity; ambient.trainX.forEach((x, k) => { for (const d of [-1, 1]) { const m = Math.abs(x + d * 14 * 40 - east - 120); if (m < best) { best = m; tourTrain = k; } } }); }
+        const x = ambient.trainX[tourTrain];
+        cam.position.set(x - 25, 9, lz + 38); cam.lookAt(x, 3, lz);
+      } else if (DEBUG_VIEW === "elevatedStreet") {
+        const x = east - 260 + tourT * 6;
+        cam.position.set(x, 2.2, lz + 5.5); cam.lookAt(x + 60, 5, lz);
+      } else {
+        const x = east - 60 + tourT * 8;
+        cam.position.set(x - 30, DEBUG_VIEW === "elevatedHigh" ? 30 : 9, lz + 40); cam.lookAt(x, 3, lz);
+      }
+      cx = cam.position.x; cz = lz;
     } else if (DEBUG_VIEW === "street") {
       cam.position.set(cx - 1.5, 3.2, cz + 150 - tourT * 3);
       cam.lookAt(cx - 1.5, 9, cz - 100);
@@ -558,7 +596,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // between its last two steps.
       traffic.time = target; traffic.draw(alpha);
       crowd.draw(alpha, target);
-      ambient.update(target, alpha, journey.plan, truck.root.position, inCity);
+      ambient.update(target, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
       if (!TOUR_VIEW) {
         // Out of town the city is streamed further (its edge in view from the open land); the radius
         // comes back in once the fog has eased in to match.

@@ -23,7 +23,7 @@ import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
-import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
+import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
@@ -549,7 +549,30 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (d) busy[i].push([d[0] - 1, d[1] + 1]);
     if (sg !== null) busy[i].push([sg - 1.4, sg + 1.4]);
   }
-  if (district !== "industrial") {
+  // Under an elevated line (on an east-west street: elevatedLine), its bents: about every 17 m, at
+  // the first spot near each where neither sidewalk has a driveway, streetlight or sign in the way
+  // (a dock's side view is kept clear too, unless there is nowhere else). No street trees here.
+  const el = axis === 0 && elevatedLine(CS, DC.cz);
+  if (el) {
+    const ok = (p: number, soft: boolean) => !inDrive(loD, p, 1.5) && !inDrive(hiD, p, 1.5) && Math.abs(p - (a0 + 10)) > 1.5 && Math.abs(p - (a0 + 31)) > 1.5
+      && (loS === null || Math.abs(p - loS) > 2) && (hiS === null || Math.abs(p - hiS) > 2) && (!soft || (!inDrive(loC, p, 0.5) && !inDrive(hiC, p, 0.5)));
+    let last = -Infinity;
+    for (const base of [22, 39, 56]) {
+      let at = NaN;
+      for (const soft of [true, false]) {
+        for (const o of [0, 2, -2, 4, -4, 6]) {
+          const p = base + o;
+          if (p > last + 10 && p >= a0 + 3 && p <= a1 - 2.5 && ok(p, soft)) { at = p; break; }
+        }
+        if (!Number.isNaN(at)) break;
+      }
+      if (Number.isNaN(at)) continue;
+      last = at;
+      elevatedBent(s, at, ELEVATED_Y + 0.5);
+      EL_COLUMNS.forEach((z, i) => { busy[i].push([at - 0.9, at + 0.9]); pavementObstacle(at, z, 0.5); });
+    }
+  }
+  if (district !== "industrial" && !el) {
     const step = district === "downtown" ? 12 : 9;
     for (const side of [1.6, STREET - 1.6]) {
       const d = side < cl ? loD : hiD, sg = side < cl ? loS : hiS, cz = side < cl ? loC : hiC;
