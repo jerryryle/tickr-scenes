@@ -10,10 +10,10 @@ import { Batch } from "./geom.ts";
 import { CURB_H } from "./grid.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { ease, Truck, truckLayout } from "./truck.ts";
-import type { TruckLayout } from "./truck.ts";
+import type { DoorGeom, TruckLayout } from "./truck.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { bedUnits, RAMP_HOLD, STYLE, toolStore, tripUnits } from "./chores.ts";
+import { bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, STRAP_PULL, strapPulls, STYLE, toolStore, tripUnits } from "./chores.ts";
 import type { Chore, ItemKind, ToolRest } from "./chores.ts";
 import { Journey, siteKey } from "./journey.ts";
 import type { Aboard, DwellNow, Stop } from "./journey.ts";
@@ -511,11 +511,21 @@ export class Crew {
       x = at[0]; y = at[1]; z = at[2];
       yaw = 0;
       this.turnTo(yaw, dt, 0.25);
-      // The hands hold the door's bottom edge (a strap at first when it is out of reach): the
+      // The hands hold the door's bottom edge, or its strap while that is out of reach: the
       // door's opening follows the hands, and the arms are solved to reach it.
       const g = truck.doorGeom();
-      if (g) this.doorNow = doorMotion(c.kind, u, x, y, g, idlePose(this.time, P));
-      else { idlePose(this.time, P); this.doorNow = doorControl(c.kind, u); }
+      if (g) {
+        // A step up to the middle of the door first, and back at the end.
+        const T = u * c.len, w = ease(T / DOOR_STEP) * (1 - ease((T - c.len + DOOR_STEP) / DOOR_STEP));
+        const sx = g.x - DOOR_STAND - x, sz = -z;
+        x += sx * w; z += sz * w;
+        this.doorNow = doorMotion(c.kind, T, c.len, x, y, g, idlePose(this.time, P));
+        const far = Math.hypot(sx, sz);
+        if (far > 0.05 && w > 0 && w < 1) {   // the legs take the step
+          const step = T < c.len / 2 ? w : 2 - w, legs = walkPose(step / 2, { ...P }, false, Math.min(1, far / 0.35));
+          P.hipL += legs.hipL; P.hipR += legs.hipR; P.knL += legs.knL; P.knR += legs.knR;
+        }
+      } else { idlePose(this.time, P); this.doorNow = doorControl(c.kind, u); }
     } else {
       // Stationary at one spot: where the previous walk ended.
       const at = this.spotFor(c);
@@ -973,49 +983,96 @@ function doorControl(kind: "doorOpen" | "doorClose", u: number) {
 // height above the hips.
 const ARM_UPPER = 0.29, ARM_FORE = 0.32, SHOULDER_UP = 0.5;
 // Both hands at a point `dx` ahead of the feet and `h` above them: crouching and leaning for
-// low points, then the two arm segments solved to reach it (as far as they go).
-function reachPose(dx: number, h: number, P: BodyPose): BodyPose {
-  const k = THREE.MathUtils.clamp((1.1 - h) / 0.85, 0, 1), up = THREE.MathUtils.clamp((h - 1.6) / 0.4, 0, 1);
+// low points, then the two arm segments solved to reach it (as far as they go). Options: `hR`
+// puts the right hand at its own height (hand over hand), `crouch` bends the knees that much
+// more (metres), and `narrow` (0..1) brings the hands in from shoulder width to meet in the middle.
+function reachPose(dx: number, h: number, P: BodyPose, o: { hR?: number; crouch?: number; narrow?: number } = {}): BodyPose {
+  const hR = o.hR ?? h, crouch = o.crouch ?? 0, narrow = o.narrow ?? 0, hm = (h + hR) / 2;
+  const k = THREE.MathUtils.clamp((1.1 - hm) / 0.85, 0, 1), up = THREE.MathUtils.clamp((Math.max(h, hR) - 1.6) / 0.4, 0, 1);
   const b = -0.1 - 0.8 * k + 0.12 * up;
-  P.bend = b; P.drop = 0.45 * k;
-  P.hipL = P.hipR = 1.0 * k; P.knL = P.knR = -1.4 * k;
-  const sx = -SHOULDER_UP * Math.sin(b), sy = HIP_Y - P.drop + SHOULDER_UP * Math.cos(b);
-  const vx = dx - sx, vy = h - sy, d = THREE.MathUtils.clamp(Math.hypot(vx, vy), 0.05, (ARM_UPPER + ARM_FORE) * 0.995);
-  const at = Math.atan2(vx, -vy);
-  const el = Math.PI - Math.acos(THREE.MathUtils.clamp((ARM_UPPER ** 2 + ARM_FORE ** 2 - d * d) / (2 * ARM_UPPER * ARM_FORE), -1, 1));
-  const a1 = at - Math.acos(THREE.MathUtils.clamp((ARM_UPPER ** 2 + d * d - ARM_FORE ** 2) / (2 * ARM_UPPER * d), -1, 1));
-  P.shLP = P.shRP = a1 - b; P.elL = P.elR = el; P.shLR = P.shRR = 0.1;
-  P.headP = THREE.MathUtils.clamp(0.6 * Math.atan2(vy, Math.max(0.2, vx)), -0.5, 0.6);
+  P.bend = b; P.drop = 0.45 * k + crouch;
+  P.hipL = P.hipR = 1.0 * k + 2.2 * crouch; P.knL = P.knR = -1.4 * k - 3.1 * crouch;
+  const sx = -SHOULDER_UP * Math.sin(b), sy = HIP_Y - P.drop + SHOULDER_UP * Math.cos(b), vx = dx - sx;
+  // One arm: rolled in about the shoulder (towards the middle, the way the hand points: up or
+  // down), then its two segments solved in that rolled plane for the height that roll leaves.
+  const arm = (hh: number): [number, number, number] => {
+    const vy = hh - sy;
+    const inward = Math.sign(vy) * Math.min(0.6, Math.atan2(0.2, Math.max(Math.abs(vy), 0.01)));
+    const roll = 0.1 * (1 - narrow) + inward * narrow, vr = vy / Math.cos(roll);
+    const d = THREE.MathUtils.clamp(Math.hypot(vx, vr), 0.05, (ARM_UPPER + ARM_FORE) * 0.995);
+    const at = Math.atan2(vx, -vr);
+    const el = Math.PI - Math.acos(THREE.MathUtils.clamp((ARM_UPPER ** 2 + ARM_FORE ** 2 - d * d) / (2 * ARM_UPPER * ARM_FORE), -1, 1));
+    const a1 = at - Math.acos(THREE.MathUtils.clamp((ARM_UPPER ** 2 + d * d - ARM_FORE ** 2) / (2 * ARM_UPPER * d), -1, 1));
+    return [a1 - b, el, roll];
+  };
+  [P.shLP, P.elL, P.shLR] = arm(h);
+  [P.shRP, P.elR, P.shRR] = arm(hR);
+  P.headP = THREE.MathUtils.clamp(0.6 * Math.atan2(hm - sy, Math.max(0.2, vx)), -0.5, 0.6);
   return P;
 }
-// One door chore at progress u, the driver's feet at (fx, fy) in the truck frame: sets the pose
-// and returns the door's opening. Opening: reach down to the handle, lift it to the chest, push it
-// up as high as the arms go, let go as it runs up on its own. Closing: reach up for the strap,
-// pull it down (the door catching up with the hands by the chest), bend and push it shut.
-function doorMotion(kind: "doorOpen" | "doorClose", u: number, fx: number, fy: number, g: { x: number; floor: number; open: number; lv: number }, P: BodyPose): number {
+// Stepping up to the roll-up door (and back) takes this long.
+const DOOR_STEP = 0.35;
+// One door chore `t` seconds in (of `len`), the driver's feet at (fx, fy) in the truck frame: sets
+// the pose and returns the door's opening.
+// Opening: reach down to the handle, lift it to the chest, push it up overhead, brace, and give it
+// one last shove: it leaves the hands at their speed and coasts up to its stop.
+// Closing: reach up for the strap hanging from the door, pull it down hand over hand until the
+// door's edge is in reach, take that and pull it down to the chest, bend and push it shut.
+function doorMotion(kind: "doorOpen" | "doorClose", t: number, len: number, fx: number, fy: number, g: DoorGeom, P: BodyPose): number {
   const rest = { ...P };
   const dx = g.x - fx - 0.06;                                   // hands just in front of the slats
-  const low = Math.max(0.05, g.floor - fy), chest = 1.25, top = Math.min(2.0, g.floor + g.lv - fy);   // hand heights above the feet
-  const edgeTop = g.floor + Math.min(g.open, g.lv) - fy;        // fully open
+  const low = Math.max(0.05, g.floor - fy), chest = 1.25;       // hand heights above the feet
+  const edgeTop = g.floor + Math.min(g.open, g.lv) - fy;        // the edge, fully open
+  const top = Math.min(DOOR_REACH, edgeTop);
   const fOf = (edge: number) => THREE.MathUtils.clamp((edge + fy - g.floor) / g.open, 0, 1);
   const seg = (v: number, v0: number, v1: number) => ease((v - v0) / (v1 - v0));
-  const reachTo = (h: number, w: number) => blendPose(rest, reachPose(dx, h, { ...rest }), w, P);
+  const reachTo = (h: number, w: number, o?: Parameters<typeof reachPose>[3]) => blendPose(rest, reachPose(dx, h, { ...rest }, o), w, P);
   if (kind === "doorOpen") {
-    if (u < 0.15) { reachTo(low, seg(u, 0, 0.15)); return 0; }
-    if (u < 0.85) {
-      const h = u < 0.5 ? low + (chest - low) * seg(u, 0.15, 0.5) : chest + (top - chest) * seg(u, 0.5, 0.85);
+    const s = t * DOOR_OPEN / len;                              // on the nominal timeline
+    const push = Math.max(chest, top - 0.2), brace = push - 0.06, dip = 0.07;
+    if (s < 0.45) { reachTo(low, seg(s, 0, 0.45)); return 0; }
+    if (s < 1.9) {
+      const h = s < 1.3 ? low + (chest - low) * seg(s, 0.45, 1.3) : chest + (push - chest) * seg(s, 1.3, 1.9);
       reachTo(h, 1); return fOf(h);
     }
-    reachTo(top, 1 - seg(u, 0.85, 1));
-    const f0 = fOf(top); return f0 + (1 - f0) * seg(u, 0.85, 0.97);
+    if (s < 2.15) { const k = seg(s, 1.9, 2.15), h = push - 0.06 * k; reachTo(h, 1, { crouch: dip * k }); return fOf(h); }
+    const SHOVE = 0.18;
+    if (s < 2.15 + SHOVE) {                                     // accelerating all the way: the hands drive it
+      const q = (s - 2.15) / SHOVE, h = brace + (top - brace) * q * q;
+      reachTo(h, 1, { crouch: dip * (1 - q) }); return fOf(h);
+    }
+    // Let go at the top of the shove, moving at v: the arms follow through and drop, the door
+    // runs on up, slowing, to its stop (or simply stops, if the hands took it all the way).
+    const v = 2 * (top - brace) / SHOVE, D = edgeTop - top, s0 = 2.15 + SHOVE;
+    reachTo(top, 1 - seg(s, s0 + 0.1, s0 + 0.65));
+    if (D < 0.01) return fOf(top);
+    const tc = THREE.MathUtils.clamp(1.5 * D / v, 0.45, 0.9), q = Math.min(1, (s - s0) / tc);
+    const m0 = Math.min(v * tc, 2.5 * D), q2 = q * q, q3 = q2 * q;
+    return fOf(top + m0 * (q3 - 2 * q2 + q) + D * (3 * q2 - 2 * q3));
   }
-  if (u < 0.18) { reachTo(top, seg(u, 0, 0.18)); return 1; }
-  if (u < 0.55) {
-    const k = seg(u, 0.18, 0.55), h = top + (chest - top) * k, strap = Math.max(0, edgeTop - top);
-    reachTo(h, 1); return fOf(h + strap * (1 - k));
+  const pulls = strapPulls(edgeTop, g.floor - fy), n = pulls.n, hi = Math.max(pulls.hi, edgeTop - g.strap), sp = pulls.each;
+  const reach = pulls.reach, t0 = 0.5, tS = t0 + n * STRAP_PULL, tE = tS + 0.3, tC = tE + 0.6, tL = tC + 0.5;
+  if (n && t < t0) { reachTo(hi, seg(t, 0, t0), { narrow: 1 }); return 1; }
+  if (n && t < tS) {
+    // Pull i: one hand draws the strap down from overhead while the other slides up it to take
+    // the next pull (the first pull with both hands starting together up top).
+    const i = Math.min(n - 1, Math.floor((t - t0) / STRAP_PULL)), q = seg(t - t0 - i * STRAP_PULL, 0, STRAP_PULL);
+    const pull = hi - sp * q, free = i === 0 ? hi : hi - sp * (1 - q);
+    const [hL, hR] = i % 2 ? [pull, free] : [free, pull];
+    reachTo(hL, 1, { hR, narrow: 1, crouch: 0.04 * Math.sin(Math.PI * q) });
+    return fOf(edgeTop - sp * (i + q));
   }
-  if (u < 0.85) { const h = chest + (low - chest) * seg(u, 0.55, 0.85); reachTo(h, 1); return fOf(h); }
-  reachTo(low, 1 - seg(u, 0.85, 1)); return 0;
+  if (t < tE) {
+    // Off the strap and onto the door's edge, now in reach (straight there when it always was).
+    const k = seg(t, tS, tE);
+    if (!n) { reachTo(reach, seg(t, 0, tE)); return 1; }
+    const last = n - 1, [l0, r0] = last % 2 ? [hi - sp, hi] : [hi, hi - sp];
+    reachTo(l0 + (reach - l0) * k, 1, { hR: r0 + (reach - r0) * k, narrow: 1 - k });
+    return fOf(reach);
+  }
+  if (t < tC) { const h = reach + (chest - reach) * seg(t, tE, tC); reachTo(h, 1); return fOf(h); }
+  if (t < tL) { const h = chest + (low - chest) * seg(t, tC, tL); reachTo(h, 1); return fOf(h); }
+  reachTo(low, 1 - seg(t, tL, tL + 0.4)); return 0;
 }
 
 // Team lift arms (shoulder pitch, elbow): the leading driver's hands just behind, on the load;

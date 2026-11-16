@@ -45,10 +45,30 @@ export interface Chore {
 const WALK = 2.0, CARRY = 1.5, TOOL = 1.6, HEAVY = 1.25;
 // Facing in the truck frame: yaw 0 looks along +x (towards the cab), PI along -x (backwards).
 const FACE_FRONT = 0, FACE_BACK = Math.PI;
-// Opening and closing up: the roll-up door (bend to the handle, lift, push it up; reach up,
-// pull it down, bend to push it shut), and the walk ramp pulled out and pushed back in, with the
-// driver this far behind its end.
-export const DOOR_OPEN = 3.0, DOOR_CLOSE = 2.8, RAMP_MOVE = 3.6, RAMP_HOLD = 0.5;
+// Opening and closing up: the roll-up door (bend to the handle, lift, push it up and give it a
+// last shove; reach up for the strap, pull it down hand over hand until the door is in reach,
+// pull that down, bend to push it shut), and the walk ramp pulled out and pushed back in, with
+// the driver this far behind its end.
+export const DOOR_OPEN = 3.4, RAMP_MOVE = 3.6, RAMP_HOLD = 0.5;
+// At the roll-up door the driver steps up to stand this far behind its plane, square to its
+// middle, where both hands reach this high above the feet (crew.ts reachPose, arms straight).
+export const DOOR_STAND = 0.5, DOOR_REACH = 1.78;
+// Closing: one pull on the strap takes this long, and the rest of the chore DOOR_CLOSE_BASE.
+export const STRAP_PULL = 0.55, DOOR_CLOSE_BASE = 2.45;
+// The pulls on the strap that bring the door's bottom edge from `edge` (fully open) down within
+// reach, both heights above the feet, `floor` the bed floor's: each pulls the strap from overhead
+// down to the waist (no lower than just above the floor, where the hands would meet the sill).
+// hi, lo: where each pull starts and ends; reach: where the edge ends up; n pulls of `each`.
+export function strapPulls(edge: number, floor: number) {
+  const hi = Math.min(DOOR_REACH - 0.08, edge - 0.05), lo = Math.max(1.0, floor + 0.12);
+  const reach = Math.min(edge, DOOR_REACH - 0.03), drop = edge - reach;
+  const n = drop < 0.02 ? 0 : Math.ceil(drop / Math.max(0.2, hi - lo));
+  return { hi, lo, reach, n, each: n ? drop / n : 0 };
+}
+// How long closing the door takes with the driver's feet at `feetY` (truck frame).
+export function doorCloseLen(L: TruckLayout, feetY: number) {
+  return DOOR_CLOSE_BASE + STRAP_PULL * strapPulls(L.doorTop - feetY, L.floor - feetY).n;
+}
 
 interface TripStyle { perTrip: number; cap: number; item: ItemKind; tool: Chore["tool"]; speed: number; helper?: boolean }
 export const STYLE: Record<Handling, TripStyle> = {
@@ -341,7 +361,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         }
       }
       if (store && !pickup) { walk("load", atRear, sill, WALK, ex); fetchTool(sill, false); walk("load", sill, atRear, WALK, lin); }
-      add({ kind: "doorClose", group: "close", len: DOOR_CLOSE, face: FACE_FRONT });
+      add({ kind: "doorClose", group: "close", len: doorCloseLen(L, atRear[1]), face: FACE_FRONT });
       walk("close", atRear, top, WALK, lin);
     }
     walk("close", top, foot, 1.1, lin);
@@ -444,14 +464,14 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
       const lastC = out[out.length - 1];
       if (lastC.kind === "walk" && lastC.b === foot && lastC.a === sill) { lastC.b = onRamp; lastC.linear = true; lastC.len = Math.max(0.4, dist3(sill, onRamp) / WALK); lastC.group = "close"; }
       else walk("close", foot, onRamp, WALK);
-      add({ kind: "doorClose", group: "close", len: DOOR_CLOSE, face: FACE_FRONT });
+      add({ kind: "doorClose", group: "close", len: doorCloseLen(L, onRamp[1]), face: FACE_FRONT });
       walk("close", onRamp, foot, WALK);
       add({ kind: "rampIn", group: "close", len: RAMP_MOVE, face: FACE_FRONT, a: foot, b: grab });
       walk("close", grab, side, WALK);
     } else {
       walk("close", foot, atRear, WALK);
       add({ kind: "gateIn", group: "close", len: 1.6, face: FACE_FRONT });
-      add({ kind: "doorClose", group: "close", len: DOOR_CLOSE, face: FACE_FRONT });
+      add({ kind: "doorClose", group: "close", len: doorCloseLen(L, atRear[1]), face: FACE_FRONT });
       walk("close", atRear, side, WALK);
     }
     walk("close", side, door, WALK);

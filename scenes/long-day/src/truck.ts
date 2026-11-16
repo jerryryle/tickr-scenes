@@ -26,7 +26,12 @@ const TC = {
   seat: 0x2c2f36, dash: 0x25272b, cabin: 0x8c9097, reefer: 0xd9dadc, skirt: 0x8d9298, mud: 0x0e0e0e,
   tank: 0xc2c6cc, step: 0x2a2a2a, wood: 0x7a5a3a, frost: 0xdcecff, mat: 0x1a1a1a,
   skin: 0xd8a47f, cup: 0xe8dcc0, lid: 0x3a2a20, tree: 0x2fbf4f, paper: 0xf2f2ea, red: 0xce1126,
+  strap: 0xd9a21b,
 };
+// The roll-up door's pull strap: how far outside the door plane it hangs, and the height above
+// the street its end hangs at when the door is fully open.
+export const STRAP_X = 0.04, STRAP_END = 1.7;
+export interface DoorGeom { x: number; floor: number; open: number; lv: number; strap: number }
 
 interface CargoSpec { kind: "box" | "flatbed"; x0: number; x1: number; floor: number; top: number; hw: number; livery: LiveryName }
 interface TruckSpec {
@@ -160,6 +165,7 @@ export function truckLayout(m: TruckModel) {
     bedRear: trailer ? s.fifthWheel! + TRAILER.rear : c ? c.x0 : e.rear,
     bedFront: trailer ? s.fifthWheel! + TRAILER.front : c ? c.x1 : e.rear,
     floor, hw: trailer ? TRAILER.hw : c ? c.hw : s.cabHW,
+    doorTop: c && !trailer && c.kind === "box" ? c.top - 0.28 : floor,   // the roll-up door's bottom edge, fully open
     rampRun: Math.sqrt(rampLen * rampLen - pivotY * pivotY),
     cabFloor: s.cabFloor, cabHW: s.cabHW,
     seat: { x: s.cabFront - 1.445, y: s.cabFloor + 0.5, z: -0.55 },   // hips, seated (5 mm off the seat's faces: shared planes flicker)
@@ -197,7 +203,8 @@ export class Truck {
   private trailer: THREE.Group | null = null;
   private trailerBody: THREE.Group | null = null;
   private trailerLeaves: THREE.Group[] = [];
-  private slats: { geo: THREE.BufferGeometry; n: number; x: number; floor: number; track: number; open: number; halfW: number; last: number } | null = null;
+  private slats: { geo: THREE.BufferGeometry; n: number; x: number; floor: number; track: number; open: number; halfW: number; last: number;
+    strap: THREE.Mesh; strapLen: number } | null = null;
   private wheelPivot = new THREE.Group();
   private steeringWheel: THREE.Mesh | null = null;
   private needle = new THREE.Group();
@@ -702,7 +709,7 @@ export class Truck {
     near.add(new THREE.Mesh(quadGeometry([{ x: (x0 + x1) / 2, y: sideY, z: -hw - 0.004, w: x1 - x0, h: sideH, rotY: Math.PI }]), this.kit.livery[c.livery]));
     parent.add(near);
     this.nearWall = near;
-    const openH = (yt - 0.28) - yfl;
+    const openH = (yt - 0.28) - yfl;   // (truckLayout's doorTop - floor)
     if (swing) {
       // Two leaves hinged at the rear corners; each carries half of the rear livery.
       const wl = hw - 0.04;
@@ -730,7 +737,15 @@ export class Truck {
       geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
       geo.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
       parent.add(new THREE.Mesh(geo, this.kit.liveryRearDS));
-      this.slats = { geo, n, x: x0 + 0.09, floor: yfl, track: yt - 0.12, open: openH, halfW: hw - 0.12, last: NaN };
+      // The pull strap: a webbing strip hanging from the middle of the door's bottom edge, just
+      // outside it, long enough that its end is in reach from the street when the door is up.
+      // Below the floor it is folded over the sill (hidden), so it is only seen once the door opens.
+      const strapLen = Math.max(0.6, yfl + openH - STRAP_END);
+      const SB = new Batch();
+      SB.span(-0.006, -1, -0.03, 0.006, 0, 0.03, TC.strap);
+      const strap = SB.build(this.kit.paint)!;
+      parent.add(strap);
+      this.slats = { geo, n, x: x0 + 0.09, floor: yfl, track: yt - 0.12, open: openH, halfW: hw - 0.12, last: NaN, strap, strapLen };
       this.layoutSlats(0);
     }
     this.anchors.rearGround.position.set(x0 - 0.9, 0, 0);
@@ -740,9 +755,10 @@ export class Truck {
   // The roll-up door in the truck frame: the plane of the closed door (x), and its bottom edge's
   // height when open by f: floor + min(f * open, lv) (above lv the slats run forward under the
   // roof). Null for bodies without one.
-  doorGeom(): { x: number; floor: number; open: number; lv: number } | null {
+  // `strap`: how far the pull strap hangs below that edge, at STRAP_X behind the door plane.
+  doorGeom(): DoorGeom | null {
     const S = this.slats;
-    return S ? { x: S.x, floor: S.floor, open: S.open, lv: S.track - S.floor } : null;
+    return S ? { x: S.x, floor: S.floor, open: S.open, lv: S.track - S.floor, strap: S.strapLen } : null;
   }
 
   // Roll-up door: slats ride a track up the door opening, then forward under the roof.
@@ -758,6 +774,11 @@ export class Truck {
     }
     S.geo.attributes.position.needsUpdate = true;
     S.geo.computeBoundingSphere();
+    // The strap hangs straight down from the bottom edge (the driver's hands hold it on that line).
+    const edge = S.floor + Math.min(f * S.open, lv), hang = Math.min(S.strapLen, edge - S.floor);
+    S.strap.visible = hang > 0.02;
+    S.strap.position.set(S.x - STRAP_X, edge, 0);
+    S.strap.scale.y = Math.max(hang, 0.001);
   }
 
   private buildFlatbed(P: Batch, L: Record<LightKey, Batch>, c: CargoSpec) {
