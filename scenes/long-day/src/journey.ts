@@ -44,7 +44,7 @@ import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
 import { blockGoals, DIR_X, DIR_Z, LANE_KERB, nodeX, nodeZ, Path, planRoute } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
-import { freewayGate } from "./freeway.ts";
+import { freewayGate, freewayMerge } from "./freeway.ts";
 import { GARAGE_IN_A } from "./garage.ts";
 import { GARAGE_H } from "./route.ts";
 import type { GarageGeom } from "./route.ts";
@@ -1067,8 +1067,8 @@ export class Journey {
     const e = gateEnd(GATES[gate]), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
     const toStyle = seasonalStyle(journeyStyle(this.cfg.seed, N1), toClimate), fromStyle = seasonalStyle(journeyStyle(this.cfg.seed, N), fromClimate);
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
-    const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle);
-    return new CountryRoad({ toFreeway,
+    const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && freewayMerge(citySeedOf(this.cfg.seed, N1));
+    return new CountryRoad({ toFreeway, toFreewayMerge,
       seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
@@ -1098,7 +1098,7 @@ export class Journey {
       const g = this.plan.entryGate, e = gateEnd(g), h = e.h + Math.PI;
       const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival", toFreeway: !!this.plan.freeway,
+        seed: this.cfg.seed, city: st.city, kind: "arrival", toFreeway: !!this.plan.freeway, toFreewayMerge: this.plan.freewayMerge,
         frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
         fromTruck: st.truck, toTruck: st.truck,
         fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,

@@ -25,7 +25,7 @@ import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
 import { GARAGE_H } from "./route.ts";
-import { buildFreewayStreet, Frame, freewayGate, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
+import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
@@ -89,6 +89,7 @@ export class CityPlan {
   // The gate whose street line the freeway runs along, if the city has one (freeway.ts).
   private fw: Gate | null | undefined;
   get freeway(): Gate | null { if (this.fw === undefined) this.fw = freewayGate(this.seed, this.style); return this.fw; }
+  get freewayMerge(): boolean { return !!this.freeway && freewayMerge(this.seed); }
   private fwFrame: Frame | null | undefined;
   get freewayFrame(): Frame | null { if (this.fwFrame === undefined) this.fwFrame = this.freeway ? Frame.ofCity(this, this.freeway) : null; return this.fwFrame; }
   // Whether the street leaving node (ix, iz) along axis (0: east, 1: south) is under the freeway.

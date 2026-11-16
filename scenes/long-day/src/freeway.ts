@@ -47,8 +47,30 @@ export function freewayGate(citySeed: number, style: CityStyle): Gate | null {
   return hash2(citySeed, 0xf3e, 0, 0x7a2) < 0.55 ? g : null;
 }
 
+// In about half the freeway cities the highway joins the freeway instead of running beside it: up
+// onto the flyover (MERGE_UP0..UP1), across the gore into the freeway's right-hand lane (MERGE_IN),
+// along with its traffic, back across onto an exit ramp (MERGE_OUT) and down it to the ground
+// (MERGE_DOWN), the flyover's deck joined to the freeway's along the way (MERGE_GORE).
+export const MERGE_UP0 = 900, MERGE_UP1 = 640, MERGE_IN = [640, 530], MERGE_OUT = [420, 330], MERGE_DOWN1 = 330, MERGE_DOWN0 = 110;
+export const MERGE_GORE: [number, number] = [330, 640];
+export const MERGE_N = FW_SHIFT + 5.4;   // the freeway's right-hand lane coming in (its outer one)
+export function freewayMerge(citySeed: number) { return hash2(citySeed, 0x3e6, 0, 0x7a3) < 0.5; }
+// Where the truck's lane is (n) at d, on a road whose highway joins the freeway, from `base`.
+export function mergeLane(d: number, base: number) {
+  const s = (u: number) => { const x = THREE.MathUtils.clamp(u, 0, 1); return x * x * x * (10 + x * (6 * x - 15)); };
+  if (d > MERGE_IN[0] || d < MERGE_OUT[1]) return base;
+  if (d > MERGE_IN[1]) return base + (MERGE_N - base) * s((MERGE_IN[0] - d) / (MERGE_IN[0] - MERGE_IN[1]));
+  if (d > MERGE_OUT[0]) return MERGE_N;
+  return MERGE_N + (base - MERGE_N) * s((MERGE_OUT[0] - d) / (MERGE_OUT[0] - MERGE_OUT[1]));
+}
 // The highway's height above the land at d out of town, on a road into a freeway city.
-export function rampLift(d: number) {
+export function rampLift(d: number, merge = false) {
+  if (merge) {
+    if (d <= MERGE_DOWN0 || d >= MERGE_UP0) return 0;
+    if (d < MERGE_DOWN1) return FW_TOP * fwEase((d - MERGE_DOWN0) / (MERGE_DOWN1 - MERGE_DOWN0));
+    if (d > MERGE_UP1) return FW_TOP * (1 - fwEase((d - MERGE_UP1) / (MERGE_UP0 - MERGE_UP1)));
+    return FW_TOP;
+  }
   if (d <= RAMP_DOWN0 || d >= RAMP_UP0) return 0;
   if (d < RAMP_DOWN1) return FW_TOP * fwEase((d - RAMP_DOWN0) / (RAMP_DOWN1 - RAMP_DOWN0));
   if (d > RAMP_UP1) return FW_TOP * (1 - fwEase((d - RAMP_UP1) / (RAMP_UP0 - RAMP_UP1)));
@@ -57,6 +79,8 @@ export function rampLift(d: number) {
 
 export class Frame {
   readonly ox: number; readonly oz: number; readonly rx: number; readonly rz: number;
+  merge = false;   // the highway joins the freeway here (freewayMerge)
+  lift(d: number) { return rampLift(d, this.merge); }
   // (x, z): the gate end; h: the heading of a truck coming in there. near/far: where the city's
   // own streets begin and end along the line (d); descend: whether the far end comes down.
   constructor(readonly x: number, readonly z: number, h: number, readonly near = -60, readonly far = -1e9, public descendFar = true) {
@@ -67,11 +91,15 @@ export class Frame {
     // The city's streets along the line, as distances out of the gate end.
     const lo = CITY_LO * BLOCK, hi = (CITY_HI + 1) * BLOCK, along = g.dir === 0 || g.dir === 2;
     const d = (u: number) => along ? (u - e.x) * f.ox : (u - e.z) * f.oz;
-    return new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), Math.min(d(lo), d(hi)));
+    const out = new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), Math.min(d(lo), d(hi)));
+    out.merge = plan.freewayMerge;
+    return out;
   }
   static ofRoad(road: CountryRoad, dx = 0, dz = 0): Frame {
     const q = road.center(road.length, { x: 0, z: 0, h: 0, k: 0 });
-    return new Frame(q.x + dx, q.z + dz, q.h);
+    const out = new Frame(q.x + dx, q.z + dz, q.h);
+    out.merge = !!road.inp.toFreewayMerge;
+    return out;
   }
   px(d: number, n: number) { return this.x + this.ox * d + this.rx * n; }
   pz(d: number, n: number) { return this.z + this.oz * d + this.rz * n; }
@@ -99,7 +127,7 @@ export class Frame {
     const d = this.dAt(x, z), n = this.nAt(x, z);
     if (d > FW_REACH + 10 || d < this.far - FW_REACH - 10) return false;
     if (Math.abs(n - this.m(d)) < FW_COLS + 2) return true;
-    return d > RAMP_DOWN0 - 20 && d < RAMP_UP0 + 20 && Math.abs(n) < RAMP_HALF + 2.5;
+    return d > (this.merge ? MERGE_DOWN0 : RAMP_DOWN0) - 20 && d < (this.merge ? MERGE_UP0 : RAMP_UP0) + 20 && Math.abs(n) < RAMP_HALF + 2.5;
   }
 }
 
@@ -131,7 +159,7 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
         along(a, a2, ma, mb, ya, yb, -0.06, 0, 2 * FW_HALF - 0.8, FW_ASPHALT);
         for (const k of [-1, 1]) {
           along(a, a2, ma + k * 4, mb + k * 4, ya, yb, -1.45, -0.55, 0.9, FW_GIRDER);
-          along(a, a2, ma + k * (FW_HALF - 0.2), mb + k * (FW_HALF - 0.2), ya, yb, 0, 0.95, 0.4, FW_CONCRETE);
+          if (!(k > 0 && F.merge && a >= MERGE_GORE[0] - 1e-6 && a2 <= MERGE_GORE[1] + 1e-6)) along(a, a2, ma + k * (FW_HALF - 0.2), mb + k * (FW_HALF - 0.2), ya, yb, 0, 0.95, 0.4, FW_CONCRETE);
           // Lane lines, dashed.
           { const k0 = Math.floor(a / STEP + 1e-9) * STEP, e = Math.min(a2, k0 + 4);
             if (Math.floor(a / STEP + 1e-9) % 2 === 0 && e > a + 0.01) along(a, e, F.m(a) + k * 3.5, F.m(e) + k * 3.5, ya, ya + (yb - ya) * (e - a) / (a2 - a), 0, 0.025, 0.16, FW_WHITE); }
@@ -140,7 +168,8 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
       }
     }
     if (parts.ramp || parts.surface) {
-      const la = rampLift(a), lb = rampLift(a2), lifted = Math.max(la, lb) > 0.05;
+      const la = F.lift(a), lb = F.lift(a2), lifted = Math.max(la, lb) > 0.05;
+      const gore = F.merge && a >= MERGE_GORE[0] - 1e-6 && a2 <= MERGE_GORE[1] + 1e-6;   // joined to the freeway's deck
       if (parts.ramp && lifted) {
         // The flyover's deck under the road, on a fill near the ground, its parapets once it is up.
         along(a, a2, 0, 0, la, lb, -0.83, -0.13, 2 * RAMP_HALF, FW_CONCRETE);
@@ -149,7 +178,9 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
           const xa = F.px(a, 0), za = F.pz(a, 0), xb = F.px(a2, 0), zb = F.pz(a2, 0), top = (la + lb) / 2 - 0.5;
           if (top > 0.05) b.box((xa + xb) / 2 - ax, top / 2, (za + zb) / 2 - az, Math.hypot(xb - xa, zb - za) + 0.04, top, 2 * RAMP_HALF - 0.4, 0x8a867c, Math.atan2(-(zb - za), xb - xa));
         }
-        if (lo > 0.5) for (const k of [-1, 1]) along(a, a2, k * (RAMP_HALF - 0.15), k * (RAMP_HALF - 0.15), la, lb, -0.13, 0.85, 0.3, FW_CONCRETE);
+        if (lo > 0.5) for (const k of [-1, 1]) if (!(gore && k < 0)) along(a, a2, k * (RAMP_HALF - 0.15), k * (RAMP_HALF - 0.15), la, lb, -0.13, 0.85, 0.3, FW_CONCRETE);
+        // The gore: the gap to the freeway's deck decked over (the lanes cross it).
+        if (gore) { const e = FW_SHIFT + FW_HALF - 0.05, g0 = -RAMP_HALF + 0.05, c = (e + g0) / 2; along(a, a2, c, c, la, lb, -0.83, -0.01, g0 - e + 0.1, FW_CONCRETE); along(a, a2, c, c, la, lb, -0.01, 0.0, g0 - e + 0.1, FW_ASPHALT); }
       }
       if (parts.surface && a >= -1) {
         // The road itself, as countryworld.ts draws it: widening to the gate street's width at the
@@ -178,7 +209,7 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
     }
     // The flyover's piers.
     if (parts.ramp) for (let d = Math.ceil((d0 - 15) / FW_BENT_STEP) * FW_BENT_STEP + 15; d < d1; d += FW_BENT_STEP) {
-      const l = rampLift(d);
+      const l = F.lift(d);
       if (d < d0 || l < 2.8) continue;
       b.cyl(F.px(d, 0) - ax, (l - 0.83) / 2, F.pz(d, 0) - az, 0.9, l - 0.83, FW_CONCRETE, 10);
       const xa = F.px(d, -4), za = F.pz(d, -4), xb = F.px(d, 4), zb = F.pz(d, 4);
@@ -277,6 +308,7 @@ export class FreewayTraffic {
       const lo = (entryOnly ? -40 : F.far - FW_REACH + FW_END_RUN + 10), hi = FW_REACH - FW_END_RUN - 10, span = hi - lo;
       for (let li = 0; li < FW_LANES.length; li++) {
         const L = FW_LANES[li];
+        if (F.merge && L.n === 5.4) continue;   // (the lane the truck joins)
         for (let k = 0; k < FW_PER_LANE && n < FW_MAX_CARS; k++) {
           const phase = (k + hash2(k, li, 0x5ca, 0xf00)) / FW_PER_LANE * (FW_REACH * 2 + 3000);
           const raw = phase + L.dir * L.v * t, d = lo + (((raw % span) + span) % span);

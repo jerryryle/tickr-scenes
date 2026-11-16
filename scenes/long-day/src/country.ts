@@ -18,7 +18,7 @@ import { BLOCK, RING } from "./grid.ts";
 import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
-import { FW_REACH, rampLift } from "./freeway.ts";
+import { FW_REACH, mergeLane, rampLift } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
@@ -104,6 +104,7 @@ interface CountryInput {
   fromStyle: CityStyle; toStyle: CityStyle; fromName: string; toName: string;
   fromClimate: Climate; toClimate: Climate;
   toFreeway?: boolean;   // the next city has a freeway: the road comes up onto a flyover beside it
+  toFreewayMerge?: boolean;   // and joins it, for a stretch (freeway.ts freewayMerge)
 }
 
 export class CountryRoad {
@@ -398,7 +399,7 @@ export class CountryRoad {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, this.Y.length - 1.001), i = Math.floor(f);
     return this.Y[i] + (this.Y[i + 1] - this.Y[i]) * (f - i);
   }
-  liftAt(s: number) { return this.inp.toFreeway ? rampLift(this.length - s) : 0; }
+  liftAt(s: number) { return this.inp.toFreeway ? rampLift(this.length - s, this.inp.toFreewayMerge) : 0; }
   gradeAt(s: number) { return (this.heightAt(s + 3) - this.heightAt(s - 3)) / 6; }
   private at(A: Float64Array, s: number) {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, A.length - 1.001), i = Math.floor(f);
@@ -495,6 +496,8 @@ export class CountryRoad {
   laneAt(s: number) {
     if (s < 60 && this.inp.kind === "exit") return LANE_KERB + (LANE - LANE_KERB) * smooth(THREE.MathUtils.clamp(s / 60, 0, 1));
     if (s > this.length - 60) return LANE + (LANE_KERB - LANE) * smooth(THREE.MathUtils.clamp((s - (this.length - 60)) / 60, 0, 1));
+    // Into a city where the highway joins the freeway: over into its right-hand lane and back.
+    if (this.inp.toFreewayMerge) return mergeLane(this.length - s, LANE);
     return LANE;
   }
   // How far the road has widened to a city street's width near a gate (0 on the open road, 1 at the gate).

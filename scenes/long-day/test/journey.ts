@@ -49,8 +49,8 @@ import { Journey } from "../src/journey.ts";
       }
       for (const p of r.pieces) for (let s = p.s - 30; s <= p.s + p.len + 30; s += 5)
         if (Math.abs(r.baseAt(s) - r.baseAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.baseAt(s) - r.baseAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
-      if (steep > (r.inp.toFreeway ? 0.062 : 0.0551)) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
-      console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome}${r.inp.toFreeway ? " (freeway)" : ""} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
+      if (steep > (r.inp.toFreeway ? 0.066 : 0.0551)) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome}${r.inp.toFreeway ? (r.inp.toFreewayMerge ? " (freeway, merging)" : " (freeway)") : ""} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
     }
     if (j.st.mode === "country" && pmode !== "country") {
       // The train must cross only while the truck waits at the crossing, and only near it.
