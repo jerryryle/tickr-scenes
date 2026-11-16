@@ -21,7 +21,7 @@ import { SIM_DT } from "./journey.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
-  | "weigh" | "fruit" | "watertower" | "bridge" | "gas";
+  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass";
 export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string }
 // A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
 // y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
@@ -77,6 +77,12 @@ const MAX_GRADE = 0.055;
 const HILL_FLAT = 35, HILL_EASE = 90;   // set pieces sit on the level: this far either side, then eased over this
 const SIDE_HILL = 16;                   // the land beside the road rises or falls up to about this much (m)
 export const COAST_N = -57, SEA_N = -75; // the beach (coastal land, on the left) and the sea beyond it
+// A tunnel through a hill: its bore (half width, height inside), the cutting walls either side of
+// its approaches, how far they run out, and the hill's height over the road at the portals.
+export const BORE_HALF = 5.2, BORE_H = 6.6, CUT_N = 7.6, CUT_RUN = 80;
+// An overpass: a cross road (or railway) on a bridge over the road, on embankments either side.
+export const OVER_DECK = 6.6, OVER_HALF = 7, OVER_ABUT = 10.5;
+export const tunnelTop = (p: RoadPiece) => 11 + 3 * p.variant;   // the hill over a tunnel's portals
 
 export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands" };
 
@@ -176,8 +182,27 @@ export class CountryRoad {
         }
         k++;
       }
+      // Tunnels through the hills of hilly land, and an overpass now and then (drawn apart from the
+      // rest, so the drives that had no room for them keep their pieces where they were).
+      const hillyAt = (s: number) => { const b = this.blendAt(s) < 0.5 ? this.fromBiome : this.toBiome; return b !== "coastal" && HILLS[b] >= 0.55; };
+      const more: [PieceKind, number][] = [];
+      if (h(100) < 0.75) more.push(["tunnel", 140 + Math.floor(h(101) * 120)]);
+      if (h(102) < 0.6) more.push(["overpass", 30]);
+      if (h(103) < 0.3) more.push(["tunnel", 120 + Math.floor(h(104) * 80)]);
+      for (const [kind, len] of more) {
+        for (let tries = 0; tries < 10 && hi - len > lo; tries++) {
+          const s = lo + h(110 + k * 9 + tries) * (hi - len - lo);
+          if (this.pieces.some((p) => s < p.s + p.len + 200 && s + len + 200 > p.s)) continue;
+          if (kind === "tunnel" && !(hillyAt(s - CUT_RUN) && hillyAt(s + len + CUT_RUN))) continue;
+          if (kind === "overpass" && (this.blendAt(s) < 0.5 ? this.fromBiome : this.toBiome) === "coastal") continue;
+          this.pieces.push({ kind, s, side: 1, len, variant: Math.floor(h(120 + k) * (kind === "tunnel" ? 3 : 2)) });
+          break;
+        }
+        k++;
+      }
     }
     this.pieces.sort((a, b) => a.s - b.s);
+    this.shapes = this.pieces.filter((p) => p.kind === "tunnel" || p.kind === "overpass");
     // Geometry: straight out of town, gentle curves, straight into the hand-over and the arrival
     // straight. The curves also turn the road onto the next city's way in (endH): the city's exit
     // gate is chosen so that is never more than a quarter turn.
@@ -382,6 +407,7 @@ export class CountryRoad {
       const noise = valueNoise(s / 95, n / 70, seed, 0x41) + 0.4 * valueNoise(s / 38, n / 30, seed, 0x42);
       g += sm * smooth(Math.min(1, (an - 11) / 40)) * SIDE_HILL * (noise * 0.75 + 0.2);
     }
+    if (this.shapes.length) g = this.shaped(s, n, y, g);
     const c = n < -11 ? this.coastAt(s) : 0;
     if (c > 0) {
       // (By a set piece the land holds level until just short of the beach.)
@@ -405,6 +431,39 @@ export class CountryRoad {
     return { s: best, n: (x - q.x) * Math.sin(q.h) + (z - q.z) * Math.cos(q.h) };
   }
   private tmpQ: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  // The pieces that shape the land: tunnels' hills and overpasses' embankments.
+  private shapes: RoadPiece[] = [];
+  // The tunnel the road is in at s (strictly inside its bore), if any.
+  tunnelAt(s: number, margin = 0): RoadPiece | null {
+    for (const p of this.shapes) if (p.kind === "tunnel" && s > p.s - margin && s < p.s + p.len + margin) return p;
+    return null;
+  }
+  // Where a camera may stand: the ground, except in a tunnel's bore, where it is the road.
+  floorAt(s: number, n: number) {
+    return this.tunnelAt(s) && Math.abs(n) < BORE_HALF ? this.heightAt(s) : this.groundAt(s, n);
+  }
+  // The land the pieces shape, at (s, n) over the road's level y (raising g, the land there).
+  private shaped(s: number, n: number, y: number, g: number) {
+    const an = Math.abs(n);
+    for (const p of this.shapes) {
+      if (p.kind === "tunnel") {
+        if (s < p.s - CUT_RUN || s > p.s + p.len + CUT_RUN) continue;
+        // The hill: over the bore and out across the land, humped along the tunnel; its sides
+        // eased down along the approaches, where the road runs into a cutting.
+        const top = tunnelTop(p), out = s < p.s ? p.s - s : s > p.s + p.len ? s - p.s - p.len : 0;
+        const along = out > 0 ? 1 - smooth(out / CUT_RUN) : 1 + 0.6 * Math.sin(Math.PI * (s - p.s) / p.len);
+        const wide = 1 - smooth(THREE.MathUtils.clamp((an - 40) / 110, 0, 1));
+        if (out > 0 && an < CUT_N) continue;
+        g = Math.max(g, y + top * along * wide);
+      } else {
+        const ds = Math.abs(s - (p.s + p.len / 2));
+        if (ds > OVER_HALF + 16 || an < OVER_ABUT) continue;
+        const f = ds < OVER_HALF ? 1 : 1 - smooth((ds - OVER_HALF) / 16), fade = 1 - smooth(THREE.MathUtils.clamp((an - 70) / 70, 0, 1));
+        g = Math.max(g, y + (OVER_DECK - 0.1) * f * fade);
+      }
+    }
+    return g;
+  }
   // A point `n` metres to the right of the centre line.
   point(s: number, n: number, out: Pose): Pose {
     this.center(s, out);
@@ -467,8 +526,19 @@ export class CountryRoad {
         leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 22, 3],
+        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2],
       };
       if (p.kind === "bridge") continue;   // its trusses hide the truck from any roadside spot; the chase shots show it
+      // A tunnel: from the cutting's shoulder short of the portal, looking on at it, the truck
+      // driving past the camera and into the hill. An overpass: from its deck, over the far lane,
+      // looking down the road at the truck coming, which passes under the camera.
+      if (p.kind === "tunnel" || p.kind === "overpass") {
+        const tun = p.kind === "tunnel", cs = tun ? p.s - 55 : p.s + p.len / 2 - 2.5;
+        const start = tun ? cs - 8 : cs - 90, end = tun ? p.s + 6 : cs + 2;
+        if (s < start || s > end) continue;
+        return tun ? { key: i, cam: [cs, -5.6, 3.4], look: [p.s, 0, 3.6], fixed: true }
+          : { key: i, cam: [cs, -2.2, OVER_DECK + 2.6], look: [p.s - 60, LANE, 1.4], fixed: true };
+      }
       const [fa, fn, fy] = F[p.kind];
       const fs = p.s + fa;
       const side = fn === 0 ? -1 : -Math.sign(fn);
@@ -499,6 +569,7 @@ export class CountryRoad {
     for (const p of this.pieces) {
       if (s < p.s - 40 || s > p.s + p.len + 40) continue;
       if (p.kind === "rail" || p.kind === "bridge") return false;
+      if (p.kind === "tunnel" || p.kind === "overpass") { if (Math.abs(n) < (p.kind === "tunnel" ? 18 : 80)) return false; continue; }
       if (Math.sign(n) === p.side && Math.abs(n) < 75) return false;
       if (Math.abs(n) < 30 && s > p.s - 20) return false;   // room for a roadside camera
     }

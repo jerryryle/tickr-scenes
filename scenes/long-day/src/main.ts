@@ -31,7 +31,7 @@ import { marquee, signAtlas } from "./signs.ts";
 import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { smooth } from "./route.ts";
 import type { Pose } from "./route.ts";
-import { ARRIVE_LEN, BIOME_OF, citySeedOf, CountryRoad } from "./country.ts";
+import { ARRIVE_LEN, BIOME_OF, BORE_H, BORE_HALF, citySeedOf, CountryRoad } from "./country.ts";
 import { Journey, setDoorProbe, setPavementProbe } from "./journey.ts";
 import type { Mode } from "./journey.ts";
 import { Director } from "./director.ts";
@@ -428,7 +428,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const pr = lastRoad = pickRoad();
     let switched = fresh;
     if (!pr) { if (roadShown) { countryWorld.setRoad(null); roadShown = null; } }
-    else if (pr.road !== roadShown) { countryWorld.setRoad(pr.road); roadShown = pr.road; countryWorld.setOffset(pr.dx, pr.dz); switched = true; }
+    else if (pr.road !== roadShown) {
+      countryWorld.setRoad(pr.road); roadShown = pr.road; countryWorld.setOffset(pr.dx, pr.dz); switched = true;
+      if (DEBUG_CAMLOG) sys.log(`ROAD ${pr.road.inp.kind} c${pr.road.inp.city} at u${pr.u.toFixed(1)} s${pr.s.toFixed(0)}: ${pr.road.pieces.map((p) => `${p.kind}@${p.s.toFixed(0)}`).join(" ")}`);
+    }
     else {
       const o = countryWorld.offset;
       if (o.x !== pr.dx || o.z !== pr.dz) { OCCLUSION.shift("road", pr.dx - o.x, pr.dz - o.z); countryWorld.setOffset(pr.dx, pr.dz); }
@@ -545,11 +548,20 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       syncTrucks();
       director = new Director(engine.camera, cfg.seed);
       director.avoidBuildings = chaseTargetOutOfBuildings;
-      director.groundAt = (x, z) => {
+      director.confine = (pos) => {
         const pr = pickRoad();
-        if (!pr || pr.s < 0) return null;
-        const at = pr.road.locate(x - pr.dx, z - pr.dz, pr.s, 160), g = pr.road.groundAt(at.s, at.n);
-        return Math.abs(g) < 0.05 ? null : g;   // (where the land is level, the shots are as they are in town)
+        if (!pr || pr.s < 0) return;
+        const r = pr.road, at = r.locate(pos.x - pr.dx, pos.z - pr.dz, pr.s, 160);
+        // In a tunnel: within its bore, under its vault.
+        if (r.tunnelAt(at.s)) {
+          const y = r.heightAt(at.s), n = THREE.MathUtils.clamp(at.n, -BORE_HALF + 1.1, BORE_HALF - 1.1);
+          r.point(at.s, n, tmpPose); pos.x = tmpPose.x + pr.dx; pos.z = tmpPose.z + pr.dz;
+          pos.y = THREE.MathUtils.clamp(pos.y, y + 1.2, y + BORE_H - 0.9);
+          return;
+        }
+        // Elsewhere above the ground (where the land is level, the shots are as they are in town).
+        const g = r.floorAt(at.s, at.n);
+        if (Math.abs(g) >= 0.05 && pos.y < g + 1.2) pos.y = g + 1.2;
       };
       const crewMat = engine.mats.ground.clone(); applyLampLight(crewMat);   // streetlight falls on the driver and the load
       // The crew material (driver, worker, loads and tools) never thins out in the driver spotlight.
@@ -633,7 +645,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);
       const sky = road ? skyTmp.setHex(journey.plan.style.sky).lerp(skyTmp2.setHex(road.inp.toStyle.sky), road.blendAt(journey.countryS)).getHex() : journey.plan.style.sky;
       atmosphere.update(t, engine, backdrop, sky, weather);
-      truck.headlights = atmosphere.night > 0.3 || weather.fog > 0.5 || weather.rain > 0.5;
+      truck.headlights = atmosphere.night > 0.3 || weather.fog > 0.5 || weather.rain > 0.5 || !!journey.country?.tunnelAt(journey.countryS, 40);
       LAMPS_ON.value = Math.max(THREE.MathUtils.clamp((atmosphere.night - 0.15) * 1.6, 0, 1), weather.fog > 0.5 || weather.rain > 0.5 ? 0.7 : 0);
       updateLampLights(truck.root.position);
       // The headlights' light on the road ahead (applyLampLight).

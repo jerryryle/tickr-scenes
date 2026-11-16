@@ -45,7 +45,7 @@ import { loadFields, saveFields } from "./snap.ts";
 import { Truck, truckExtents, truckLayout } from "./truck.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
 import type { Pose } from "./route.ts";
-import { CountryRoad, pieceSigns } from "./country.ts";
+import { CountryRoad, CUT_RUN, pieceSigns } from "./country.ts";
 import type { RoadSign } from "./country.ts";
 import { frontPt } from "./city.ts";
 import { hasSign, siteLayout } from "./facilities.ts";
@@ -81,7 +81,6 @@ const ARRIVE_DIST = 45, CURB_DIST = 13, DEPART_LEN = 12;
 const READ_ROWS = 20;   // (of the sign board: its letters are about half of it)
 // A road sign is filmed from the truck's lane this far before it, up above the truck's roof: the
 // truck drives out from under the camera and away to the sign, which reads above the road.
-const GROUND_CLEAR = 1.2;       // the camera keeps at least this far above the country's ground
 const SIGN_CAM_BACK = 62, SIGN_CAM_Y = 4.7, SIGN_PREROLL = 60;
 // At a kerb stop with a name sign, the stop's shot starts this far out, on the sign.
 const CURB_SIGN_DIST = 45, CURB_SIGN_HOLD = 2.8, CURB_SIGN_ZOOM = 3.4;
@@ -140,7 +139,7 @@ export class Director {
   private yaw = 0; private yawV = 0; private pitch = -0.4; private pitchV = 0;
   private started = false;
   avoidBuildings: ((pos: THREE.Vector3, truck: THREE.Vector3, rise: boolean) => boolean) | null = null;   // main: keeps a camera out of buildings
-  groundAt: ((x: number, z: number) => number | null) | null = null;   // main: the country's ground height (null in town)
+  confine: ((pos: THREE.Vector3) => void) | null = null;   // main: keeps the camera out of the ground, inside a tunnel's bore, under a deck
   // The truck's heading, smoothed, for rigs that turn with the truck (a corner is a turn, not a jolt).
   private refYaw = 0; private refYawV = 0;
   private anchorPos = new THREE.Vector3(); private anchorLook = new THREE.Vector3(); private anchorH = 0;
@@ -370,8 +369,9 @@ export class Director {
     // stop's camera (or cuts once, itself); depart and the road coverage carry on from it.
     if (beatChanged && (beat === "arrive" || beat === "curb" || beat === "backup" || beat === "roadside" || beat === "swap")) shot.cut = true;
     this.keepInView(shot, inp);
-    // Out of town, never under the hills (main.ts says where the ground is).
-    if (this.groundAt && !this.interior) { const g = this.groundAt(shot.pos.x, shot.pos.z); if (g !== null && shot.pos.y < g + GROUND_CLEAR) shot.pos.y = g + GROUND_CLEAR; }
+    // Never under the hills, nor through a tunnel's walls (main.ts knows where they are).
+    if (this.confine && !this.interior) this.confine(shot.pos);
+    if (this.tunnelAhead(j)) shot.cutaway = false;   // (in a bore, the spotlight would only dapple its walls)
     this.apply(shot, dt);
     truck.cutaway = false;
   }
@@ -709,6 +709,13 @@ export class Director {
   }
 
   // ---- road coverage --------------------------------------------------------------------------
+  // A tunnel close ahead (or the truck in one): from its cutting until the truck is out the far end.
+  private tunnelAhead(j: Journey) {
+    const r = j.country;
+    if (!r || j.countryU < 0) return false;
+    const s = j.countryS;
+    return !!r.tunnelAt(s + Math.max(j.st.v, 8) * 8, CUT_RUN + 20) || !!r.tunnelAt(s, 25);
+  }
   // The setups that can be used from here, with the truck where it is and the road ahead as it is.
   private roadOptions(inp: DirectorInput): RoadShot[] {
     const j = inp.journey, st = j.st, ex = truckExtents(inp.truck.model);
@@ -719,6 +726,8 @@ export class Director {
       // Side tracking wants a straight run.
       if (!this.turnWithin(j, -8, v * 10 + 20) && st.v > 3) out.push("track");
     } else if (j.country) out.push("lead", "track", "aerial");
+    // Into a tunnel: only the rigs that ride low on the road go in with the truck.
+    if (this.tunnelAhead(j)) return out.filter((o) => o === "chase" || o === "lead");
     return out;
   }
   // Start a road setup (`kind`, or the next in the rotation), gliding there over `blend` seconds
@@ -768,6 +777,7 @@ export class Director {
       const e = this.time - this.roadStart;
       let done = e >= this.roadLen;
       if (this.road === "track" && this.turnWithin(j, -4, Math.max(st.v, 3) * 3 + 10)) done = true;
+      if (this.road !== "chase" && this.road !== "lead" && this.tunnelAhead(j)) done = true;
       if (this.road === "lead" && st.mode === "drive" && j.path && st.s + ex.front + 10 > j.path.length - 2) done = true;
       if (done && !(this.blendLen !== 0 && this.time - this.blendStart < Math.abs(this.blendLen))) this.startRoad(inp, null, GLIDE);
     }

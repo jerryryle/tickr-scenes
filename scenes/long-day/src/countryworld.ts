@@ -21,7 +21,7 @@ import { bareTree, shade } from "./city.ts";
 import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
-import { COAST_N, CountryRoad, LANE, ONCOMING_SPEED, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED } from "./country.ts";
+import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop } from "./country.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
 
@@ -49,7 +49,7 @@ export const BIOMES: Record<BiomeId, BiomeLook> = {
   wetlands: { ground: 0x5a8a50, ground2: 0x6a9a58, trees: ["broad", "shrub", "shrub", "conifer"], greens: [0x3c6a3c, 0x4a7a40], density: 0.4, rocks: 0.05, ponds: true, pylons: true },
 };
 const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf2c200, pole: 0x6b5a44, metal: 0x8d9296, dark: 0x1e2124,
-  water: 0x2f78b8, sand: 0xd9c89a, green: 0x1e6b3a, red: 0xc0392b, ryder: 0xce1126, orange: 0xe8701a, wood: 0x8a5a34, trunk: 0x5a4030 };
+  water: 0x2f78b8, sand: 0xd9c89a, rock: 0x8a8070, concrete: 0xa8a49a, green: 0x1e6b3a, red: 0xc0392b, ryder: 0xce1126, orange: 0xe8701a, wood: 0x8a5a34, trunk: 0x5a4030 };
 
 export class CountryWorld {
   readonly group = new THREE.Group();
@@ -310,7 +310,7 @@ export class CountryWorld {
     road.center(s0, this.p);
     this.ox = this.p.x; this.oz = this.p.z;
     this.quads = []; this.slots = []; this.ads = false;
-    const g = new Batch(), s = new Batch();
+    const g = new Batch(), s = new Batch(), glow = this.glow;
     const rnd = mulberry32(Math.floor(hash3(i, road.inp.city, 7, road.inp.seed, 0x5e9) * 4294967296));
     // Land: a mesh over the ground's heights, in rows across the road, coloured by cell: by
     // biome, in bands (fields in farm country), sand and sea on a coast.
@@ -320,23 +320,32 @@ export class CountryWorld {
       const rows: number[] = [];
       for (let a = r0; a < r1 - 0.01; a = Math.min(r1, (Math.floor(a / LAND_ROW) + 1) * LAND_ROW)) rows.push(a);
       rows.push(r1);
+      // (A tunnel's portals are rows of their own, the land stepping up there from the road to
+      // the hill over it: the land just short of the portal ends one quad, just past it starts the next.)
+      for (const p of road.pieces) if (p.kind === "tunnel") for (const e of [p.s, p.s + p.len]) if (e > r0 + 0.01 && e < r1 - 0.01 && !rows.includes(e)) rows.push(e);
+      rows.sort((x, y) => x - y);
+      const portal = (a: number) => road.pieces.some((p) => p.kind === "tunnel" && (Math.abs(a - p.s) < 1e-6 || Math.abs(a - p.s - p.len) < 1e-6));
       const cols = [...LAND_N.slice(1).reverse().map((n) => -n), ...LAND_N];
+      const rowAt = (a: number) => { const row: number[] = []; for (const n of cols) { const [x, z, , y] = this.L(a, n); row.push(x, y - 0.12, z); } return row; };
       let prev: number[] | null = null;
-      for (const a of rows) {
-        const row: number[] = [];
-        for (const n of cols) { const [x, z, , y] = this.L(a, n); row.push(x, y - 0.12, z); }
+      for (let ri = 0; ri < rows.length; ri++) {
+        const a = rows[ri], cut = portal(a);
+        const row = cut ? rowAt(a - 1e-4) : rowAt(a);
         if (prev) {
-          const pa = rows[rows.indexOf(a) - 1], sm = (pa + a) / 2;
+          const pa = rows[ri - 1], sm = (pa + a) / 2;
           for (let c = 0; c + 1 < cols.length; c++) {
-            const color = this.landColor(road, sm, pa, cols[c], cols[c + 1]);
+            let color = this.landColor(road, sm, pa, cols[c], cols[c + 1]);
             const A = c * 3, B = (c + 1) * 3;
+            // Steep ground (a cutting, a hillside over a portal) is bare rock.
+            const ys = [prev[A + 1], prev[B + 1], row[A + 1], row[B + 1]], rise = Math.max(...ys) - Math.min(...ys);
+            if (rise > 0.75 * Math.min(cols[c + 1] - cols[c], a - pa) && rise > 1.5) color = shade(CW.rock, 0.92 + 0.16 * hash2(Math.floor(pa), c, road.inp.seed, 0x70c));
             g.tri(prev[A], prev[A + 1], prev[A + 2], prev[B], prev[B + 1], prev[B + 2], row[B], row[B + 1], row[B + 2], color);
             g.tri(prev[A], prev[A + 1], prev[A + 2], row[B], row[B + 1], row[B + 2], row[A], row[A + 1], row[A + 2], color);
           }
           // The sea, level, beyond a coast's beach on the left.
           if (road.coastAt(sm) > 0.5) this.rbox(g, sm, (SEA_N - 320) / 2, -0.07, a - pa + 0.4 + Math.abs(road.center(sm, this.p).k) * (a - pa) * 320, 0.1, 320 + SEA_N, CW.water);
         }
-        prev = row;
+        prev = cut ? rowAt(a + 1e-4) : row;
       }
     }
     // The road: asphalt, gravel shoulders, edge lines and the double yellow (dashed while passing
@@ -425,15 +434,15 @@ export class CountryWorld {
     // (Each on the level ground the road holds round it.)
     for (const p of road.pieces) if (p.s >= s0 && p.s < s1) {
       const q0 = this.quads.length, y = road.heightAt(p.s);
-      g.dy = s.dy = y; this.pieceY = y;
+      g.dy = s.dy = glow.dy = y; this.pieceY = y;
       this.piece(g, s, p, rnd);
       for (let k = q0; k < this.quads.length; k++) this.quads[k].y += y;
     }
-    g.dy = s.dy = 0;
+    g.dy = s.dy = glow.dy = 0;
     // Assemble.
     const group = new THREE.Group();
     group.position.set(this.ox, 0, this.oz);
-    for (const [b, m] of [[g, this.mats.ground], [s, this.mats.solid]] as const) { const mesh = b.build(m); if (mesh) group.add(mesh); }
+    for (const [b, m] of [[g, this.mats.ground], [s, this.mats.solid], [glow, this.lightMat]] as const) { const mesh = b.build(m); if (mesh) group.add(mesh); }
     const slots = this.slots;
     let sm: SignMesh | null = null;
     if (this.quads.length) {
@@ -448,6 +457,7 @@ export class CountryWorld {
   }
   private fleetJobs: { stalls: StallPose[]; y: number }[] = [];
   private pieceY = 0;
+  private glow = new Batch();   // lamps that are always lit (a tunnel's), in the segment being built
 
   // A cell of land between n0 and n1 across the road, at sm along it (its row starting at a):
   // the biome's ground in hashed bands, or a patchwork of fields (whole columns, 96 m long); sand
@@ -725,6 +735,66 @@ export class CountryWorld {
         this.rbox(s, S + 60, 0, 6.6, 30.8, 0.6, 10.2, 0x4a4f57);
         for (const a of [-15.2, 15.2]) { this.rbox(s, S + 60 + a, 0, 5.4, 0.4, 1.2, 10, 0xa83a2a); this.rbox(s, S + 60 + a, -4.6, 2.6, 0.4, 5.2, 0.6, 0xf2ede0); this.rbox(s, S + 60 + a, 4.6, 2.6, 0.4, 5.2, 0.6, 0xf2ede0); }
         for (let a = -14; a <= 14; a += 7) for (const n of [-4.8, 4.8]) this.rbox(s, S + 60 + a, n * 1.02, 2.2, 1.2, 0.9, 0.1, 0x2a2020);
+        break;
+      }
+      case "tunnel": {
+        // The bore: tiled walls with a walkway along each, a dark vault, a line of lamps along
+        // each side of it; a concrete portal at each end, under the hill.
+        for (let a = S; a < S + p.len - 0.01; a += 6) {
+          const l = Math.min(6, S + p.len - a) + 0.1, am = a + l / 2 - 0.05;
+          for (const k of [-1, 1]) {
+            this.rbox(s, am, k * (BORE_HALF + 0.15), 0.7, l, 1.4, 0.3, 0xcfcabb);
+            this.rbox(s, am, k * (BORE_HALF + 0.15), 1.4 + (BORE_H - 1.4) / 2, l, BORE_H - 1.4, 0.3, 0x4f4d49);
+            this.rbox(s, am, k * (BORE_HALF - 0.45), 0.15, l, 0.3, 0.9, 0x8d8a82);
+            this.rbox(s, am, k * (BORE_HALF - 1.4), BORE_H - 0.25, l, 0.5, 2.2, 0x34332f);
+          }
+          this.rbox(s, am, 0, BORE_H + 0.15, l, 0.3, 2 * BORE_HALF + 0.6, 0x2c2b28);
+          if (Math.round(a / 6) % 2 === 0) for (const k of [-1, 1]) this.rbox(this.glow, a + 3, k * (BORE_HALF - 0.6), BORE_H - 0.55, 2.4, 0.12, 0.3, 0xfff0c8);
+        }
+        const top = tunnelTop(p);
+        for (const [e, f] of [[S - 0.5, -1], [S + p.len + 0.5, 1]] as const) {
+          for (const k of [-1, 1]) this.rbox(s, e, k * (BORE_HALF + 4), (top + 0.8) / 2, 1.0, top + 0.8, 8, CW.concrete);
+          this.rbox(s, e, 0, BORE_H + (top + 0.8 - BORE_H) / 2, 1.0, top + 0.8 - BORE_H, 2 * BORE_HALF + 0.1, CW.concrete);
+          this.rbox(s, e + f * 0.55, 0, BORE_H + 0.35, 0.12, 0.7, 2 * BORE_HALF + 1.4, 0x6f6c64);   // the lintel's band
+          for (const k of [-1, 1]) this.rbox(s, e + f * 0.55, k * (BORE_HALF + 0.35), BORE_H / 2, 0.12, BORE_H, 0.7, 0x6f6c64);
+          this.rbox(s, e, 0, top + 1.0, 1.4, 0.4, 2 * BORE_HALF + 9, 0x8d8a82);   // its coping
+        }
+        break;
+      }
+      case "overpass": {
+        // A cross road (or a railway) across the road on a bridge: its deck between two
+        // abutments, on embankments out across the land either side.
+        const C = S + p.len / 2, [, , h] = this.L(C, 0), rail = p.variant === 1;
+        const across = (n0: number, n1: number, y: number, hgt: number, wid: number, color: number, ds = 0) => {
+          const [x0, z0] = this.L(C + ds, n0), [x1, z1] = this.L(C + ds, n1);
+          s.box((x0 + x1) / 2, y, (z0 + z1) / 2, Math.hypot(x1 - x0, z1 - z0), hgt, wid, color, h - Math.PI / 2);
+        };
+        const deckC = rail ? 0x6a3a2a : CW.concrete, W = 2 * OVER_HALF - 2;
+        across(-OVER_ABUT - 1.5, OVER_ABUT + 1.5, OVER_DECK - 0.55, 1.1, W, deckC);
+        for (const k of [-1, 1]) {
+          this.rbox(s, C, k * (OVER_ABUT + 0.4), (OVER_DECK - 1.1) / 2, W + 2, OVER_DECK - 1.1, 0.8, CW.concrete);
+          if (rail) across(-OVER_ABUT - 1.5, OVER_ABUT + 1.5, OVER_DECK + 0.6, 1.6, 0.35, deckC, k * (W / 2 - 0.2));
+          else across(-OVER_ABUT - 1.5, OVER_ABUT + 1.5, OVER_DECK + 0.45, 0.9, 0.3, CW.concrete, k * (W / 2 - 0.2));
+        }
+        // The way over: on the deck, then down the embankments onto the land.
+        const keep = s.dy; s.dy = 0;
+        for (let n = -150; n < 150; n += 6) {
+          const n1 = n + 6, y0 = this.road!.groundAt(C, n), y1 = this.road!.groundAt(C, n1);
+          const onDeck = Math.abs(n + 3) < OVER_ABUT + 1.5, ya = onDeck ? this.pieceY + OVER_DECK : y0, yb = onDeck ? this.pieceY + OVER_DECK : y1;
+          const [x0, z0] = this.L(C, n), [x1, z1] = this.L(C, n1), run = Math.hypot(x1 - x0, z1 - z0);
+          const yaw = h - Math.PI / 2, pitch = Math.atan2(yb - ya, run);
+          if (rail) {
+            s.boxR((x0 + x1) / 2, (ya + yb) / 2 + 0.05, (z0 + z1) / 2, run + 0.2, 0.2, 3.6, 0x8a8478, 0, yaw, pitch);
+            for (const k of [-0.72, 0.72]) {
+              const ox = Math.cos(h) * k, oz = -Math.sin(h) * k;
+              s.boxR((x0 + x1) / 2 + ox, (ya + yb) / 2 + 0.25, (z0 + z1) / 2 + oz, run + 0.1, 0.12, 0.1, 0x9a9ea2, 0, yaw, pitch);
+            }
+          } else {
+            s.boxR((x0 + x1) / 2, (ya + yb) / 2 + 0.04, (z0 + z1) / 2, run + 0.2, 0.1, 7, CW.asphalt, 0, yaw, pitch);
+            s.boxR((x0 + x1) / 2, (ya + yb) / 2 + 0.1, (z0 + z1) / 2, run, 0.02, 0.2, CW.yellow, 0, yaw, pitch);
+          }
+        }
+        s.dy = keep;
         break;
       }
       case "gas": {
