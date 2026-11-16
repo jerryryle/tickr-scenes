@@ -16,7 +16,7 @@ they import nothing (most of the city, journey and rendering modules import each
 cycle, which is fine for code inside functions but not for top-level initializers).
 
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,
-`DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`).
+`DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_CAMLOG`).
 Shipping builds use its defaults; a debug build overrides them, since the board only passes env
 keys that are in the scene's schema:
 

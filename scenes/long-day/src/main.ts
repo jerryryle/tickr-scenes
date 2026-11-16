@@ -5,7 +5,7 @@
 import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
 import { readConfig } from "./env.ts";
-import { DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
+import { DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
@@ -365,7 +365,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   function tick() {
     presK++;
     step(presK / TICK_HZ, 1 / TICK_HZ, false);
-    if (DEBUG_SCRUBTEST) scrubTestLog();
+    if (DEBUG_SCRUBTEST || DEBUG_CAMLOG) scrubTestLog();
     if (PREVIEW && onBoundary(presK)) {
       snaps.set(presK, presSave());
       for (const [k, sn] of snaps) if (Math.abs(sn.city - presCity) > 1) snaps.delete(k);
@@ -392,7 +392,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     presCity = -1; presK = k;
     step(k / TICK_HZ, 0, true);
     if (PREVIEW && onBoundary(k) && !snaps.has(k)) snaps.set(k, presSave());
-    if (DEBUG_SCRUBTEST) scrubTestLog();
+    if (DEBUG_SCRUBTEST || DEBUG_CAMLOG) scrubTestLog();
   }
   // One update of the presentation at journey time `time`, `dt` after the last (0 and `fresh` when
   // starting from scratch).
@@ -460,7 +460,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (presK === scrubLogged) return;
     scrubLogged = presK;
     const c = engine.camera, p = truck.root.position;
-    sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant}`);
+    sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant} ${journey.st.mode} ${journey.st.v.toFixed(2)} ${truck.heading.toFixed(4)}`);
   }
 
   function backdropState(pr: { road: CountryRoad; s: number } | null): { city: number; p: number } {

@@ -9,3 +9,4 @@ export const DEBUG_HOUR: number = -1;     // pin the hour of day, 0..24 (test re
 export const DEBUG_CLIMATE: string = "";  // "season/weather", e.g. "winter/snow", for every city (test renders only)
 export const DEBUG_MEMLOG: number = 0;     // log GPU and heap counters every N scene seconds (test renders only)
 export const DEBUG_SCRUBTEST: number = 0;  // test renders: play forward this many seconds, scrub back half way and play again, logging every tick
+export const DEBUG_CAMLOG: number = 0;     // test renders: log the camera, truck and shot at every tick (TICK lines)
