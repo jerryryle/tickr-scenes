@@ -329,27 +329,41 @@ export class CountryWorld {
       for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, 6.2, 0.1, 1.8, CW.shoulder); this.rbox(g, sm, k * (half - 0.25), 0.005, 6.2, 0.02, 0.14, CW.white); }
       if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, 6.0, 0.02, 0.24, CW.yellow);
     }
-    // Utility poles on the right, with the wires between them.
+    // Utility poles on the right, every 50 m where the land is clear, with wires only between two
+    // poles. Where the line stops, the wires either end at the last pole or, now and then, have
+    // snapped and hang from its crossarm to the ground, the slack lying in the grass.
+    const hasPole = (a: number) => land(a) && (road.clearAt(a, 12) || road.pieces.some((p) => p.kind === "billboards" && a > p.s - 40 && a < p.s + p.len + 40));
+    const WIRE = 0x2a2a2a;
+    const arm = (a: number, k: number): [number, number] => { const [x, z, h] = this.L(a, 12.5); return [x + Math.sin(h) * k, z + Math.cos(h) * k]; };
     for (let a = Math.ceil(s0 / 50) * 50; a < s1; a += 50) {
-      if (!land(a) || !land(a + 50)) continue;
-      if (!road.clearAt(a, 12) && !road.pieces.some((p) => p.kind === "billboards" && a > p.s - 40 && a < p.s + p.len + 40)) continue;
+      if (!hasPole(a)) continue;
       const [x, z, h] = this.L(a, 12.5);
       s.cyl(x, 4.5, z, 0.14, 9, CW.pole, 6); s.box(x, 8.4, z, 0.14, 0.14, 2.2, CW.pole, h);
-      const [x2, z2] = this.L(a + 50, 12.5);
-      for (const k of [-0.9, 0.9]) {
-        const ax = x + Math.sin(h) * k, az = z + Math.cos(h) * k, bx = x2 + Math.sin(h) * k, bz = z2 + Math.cos(h) * k;
-        const mx = (ax + bx) / 2, mz = (az + bz) / 2, L = Math.hypot(bx - ax, bz - az);
-        s.box(mx, 8.2, mz, L, 0.05, 0.05, 0x2a2a2a, Math.atan2(-(bz - az), bx - ax));
+      for (const dir of [1, -1]) {
+        const b = a + dir * 50;
+        if (dir > 0 && hasPole(b)) {
+          for (const k of [-0.9, 0.9]) {
+            const [ax, az] = arm(a, k), [bx, bz] = arm(b, k);
+            s.box((ax + bx) / 2, 8.2, (az + bz) / 2, Math.hypot(bx - ax, bz - az), 0.05, 0.05, WIRE, Math.atan2(-(bz - az), bx - ax));
+          }
+        } else if (!hasPole(b) && hash3(a, dir, road.inp.city, road.inp.seed, 0xd1e) < 0.35) {
+          // Broken: each wire drops straight down from its end of the crossarm, and a few metres
+          // of it trail off along the line on the ground.
+          const fx = Math.cos(h) * dir, fz = -Math.sin(h) * dir;
+          for (const k of [-0.9, 0.9]) {
+            const [ax, az] = arm(a, k), tail = 2 + hash3(a, dir, k > 0 ? 1 : 2, road.inp.seed, 0x7a1) * 4;
+            s.box(ax + fx * 0.05, 4.1, az + fz * 0.05, 0.05, 8.2, 0.05, WIRE, h);
+            s.box(ax + fx * (0.05 + tail / 2), 0.03, az + fz * (0.05 + tail / 2), tail, 0.05, 0.05, WIRE, Math.atan2(-fz, fx) + (k > 0 ? 0.15 : -0.1));
+          }
+        }
       }
     }
     // Scenery by biome.
     for (let a = s0; a < s1; a += 6) for (const side of [-1, 1] as const) {
       if (!land(a)) continue;
       const bio = this.look(road, a, side * 40);
-      if (bio.fence && rnd() < 0.5 && road.clearAt(a, side * 14) && Math.floor(a / 6) % 1 === 0) {
-        const [x, z, h] = this.L(a, side * 14.5);
-        s.box(x, 0.6, z, 0.12, 1.2, 0.12, CW.wood, h); s.box(x + Math.cos(h) * 3, 0.85, z - Math.sin(h) * 3, 6, 0.08, 0.06, CW.wood, h); s.box(x + Math.cos(h) * 3, 0.45, z - Math.sin(h) * 3, 6, 0.08, 0.06, CW.wood, h);
-      }
+      if (bio.fence) rnd();   // fences used to roll here; keep the draw so the rest of the scenery stays put
+      this.fence(s, road, a, side, land);
       const tries = bio.density * 2.2;
       for (let t = 0; t < tries; t++) {
         if (rnd() > tries - t) break;
@@ -405,6 +419,53 @@ export class CountryWorld {
 
   // ---- scenery ------------------------------------------------------------------------------
   private tree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand) { landTree(s, x, z, kind, green, rnd); }
+  // A post-and-rail fence along the land, 14.5 m out, in 6 m bays: bay i runs from 6i to 6i + 6.
+  // Whether a bay stands is hashed from its index, so a segment can see its neighbours' bays and
+  // every rail ends on a post. Now and then a bay has come down: its top rail has dropped to the
+  // ground at one end and its lower rail lies in the grass, and at the end of a run the post that
+  // held them lies beside its stump.
+  private fence(s: Batch, road: CountryRoad, a: number, side: -1 | 1, land: (a: number) => boolean) {
+    const N = side * 14.5, seed = road.inp.seed, city = road.inp.city;
+    const bay = (i: number) => {
+      const b0 = i * 6, b1 = b0 + 6;
+      return land(b0) && land(b1) && !!this.look(road, b0, side * 40).fence && road.clearAt(b0, side * 14) && road.clearAt(b1, side * 14)
+        && hash3(i, side, city, seed, 0xfe1) < 0.5;
+    };
+    const broken = (i: number) => hash3(i, side, city, seed, 0xb70) < 0.05;
+    const i = Math.round(a / 6);
+    const prev = bay(i - 1), here = bay(i), next = here && bay(i + 1);
+    // A broken bay at the end of a run loses its free post; a broken bay inside a run hangs from
+    // its posts. Which end gives way: the free one, else a coin toss.
+    const dropsAt = (j: number, startFree: boolean, endFree: boolean) =>
+      endFree ? 1 : startFree ? 0 : hash3(j, side, city, seed, 0xe9d) < 0.5 ? 0 : 1;
+    // The post at a (the end of bay i - 1 and the start of bay i).
+    if (prev || here) {
+      const fallen = prev !== here && (prev ? broken(i - 1) : broken(i) && next);   // a run's end post, of a broken bay that drops there
+      const [x, z, h] = this.L(a, N);
+      if (!fallen) s.box(x, 0.6, z, 0.12, 1.2, 0.12, CW.wood, h);
+      else {
+        const t = hash3(i, side, city, seed, 0xfa1) - 0.5, dx = Math.sin(h + t) * side, dz = Math.cos(h + t) * side;
+        s.box(x, 0.12, z, 0.12, 0.24, 0.12, CW.wood, h);                                          // the snapped stump
+        s.box(x + dx * 0.65, 0.07, z + dz * 0.65, 1.0, 0.12, 0.12, CW.wood, Math.atan2(-dz, dx));   // the post, lying out from it
+      }
+    }
+    if (!here) return;
+    const [x0, z0] = this.L(a, N), [x1, z1] = this.L(a + 6, N);
+    const yaw = Math.atan2(-(z1 - z0), x1 - x0), len = Math.hypot(x1 - x0, z1 - z0);
+    if (!broken(i)) {
+      for (const y of [0.85, 0.45]) s.box((x0 + x1) / 2, y, (z0 + z1) / 2, len, 0.08, 0.06, CW.wood, yaw);
+      return;
+    }
+    const end = dropsAt(i, !prev, !next);
+    // The top rail, still nailed at the far end from `end`, its loose end on the ground.
+    const [ax, az, bx, bz] = end ? [x0, z0, x1, z1] : [x1, z1, x0, z0];
+    const drop = 0.8, run = Math.sqrt(len * len - drop * drop), ux = (bx - ax) / len, uz = (bz - az) / len;
+    const ex = ax + ux * run, ez = az + uz * run;
+    s.boxR((ax + ex) / 2, 0.85 - drop / 2, (az + ez) / 2, len, 0.08, 0.06, CW.wood, 0, Math.atan2(-uz, ux), -Math.atan2(drop, run));
+    // The lower rail, lying in the grass just beyond the line, a little askew.
+    const [, , h] = this.L(a + 3, N), ox = Math.sin(h) * side * 0.35, oz = Math.cos(h) * side * 0.35;
+    s.box((x0 + x1) / 2 + ox, 0.04, (z0 + z1) / 2 + oz, len * 0.96, 0.06, 0.08, CW.wood, yaw + (hash3(i, side, city, seed, 0x10e) - 0.5) * 0.2);
+  }
   private turbine(s: Batch, x: number, z: number, _h: number, rnd: Rand) {
     s.cyl(x, 17, z, 0.7, 34, 0xeef0f0, 8);
     s.box(x, 34.3, z, 2.6, 1.2, 1.2, 0xeef0f0);
@@ -435,7 +496,7 @@ export class CountryWorld {
   // A big overhead-height highway sign on two posts (big enough to read across the room).
   private greenSign(s: Batch, p: RoadPiece, text: string) {
     const n = 11, uv = this.slot(text, { bg: "#1e6b3a", fg: "#ffffff", logo: false });
-    for (const k of [-5.4, 5.4]) this.rbox(s, p.s, n + k, 3.2, 0.25, 6.4, 0.25, 0x8d9296);
+    for (const k of [-5.4, 5.4]) this.rbox(s, p.s + 0.27, n + k, 3.2, 0.25, 6.4, 0.25, 0x8d9296);   // behind the board
     this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, CW.green);
     this.rbox(s, p.s + 0.08, n, 5.2, 0.08, 2.75, 13.6, 0xf2f2ee);   // white border (its faces inside the board's: shared planes flicker)
     if (uv) this.signAt(pieceSigns(p)[0], uv);
@@ -450,7 +511,7 @@ export class CountryWorld {
           const a = S + 30 + k * 110, n = (k % 2 ? -1 : 1) * 22, sd = Math.sign(n);
           const pool = [...AD_BILLBOARD, ...AD_BATON, ...AD_BATON, ...AD_RYDER];
           const ad = pool[Math.floor(hash2(k, Math.floor(S), this.road!.inp.seed, 0xad) * pool.length)];
-          for (const d of [-3, 3]) this.rbox(s, a, n + d * sd, 3.2, 0.3, 6.4, 0.3, 0x5a5f66);
+          for (const d of [-3, 3]) this.rbox(s, a + 0.51, n + d * sd, 3.2, 0.3, 6.4, 0.3, 0x5a5f66);   // behind the board
           this.rbox(s, a + 0.2, n, 9.0, 0.3, 5.4, 15.4, 0x2a2b2e);
           this.rbox(s, a + 0.5, n, 6.3, 0.15, 0.15, 15, 0x5a5f66);   // catwalk
           const b = pieceSigns(p)[k], [x, z, h] = this.L(b.s, b.n);
@@ -469,7 +530,7 @@ export class CountryWorld {
         const uv = this.slot("RYDER TRUCK STOP", { bg: "#ce1126", fg: "#ffffff", logo: true });
         if (uv) { const [x, z, h] = this.L(S + 70, 32.6); this.quads.push({ x, y: 5.5, z, w: 9.6, h: 1.2, rotY: Math.atan2(-Math.sin(h), -Math.cos(h)), ...uv }); }
         // The tall sign at the road, readable from the approach.
-        this.rbox(s, S - 60, 20, 7, 0.6, 14, 0.6, 0x5a5f66);
+        this.rbox(s, S - 59.24, 20, 7, 0.6, 14, 0.6, 0x5a5f66);   // behind the board
         this.rbox(s, S - 59.7, 20, 14.2, 0.3, 2.2, 9.4, CW.ryder);
         const uv2 = this.slot("RYDER TRUCK STOP", { bg: "#ce1126", fg: "#ffffff", logo: true });
         if (uv2) this.signAt(pieceSigns(p)[0], uv2);
@@ -506,7 +567,7 @@ export class CountryWorld {
       case "construction": {
         for (let a = S + 20; a < S + p.len - 20; a += 9) { const [x, z] = this.L(a, 4.4); s.cone(x, 0.4, z, 0.25, 0.8, CW.orange, 6); s.cyl(x, 0.35, z, 0.27, 0.12, 0xf2f2f2, 6); }
         const uv = this.slot("ROAD WORK AHEAD", { bg: "#e8701a", fg: "#111111", logo: false });
-        this.rbox(s, S, 9, 1.2, 0.12, 2.4, 0.12, 0x8d9296);
+        this.rbox(s, S + 0.15, 9, 1.2, 0.12, 2.4, 0.12, 0x8d9296);   // behind the board
         this.rbox(s, S + 0.05, 9, 2.6, 0.06, 1.0, 5.4, CW.orange);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         // A roller and an excavator on the shoulder, and a stockpile.
@@ -558,7 +619,7 @@ export class CountryWorld {
         }
         const uv = this.slot(names[v], { bg: "#f5c542", fg: "#5a1a0a", logo: false });
         const ns = side * 15;
-        for (const k of [-2.8, 2.8]) this.rbox(s, S, ns + k, 1.8, 0.16, 3.6, 0.16, CW.wood);
+        for (const k of [-2.8, 2.8]) this.rbox(s, S + 0.17, ns + k, 1.8, 0.16, 3.6, 0.16, CW.wood);   // behind the board
         this.rbox(s, S + 0.05, ns, 3.2, 0.06, 1.2, 7, 0xf5c542);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
@@ -569,7 +630,7 @@ export class CountryWorld {
         this.rbox(s, S + 100, 22, 2, 8, 4, 6, 0xe8e2d6); this.rbox(s, S + 100, 22, 4.3, 8.6, 0.5, 6.6, 0x5b6470);
         this.rbox(s, S + 100, 18.9, 2.4, 6, 1.4, 0.1, 0x2a3440);
         const uv = this.slot("WEIGH STATION · CLOSED", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
-        for (const k of [-3.6, 3.6]) this.rbox(s, S - 80, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);
+        for (const k of [-3.6, 3.6]) this.rbox(s, S - 79.8, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);   // behind the board
         this.rbox(s, S - 79.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
@@ -581,7 +642,7 @@ export class CountryWorld {
         for (let k = 0; k < 7; k++) { const ca = Math.cos(h) * (-3 + k), cz = -Math.sin(h) * (-3 + k); s.box(x + ca - Math.sin(h) * side * 2.35, 3.4, z + cz - Math.cos(h) * side * 2.35, 1, 0.12, 0.5, k % 2 ? 0xf2f2f2 : CW.red, h); }
         const texts = ["FRESH PEACHES", "SWEET CORN", "CHERRIES · PIE", "PUMPKINS · CIDER"];
         const uv = this.slot(texts[p.variant], { bg: "#f2ede0", fg: "#a83a2a", logo: false });
-        this.rbox(s, S, side * 9.5, 0.8, 0.12, 1.6, 0.12, CW.wood);
+        this.rbox(s, S + 0.14, side * 9.5, 0.8, 0.12, 1.6, 0.12, CW.wood);   // behind the board
         this.rbox(s, S + 0.04, side * 9.5, 1.6, 0.05, 0.8, 4.2, 0xf2ede0);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         // Orchard rows behind.
@@ -623,7 +684,7 @@ export class CountryWorld {
         for (const a of [-4, 4]) this.rbox(s, S + 40 + a, n, 0.75, 0.8, 1.5, 0.6, 0xc0392b);
         this.rbox(s, S + 75, side * 30, 2.2, 14, 4.4, 8, 0xe8e2d6); this.rbox(s, S + 75, side * 25.95, 1.8, 10, 2.4, 0.1, 0x2a3440);
         const uv = this.slot(`GAS  $${(3 + p.variant * 0.17 + 0.29).toFixed(2)}`, { bg: "#1f6fb2", fg: "#ffffff", logo: false });
-        this.rbox(s, S + 5, side * 11, 3.5, 0.3, 7, 0.3, 0x5a5f66);
+        this.rbox(s, S + 5.39, side * 11, 3.5, 0.3, 7, 0.3, 0x5a5f66);   // behind the board
         this.rbox(s, S + 5.1, side * 11, 7.2, 0.25, 1.4, 4.8, 0x1f6fb2);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
