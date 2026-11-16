@@ -322,8 +322,10 @@ export class Director {
         const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
         const c = truckExtents(st.truck).center;
         // On the far side of the street (street trees line the far sidewalk), a little ahead of centre.
-        this.anchorPos.set(p.x + fx * (c + 4) - rx * 10.5, 2.6, p.z + fz * (c + 4) - rz * 10.5);
-        this.anchorLook.set(p.x + fx * c, 1.5, p.z + fz * c);
+        // (Up on a garage's roof, on the roof.)
+        const y = j.pathY(st.stopS);
+        this.anchorPos.set(p.x + fx * (c + 4) - rx * 10.5, y + 2.6, p.z + fz * (c + 4) - rz * 10.5);
+        this.anchorLook.set(p.x + fx * c, y + 1.5, p.z + fz * c);
         break;
       }
       case "drive":
@@ -411,7 +413,7 @@ export class Director {
       } else { j.path.eval(s, p); h = p.h; }
       j.path.eval(st.s, this.pose2);   // (leave the path's cursor where the journey keeps it)
     } else return false;   // (Out of town the roads curve gently: rigs turn with the truck, which stays smooth through the hand-over from one city's road to the next.)
-    out.set(p.x + Math.sin(h) * lat, y, p.z + Math.cos(h) * lat);
+    out.set(p.x + Math.sin(h) * lat, y + j.pathY(Math.max(0, st.s - (1 - j.alpha) * j.lastStep + ds)), p.z + Math.cos(h) * lat);   // (over a garage's ramps: above them)
     return true;
   }
   private pose2: Pose = { x: 0, z: 0, h: 0, k: 0 };

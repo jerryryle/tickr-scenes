@@ -23,6 +23,8 @@ import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
+import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
+import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, freewayGate, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
@@ -185,7 +187,8 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   if (CS.cableCar && cableColumn(cx)) buildCableTracks(ground);
   const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
   let stalls: StallPose[] = [];
-  if (site.kind === "dock") buildDockSite(ground, solid, site, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
+  if (site.kind === "garage") buildGarage(ground, solid, site.side, rnd, plan.seed);
+  else if (site.kind === "dock") buildDockSite(ground, solid, site, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
   else if (site.kind === "lot") stalls = buildRentalLot(ground, solid, site, rnd, DC.quads, uv);
   else if (CS.townSquare && district === "downtown" && plan.coreDistance(cx, cz) < 0.8) buildTownSquare(ground, solid, B, rnd);
   else {
@@ -245,7 +248,7 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
 // there (entranceDoor), the driver walks to it (journey.ts DOOR_PROBE), and FrontDoorFx opens it.
 // Cached per block: a pure function of the city.
 // `plain`: a container's cargo doors (locking bars, no windows or light).
-export interface KerbDoor { side: number; a: number; n: number; x: number; z: number; nx: number; nz: number; frame: number; panel: number; half: number; h: number; plain: boolean }   // world centre of its foot, outward normal, colours, half width and height
+export interface KerbDoor { side: number; a: number; n: number; x: number; z: number; nx: number; nz: number; frame: number; panel: number; half: number; h: number; plain: boolean; y?: number }   // (y: its sill, when not at the kerb's height)   // world centre of its foot, outward normal, colours, half width and height
 const KERB_DOORS = new Map<string, (KerbDoor | null)[]>();
 let kerbDoorsSeed = NaN;
 const DOOR_PROBE_MAT = new THREE.MeshBasicMaterial();
@@ -319,6 +322,12 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   if (hit) return hit;
   const none: (KerbDoor | null)[] = [null, null, null, null];
   const fac = facilityAt(plan, bx, bz), site = siteLayout(plan, bx, bz);
+  if (fac && site.kind === "garage") {
+    // On the roof: the stair tower's door, beside the lane where trucks stop.
+    const [a, n] = GARAGE_DOOR, [fx, fz] = frontPt(site.side, a, n), [rx, rz] = RIGHT[FRONT_NODE[site.side][2]], out = none.slice();
+    out[site.side] = { side: site.side, a, n, x: bx * BLOCK + fx, z: bz * BLOCK + fz, nx: -rx, nz: -rz, frame: 0xf2efe8, panel: 0x23365e, half: DOOR_HALF, h: DOOR_H, plain: false, y: GARAGE_H };
+    KERB_DOORS.set(key, out); return out;
+  }
   if (!fac || (site.kind !== "kerb" && site.kind !== "stand")) { KERB_DOORS.set(key, none); return none; }
   const spots: number[] = [];
   DOOR_SPOTS.out = spots;
@@ -478,6 +487,7 @@ function streetFrontage(plan: CityPlan, bx: number, bz: number, side: number): F
   const L = siteLayout(plan, bx, bz);
   if (L.kind === "dock") return { side, drive: L.side === side ? [Math.min(...dockUsedBays(L).map((i) => L.bays[i])) - 4.5, Math.max(...dockUsedBays(L).map((i) => L.bays[i])) + 18] : null, sign: null,
     clear: PREV_SIDE[L.side] === side ? [16, 51] : undefined };
+  if (L.kind === "garage") return { side, drive: L.side === side ? GARAGE_DRIVE : null, sign: null };
   if (L.kind === "kerb" && hasSign(facilityAt(plan, bx, bz))) return { side, drive: null, sign: BLADE_A };
   if (L.kind === "stand") { const b = standBox(L); return { side, drive: null, sign: BLADE_A, clear: L.side === side ? [b.a0 - 1, b.a1 + 0.5] : undefined }; }
   return { side, drive: null, sign: null };

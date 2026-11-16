@@ -45,6 +45,15 @@ import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFin
 import { blockGoals, DIR_X, DIR_Z, LANE_KERB, nodeX, nodeZ, Path, planRoute } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate } from "./freeway.ts";
+import { GARAGE_IN_A } from "./garage.ts";
+import { GARAGE_H } from "./route.ts";
+import type { GarageGeom } from "./route.ts";
+import type { GarageLayout } from "./facilities.ts";
+// Debug builds: every journey log line, from the start (main.ts).
+export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null };
+// Out of a garage, the street leg back towards its node starts this far from it (garage.ts:
+// the way down ends 36 m along the frontage, in the far kerb lane).
+const GARAGE_OUT_BEFORE = 36;
 import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from "./country.ts";
 import { bedRearX, handTrips, maxHandUnits, planChores, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup } from "./chores.ts";
@@ -96,6 +105,7 @@ interface JourneyState {
   route: Route | null; s: number; v: number; at: { ix: number; iz: number; dir: number; before: number };
   stopS: number; backS: number;     // where the truck stops, and where it reverses to (dock stops)
   dockExit: { geom: DockGeom; s: number } | null;   // leaving a bay: the next route starts in it
+  garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
   jobCounter: number; lastSwap: number; jobsSinceSwap: number; intercity: boolean; committed: string; redWait: number; preempt: SignalPreempt[];
@@ -286,6 +296,7 @@ export class Journey {
   private log(msg: string) {
     const t = this.st.cityTime;
     const line = `c${this.st.city} ${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")} ${msg}`;
+    JOURNEY_LOG.out?.(line);
     this.st.events.push(line);
     if (this.st.events.length > 12) this.st.events.shift();   // recent lines for the debug HUD
     this.onEvent?.(line);
@@ -498,17 +509,21 @@ export class Journey {
         const all = blockGoals(bx, bz, 47 - truckExtents(stop.truck!).front, true), L = siteLayout(this.plan, bx, bz);
         goals = L.kind === "lot" ? [all[L.side]] : all;
       } else {
-        // A park's stand is on one side of it: stop there.
+        // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
+        // on, to where the way in turns off (straight through the node before, to be in the kerb
+        // lane), and on up onto its roof.
         const all = blockGoals(bx, bz, 30 - this.centerX), L = siteLayout(this.plan, bx, bz);
-        goals = L.kind === "stand" ? [all[L.side]] : all;
+        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [blockGoals(bx, bz, GARAGE_IN_A, true)[(L as GarageLayout).side]] : all;
       }
       st.route = planRoute(st.at.ix, st.at.iz, st.at.dir, st.at.before, goals, 6000, cityStreet);
       if (!st.route) { this.log(`no route to ${stop.site!.name}; skipping`); st.stops.shift(); return; }
+      if (this.garageStop(stop)) { st.route.garageIn = true; this.log(`up onto the roof of ${stop.site!.name}`); }
       st.spare = stop.kind === "swap" ? stop.truck! : null;
     }
     // Leaving a bay: the route starts inside it.
     let s0 = 0;
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
+    if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
     this.path = new Path(st.route);
     st.s = s0; st.committed = ""; st.redWait = 0;
     st.stopS = this.path.length;
@@ -554,6 +569,21 @@ export class Journey {
       geom: { x: ref.x, z: ref.z, H, Lb, R, door }, edge: at(p, L.edge), H, sign };
   }
   get dock(): DockPlan | null { return this.dockPlan(this.st.stops[0]); }
+  // Whether a stop is up on a garage's roof (a garage site, and a truck that goes up its ramps).
+  garageStop(stop: Stop | undefined | null, model: TruckModel = this.st.truck) {
+    if (!stop?.site || (stop.kind !== "pickup" && stop.kind !== "drop") || model === "tractor" || model === "flatbed") return false;
+    return siteLayout(this.plan, stop.site.bx, stop.site.bz).kind === "garage";
+  }
+  // The truck's height (and grade) where it is drawn: up a garage's ramps or on its roof.
+  truckLift(): { y: number; grade: number } {
+    const st = this.st;
+    if (st.mode === "country" || st.mode === "inbound") return { y: 0, grade: 0 };
+    if (this.path && this.path.ramps.length) { const s = st.s - (1 - this.alpha) * this.lastStep; return { y: this.path.yAt(s), grade: this.path.gradeAt(s) }; }
+    if (st.garageExit) return { y: GARAGE_H, grade: 0 };
+    return { y: 0, grade: 0 };
+  }
+  // The height of the current path at s (0 off a garage).
+  pathY(s: number) { return this.path ? this.path.yAt(s) : this.st.garageExit ? GARAGE_H : 0; }
 
   isDockStop(stop: Stop | undefined | null) { return this.dockPlan(stop) !== null; }
 
@@ -612,6 +642,7 @@ export class Journey {
     if (!DOOR_PROBE || !stop.site || stop.kind === "swap") return null;
     const L = truckLayout(this.st.truck);
     if (L.trailer) return null;   // (a flatbed's forklift uses the door: crew.ts)
+    if (siteLayout(this.plan, stop.site.bx, stop.site.bz).kind === "garage" && !this.garageStop(stop)) return null;   // (its door is up on the roof)
     const h = this.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
     let best: KerbDoor | null = null, bestD = 45;   // anywhere along the block side: a longer walk beats no door
     for (const d of DOOR_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
@@ -681,6 +712,8 @@ export class Journey {
   private placePose() {
     if (this.st.mode === "country" || this.st.mode === "inbound") { this.countryPose(); return; }
     if (this.path) { this.path.eval(this.st.s, this.pose); return; }
+    const gx = this.st.garageExit;
+    if (gx) { this.pose.x = gx.x; this.pose.z = gx.z; this.pose.h = gx.h; this.pose.k = 0; return; }   // up on a garage's roof
     const ex = this.st.dockExit;
     if (ex) {   // waiting in a bay for the next route
       this.pose.x = ex.geom.x + Math.cos(ex.geom.H) * ex.s; this.pose.z = ex.geom.z - Math.sin(ex.geom.H) * ex.s;
@@ -884,6 +917,12 @@ export class Journey {
         // Out of the bay next: the route starts in it and joins the street after the turn.
         st.at = { ix: dock.node[0] + DIR_X[dock.dir], iz: dock.node[1] + DIR_Z[dock.dir], dir: dock.dir, before: BLOCK - (dock.p + dock.R) };
         st.dockExit = { geom: dock.geom, s: dock.trail };
+      } else if (this.path?.route.garageIn) {
+        // Down off the roof next: the route starts there and comes out across the street, in the
+        // kerb lane back towards the node the truck came in past.
+        const L = siteLayout(this.plan, stop.site!.bx, stop.site!.bz) as GarageLayout, g = blockGoals(stop.site!.bx, stop.site!.bz, 0)[L.side];
+        st.at = { ix: g.ix, iz: g.iz, dir: (g.dir + 2) % 4, before: GARAGE_OUT_BEFORE };
+        st.garageExit = { x: this.pose.x, z: this.pose.z, h: this.pose.h };
       } else this.arriveAtEnd();
       this.path = null; st.route = null; st.s = 0; st.v = 0;
       st.mode = "drive"; st.modeTime = 0; this.chores = [];
@@ -988,7 +1027,7 @@ export class Journey {
     const st = this.st;
     st.mode = "country"; st.modeTime = 0; st.departAt = st.cityTime; st.departTruck = st.truck;
     st.departV = st.v; st.departS0 = s0;
-    st.spare = null; st.parked = null; st.dockExit = null; st.intercity = true;
+    st.spare = null; st.parked = null; st.dockExit = null; st.garageExit = null; st.intercity = true;
     st.stops = st.stops.filter((s) => s.kind !== "depart");
     this.path = null; st.route = null;
     this.log(`leaving for the country: ${(this.period - st.departAt).toFixed(0)} s to the next city's road`);

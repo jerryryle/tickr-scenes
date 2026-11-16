@@ -32,7 +32,7 @@ import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { smooth } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { ARRIVE_LEN, BIOME_OF, BORE_H, BORE_HALF, citySeedOf, CountryRoad } from "./country.ts";
-import { Journey, setDoorProbe, setPavementProbe } from "./journey.ts";
+import { Journey, JOURNEY_LOG, setDoorProbe, setPavementProbe } from "./journey.ts";
 import type { Mode } from "./journey.ts";
 import { Director } from "./director.ts";
 import { Crew } from "./crew.ts";
@@ -100,8 +100,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     lastX = p.x; lastZ = p.z;
     truck.follow(p.x, p.z, p.h, p.k, moved);
     // Out of town, the road's hills (in town, and at both ends of the road, all level).
-    const pr = pickRoad0();
-    if (pr && pr.s > 0) truck.setGrade(pr.road.heightAt(pr.s), pr.road.gradeAt(pr.s)); else truck.setGrade(0, 0);
+    // In town, up a garage's ramps and on its roof.
+    const pr = pickRoad0(), lift = journey.truckLift();
+    if (lift.y > 0.001 || lift.grade !== 0) truck.setGrade(lift.y, lift.grade);
+    else if (pr && pr.s > 0) truck.setGrade(pr.road.heightAt(pr.s), pr.road.gradeAt(pr.s)); else truck.setGrade(0, 0);
     truck.speed = journey.st.v; truck.accel = journey.accel;
     // Reversing into a bay, the trailer leads along the bay path; ease into it from however the
     // hitch left it on the way in.
@@ -545,6 +547,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (random) cfg.seed = saved?.seed ?? (sys.isPreview ? daySeed : ((Math.floor(Math.random() * 2 ** 31) ^ Date.now()) >>> 0 || 1));
       base = (saved?.simTime ?? 0) + DEBUG_SKIP_MINUTES * 60;   // the skip: test renders only
       setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles);
+      if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
       journey = new Journey(cfg, base, saved?.season ?? realSeason());
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // For reproducing what was seen: the journey and where it starts (journey time = this + scene time).

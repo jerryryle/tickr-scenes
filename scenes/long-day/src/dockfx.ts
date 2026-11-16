@@ -90,7 +90,7 @@ export class FrontDoorFx {
     const two = !!d && d.half > DOOR_HALF;
     this.leaves[0].visible = show; this.leaves[1].visible = show && two;
     if (!d || !show) return;
-    const tx = -d.nz, tz = d.nx, yaw = Math.atan2(-tz, tx), y0 = CURB_H, W = d.half * 2, H = d.h;   // t: along the wall
+    const tx = -d.nz, tz = d.nx, yaw = Math.atan2(-tz, tx), y0 = d.y ?? CURB_H, W = d.half * 2, H = d.h;   // t: along the wall
     this.hole.position.set(d.x + d.nx * 0.1, y0 + H / 2, d.z + d.nz * 0.1);
     this.hole.rotation.set(0, yaw, 0);
     this.hole.scale.set(W, H, 0.02);

@@ -17,7 +17,7 @@ import { Journey } from "../src/journey.ts";
   const err = (m: string) => { if (errs.length < 40) errs.push(`t${j.st.simTime.toFixed(1)} ${m}`); };
   let px = j.pose.x, pz = j.pose.z, ph = j.pose.h, pmode = j.st.mode, ptruck = j.st.truck, pcity = j.st.city;
   let redStops = 0, redTime = 0, atRed = false, curRed = 0, longReds = 0;
-  let still = 0, reverses = 0, docks = 0, kerbs = 0, swaps = 0;
+  let still = 0, reverses = 0, docks = 0, kerbs = 0, swaps = 0, garages = 0;
   const kinds: Record<string, number> = {}, dockBy: Record<string, number> = {}, kerbBy: Record<string, number> = {};
   const arrivals: string[] = [];
   j.onEvent = (line) => { if (/arrived|swap|no route|no job/.test(line) || (globalThis as any).process.env.JTLOG) arrivals.push(line); };
@@ -76,6 +76,13 @@ import { Journey } from "../src/journey.ts";
       if (stop.kind === "swap") swaps++;
       else if (j.dock) { docks++; dockBy[st.truck] = (dockBy[st.truck] ?? 0) + 1; }
       else { kerbs++; kerbBy[st.truck] = (kerbBy[st.truck] ?? 0) + 1; }
+      // Up on a garage's roof: level, at its height.
+      if (j.garageStop(stop)) {
+        garages++;
+        const l = j.truckLift();
+        if (Math.abs(l.y - 4.8) > 1e-6 || Math.abs(l.grade) > 1e-6) err(`not on the garage roof at its stop: y${l.y.toFixed(2)} grade ${l.grade.toFixed(3)}`);
+        if ((globalThis as any).process.env.JTFIND) console.log(`FIND garage ${st.truck} t=${(st.simTime / 60).toFixed(2)}min ${stop.site?.name}`);
+      }
     }
     const jump = Math.hypot(j.pose.x - px, j.pose.z - pz);
     const dh = Math.abs(Math.atan2(Math.sin(j.pose.h - ph), Math.cos(j.pose.h - ph)));
@@ -130,6 +137,7 @@ import { Journey } from "../src/journey.ts";
   j.seekTo(n * DT);
   const st = j.st;
   for (const d of departs) console.log("  " + d);
+  console.log(`garage roofs ${garages}`);
   console.log(`red-light stops ${redStops} (${longReds} over 5 s), waiting ${redTime.toFixed(0)} s`);
   console.log(`state json ${JSON.stringify(j.snapshot()).length} bytes, keyframes ${j.keyframeCount}`);
   console.log(`minutes ${minutes} stops ${st.stopsDone} cities ${st.city} truck ${st.truck}`);

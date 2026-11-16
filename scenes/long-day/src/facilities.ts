@@ -221,7 +221,10 @@ export type StandKind = "farmStand" | "pottingShed" | "salesHut" | "ticketBooth"
 // stands end-on to the street, its cargo doors facing the kerb, in a deeper gap before the
 // warehouse; a park's building goes further back.
 export interface StandLayout { kind: "stand"; side: number; a: number; stand: StandKind; look: number; forklift: boolean }
-export type SiteLayout = DockLayout | LotLayout | KerbLayout | StandLayout;
+// A parking garage with a rooftop stop (garage.ts): trucks come along `side`, drive up onto its
+// roof and leave down its far ramp.
+export interface GarageLayout { kind: "garage"; side: number }
+export type SiteLayout = DockLayout | LotLayout | KerbLayout | StandLayout | GarageLayout;
 const STANDS: Partial<Record<FacilityId, StandKind>> = {
   farm: "farmStand", farmCoop: "farmStand", greenhouse: "pottingShed", treeFarm: "pottingShed",
   pumpkinPatch: "salesHut", treeLot: "salesHut", countyFair: "ticketBooth", pettingZoo: "ticketBooth",
@@ -249,6 +252,7 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   if (!isDock(fac)) {
     const district = plan.district(bx, bz);
     if (district === "industrial") return { kind: "stand", side, a: STAND_DOOR_A, stand: "container", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
+    if ((district === "downtown" || district === "commercial") && h(0x6a7a) < 0.2) return { kind: "garage", side };
     if (district !== "park") return { kind: "kerb" };
     return { kind: "stand", side, a: STAND_DOOR_A, stand: STANDS[fac] ?? "farmStand", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
   }

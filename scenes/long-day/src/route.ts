@@ -43,10 +43,30 @@ export interface DockGeom { x: number; z: number; H: number; Lb: number; R: numb
 // The bay's roll-up door in world space (centre of its foot on the wall, half-width, height) and
 // the leveller lip's hinge at the platform edge: what DockFx opens and lowers.
 export interface DockDoor { x: number; z: number; w: number; h: number; lx: number; lz: number }
-export interface Route { ix: number; iz: number; dir: number; before: number; moves: string; after: number; dock?: DockGeom }
+export interface Route { ix: number; iz: number; dir: number; before: number; moves: string; after: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom }
+
+// A parking garage's rooftop stop (facilities.ts "garage", garage.ts builds it): from the kerb
+// lane a right turn into the block, a ramp up along its side, a left turn onto the level lane
+// across the back of the roof, where the truck stops (`garageIn`, appended to the route). The way
+// out (`garageOut`, from the stop at x, z on heading h) carries on along the roof, turns left
+// down the far side's ramp and turns left out across the street, into the kerb lane back the
+// way the truck came. Each step goes on from where the last ended.
+export const GARAGE_H = 4.8;
+export interface GarageGeom { x: number; z: number; h: number }
+type TailStep = { turn: number; sgn: 1 | -1; v: number } | { line: number; v: number };
+const GARAGE_IN: TailStep[] = [{ turn: 7, sgn: -1, v: 2.8 }, { line: 26.5, v: 3.4 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 3, v: 2.5 }];
+const GARAGE_OUT: TailStep[] = [{ line: 9, v: 3 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 33.5, v: 3.4 }, { turn: 9, sgn: 1, v: 3 }];
+// Where on the way in the ramp rises (from the start of step 1 to the end of step 2), and where on
+// the way out it comes down.
+const GARAGE_IN_RAMP = [1, 2], GARAGE_OUT_RAMP = [1, 2];
+// A ramp's height profile: a steady slope, eased in and out over its ends.
+function rampProfile(u: number) {
+  const e = 0.15, m = 1 / (1 - e), x = Math.min(Math.max(u, 0), 1);
+  return x < e ? m * x * x / (2 * e) : x > 1 - e ? 1 - m * (1 - x) * (1 - x) / (2 * e) : m * (x - e / 2);
+}
 
 // A line holds lane offset o0, changes to o1 over [c0, c0 + tc] (tc 0: no change), then holds it.
-interface LinePiece { kind: "line"; s0: number; len: number; x0: number; z0: number; dir: number; o0: number; o1: number; c0: number; tc: number }
+interface LinePiece { kind: "line"; s0: number; len: number; x0: number; z0: number; dir: number; o0: number; o1: number; c0: number; tc: number; vmax?: number }
 // A 90-degree turn: easement spiral, circular arc, easement spiral, so the curvature (and the
 // front wheels) build up and wind off smoothly instead of snapping at the turn's ends. `sc` is
 // metres per unit of TURN_UNIT, `sgn` +1 for left, -1 for right.
@@ -91,8 +111,54 @@ export class Path {
   readonly turns: { s: number; dir: -1 | 1 }[] = [];  // turn starts, for indicators
   length = 0;
   private cursor = 0;
+  // Ramps (a garage's): height y0 at s0 to y1 at s1; level elsewhere, at the last one's end.
+  readonly ramps: { s0: number; s1: number; y0: number; y1: number }[] = [];
 
-  constructor(readonly route: Route) {
+  // Steps from (x, z) on heading h, from the end of the path so far; the ramp over steps r0..r1
+  // goes from y0 to y1.
+  private tail(steps: TailStep[], x: number, z: number, h: number, ramp: number[], y0: number, y1: number) {
+    let rs0 = 0, rs1 = 0;
+    steps.forEach((st, i) => {
+      if (i === ramp[0]) rs0 = this.length;
+      if ("turn" in st) {
+        this.turns.push({ s: this.length, dir: st.sgn > 0 ? -1 : 1 });
+        const tp = turnPiece(this.length, x, z, h, st.turn, st.sgn, st.v);
+        this.pieces.push(tp); this.length += tp.len;
+        x += Math.cos(h) * st.turn - Math.sin(h) * st.turn * st.sgn;
+        z += -Math.sin(h) * st.turn - Math.cos(h) * st.turn * st.sgn;
+        h += st.sgn * Math.PI / 2;
+      } else {
+        const d = ((Math.round(h / (Math.PI / 2)) % 4) + 4) % 4;
+        this.pieces.push({ kind: "line", s0: this.length, len: st.line, x0: x, z0: z, dir: d, o0: 0, o1: 0, c0: 0, tc: 0, vmax: st.v });
+        this.length += st.line;
+        x += Math.cos(h) * st.line; z -= Math.sin(h) * st.line;
+      }
+      if (i === ramp[1]) rs1 = this.length;
+    });
+    this.ramps.push({ s0: rs0, s1: rs1, y0, y1 });
+    return { x, z, h };
+  }
+  // The height of the path at s (0 but on a garage's ramps and roof), and its grade.
+  yAt(s: number) {
+    if (!this.ramps.length) return 0;
+    let y = this.ramps[0].y0;
+    for (const r of this.ramps) {
+      if (s <= r.s0) break;
+      if (s >= r.s1) { y = r.y1; continue; }
+      return r.y0 + (r.y1 - r.y0) * rampProfile((s - r.s0) / (r.s1 - r.s0));
+    }
+    return y;
+  }
+  gradeAt(s: number) { return this.ramps.length ? (this.yAt(s + 1) - this.yAt(s - 1)) / 2 : 0; }
+  // Just a garage's way in (from the kerb lane at x, z on heading h) or out (from the stop): for
+  // drawing its ramps (garage.ts).
+  static garageTrack(out: boolean, x: number, z: number, h: number): Path {
+    const p = new Path({ ix: 0, iz: 0, dir: 0, before: 0, moves: "", after: 0, garageOut: out ? { x, z, h } : undefined }, true);
+    if (!out) p.tail(GARAGE_IN, x, z, h, GARAGE_IN_RAMP, 0, GARAGE_H);
+    return p;
+  }
+
+  constructor(readonly route: Route, trackOnly = false) {
     let d = route.dir;
     let nx = route.ix, nz = route.iz;                    // the node being approached
     let lx = nodeX(nx) - DIR_X[d] * route.before, lz = nodeZ(nz) - DIR_Z[d] * route.before; // current leg start
@@ -111,6 +177,13 @@ export class Path {
       this.length += tp.len;
       legS = this.length;
     }
+    if (route.garageOut) {
+      // Down out of a garage: the route starts at its rooftop stop.
+      const g = route.garageOut;
+      this.tail(GARAGE_OUT, g.x, g.z, g.h, GARAGE_OUT_RAMP, GARAGE_H, 0);
+      legS = this.length;
+      if (trackOnly) { this.endDir = 0; this.endNode = [0, 0]; return; }
+    } else if (trackOnly) { this.endDir = 0; this.endNode = [0, 0]; return; }
     const pushLine = (ex: number, ez: number, o1: number) => {
       const len = Math.max(0, (ex - lx) * DIR_X[d] + (ez - lz) * DIR_Z[d]);
       // Only two lanes, so a line changes lane at most once: none when both ends share one.
@@ -150,6 +223,11 @@ export class Path {
     // Final leg to the stop point, `after` metres past the last move's node.
     pushLine(nodeX(lastX) + DIR_X[d] * route.after, nodeZ(lastZ) + DIR_Z[d] * route.after, LANE_KERB);
     this.endDir = d; this.endNode = [lastX, lastZ];
+    if (route.garageIn) {
+      // On into a garage and up onto its roof, from the kerb lane where the street leg ends.
+      const h = d * Math.PI / 2, ex = nodeX(lastX) + DIR_X[d] * route.after + Math.sin(h) * LANE_KERB, ez = nodeZ(lastZ) + DIR_Z[d] * route.after + Math.cos(h) * LANE_KERB;
+      this.tail(GARAGE_IN, ex, ez, h, GARAGE_IN_RAMP, 0, GARAGE_H);
+    }
   }
   endDir: number; endNode: [number, number];
 
@@ -203,6 +281,7 @@ export class Path {
       if (p.s0 > s + range) break;
       if (p.kind === "arc") { limit(p.s0, p.s0 + p.len, p.vmax); continue; }
       if (p.tc > 0) limit(p.s0 + p.c0, p.s0 + p.c0 + p.tc, Math.sqrt(LANE_LAT_ACCEL * p.tc * p.tc / (SMOOTH_DD_MAX * Math.abs(p.o1 - p.o0))));
+      if (p.vmax !== undefined) limit(p.s0, p.s0 + p.len, p.vmax);
     }
     return v;
   }
