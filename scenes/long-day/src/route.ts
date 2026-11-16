@@ -9,9 +9,12 @@
 // one move per node it reaches (S straight, L left, R right) and ends `after` metres past the
 // node of its last move. The path is a chain of line pieces (with smooth lane changes) and
 // quarter-circle turns, parameterised by distance s. The truck's rear axle rides on it.
-// Turns are sized for a 26 ft box truck's rear axle: right turns run kerb lane to inner lane at
-// r = 6.5 m (clearing the kerb corner by about a metre), left turns inner lane to inner lane at
-// r = 9 m. Lines then merge back to the kerb lane.
+// Turns are sized for a 26 ft box truck's rear axle: right turns swing kerb lane to kerb lane at
+// r = 6.5 m (the rear axle passing 4.3 m from the kerb corner), left turns inner lane to inner
+// lane at r = 9 m. Between turns a line keeps to the kerb lane, unless both of its ends are in
+// the inner lane (out of a left and into another): then it stays there rather than weave out and
+// back. The journey ignores traffic, so a right turn never waits for a clear kerb lane: traffic
+// gets out of the truck's way instead (traffic.ts).
 import type { SignalAxis } from "./signals.ts";
 import { BLOCK, STREET } from "./grid.ts";
 
@@ -23,10 +26,13 @@ export const turnDir = (d: number, m: Move) => (m === "L" ? (d + 1) % 4 : m === 
 
 export const LANE_KERB = 4.5, LANE_INNER = 1.5;
 const R_RIGHT = 6.5, R_LEFT = 9;
-const EXT_IN = { R: LANE_INNER + R_RIGHT, L: R_LEFT - LANE_INNER };   // turn start, before the node centre
+const EXT_IN = { R: LANE_KERB + R_RIGHT, L: R_LEFT - LANE_INNER };   // turn start, before the node centre
 const EXT_OUT = { R: LANE_KERB + R_RIGHT, L: R_LEFT - LANE_INNER };   // turn end, past the node centre
-const OFF_IN = { R: LANE_KERB, L: LANE_INNER }, OFF_OUT = { R: LANE_INNER, L: LANE_INNER };
-const LANE_CHANGE = 18;  // metres for a lane change
+const OFF_IN = { R: LANE_KERB, L: LANE_INNER }, OFF_OUT = { R: LANE_KERB, L: LANE_INNER };
+// A lane change: at most LANE_CHANGE metres, and at most LANE_CHANGE_SHARE of its line. The rest
+// of the line is split between a run out of the turn before it (LANE_HOLD) and a settled run in
+// the new lane before the turn or stop after it (LANE_LEAD), in that proportion when short.
+const LANE_CHANGE = 26, LANE_CHANGE_SHARE = 0.75, LANE_HOLD = 12, LANE_LEAD = 15;
 const LANE_LAT_ACCEL = 2.5;  // m/s^2 at the sharpest point of a lane change
 const SPEED_RIGHT = 4.2, SPEED_LEFT = 5.2, DOCK_TURN_SPEED = 2.6;
 
@@ -39,7 +45,8 @@ export interface DockGeom { x: number; z: number; H: number; Lb: number; R: numb
 export interface DockDoor { x: number; z: number; w: number; h: number; lx: number; lz: number }
 export interface Route { ix: number; iz: number; dir: number; before: number; moves: string; after: number; dock?: DockGeom }
 
-interface LinePiece { kind: "line"; s0: number; len: number; x0: number; z0: number; dir: number; o0: number; o1: number; t0: number; t1: number }
+// A line holds lane offset o0, changes to o1 over [c0, c0 + tc] (tc 0: no change), then holds it.
+interface LinePiece { kind: "line"; s0: number; len: number; x0: number; z0: number; dir: number; o0: number; o1: number; c0: number; tc: number }
 // A 90-degree turn: easement spiral, circular arc, easement spiral, so the curvature (and the
 // front wheels) build up and wind off smoothly instead of snapping at the turn's ends. `sc` is
 // metres per unit of TURN_UNIT, `sgn` +1 for left, -1 for right.
@@ -96,7 +103,7 @@ export class Path {
       // reference is shifted left to put the path on the bay's centreline.
       const k = route.dock, sh = Math.sin(k.H), ch = Math.cos(k.H);
       const bayDir = Math.round(k.H / (Math.PI / 2)) % 4;
-      this.pieces.push({ kind: "line", s0: 0, len: k.Lb, x0: k.x - sh * LANE_KERB, z0: k.z - ch * LANE_KERB, dir: bayDir, o0: LANE_KERB, o1: LANE_KERB, t0: 0, t1: 0 });
+      this.pieces.push({ kind: "line", s0: 0, len: k.Lb, x0: k.x - sh * LANE_KERB, z0: k.z - ch * LANE_KERB, dir: bayDir, o0: LANE_KERB, o1: LANE_KERB, c0: 0, tc: 0 });
       this.length = k.Lb;
       this.turns.push({ s: this.length, dir: 1 });
       const tp = turnPiece(this.length, k.x + ch * k.Lb, k.z - sh * k.Lb, k.H, k.R, -1, DOCK_TURN_SPEED);
@@ -106,8 +113,16 @@ export class Path {
     }
     const pushLine = (ex: number, ez: number, o1: number) => {
       const len = Math.max(0, (ex - lx) * DIR_X[d] + (ez - lz) * DIR_Z[d]);
-      const t0 = lo !== LANE_KERB ? Math.min(LANE_CHANGE, len / 2) : 0, t1 = o1 !== LANE_KERB ? Math.min(LANE_CHANGE, len / 2) : 0;
-      this.pieces.push({ kind: "line", s0: this.length, len, x0: lx, z0: lz, dir: d, o0: lo, o1, t0, t1 });
+      // Only two lanes, so a line changes lane at most once: none when both ends share one.
+      let c0 = 0, tc = 0;
+      if (lo !== o1) {
+        tc = Math.min(LANE_CHANGE, len * LANE_CHANGE_SHARE);
+        // Out of a turn to the kerb: a run out of the turn first. Into the inner lane for a left
+        // (no turn behind needs a run-out): as early as the settled run before the left allows.
+        if (o1 === LANE_KERB) c0 = len - tc > LANE_HOLD + LANE_LEAD ? LANE_HOLD : (len - tc) * LANE_HOLD / (LANE_HOLD + LANE_LEAD);
+        else c0 = Math.max(0, len - LANE_LEAD - tc);
+      }
+      this.pieces.push({ kind: "line", s0: this.length, len, x0: lx, z0: lz, dir: d, o0: lo, o1, c0, tc });
       this.length += len;
     };
     for (const ch of route.moves) {
@@ -163,10 +178,9 @@ export class Path {
       out.h = p.h0 + p.sgn * U.hAt(w); out.k = p.sgn * U.kAt(w) / p.sc;
       return out;
     }
-    // Lane offset: o0 blends to the kerb lane over t0, then to o1 over the last t1 metres.
-    let o = LANE_KERB, od = 0, odd = 0;
-    if (p.t0 > 0 && u < p.t0) { const w = u / p.t0; o = p.o0 + (LANE_KERB - p.o0) * smooth(w); od = (LANE_KERB - p.o0) * smoothD(w) / p.t0; odd = (LANE_KERB - p.o0) * smoothDD(w) / (p.t0 * p.t0); }
-    else if (p.t1 > 0 && u > p.len - p.t1) { const w = (u - (p.len - p.t1)) / p.t1; o = LANE_KERB + (p.o1 - LANE_KERB) * smooth(w); od = (p.o1 - LANE_KERB) * smoothD(w) / p.t1; odd = (p.o1 - LANE_KERB) * smoothDD(w) / (p.t1 * p.t1); }
+    // Lane offset: o0, blending to o1 over [c0, c0 + tc].
+    let o = u < p.c0 || p.tc <= 0 ? p.o0 : p.o1, od = 0, odd = 0;
+    if (p.tc > 0 && u >= p.c0 && u <= p.c0 + p.tc) { const w = (u - p.c0) / p.tc, D = p.o1 - p.o0; o = p.o0 + D * smooth(w); od = D * smoothD(w) / p.tc; odd = D * smoothDD(w) / (p.tc * p.tc); }
     this.lastOffset = o;
     const h = p.dir * Math.PI / 2, sh = Math.sin(h), ch = Math.cos(h);
     out.x = p.x0 + ch * u + sh * o;
@@ -188,8 +202,7 @@ export class Path {
     for (const p of this.pieces) {
       if (p.s0 > s + range) break;
       if (p.kind === "arc") { limit(p.s0, p.s0 + p.len, p.vmax); continue; }
-      if (p.t0 > 0) limit(p.s0, p.s0 + p.t0, Math.sqrt(LANE_LAT_ACCEL * p.t0 * p.t0 / (SMOOTH_DD_MAX * Math.abs(LANE_KERB - p.o0))));
-      if (p.t1 > 0) limit(p.s0 + p.len - p.t1, p.s0 + p.len, Math.sqrt(LANE_LAT_ACCEL * p.t1 * p.t1 / (SMOOTH_DD_MAX * Math.abs(p.o1 - LANE_KERB))));
+      if (p.tc > 0) limit(p.s0 + p.c0, p.s0 + p.c0 + p.tc, Math.sqrt(LANE_LAT_ACCEL * p.tc * p.tc / (SMOOTH_DD_MAX * Math.abs(p.o1 - p.o0))));
     }
     return v;
   }
