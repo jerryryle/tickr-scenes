@@ -56,6 +56,16 @@ import { Journey } from "../src/journey.ts";
         for (let s = r.gateS - 700; s < r.length; s += 1) ts = Math.max(ts, Math.abs(r.truckY(s + 1) - r.truckY(s)));
         if (ts > 0.07) err(`on-ramp too steep: ${(ts * 100).toFixed(1)}% (c${j.st.city})`);
         if (Math.abs(r.truckY(r.length) - 9.6) > 1e-6) err(`not on the freeway at its off-ramp (c${j.st.city})`);
+        // How hard it turns going over onto the on-ramp and up it (sideways pull, m/s^2).
+        const q0 = { x: 0, z: 0, h: 0, k: 0 }, q1 = { x: 0, z: 0, h: 0, k: 0 };
+        let lat = 0;
+        for (let u = r.duration - 20; u < r.duration + r.arriveDur - 0.5; u += 0.25) {
+          r.poseAt(u, q0); r.poseAt(u + 0.25, q1);
+          const ds = Math.hypot(q1.x - q0.x, q1.z - q0.z), dh = Math.atan2(Math.sin(q1.h - q0.h), Math.cos(q1.h - q0.h));
+          if (ds > 0.2) lat = Math.max(lat, Math.abs(dh / ds) * (ds / 0.25) ** 2);
+        }
+        if (lat > 2.2) err(`on-ramp too sharp: ${lat.toFixed(2)} m/s^2 (c${j.st.city})`);
+        console.log(`ONRAMP c${j.st.city} lateral ${lat.toFixed(2)} m/s^2`);
       }
       console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome}${r.inp.toFreeway ? (r.inp.toFreewayMerge ? " (freeway, merging)" : " (freeway)") : ""} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
     }

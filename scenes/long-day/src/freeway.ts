@@ -29,22 +29,25 @@ import { headLamp, tailLamp } from "./traffic.ts";
 export const FW_TOP = 9.6;             // the deck's top (clear of the streetlights' arms under it)
 export const FW_HALF = 7.4;            // half the deck's width
 export const FW_COLS = 8.2;            // a bent's columns, either side of the deck's centre line
-export const FW_SHIFT = -16;           // out on the entry side the deck runs this far to the highway's left
+export const FW_SHIFT = 16;            // out on the entry side the deck runs this far to the highway's right
 const FW_SHIFT_LEN = 130;              // and swings over to the street line within this of the gate end
-// Out of town each way it runs straight for FW_BEND, then curves away from the line (radius
-// FW_BEND_R, a quarter turn) and runs straight on for FW_LEG, out of sight.
-const FW_BEND = 350, FW_BEND_R = 600, FW_LEG = 900;
+// Out of town each way it runs straight for FW_BEND (on the entry side, past the on-ramp), then
+// curves away from the line (radius FW_BEND_R, a quarter turn) and runs straight on for FW_LEG,
+// out of sight.
+const FW_BEND = 780, FW_BEND_FAR = 350, FW_BEND_R = 600, FW_LEG = 900;
 export const FW_TIP = FW_BEND + FW_BEND_R * Math.PI / 2 + FW_LEG;   // its far end, from the gate end
+const FW_TIP_FAR = FW_BEND_FAR + FW_BEND_R * Math.PI / 2 + FW_LEG;   // and on the far side, from the city's far edge
 const FW_BENT_STEP = 30;
-// The on-ramp: off the highway's lane to the left (DIV), up beside the freeway (UP), and across
-// into its right-hand lane (MERGE), the truck's lane all the way (onRampN, onRampY).
-const RAMP_DIV0 = 560, RAMP_DIV1 = 470, RAMP_UP0 = 440, RAMP_UP1 = 230, RAMP_MERGE1 = 150;
-const RAMP_N = -5.6, RAMP_HALF = 2.6;
+// The on-ramp: an exit lane off the highway to the right (DIV), across under the freeway at
+// ground level between its columns, up along its far side (UP), and into its right-hand lane
+// over a taper (MERGE): the truck's lane all the way (onRampN, onRampY).
+const RAMP_DIV0 = 720, RAMP_DIV1 = 560, RAMP_UP0 = 560, RAMP_UP1 = 330, RAMP_MERGE1 = 250;
+const RAMP_N = 28, RAMP_HALF = 2.6, ROAD_EDGE = 4.1;
 export const FW_LANE_N = 5.4;           // the freeway's right-hand lane coming in (its outer one)
 // Off the freeway into town (interchange.ts): from its right-hand lane FW_OFF_A along the street
 // from the FW_OFF_K-th node in from the gate; FW_OFF_D past the gate end along the line.
-export const FW_OFF_K = 2, FW_OFF_A = 35, FW_OFF_D = (BLOCK - STREET / 2) + FW_OFF_K * BLOCK + FW_OFF_A;
-export const FW_OFF_V = 4;              // the truck's speed as it leaves the freeway
+export const FW_OFF_K = 2, FW_OFF_A = -50, FW_OFF_D = (BLOCK - STREET / 2) + FW_OFF_K * BLOCK + FW_OFF_A;
+export const FW_OFF_V = 10;             // the truck's speed as it starts off the freeway (it slows on the ramp)
 const FW_CONCRETE = 0x9a978e, FW_GIRDER = 0x6f7276, FW_ASPHALT = 0x3a3b3f, FW_WHITE = 0xe8e8e0, FW_YELLOW = 0xf2c200;
 
 const fwEase = (u: number) => { const t = THREE.MathUtils.clamp(u, 0, 1); return t * t * (3 - 2 * t); };
@@ -77,13 +80,17 @@ export function onRampY(d: number) {
   if (d > RAMP_UP1) return FW_TOP * fwEase((RAMP_UP0 - d) / (RAMP_UP0 - RAMP_UP1));
   return FW_TOP;
 }
-// The on-ramp's deck edges at d: its left clipped to the freeway's right edge, its right closing
-// in on it over the merge (a taper).
+// The on-ramp's edges at d: leaving the highway, its left clipped to the highway's edge (a gore
+// opening from it); over the merge, its left clipped to the freeway's right edge and its right
+// closing in on it (a taper).
 function rampEdges(d: number): [number, number] {
-  const c = onRampN(d, RAMP_N), fwEdge = fwM(d) + FW_HALF;
-  const right = d > RAMP_UP1 ? RAMP_N + RAMP_HALF : RAMP_N + RAMP_HALF + (fwEdge - (RAMP_N + RAMP_HALF)) * fwSmooth((RAMP_UP1 - d) / (RAMP_UP1 - RAMP_MERGE1));
-  return [Math.max(c - RAMP_HALF, fwEdge), right];
+  const c = onRampN(d, ONRAMP_FROM), fwEdge = fwM(d) + FW_HALF;
+  if (d > RAMP_UP0) return [Math.max(c - RAMP_HALF, ROAD_EDGE), c + RAMP_HALF];
+  if (d > RAMP_UP1) return [c - RAMP_HALF, c + RAMP_HALF];
+  const right = RAMP_N + RAMP_HALF + (fwEdge - (RAMP_N + RAMP_HALF)) * fwSmooth((RAMP_UP1 - d) / (RAMP_UP1 - RAMP_MERGE1));
+  return [Math.max(c - RAMP_HALF, fwEdge), Math.max(right, fwEdge)];
 }
+const ONRAMP_FROM = 1.85;   // (the highway's lane: country.ts LANE)
 
 export class Frame {
   readonly ox: number; readonly oz: number; readonly rx: number; readonly rz: number;
@@ -118,14 +125,15 @@ export class Frame {
   private at(d: number) {
     const p = this.pt, R = FW_BEND_R, q = Math.PI / 2 * R;
     if (d > FW_BEND) {
-      // Entry side: bending towards -n from the deck's line at n = FW_SHIFT.
-      const u = d - FW_BEND, kx = this.x + this.ox * FW_BEND + this.rx * (FW_SHIFT - R), kz = this.z + this.oz * FW_BEND + this.rz * (FW_SHIFT - R);
-      if (u <= q) { const c = Math.cos(u / R), s = Math.sin(u / R); p.ax = this.rx * c + this.ox * s; p.az = this.rz * c + this.oz * s; p.x = kx + p.ax * R; p.z = kz + p.az * R; }
-      else { p.ax = this.ox; p.az = this.oz; p.x = kx + this.ox * R - this.rx * (u - q); p.z = kz + this.oz * R - this.rz * (u - q); }
+      // Entry side: bending away from the highway (towards the side it runs on) from its line at
+      // n = FW_SHIFT.
+      const sg = Math.sign(FW_SHIFT), u = d - FW_BEND, kx = this.x + this.ox * FW_BEND + this.rx * (FW_SHIFT + sg * R), kz = this.z + this.oz * FW_BEND + this.rz * (FW_SHIFT + sg * R);
+      if (u <= q) { const c = Math.cos(u / R), s = Math.sin(u / R); p.ax = this.rx * c - sg * this.ox * s; p.az = this.rz * c - sg * this.oz * s; p.x = kx - sg * p.ax * R; p.z = kz - sg * p.az * R; }
+      else { p.ax = -sg * this.ox; p.az = -sg * this.oz; p.x = kx + this.ox * R + sg * this.rx * (u - q); p.z = kz + this.oz * R + sg * this.rz * (u - q); }
       p.x -= p.ax * FW_SHIFT; p.z -= p.az * FW_SHIFT;   // (n is measured from where the line's n = 0 would be)
       return p;
     }
-    const fb = this.far - FW_BEND;
+    const fb = this.far - FW_BEND_FAR;
     if (d < fb) {
       // Far side: bending towards farSide * n from the line.
       const v = fb - d, sg = this.farSide, kx = this.x + this.ox * fb + this.rx * sg * R, kz = this.z + this.oz * fb + this.rz * sg * R;
@@ -144,11 +152,11 @@ export class Frame {
   nAt(x: number, z: number) { return (x - this.x) * this.rx + (z - this.z) * this.rz; }
   // The freeway's d nearest (x, z) and how far across from its centre line (x, z) is.
   locate(x: number, z: number): { d: number; off: number } {
-    let d = THREE.MathUtils.clamp(this.dAt(x, z), this.far - FW_TIP, FW_TIP);
+    let d = THREE.MathUtils.clamp(this.dAt(x, z), this.far - FW_TIP_FAR, FW_TIP);
     // (Out on the bends: search along it.)
-    if (d > FW_BEND - 1 || d < this.far - FW_BEND + 1) {
+    if (d > FW_BEND - 1 || d < this.far - FW_BEND_FAR + 1) {
       let best = d, bd = Infinity;
-      const lo = d > 0 ? FW_BEND : this.far - FW_TIP, hi = d > 0 ? FW_TIP : this.far - FW_BEND;
+      const lo = d > 0 ? FW_BEND : this.far - FW_TIP_FAR, hi = d > 0 ? FW_TIP : this.far - FW_BEND_FAR;
       for (let u = lo; u <= hi; u += 20) { const dx = this.px(u, this.m(u)) - x, dz = this.pz(u, this.m(u)) - z, e = dx * dx + dz * dz; if (e < bd) { bd = e; best = u; } }
       for (let st = 10; st > 0.5; st /= 2) for (const u of [best - st, best + st]) { if (u < lo || u > hi) continue; const dx = this.px(u, this.m(u)) - x, dz = this.pz(u, this.m(u)) - z, e = dx * dx + dz * dz; if (e < bd) { bd = e; best = u; } }
       d = best;
@@ -159,18 +167,18 @@ export class Frame {
   // The underside of the deck over (x, z), if (x, z) is under it (the camera keeps below it).
   under(x: number, z: number): number | null {
     const L = this.locate(x, z);
-    if (Math.abs(L.off) > FW_HALF + 0.5 || L.d > FW_TIP || L.d < this.far - FW_TIP) return null;
+    if (Math.abs(L.off) > FW_HALF + 0.5 || L.d > FW_TIP || L.d < this.far - FW_TIP_FAR) return null;
     return FW_TOP - 2.2;
   }
   // Is (x, z) where the freeway or its on-ramp stands (scenery keeps out)?
   corridor(x: number, z: number) {
     const d0 = this.dAt(x, z), n0 = this.nAt(x, z);
     // (Quick: the bends go off to one side only.)
-    if ((d0 > 0 && n0 > 12 + RAMP_HALF) || (d0 < this.far && n0 * this.farSide < -12)) return false;
+    if ((d0 > 0 && n0 * Math.sign(FW_SHIFT) < -8) || (d0 < this.far && n0 * this.farSide < -12)) return false;
+    // The on-ramp (its lane, out to its edges and a little more).
+    if (d0 > RAMP_MERGE1 - 20 && d0 < RAMP_DIV0 + 20) { const c = onRampN(THREE.MathUtils.clamp(d0, RAMP_MERGE1, RAMP_DIV0), ONRAMP_FROM); if (Math.abs(n0 - c) < RAMP_HALF + 3) return true; }
     const L = this.locate(x, z);
-    if (L.d <= FW_TIP + 10 && L.d >= this.far - FW_TIP - 10 && Math.abs(L.off) < FW_COLS + 2) return true;
-    const d = this.dAt(x, z), n = this.nAt(x, z);
-    return d > RAMP_MERGE1 - 20 && d < RAMP_UP0 + 20 && n > RAMP_N - RAMP_HALF - 3 && n < RAMP_N + RAMP_HALF + 2.5;
+    return L.d <= FW_TIP + 10 && L.d >= this.far - FW_TIP_FAR - 10 && Math.abs(L.off) < FW_COLS + 2;
   }
 }
 
@@ -190,7 +198,7 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
   };
   const keep = b.dy; b.dy = 0;
   // (Finer where the deck bends, so its pieces follow it without gaps.)
-  const bendy = (a: number) => (a > -1 && a < FW_SHIFT_LEN + 1) || (a > FW_BEND - 1 && a < FW_BEND + FW_BEND_R * Math.PI / 2 + 1) || (a < F.far - FW_BEND + 1 && a > F.far - FW_BEND - FW_BEND_R * Math.PI / 2 - 1);
+  const bendy = (a: number) => (a > -1 && a < FW_SHIFT_LEN + 1) || (a > FW_BEND - 1 && a < FW_BEND + FW_BEND_R * Math.PI / 2 + 1) || (a < F.far - FW_BEND_FAR + 1 && a > F.far - FW_BEND_FAR - FW_BEND_R * Math.PI / 2 - 1);
   const stepAt = (a: number) => (bendy(a) ? 2 : STEP);
   const next = (a: number) => Math.min(d1, (Math.floor(a / stepAt(a) + 1e-9) + 1) * stepAt(a));
   const gore = (a: number, a2: number) => a >= RAMP_MERGE1 - 1e-6 && a2 <= RAMP_UP1 + 12;   // where the on-ramp joins (the parapet is open)
@@ -223,14 +231,21 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
   // The on-ramp: one continuous surface (its deck's top, sides and underside), parapets along its
   // edges once it is up, a wall under it low down and piers higher up.
   if (parts.ramp) {
-    const r0 = Math.max(d0, RAMP_MERGE1), r1 = Math.min(d1, RAMP_UP0);
+    const r0 = Math.max(d0, RAMP_MERGE1), r1 = Math.min(d1, RAMP_DIV0);
     type V = [number, number, number];
     const quad = (p: V, q: V, r: V, s: V, color: number, face: V) => { b.tri(...p, ...q, ...r, color, face); b.tri(...p, ...r, ...s, color, face); };
-    const P = (d: number, n: number, dy: number): V => [F.px(d, n) - ax, onRampY(d) - 0.01 + dy, F.pz(d, n) - az];
+    // (On the ground it is just its pavement, a few millimetres under the highway's at its edge.)
+    const P = (d: number, n: number, dy: number): V => [F.px(d, n) - ax, Math.max(onRampY(d) - 0.01, -0.006) + dy, F.pz(d, n) - az];
     for (let a = r0; a < r1 - 1e-6; a = Math.min(r1, a + 2)) {
       const a2 = Math.min(r1, a + 2), [la, ra] = rampEdges(a), [lb, rb] = rampEdges(a2), ya = onRampY(a), yb = onRampY(a2);
       const out: V = [F.ox, 0, F.oz], right: V = [F.rx, 0, F.rz], left: V = [-F.rx, 0, -F.rz];
-      quad(P(a, la, 0), P(a, ra, 0), P(a2, rb, 0), P(a2, lb, 0), FW_ASPHALT, [0, 1, 0]);
+      if (rb - lb < 0.05 && ra - la < 0.05) continue;
+      quad(P(a, la, 0), P(a, ra, 0), P(a2, rb, 0), P(a2, lb, 0), 0x34353a, [0, 1, 0]);
+      if (Math.max(ya, yb) < 0.02) {
+        // At grade: its edge lines (the left one only once clear of the highway).
+        for (const [na, nb, k] of [[ra, rb, 1], [la, lb, -1]] as const) if (k > 0 || la > ROAD_EDGE + 0.3) quad(P(a, na - k * 0.25, 0.012), P(a, na - k * 0.11, 0.012), P(a2, nb - k * 0.11, 0.012), P(a2, nb - k * 0.25, 0.012), FW_WHITE, [0, 1, 0]);
+        continue;
+      }
       quad(P(a, la, -0.7), P(a, ra, -0.7), P(a2, rb, -0.7), P(a2, lb, -0.7), FW_CONCRETE, [0, -1, 0]);
       const low = (ya + yb) / 2 < 2.8;
       for (const [na, nb, face] of [[la, lb, left], [ra, rb, right]] as const) {
@@ -244,19 +259,24 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
         quad(P(a, na, 0), P(a2, nb, 0), P(a2, nb, 0.9), P(a, na, 0.9), FW_CONCRETE, k > 0 ? right : left);
         quad(P(a, ia, 0.9), P(a, na, 0.9), P(a2, nb, 0.9), P(a2, ib, 0.9), FW_CONCRETE, [0, 1, 0]);
       }
-      if (a === r1 - 2 || a2 >= RAMP_UP0) quad(P(a2, lb, -0.7), P(a2, rb, -0.7), P(a2, rb, 0), P(a2, lb, 0), FW_CONCRETE, out);
+
       // The lane's edge line, dashed down the middle of the taper.
-      if (Math.floor(a / 6) % 2 === 0) { const c = onRampN(a, RAMP_N), c2 = onRampN(a2, RAMP_N); quad(P(a, c + RAMP_HALF - 0.4, 0.005), P(a, c + RAMP_HALF - 0.25, 0.005), P(a2, c2 + RAMP_HALF - 0.25, 0.005), P(a2, c2 + RAMP_HALF - 0.4, 0.005), FW_WHITE, [0, 1, 0]); }
+      if (Math.floor(a / 6) % 2 === 0) { const c = onRampN(a, ONRAMP_FROM), c2 = onRampN(a2, ONRAMP_FROM); quad(P(a, c + RAMP_HALF - 0.4, 0.005), P(a, c + RAMP_HALF - 0.25, 0.005), P(a2, c2 + RAMP_HALF - 0.25, 0.005), P(a2, c2 + RAMP_HALF - 0.4, 0.005), FW_WHITE, [0, 1, 0]); }
     }
     for (let d = Math.ceil((r0 - 15) / FW_BENT_STEP) * FW_BENT_STEP + 15; d < r1; d += FW_BENT_STEP) {
-      const l = onRampY(d), c = onRampN(d, RAMP_N);
+      const l = onRampY(d), c = onRampN(d, ONRAMP_FROM);
       if (d < r0 || l < 2.8) continue;
       b.cyl(F.px(d, c) - ax, (l - 0.7) / 2, F.pz(d, c) - az, 0.7, l - 0.7, FW_CONCRETE, 10);
     }
   }
   // Bents: every FW_BENT_STEP metres of d (the same spots whoever draws them).
   if (parts.bents ?? parts.main) {
-    const entryOk = (d: number, n: number) => d < 0 || d > FW_BEND || (Math.abs(n) > 7.2 && !(d > RAMP_MERGE1 - 10 && d < RAMP_UP0 + 10 && n > RAMP_N - RAMP_HALF - 0.8 && n < RAMP_N + RAMP_HALF + 0.8));
+    const entryOk = (d: number, n: number) => {
+      if (d < 0 || d > FW_BEND + 1) return true;
+      if (Math.abs(n) < 7.2) return false;
+      if (d > RAMP_MERGE1 - 10 && d < RAMP_DIV0 + 10) { const c = onRampN(THREE.MathUtils.clamp(d, RAMP_MERGE1, RAMP_DIV0), ONRAMP_FROM); if (Math.abs(n - c) < RAMP_HALF + 1.2) return false; }
+      return true;
+    };
     for (let d = Math.ceil(d0 / FW_BENT_STEP) * FW_BENT_STEP; d < d1; d += FW_BENT_STEP) {
       const y = F.y(d), m = F.m(d);
       if (d < F.near && d > F.far) continue;   // (in town the street's own: city.ts)
@@ -344,7 +364,7 @@ export class FreewayReach {
     };
     piece(F.near, 0, true);
     for (let d = 0; d < FW_TIP; d += 60) piece(d, Math.min(FW_TIP, d + 60), true);
-    for (let d = F.far; d > F.far - FW_TIP; d -= 60) piece(Math.max(F.far - FW_TIP, d - 60), d, false);
+    for (let d = F.far; d > F.far - FW_TIP_FAR; d -= 60) piece(Math.max(F.far - FW_TIP_FAR, d - 60), d, false);
   }
   // The road coming in draws the entry side out to `d` itself (0: it doesn't).
   cover(d: number) { for (const p of this.entry) p.mesh.visible = !(p.d0 >= 0 && p.d1 <= d + 0.01); }
@@ -379,7 +399,7 @@ export class FreewayTraffic {
   update(F: Frame | null, t: number, near: { x: number; z: number }, entryOnly: boolean) {
     let n = 0;
     if (F) {
-      const lo = (entryOnly ? -40 : F.far - FW_TIP + 10), hi = FW_TIP - 10, span = hi - lo;
+      const lo = (entryOnly ? -40 : F.far - FW_TIP_FAR + 10), hi = FW_TIP - 10, span = hi - lo;
       for (let li = 0; li < FW_LANES.length; li++) {
         const L = FW_LANES[li];
         if (F.merge && L.n === FW_LANE_N) continue;   // (the lane the truck takes)

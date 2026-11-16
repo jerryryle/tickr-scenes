@@ -53,16 +53,20 @@ export interface Route { ix: number; iz: number; dir: number; before: number; mo
 // way the truck came. Each step goes on from where the last ended.
 export const GARAGE_H = 4.8;
 // `helix`: a freeway's off-ramp instead (interchange.ts), from its right-hand lane at the deck's
-// height: a right turn off it into the block beside, a spiral down two right-hand turns and a half
-// to the ground, and a right turn out into the street's kerb lane beneath the freeway.
+// height: out across a deceleration lane that peels off the deck to the right (where it starts
+// down), round three-quarters of a loop down into the block beside, and a right turn out into the
+// street's kerb lane beneath the freeway.
 export const HELIX_TOP = 9.6;   // (freeway.ts FW_TOP)
 export interface GarageGeom { x: number; z: number; h: number; kind?: "helix" }
-type TailStep = { turn: number; sgn: 1 | -1; v: number } | { line: number; v: number };
+type TailStep = { turn: number; sgn: 1 | -1; v: number } | { line: number; v: number; shift?: number };
 const GARAGE_IN: TailStep[] = [{ turn: 7, sgn: -1, v: 2.8 }, { line: 26.5, v: 3.4 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 3, v: 2.5 }];
 const GARAGE_OUT: TailStep[] = [{ line: 9, v: 3 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 33.5, v: 3.4 }, { turn: 9, sgn: 1, v: 3 }];
-const HELIX_Q: TailStep = { turn: 12.5, sgn: -1, v: 4.5 };
-const HELIX_OUT: TailStep[] = [{ turn: 11, sgn: -1, v: 6 }, { line: 17.6, v: 5 }, HELIX_Q, HELIX_Q, HELIX_Q, HELIX_Q, HELIX_Q, HELIX_Q, { line: 20.5, v: 5 }, { turn: 9, sgn: -1, v: 4 }];
-const HELIX_RAMP = [1, 7];
+export const OFFRAMP_SHIFT = 7.6, OFFRAMP_LEN = 80, OFFRAMP_R = 17.5;
+const HELIX_Q: TailStep = { turn: OFFRAMP_R, sgn: -1, v: 6 };
+const HELIX_OUT: TailStep[] = [{ line: OFFRAMP_LEN, v: 11, shift: OFFRAMP_SHIFT }, HELIX_Q, HELIX_Q, HELIX_Q, { line: 17, v: 6 }, { turn: 9, sgn: -1, v: 4 }];
+// (Down from 70% of the way out across the deceleration lane, once it is clear of the deck, to
+// the foot of the loop's way out.)
+const HELIX_RAMP = [0, 4, 0.7];
 // Where on the way in the ramp rises (from the start of step 1 to the end of step 2), and where on
 // the way out it comes down.
 const GARAGE_IN_RAMP = [1, 2], GARAGE_OUT_RAMP = [1, 2];
@@ -126,7 +130,7 @@ export class Path {
   private tail(steps: TailStep[], x: number, z: number, h: number, ramp: number[], y0: number, y1: number) {
     let rs0 = 0, rs1 = 0;
     steps.forEach((st, i) => {
-      if (i === ramp[0]) rs0 = this.length;
+      if (i === ramp[0]) rs0 = this.length + ("line" in st ? st.line * (ramp[2] ?? 0) : 0);
       if ("turn" in st) {
         this.turns.push({ s: this.length, dir: st.sgn > 0 ? -1 : 1 });
         const tp = turnPiece(this.length, x, z, h, st.turn, st.sgn, st.v);
@@ -136,9 +140,10 @@ export class Path {
         h += st.sgn * Math.PI / 2;
       } else {
         const d = ((Math.round(h / (Math.PI / 2)) % 4) + 4) % 4;
-        this.pieces.push({ kind: "line", s0: this.length, len: st.line, x0: x, z0: z, dir: d, o0: 0, o1: 0, c0: 0, tc: 0, vmax: st.v });
+        const sh = st.shift ?? 0;
+        this.pieces.push({ kind: "line", s0: this.length, len: st.line, x0: x, z0: z, dir: d, o0: 0, o1: sh, c0: 0, tc: sh ? st.line : 0, vmax: st.v });
         this.length += st.line;
-        x += Math.cos(h) * st.line; z -= Math.sin(h) * st.line;
+        x += Math.cos(h) * st.line + Math.sin(h) * sh; z += -Math.sin(h) * st.line + Math.cos(h) * sh;
       }
       if (i === ramp[1]) rs1 = this.length;
     });

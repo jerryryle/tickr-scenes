@@ -110,10 +110,19 @@ export class CityPlan {
   interchangeStreet(axis: number, cx: number, cz: number): { open: [number, number]; clear: [number, number]; k: number } | null {
     const c = this.interchange;
     if (!c) return null;
-    const d = c.dir, [sx, sz, sa] = d === 0 ? [c.ix, c.iz, 0] : d === 2 ? [c.ix - 1, c.iz, 0] : d === 1 ? [c.ix, c.iz - 1, 1] : [c.ix, c.iz, 1];
-    if (sx !== cx || sz !== cz || sa !== axis) return null;
-    const at = (a: number) => (d === 0 || d === 3 ? 9 + a : 69 - a), span = (a0: number, a1: number): [number, number] => [Math.min(at(a0), at(a1)), Math.max(at(a0), at(a1))];
-    return { open: span(INTERCHANGE_OPEN[0], INTERCHANGE_OPEN[1]), clear: span(INTERCHANGE_CLEAR[0], INTERCHANGE_CLEAR[1]), k: d === 0 || d === 3 ? -1 : 1 };
+    // The street from the node before the interchange's (the deceleration lane starts there) and
+    // from its own: each in the chunk of the node it leaves (heading east or south) or arrives at.
+    const d = c.dir, [dx, dz] = [[1, 0], [0, -1], [-1, 0], [0, 1]][d];
+    for (const back of [1, 0]) {
+      const ix = c.ix - dx * back, iz = c.iz - dz * back;
+      const [sx, sz, sa] = d === 0 ? [ix, iz, 0] : d === 2 ? [ix - 1, iz, 0] : d === 1 ? [ix, iz - 1, 1] : [ix, iz, 1];
+      if (sx !== cx || sz !== cz || sa !== axis) continue;
+      const off = back * BLOCK, at = (a: number) => (d === 0 || d === 3 ? 9 + a + off : 69 - a - off);
+      const span = (a0: number, a1: number): [number, number] => [Math.max(0, Math.min(at(a0), at(a1))), Math.min(BLOCK, Math.max(at(a0), at(a1)))];
+      const cl = span(INTERCHANGE_CLEAR[0], INTERCHANGE_CLEAR[1]);
+      return { open: span(INTERCHANGE_OPEN[0], INTERCHANGE_OPEN[1]), clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1 };
+    }
+    return null;
   }
   private fwFrame: Frame | null | undefined;
   get freewayFrame(): Frame | null { if (this.fwFrame === undefined) this.fwFrame = this.freeway ? Frame.ofCity(this, this.freeway) : null; return this.fwFrame; }

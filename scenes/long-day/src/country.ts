@@ -194,7 +194,7 @@ export class CountryRoad {
       if (SB > 1700) this.pieces.push({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: 0,
         text: `${inp.toName.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` });
     }
-    this.pieces.push({ kind: "welcome", s: L - 230, side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? 16 : undefined });
+    this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 800 : 230), side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city, on the left: the freeway is on the right)
     if (!arrival) {
       const extras: [PieceKind, number][] = [["attraction", 120], ["weigh", 200], ["fruit", 80], ["watertower", 90], ["bridge", 120], ["gas", 110]];
       for (let i = extras.length - 1; i > 0; i--) { const j = Math.floor(h(20 + i) * (i + 1)); [extras[i], extras[j]] = [extras[j], extras[i]]; }
