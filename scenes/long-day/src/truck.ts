@@ -26,11 +26,11 @@ const TC = {
   seat: 0x2c2f36, dash: 0x25272b, cabin: 0x8c9097, reefer: 0xd9dadc, skirt: 0x8d9298, mud: 0x0e0e0e,
   tank: 0xc2c6cc, step: 0x2a2a2a, wood: 0x7a5a3a, frost: 0xdcecff, mat: 0x1a1a1a,
   skin: 0xd8a47f, cup: 0xe8dcc0, lid: 0x3a2a20, tree: 0x2fbf4f, paper: 0xf2f2ea, red: 0xce1126,
-  strap: 0xd9a21b,
 };
 // The roll-up door's pull strap: how far outside the door plane it hangs, and the height above
 // the street its end hangs at when the door is fully open.
 export const STRAP_X = 0.04, STRAP_END = 1.7;
+const STRAP_COLOR = 0xff6a13, STRAP_GLOW = 0xb04a10;
 export interface DoorGeom { x: number; floor: number; open: number; lv: number; strap: number }
 
 interface CargoSpec { kind: "box" | "flatbed"; x0: number; x1: number; floor: number; top: number; hw: number; livery: LiveryName }
@@ -212,6 +212,7 @@ export class Truck {
   private freshener = new THREE.Group();
   private bob = { x: 0, z: 0, vx: 0, vz: 0 };
   private tabletMat = new THREE.MeshBasicMaterial({ map: placeholderTexture() });
+  private strapMat = (() => { const m = new THREE.MeshLambertMaterial({ color: STRAP_COLOR }); applyDriverSpot(m); applyLampLight(m); return m; })();
   private tabletCanvas: { canvas: any; g: CanvasRenderingContext2D } | null = null;
   private exhaust: THREE.Vector3[] = [];
   private puffTimer = 0;
@@ -313,6 +314,7 @@ export class Truck {
     for (const m of Object.values(this.lights.mats)) m.dispose();
     this.glass.dispose();
     this.tabletMat.map?.dispose(); this.tabletMat.dispose();
+    this.strapMat.dispose();
   }
 
   // Air-brake hiss when parking.
@@ -373,6 +375,7 @@ export class Truck {
     // Lights.
     const blink = (this.time % 0.7) < 0.35;
     const brake = this.engineOn && (this.accel < -0.4 || Math.abs(this.speed) < 0.05);
+    this.strapMat.emissive.setHex(this.headlights ? STRAP_GLOW : 0x000000);
     this.lights.set(this.headlights, brake, this.speed < -0.05,
       (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink);
 
@@ -741,9 +744,11 @@ export class Truck {
       // outside it, long enough that its end is in reach from the street when the door is up.
       // Below the floor it is folded over the sill (hidden), so it is only seen once the door opens.
       const strapLen = Math.max(0.6, yfl + openH - STRAP_END);
+      // Safety orange with a reflective weave: it shows against the dark street and the lit bed
+      // alike, glowing faintly once the lights are on.
       const SB = new Batch();
-      SB.span(-0.006, -1, -0.03, 0.006, 0, 0.03, TC.strap);
-      const strap = SB.build(this.kit.paint)!;
+      SB.span(-0.006, -1, -0.04, 0.006, 0, 0.04, 0xffffff);
+      const strap = SB.build(this.strapMat)!;
       parent.add(strap);
       this.slats = { geo, n, x: x0 + 0.09, floor: yfl, track: yt - 0.12, open: openH, halfW: hw - 0.12, last: NaN, strap, strapLen };
       this.layoutSlats(0);
