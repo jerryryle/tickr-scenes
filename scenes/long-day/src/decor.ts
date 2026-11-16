@@ -201,7 +201,7 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   if (district !== "residential" || rnd() < 0.3)
     place(0.95, (p) => { box(p, y0 + 0.45, ac + inward * 0.1, 1.8, 0.08, 0.45, 0x7a5232); box(p, y0 + 0.75, ac + inward * 0.33, 1.8, 0.4, 0.06, 0x7a5232);
       for (const k of [-0.8, 0.8]) box(p + k, y0 + 0.22, ac + inward * 0.1, 0.07, 0.44, 0.4, 0x2a2b2e); });
-  if (rnd() < 0.5) place(0.3, (p) => { box(p, y0 + 0.55, ac, 0.5, 1.1, 0.45, 0x1f4f9f); box(p, y0 + 1.1, ac, 0.5, 0.1, 0.45, 0x1a3f80); });   // mailbox
+  if (rnd() < 0.5) place(0.3, (p) => { box(p, y0 + 0.55, ac, 0.5, 1.1, 0.45, 0x1f4f9f); box(p, y0 + 1.1, ac, 0.52, 0.1, 0.47, 0x1a3f80); });   // mailbox (the lid overhangs: shared planes flicker)
   if (district === "commercial" || district === "downtown") {
     place(0.75, (p) => { for (const [k, c] of [[-0.4, 0xc0392b], [0.3, 0xf2c200]] as const) box(p + k, y0 + 0.5, ac, 0.45, 1.0, 0.4, c); });   // newspaper boxes
     // A row of parking meters along the kerb.

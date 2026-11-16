@@ -543,12 +543,14 @@ function buildOutskirts(ground: Batch, solid: Batch, lamps: Batch, plan: CityPla
   const greens = c ? seasonGreens(b.greens, c) : b.greens, cgreens = c ? seasonGreens(b.greens, c, true) : b.greens;
   const ox = cx * BLOCK, oz = cz * BLOCK, line = elevatedLine(CS, cz);
   for (const r of rects) {
-    // Ground in 12 m cells: fields in farm country, patchy grass elsewhere.
+    // Ground in 12 m cells: fields in farm country, patchy grass elsewhere. A few cm below the
+    // country road's land (countryworld.ts), which overlaps this ring where they meet: at the
+    // same height the two flickered against each other.
     for (let x = r.x0; x < r.x1 - 0.01; x += 12) for (let z = r.z0; z < r.z1 - 0.01; z += 12) {
       const w = Math.min(12, r.x1 - x), d = Math.min(12, r.z1 - z), wx = ox + x + w / 2, wz = oz + z + d / 2;
       const col = fields ? fields[Math.floor(hash2(Math.floor(wx / 48), Math.floor(wz / 36), plan.seed, 0xf1e) * fields.length)]
         : hash2(Math.floor(wx / 36), Math.floor(wz / 36), plan.seed, 0x6a) < 0.6 ? g0 : g1;
-      ground.box(x + w / 2, -0.12, z + d / 2, w, 0.1, d, col);
+      ground.box(x + w / 2, -0.16, z + d / 2, w, 0.1, d, col);
     }
     // Trees and rocks, clear of the highway out of town and of the streets' edges.
     const area = (r.x1 - r.x0) * (r.z1 - r.z0), n = Math.floor(b.density * 0.0024 * area + rnd());
@@ -619,17 +621,21 @@ export const inset = (r: Rect, d: number): Rect => ({ x0: r.x0 + d, z0: r.z0 + d
 // Flat roof cap, parapet and rooftop clutter for a box ending at `top`.
 function flatRoof(s: Batch, r: Rect, top: number, wall: number, rnd: Rand, clutter = 2) {
   DC.roofs.push({ r, top });
-  s.span(r.x0, top - 0.05, r.z0, r.x1, top + 0.05, r.z1, pick(rnd, CS.roofs));
+  // (The parapet stands 2 cm inside the walls and the cap inside that: faces that share a plane
+  // flicker against each other, here the walls below, a tower's walls where it rises flush from
+  // a podium's edge, and the parapet of the row house next door.)
+  const ci = inset(r, 0.04);
+  s.span(ci.x0, top - 0.05, ci.z0, ci.x1, top + 0.05, ci.z1, pick(rnd, CS.roofs));
   if (rnd() < CS.waterTanks && r.x1 - r.x0 > 7 && r.z1 - r.z0 > 7) {   // a wooden water tank on legs
     const ux = r.x0 + 2.4, uz = r.z1 - 2.4;
     s.cyl(ux, top + 3.2, uz, 1.3, 2.4, 0x7a5236, 10); s.cone(ux, top + 4.9, uz, 1.4, 1.0, 0x4a3424, 10);
     for (const [lx, lz] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]]) s.box(ux + lx, top + 1, uz + lz, 0.14, 2, 0.14, C.dark);
   }
-  const p = 0.3, ph = 0.6, pc = shade(wall, 0.82);
-  s.span(r.x0, top, r.z0, r.x1, top + ph, r.z0 + p, pc);
-  s.span(r.x0, top, r.z1 - p, r.x1, top + ph, r.z1, pc);
-  s.span(r.x0, top, r.z0, r.x0 + p, top + ph, r.z1, pc);
-  s.span(r.x1 - p, top, r.z0, r.x1, top + ph, r.z1, pc);
+  const p = 0.3, ph = 0.6, pc = shade(wall, 0.82), po = inset(r, 0.02);
+  s.span(po.x0, top, po.z0, po.x1, top + ph, r.z0 + p, pc);
+  s.span(po.x0, top, r.z1 - p, po.x1, top + ph, po.z1, pc);
+  s.span(po.x0, top, po.z0, r.x0 + p, top + ph, po.z1, pc);
+  s.span(r.x1 - p, top, po.z0, po.x1, top + ph, po.z1, pc);
   const w = r.x1 - r.x0, d = r.z1 - r.z0;
   for (let i = 0; i < clutter; i++) {
     if (w < 5 || d < 5) break;
@@ -669,14 +675,14 @@ function buildDowntown(g: Batch, s: Batch, B: Rect, hs: number, rnd: Rand) {
     const tw = inset(r, range(rnd, 2.2, 4.5));
     const floors = Math.round((5 + hs * range(rnd, 5, 14)) * CS.towerScale);
     if (tw.x1 - tw.x0 < 6 || tw.z1 - tw.z0 < 6 || floors < 6) { flatRoof(s, r, podTop, wall, rnd, 3); continue; }
-    s.span(r.x0, podTop - 0.05, r.z0, r.x1, podTop + 0.05, r.z1, C.roofLight);
+    { const ci = inset(r, 0.04); s.span(ci.x0, podTop - 0.05, ci.z0, ci.x1, podTop + 0.05, ci.z1, C.roofLight); }   // inside the walls (see flatRoof)
     const towerWall = rnd() < 0.5 ? wall : pick(rnd, CS.walls.downtown);
     const tile = pick(rnd, CS.towerTiles);
     let top = facadeBox(s, tw.x0, tw.z0, tw.x1, tw.z1, podTop, [{ tile, floors, floorH: 3.6 }], towerWall);
     let roofRect = tw;
     if (rnd() < 0.35 && tw.x1 - tw.x0 > 12) { // setback crown
       const cr = inset(tw, 2.5);
-      s.span(tw.x0, top - 0.05, tw.z0, tw.x1, top + 0.05, tw.z1, C.roofLight);
+      { const ci = inset(tw, 0.04); s.span(ci.x0, top - 0.05, ci.z0, ci.x1, top + 0.05, ci.z1, C.roofLight); }
       top = facadeBox(s, cr.x0, cr.z0, cr.x1, cr.z1, top, [{ tile, floors: irange(rnd, 2, 4), floorH: 3.6 }], towerWall);
       roofRect = cr;
     }
@@ -853,7 +859,7 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
     // The north and south rows run the full block; east and west rows fill between them.
     const [lo, hi] = side < 2 ? [9.4, 50.6] : [9 + setback + depth + 0.6, 51 - setback - depth - 0.6];
     const n0 = setback, n1 = setback + depth;
-    let a = lo;
+    let a = lo, alt = 0;
     while (hi - a > 4.2) {
       const w = Math.min(hi - a, hi - a < 9 ? hi - a : range(rnd, 4.8, 6.4));
       const r = frontRect(side, a, a + w, n0, n1);
@@ -864,7 +870,8 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
       if (victorian) {
         // Gable to the street, and a bay window on the upper floor.
         const d = FRONT_NODE[side][2], ridgeAlongX = RIGHT[d][0] !== 0;
-        s.prism((r.x0 + r.x1) / 2, top + w * 0.27, (r.z0 + r.z1) / 2, depth + 0.4, w * 0.54, w + 0.25, pick(rnd, CS.gables), ridgeAlongX ? 0 : Math.PI / 2);
+        // (Neighbours' gables overlap; alternate lengths keep their end faces off one plane.)
+        s.prism((r.x0 + r.x1) / 2, top + w * 0.27, (r.z0 + r.z1) / 2, depth + 0.4 + (alt++ & 1) * 0.04, w * 0.54, w + 0.25, pick(rnd, CS.gables), ridgeAlongX ? 0 : Math.PI / 2);
         fspan(s, side, a + w * 0.25, a + w * 0.75, CURB_H + 3.3, CURB_H + 3.1 * floors - 0.3, n0 - 0.7, n0, shade(wall, 1.06));
         fspan(s, side, a + w * 0.2, a + w * 0.8, CURB_H + 3.1 * floors - 0.3, CURB_H + 3.1 * floors - 0.1, n0 - 0.8, n0, 0xf2f2ea);
       } else {
@@ -1000,7 +1007,7 @@ function buildWarehouse(s: Batch, side: number, face: number, L: DockLayout, r: 
   if (saw) {
     // Sawtooth: rows of north lights across the building.
     DC.roofs.push({ r, top: top + 1.6 });
-    s.span(r.x0, top - 0.05, r.z0, r.x1, top + 0.05, r.z1, pick(rnd, CS.roofs));
+    { const ci = inset(r, 0.04); s.span(ci.x0, top - 0.05, ci.z0, ci.x1, top + 0.05, ci.z1, pick(rnd, CS.roofs)); }   // inside the walls (see flatRoof)
     const roofC = shade(wall, 0.75);
     for (let a = L.a0 + 0.5; a < L.a1 - 3; a += 4.5) {
       fspan(s, side, a, a + 3.6, top, top + 0.8, L.wall + 0.3, 39.2, roofC);
@@ -1014,7 +1021,7 @@ function buildWarehouse(s: Batch, side: number, face: number, L: DockLayout, r: 
     const span = L.a1 - L.a0;
     for (let k = 0; k < 4; k++) {
       const inset = span * [0, 0.12, 0.25, 0.38][k], y = top + [0, 0.9, 1.6, 2.05][k];
-      fspan(s, side, L.a0 + inset, L.a1 - inset, y - 0.05, y + 0.9, L.wall, 39.5, roofC);
+      fspan(s, side, L.a0 + inset, L.a1 - inset, k ? y - 0.05 : y, y + 0.9, L.wall, 39.5, roofC);   // the first from the walls' top, not overlapping them
     }
   } else {
     flatRoof(s, r, top, wall, rnd, L.deep ? 1 : 2);
@@ -1042,7 +1049,7 @@ function buildWarehouse(s: Batch, side: number, face: number, L: DockLayout, r: 
   }
   // A rooftop office with a strip of windows at one end, on some of the bigger ones.
   if (L.deep ? rnd() < 0.45 : rnd() < 0.2) {
-    const end = rnd() < 0.5, oa0 = end ? L.a1 - 9 : L.a0, oa1 = end ? L.a1 : L.a0 + 9;
+    const end = rnd() < 0.5, oa0 = end ? L.a1 - 9 : L.a0 + 0.02, oa1 = end ? L.a1 - 0.02 : L.a0 + 9;   // (off the roof's end planes: shared planes flicker)
     const o = frontRect(side, oa0, oa1, L.wall + 0.5, L.wall + 9);
     const otop = facadeBox(s, o.x0, o.z0, o.x1, o.z1, top, [{ tile: FACADE.RIBBON, floors: 1, floorH: 3.6 }], pick(rnd, [wall, 0xe2ddd2, 0x4f5d6e, accent]));
     s.span(o.x0 - 0.05, otop - 0.05, o.z0 - 0.05, o.x1 + 0.05, otop + 0.25, o.z1 + 0.05, shade(wall, 0.7));
@@ -1074,7 +1081,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   const pave = district === "industrial" ? C.concrete : CS.pavers;
   // Ground: the block's raised base behind the yard (and beside a shallow one), the yard itself
   // at road level so trucks drive straight in.
-  fspan(g, side, 9, 51, 0, CURB_H, L.edge, 42, pave);
+  fspan(g, side, 9, 51, 0, CURB_H, L.edge + 0.02, 42, pave);   // (just behind the platform's face: shared planes flicker)
   if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, CURB_H, 0, L.edge, pave);
   fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge, 0x66655f);
   for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
@@ -1215,7 +1222,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
       const pod = facadeBox(s, sr.x0, sr.z0, sr.x1, sr.z1, CURB_H, [{ tile: FACADE.LOBBY, floors: 1, floorH: 5 }, { tile: FACADE.PUNCHED, floors: 2, floorH: 3.6 }], wall);
       const tw = inset(sr, 2.5);
       const t2 = facadeBox(s, tw.x0, tw.z0, tw.x1, tw.z1, pod, [{ tile: pick(rnd, [FACADE.OFFICE, FACADE.CURTAIN, FACADE.RIBBON]), floors: Math.round(6 + hs * 10), floorH: 3.6 }], wall);
-      s.span(sr.x0, pod - 0.05, sr.z0, sr.x1, pod + 0.05, sr.z1, C.roofLight);
+      { const ci = inset(sr, 0.04); s.span(ci.x0, pod - 0.05, ci.z0, ci.x1, pod + 0.05, ci.z1, C.roofLight); }   // inside the walls (see flatRoof)
       if (wantsMarquee()) marqueeCanopy(s, sr, face);
       if (uv && DC.fac === "officeTower" && facilityName(DC.plan, "officeTower", DC.cx, DC.cz) === "Baton Tower") batonCrown(s, tw, t2);
       else flatRoof(s, tw, t2, wall, rnd, 2);

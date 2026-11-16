@@ -292,12 +292,14 @@ export class CountryWorld {
     const g = new Batch(), s = new Batch();
     const rnd = mulberry32(Math.floor(hash3(i, road.inp.city, 7, road.inp.seed, 0x5e9) * 4294967296));
     // Land: across the road in strips, coloured by biome (fields in farm country). On the outside
-    // of a curve the strips fan apart, so each is lengthened to its outer edge's arc.
+    // of a curve the strips fan apart, so each is lengthened to its outer edge's arc. Strips
+    // overlap the next ones along the road, so alternate rows sit 1 cm apart: overlapping faces
+    // at one height flicker against each other.
     const land = (a: number) => a >= road.landFrom && a <= road.landTo;
     for (let a = s0; a < s1; a += 12) {
-      const sm = a + 6, k = Math.abs(road.center(sm, this.p).k);
+      const sm = a + 6, k = Math.abs(road.center(sm, this.p).k), lift = (Math.round(a / 12) & 1) * 0.01;
       if (!land(sm)) continue;
-      const strip = (n: number, w: number, y: number, color: number) => this.rbox(g, sm, n, y, 12.4 + k * 12 * (Math.abs(n) + w / 2) * 1.3, 0.1, w, color);
+      const strip = (n: number, w: number, y: number, color: number) => this.rbox(g, sm, n, y + lift, 12.4 + k * 12 * (Math.abs(n) + w / 2) * 1.3, 0.1, w, color);
       for (const side of [-1, 1] as const) {
         const bio = this.look(road, sm, side * 50);
         if (bio.fields) {
@@ -322,7 +324,7 @@ export class CountryWorld {
     // Near a gate it widens to a city street's carriageway, to meet the gate street.
     for (let a = s0; a < s1 && a < road.length; a += 6) {
       const sm = a + 3, w = road.widthAt(sm), half = 4.1 + 1.9 * w;
-      this.rbox(g, sm, 0, -0.06, 6.2, 0.12, half * 2, CW.asphalt);
+      this.rbox(g, sm, 0, -0.064, 6.2, 0.12, half * 2, CW.asphalt);   // 4 mm under a city street's asphalt, which it meets at the gate
       for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, 6.2, 0.1, 1.8, CW.shoulder); this.rbox(g, sm, k * (half - 0.25), 0.005, 6.2, 0.02, 0.14, CW.white); }
       if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, 6.0, 0.02, 0.24, CW.yellow);
     }
@@ -434,7 +436,7 @@ export class CountryWorld {
     const n = 11, uv = this.slot(text, { bg: "#1e6b3a", fg: "#ffffff", logo: false });
     for (const k of [-5.4, 5.4]) this.rbox(s, p.s, n + k, 3.2, 0.25, 6.4, 0.25, 0x8d9296);
     this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, CW.green);
-    this.rbox(s, p.s + 0.06, n, 5.2, 0.06, 2.75, 13.6, 0xf2f2ee);   // white border
+    this.rbox(s, p.s + 0.08, n, 5.2, 0.08, 2.75, 13.6, 0xf2f2ee);   // white border (its faces inside the board's: shared planes flicker)
     if (uv) this.sign(p.s, n, 5.2, 12.8, 1.6, uv);
   }
 

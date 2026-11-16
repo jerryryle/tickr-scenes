@@ -162,7 +162,7 @@ export function truckLayout(m: TruckModel) {
     floor, hw: trailer ? TRAILER.hw : c ? c.hw : s.cabHW,
     rampRun: Math.sqrt(rampLen * rampLen - pivotY * pivotY),
     cabFloor: s.cabFloor, cabHW: s.cabHW,
-    seat: { x: s.cabFront - 1.45, y: s.cabFloor + 0.5, z: -0.55 },   // hips, seated
+    seat: { x: s.cabFront - 1.445, y: s.cabFloor + 0.5, z: -0.55 },   // hips, seated (5 mm off the seat's faces: shared planes flicker)
   };
 }
 export type TruckLayout = ReturnType<typeof truckLayout>;
@@ -508,7 +508,7 @@ export class Truck {
       P.span(xf - 0.2, belt + 0.38, zo, xf - 0.12, belt + 0.43, z * (hw + 0.24), TC.black);
       P.span(xf - 0.25, belt + 0.12, z * (hw + 0.2), xf - 0.11, belt + 0.62, z * (hw + 0.32), TC.black);
     }
-    for (const z of [-0.3, 0, 0.3]) L.clrA.box(xf - 0.1, yt + 0.03, z, 0.08, 0.06, 0.12); // cab marker lights
+    for (const z of [-0.3, 0, 0.3]) L.clrA.box(xf - 0.1, yt + 0.035, z, 0.08, 0.07, 0.12); // cab marker lights (taller than the roof cap)
 
     // Driver door (hinged at its front edge, swings out to -z).
     const D = new Batch(), dl = s.doorLen;
@@ -540,7 +540,7 @@ export class Truck {
       P.span(nose - 0.06, gy1 - 0.05, -gz, nose + 0.02, gy1 + 0.04, gz, TC.chrome);
       P.span(nose - 0.06, gy0 - 0.04, -gz, nose + 0.02, gy0 + 0.04, gz, TC.chrome);
       for (const z of [-1, 1]) P.span(nose - 0.06, gy0, z * (gz - 0.06), nose + 0.02, gy1, z * gz, TC.chrome);
-      for (let k = 1; k < 4; k++) { const y = gy0 + (gy1 - gy0) * k / 4; P.span(nose - 0.07, y - 0.015, -gz + 0.06, nose - 0.02, y + 0.015, gz - 0.06, TC.alu); }
+      for (let k = 1; k < 4; k++) { const y = gy0 + (gy1 - gy0) * k / 4; P.span(nose - 0.07, y - 0.015, -gz + 0.07, nose - 0.02, y + 0.015, gz - 0.07, TC.alu); }
       for (const z of [-1, 1]) {
         // Fender: a flare over the wheel and a corner running forward to the nose, carrying the
         // headlamp and the turn signal; a black liner in the wheel well.
@@ -551,7 +551,7 @@ export class Truck {
         P.span(nose - 0.3, R2 + 0.2, z * gz, nose - 0.04, yh - drop - 0.06, z * (hH - 0.02), TC.white);   // beside the grille
         P.span(fa - 0.7, R2 - 0.1, z * (hw - 0.45), fa + 0.5, R2 + 0.04, z * (hw - 0.05), TC.mud);
         L.head.span(nose - 0.02, R2 - 0.08, z * (hH - 0.22), nose + 0.01, R2 + 0.1, z * (hH + 0.05));
-        (z < 0 ? L.sigL : L.sigR).span(nose - 0.03, R2 - 0.08, z * (hH + 0.07), nose, R2 + 0.1, z * (hw + 0.06));
+        (z < 0 ? L.sigL : L.sigR).span(nose - 0.03, R2 - 0.08, z * (hH + 0.07), nose + 0.01, R2 + 0.1, z * (hw + 0.06));   // proud of the fender
       }
       // Bumper tight under the nose, a black valance below it.
       P.span(nose - 0.04, 0.44, -hw + 0.02, nose + 0.1, 0.7, hw - 0.02, TC.chrome);
@@ -580,7 +580,7 @@ export class Truck {
   private buildInterior(P: Batch) {
     const s = this.spec, xb = s.cabBack, xf = s.cabFront, yf = s.cabFloor, yt = s.cabTop, hw = s.cabHW;
     const belt = yf + (s.cab === "cabover" ? 0.92 : 0.88), yd = belt - 0.05, winTop = yt - 0.16;
-    P.span(xb + 0.07, yf, -hw + 0.07, xf - 0.07, yf + 0.01, hw - 0.07, TC.mat);
+    P.span(xb + 0.09, yf, -hw + 0.07, xf - 0.07, yf + 0.01, hw - 0.09, TC.mat);                 // floor mat, clear of the trims
     P.span(xb + 0.07, yf, -hw + 0.07, xb + 0.09, yt - 0.07, hw - 0.07, TC.cabin);      // back wall trim
     P.span(xb + 0.07, yt - 0.09, -hw + 0.07, xf - 0.07, yt - 0.07, hw - 0.07, TC.cabin); // headliner
     P.span(xb + 0.07, yf, hw - 0.09, xf - 0.07, belt, hw - 0.07, TC.cabin);              // passenger side trim
@@ -603,7 +603,7 @@ export class Truck {
 
     // Gauges (lit) and speedometer needle.
     const G = new Batch();
-    for (const z of [-0.68, -0.42]) G.cyl(xf - 0.71, yd + 0.02, z, 0.085, 0.02, 0xffffff, 12, 0, Math.PI / 2);
+    for (const z of [-0.68, -0.42]) G.cyl(xf - 0.715, yd + 0.02, z, 0.085, 0.02, 0xffffff, 12, 0, Math.PI / 2);   // faces 5 mm proud of the hood
     this.body.add(G.build(this.lights.mats.gauge)!);
     const N = new Batch(); N.span(-0.006, 0, -0.004, 0.006, 0.07, 0.004, TC.red);
     this.needle.add(N.build(this.kit.paint)!);
@@ -653,7 +653,8 @@ export class Truck {
   private buildBox(P: Batch, L: Record<LightKey, Batch>, c: CargoSpec, parent: THREE.Object3D, reefer: boolean, swing = false) {
     const { x0, x1, floor: yfl, top: yt, hw } = c;
     this.boxParent = parent; this.boxSpec = c;
-    P.span(x0, yfl - 0.12, -hw, x1, yfl, hw, TC.frame);                         // floor plate
+    // (Parts that meet are kept off each other's planes: faces sharing a plane flicker.)
+    P.span(x0, yfl - 0.12, -hw + 0.06, x1, yfl, hw - 0.06, TC.frame);           // floor plate, inside the walls
     // The street-side (left) wall is its own group so the camera's interior cutaway can hide it.
     const W = new Batch();
     for (const z of [-1, 1]) (z < 0 ? W : P).span(x0, yfl - 0.12, z * (hw - 0.05), x1, yt, z * hw, TC.white);
@@ -661,7 +662,7 @@ export class Truck {
     P.span(x1 - 0.06, yfl, -hw, x1, yt, hw, TC.white);                          // front wall
     for (const z of [-1, 1]) P.span(x0 - 0.04, yfl - 0.12, z * (hw - 0.12), x0 + 0.06, yt, z * hw, TC.white); // rear posts
     P.span(x0 - 0.04, yt - 0.28, -hw, x0 + 0.06, yt, hw, TC.white);             // rear header
-    P.span(x0 - 0.06, yfl - 0.12, -hw, x0 + 0.06, yfl + 0.02, hw, TC.alu);       // rear sill
+    P.span(x0 - 0.06, yfl - 0.12, -hw + 0.125, x0 + 0.06, yfl + 0.02, hw - 0.125, TC.alu);   // rear sill, between the posts
     for (let x = x0 + 0.3; x < x1; x += 0.6) P.span(x, yfl - 0.3, -hw + 0.06, x + 0.08, yfl - 0.12, hw - 0.06, TC.frame);
     // Under-ride guard.
     P.span(x0 + 0.05, 0.42, -hw + 0.12, x0 + 0.16, 0.58, hw - 0.12, TC.black);
@@ -672,9 +673,9 @@ export class Truck {
       B.span(x0 + 0.06, yfl, z * (hw - 0.07), x1 - 0.06, yt - 0.06, z * (hw - 0.05), TC.plywood);
       for (const y of [yfl + 0.9, yfl + 1.6]) B.span(x0 + 0.1, y, z * (hw - 0.075), x1 - 0.1, y + 0.08, z * (hw - 0.07), TC.frame);
     }
-    P.span(x0 + 0.06, yt - 0.08, -hw + 0.05, x1 - 0.06, yt - 0.06, hw - 0.05, TC.plywood);
-    P.span(x1 - 0.08, yfl, -hw + 0.05, x1 - 0.06, yt - 0.06, hw - 0.05, TC.plywood);
-    P.span(x0 + 0.02, yfl, -hw + 0.05, x1 - 0.06, yfl + 0.012, hw - 0.05, TC.deck);
+    P.span(x0 + 0.06, yt - 0.08, -hw + 0.07, x1 - 0.06, yt - 0.06, hw - 0.07, TC.plywood);
+    P.span(x1 - 0.08, yfl, -hw + 0.07, x1 - 0.06, yt - 0.06, hw - 0.07, TC.plywood);
+    P.span(x0 + 0.02, yfl, -hw + 0.07, x1 - 0.06, yfl + 0.012, hw - 0.07, TC.deck);
     if (reefer) {
       P.span(x1, yt - 0.95, -0.85, x1 + 0.42, yt - 0.05, 0.85, TC.reefer);
       P.span(x1 + 0.42, yt - 0.85, -0.7, x1 + 0.44, yt - 0.15, 0.7, TC.grille);

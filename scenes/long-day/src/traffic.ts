@@ -507,7 +507,7 @@ export function pickupBody(b: Batch) {
   for (const z of [-1, 1]) b.box(-1.62, yb + 0.22, z * (W / 2 - 0.04), 2.0, 0.44, 0.08, P);
   b.box(-L / 2 + 0.06, yb + 0.22, 0, 0.1, 0.44, W - 0.04, P);
   b.box(-0.62, yb + 0.22, 0, 0.08, 0.44, W - 0.04, P);
-  b.box(-1.62, yb + 0.03, 0, 2.0, 0.02, W - 0.16, 0x2a2a2a);
+  b.box(-1.62, yb + 0.05, 0, 2.0, 0.02, W - 0.16, 0x2a2a2a);   // (above the body's top: shared planes flicker)
 }
 export function vanBody(b: Batch) {
   const L = 5.6, W = 2.0, yb = 1.05, P = 0xffffff;
