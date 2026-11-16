@@ -23,6 +23,25 @@ export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" |
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
   | "weigh" | "fruit" | "watertower" | "bridge" | "gas";
 export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string }
+// A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
+// y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
+// and the camera director uses it to film them so they can be read. (Billboards: one entry per
+// board, in order.)
+export interface RoadSign { s: number; n: number; y: number; w: number; h: number; billboard?: boolean }
+export function pieceSigns(p: RoadPiece): RoadSign[] {
+  const S = p.s, side = p.side;
+  switch (p.kind) {
+    case "leave": case "distance": case "welcome": return [{ s: S, n: 11, y: 5.2, w: 12.8, h: 1.6 }];
+    case "billboards": return [0, 1, 2].map((k) => ({ s: S + 30 + k * 110 - 0.05, n: (k % 2 ? -1 : 1) * 22, y: 9.0, w: 14.6, h: 5.0, billboard: true }));
+    case "truckstop": return [{ s: S - 60, n: 20, y: 14.2, w: 9.0, h: 1.1 }];
+    case "construction": return [{ s: S, n: 9, y: 2.6, w: 5.2, h: 0.7 }];
+    case "attraction": return [{ s: S, n: side * 15, y: 3.2, w: 6.8, h: 0.85 }];
+    case "weigh": return [{ s: S - 80, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
+    case "fruit": return [{ s: S, n: side * 9.5, y: 1.6, w: 4.0, h: 0.5 }];
+    case "gas": return [{ s: S + 5, n: side * 11, y: 7.2, w: 4.6, h: 0.6 }];
+    default: return [];
+  }
+}
 interface CountryStop { s: number; dwell: number; kind: "truckstop" | "rail"; arrive: number }
 
 const ROAD_DS = 2;               // geometry sample spacing (m)
@@ -360,7 +379,9 @@ export class CountryRoad {
       const start = facesBack ? camS - 6 : stop ? fs - 130 : fs - 55;
       const end = facesBack ? fs + 10 : p.kind === "rail" || stop ? fs + 12 : fs + 8;
       if (s < start || s > end) continue;
-      const cam: [number, number, number] = p.kind === "rail" ? [fs - 46, -13, 4.5]   // behind the waiting truck, the train crossing beyond it
+      // At the crossing: from the far side of the tracks, low on the shoulder, looking back at the
+      // truck coming to a stop, so the train passes between them and the truck reappears after it.
+      const cam: [number, number, number] = p.kind === "rail" ? [fs + 32, -6.8, 1.9]
        
         : facesBack ? [camS, fn > 0 ? -7 : 7, 3.2]
         : p.kind === "truckstop" && stop ? [fs + 26, -7, 4.5]

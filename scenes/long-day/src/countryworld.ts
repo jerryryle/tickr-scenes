@@ -21,8 +21,8 @@ import { bareTree, shade } from "./city.ts";
 import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
-import { CountryRoad, LANE, ONCOMING_SPEED, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED } from "./country.ts";
-import type { BiomeId, RoadPiece } from "./country.ts";
+import { CountryRoad, LANE, ONCOMING_SPEED, pieceSigns, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED } from "./country.ts";
+import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
 
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
@@ -277,6 +277,7 @@ export class CountryWorld {
     const dx = Math.cos(h) * facing, dz = -Math.sin(h) * facing;
     this.quads.push({ x: x + dx * 0.08, y, z: z + dz * 0.08, w, h: hgt, rotY: Math.atan2(dx, dz), ...uv });
   }
+  private signAt(g: RoadSign, uv: ReturnType<SignAtlas["uv"]>) { this.sign(g.s, g.n, g.y, g.w, g.h, uv); }
   private slot(text: string, style: SignStyle) {
     const k = signAtlas.alloc(text, style);
     if (k < 0) return null;
@@ -437,7 +438,7 @@ export class CountryWorld {
     for (const k of [-5.4, 5.4]) this.rbox(s, p.s, n + k, 3.2, 0.25, 6.4, 0.25, 0x8d9296);
     this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, CW.green);
     this.rbox(s, p.s + 0.08, n, 5.2, 0.08, 2.75, 13.6, 0xf2f2ee);   // white border (its faces inside the board's: shared planes flicker)
-    if (uv) this.sign(p.s, n, 5.2, 12.8, 1.6, uv);
+    if (uv) this.signAt(pieceSigns(p)[0], uv);
   }
 
   private piece(g: Batch, s: Batch, p: RoadPiece, rnd: Rand) {
@@ -452,8 +453,8 @@ export class CountryWorld {
           for (const d of [-3, 3]) this.rbox(s, a, n + d * sd, 3.2, 0.3, 6.4, 0.3, 0x5a5f66);
           this.rbox(s, a + 0.2, n, 9.0, 0.3, 5.4, 15.4, 0x2a2b2e);
           this.rbox(s, a + 0.5, n, 6.3, 0.15, 0.15, 15, 0x5a5f66);   // catwalk
-          const [x, z, h] = this.L(a - 0.05, n);
-          this.quads.push({ x, y: 9.0, z, w: 14.6, h: 5.0, rotY: Math.atan2(-Math.cos(h), Math.sin(h)), ...signAtlas.adUV(ad) });
+          const b = pieceSigns(p)[k], [x, z, h] = this.L(b.s, b.n);
+          this.quads.push({ x, y: b.y, z, w: b.w, h: b.h, rotY: Math.atan2(-Math.cos(h), Math.sin(h)), ...signAtlas.adUV(ad) });
           this.ads = true;
         }
         break;
@@ -471,7 +472,7 @@ export class CountryWorld {
         this.rbox(s, S - 60, 20, 7, 0.6, 14, 0.6, 0x5a5f66);
         this.rbox(s, S - 59.7, 20, 14.2, 0.3, 2.2, 9.4, CW.ryder);
         const uv2 = this.slot("RYDER TRUCK STOP", { bg: "#ce1126", fg: "#ffffff", logo: true });
-        if (uv2) this.sign(S - 60, 20, 14.2, 9.0, 1.1, uv2);
+        if (uv2) this.signAt(pieceSigns(p)[0], uv2);
         // Canopy and pumps.
         for (const a of [S + 10, S + 30]) for (const n of [24, 34]) this.rbox(s, a, n, 2.6, 0.4, 5.2, 0.4, 0xdedbd0);
         this.rbox(s, S + 20, 29, 5.4, 26, 0.6, 14, 0xf2f2ee); this.rbox(s, S + 20, 29, 5.0, 26, 0.3, 14.2, CW.ryder);
@@ -507,7 +508,7 @@ export class CountryWorld {
         const uv = this.slot("ROAD WORK AHEAD", { bg: "#e8701a", fg: "#111111", logo: false });
         this.rbox(s, S, 9, 1.2, 0.12, 2.4, 0.12, 0x8d9296);
         this.rbox(s, S + 0.05, 9, 2.6, 0.06, 1.0, 5.4, CW.orange);
-        if (uv) this.sign(S, 9, 2.6, 5.2, 0.7, uv);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
         // A roller and an excavator on the shoulder, and a stockpile.
         const [x, z, h] = this.L(S + p.len / 2, 12);
         s.box(x, 1.3, z, 3.4, 1.4, 1.8, 0xf2c200, h); s.cyl(x + Math.cos(h) * 2.1, 0.75, z - Math.sin(h) * 2.1, 0.75, 1.9, 0x5a5f66, 10, Math.PI / 2, -h);
@@ -559,7 +560,7 @@ export class CountryWorld {
         const ns = side * 15;
         for (const k of [-2.8, 2.8]) this.rbox(s, S, ns + k, 1.8, 0.16, 3.6, 0.16, CW.wood);
         this.rbox(s, S + 0.05, ns, 3.2, 0.06, 1.2, 7, 0xf5c542);
-        if (uv) this.sign(S, ns, 3.2, 6.8, 0.85, uv);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
       }
       case "weigh": {
@@ -570,7 +571,7 @@ export class CountryWorld {
         const uv = this.slot("WEIGH STATION · CLOSED", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
         for (const k of [-3.6, 3.6]) this.rbox(s, S - 80, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);
         this.rbox(s, S - 79.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
-        if (uv) this.sign(S - 80, 10, 4.0, 8.4, 1.05, uv);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
       }
       case "fruit": {
@@ -582,7 +583,7 @@ export class CountryWorld {
         const uv = this.slot(texts[p.variant], { bg: "#f2ede0", fg: "#a83a2a", logo: false });
         this.rbox(s, S, side * 9.5, 0.8, 0.12, 1.6, 0.12, CW.wood);
         this.rbox(s, S + 0.04, side * 9.5, 1.6, 0.05, 0.8, 4.2, 0xf2ede0);
-        if (uv) this.sign(S, side * 9.5, 1.6, 4.0, 0.5, uv);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
         // Orchard rows behind.
         for (let r = 0; r < 4; r++) for (let c = 0; c < 8; c++) {
           const [tx, tz] = this.L(S + 10 + c * 10, side * (24 + r * 9)); s.cyl(tx, 0.6, tz, 0.15, 1.2, CW.trunk, 5); s.ico(tx, 2, tz, 1.4, 0x3c7a46);
@@ -624,7 +625,7 @@ export class CountryWorld {
         const uv = this.slot(`GAS  $${(3 + p.variant * 0.17 + 0.29).toFixed(2)}`, { bg: "#1f6fb2", fg: "#ffffff", logo: false });
         this.rbox(s, S + 5, side * 11, 3.5, 0.3, 7, 0.3, 0x5a5f66);
         this.rbox(s, S + 5.1, side * 11, 7.2, 0.25, 1.4, 4.8, 0x1f6fb2);
-        if (uv) this.sign(S + 5, side * 11, 7.2, 4.6, 0.6, uv);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
       }
     }

@@ -37,9 +37,9 @@ import { cityName, journeyStyle } from "./styles.ts";
 import { cargoSeason, cityClimate, realSeason, seasonalStyle } from "./climate.ts";
 import type { Climate, Season } from "./climate.ts";
 import { CITY_HI, CITY_LO, CityPlan, cityStreet, entryGateOf, gateEnd, GATES, insideCity, setCityLimits } from "./city.ts";
-import { BLOCK, STREET } from "./grid.ts";
+import { BLOCK, CURB_H, STREET } from "./grid.ts";
 import type { Gate, KerbDoor } from "./city.ts";
-import { dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, siteLayout } from "./facilities.ts";
+import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
 import { blockGoals, DIR_X, DIR_Z, LANE_KERB, nodeX, nodeZ, Path, planRoute } from "./route.ts";
@@ -66,6 +66,9 @@ export interface DockPlan {
   stair: number;                                 // the platform steps, as an offset from the bay (dockStair)
   geom: DockGeom;
   edge: { x: number; z: number }; H: number;   // the platform edge at the bay, and the docked heading
+  // The facility's name sign (city.ts buildDockSite): the centre of its lettering, its size and
+  // the way it faces (out to the street). For the camera, so the destination can be read.
+  sign: { x: number; z: number; y: number; w: number; h: number; nx: number; nz: number } | null;
 }
 const DOCK_R: Record<TruckModel, number> = { box16: 6.5, box26: 8, reefer: 8, tractor: 10, flatbed: 0 };
 const TRAILER_TRAIL = 12.75;          // tractor rear axle to the trailer's axles
@@ -544,8 +547,10 @@ export class Journey {
     const ref = at(p, nRef), H = ((d + 1) % 4) * Math.PI / 2;
     const dp = at(p, L.wall), lp = at(p, L.edge);
     const door: DockDoor = { x: dp.x, z: dp.z, w: dockDoorW(L), h: dockDoorH(L), lx: lp.x, lz: lp.z };
+    const sp = L.deep ? at(30, L.wall - 0.13) : at(39, 1.87);
+    const sign = hasSign(stop.site!.fac) ? { x: sp.x, z: sp.z, y: L.deep ? DOCK_PLATFORM + 5.7 : CURB_H + 5.5, w: L.deep ? 9.6 : 9.2, h: L.deep ? 1.2 : 1.15, nx: -rx, nz: -rz } : null;
     return { node: [g.ix, g.iz], dir: d, p, R, pull: tractor ? 1.5 : 3, trail, stair: dockStair(L, p),
-      geom: { x: ref.x, z: ref.z, H, Lb, R, door }, edge: at(p, L.edge), H };
+      geom: { x: ref.x, z: ref.z, H, Lb, R, door }, edge: at(p, L.edge), H, sign };
   }
   get dock(): DockPlan | null { return this.dockPlan(this.st.stops[0]); }
 
