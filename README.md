@@ -110,7 +110,9 @@ its exit code (`process.exitCode = 1`), and `make check` shows its output only t
 
 Build, then follow the toolkit's publish flow on `build/<scene>/`. Pull the scene into
 `build/<scene>/` first (`tickr-scene pull`) so the `document.sha256` a publish needs as its base
-is there; a rebuild replaces only `scene.ts`, `scene.json` and `assets/`, so it survives.
+is there; a rebuild replaces only `scene.ts`, `scene.json` and `assets/`, so it survives. Every
+`make <scene>` regenerates `scene.ts` from `src/`, so building after a pull always gives the
+current source, never the pulled one.
 
 A change made in the tickr editor has to be carried back into `src/` by hand: diff the pulled
 `scene.ts` against `build/<scene>/scene.ts`, then edit the modules.

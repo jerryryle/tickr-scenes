@@ -38,7 +38,7 @@ node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-le
 copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] && n=$$(basename "$$f") && cp "$$f" "$(2)/$${n%.*}"; done; true
 
-.PHONY: all check clean distclean debug run test list $(SCENES) \
+.PHONY: all check clean distclean debug run test list FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES))
 .SECONDEXPANSION:
 .DELETE_ON_ERROR:
@@ -54,13 +54,23 @@ $(SCENES): %: build/%/scene.ts
 	@$(call copy-assets,scenes/$*/assets,build/$*/assets)
 	@echo "$* -> build/$*/"
 
-build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts) scripts/flatten.ts | $(DEPS)
-	@mkdir -p $(@D)
-	$(FLATTEN) $< --root scenes/$*/src > $@
+# A built scene.ts is regenerated on every build (flattening takes well under a second) and
+# replaced only when its content changes. Timestamps can't be trusted here: `tickr-scene pull`
+# into build/<scene>/ rewrites scene.ts with the published source and a newer mtime, which would
+# otherwise leave that published source in place and get it published again.
+replace-if-changed = if cmp -s $(1).tmp $(1); then rm -f $(1).tmp; else mv -f $(1).tmp $(1); fi
 
-build/%/scene.ts: scenes/%/scene.ts
+build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts) scripts/flatten.ts FORCE | $(DEPS)
 	@mkdir -p $(@D)
-	cp $< $@
+	@$(FLATTEN) $< --root scenes/$*/src > $@.tmp
+	@$(call replace-if-changed,$@)
+
+build/%/scene.ts: scenes/%/scene.ts FORCE
+	@mkdir -p $(@D)
+	@cp $< $@.tmp
+	@$(call replace-if-changed,$@)
+
+FORCE:
 
 check: $(addprefix check-,$(SCENES))
 	@$(BIN)/tsc -p tsconfig.json && echo "ok   scripts"
