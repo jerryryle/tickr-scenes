@@ -7,6 +7,7 @@
 // trailer doors) so they open and close exactly when the driver works them.
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
+import { CURB_H } from "./grid.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { ease, Truck, truckLayout } from "./truck.ts";
 import type { TruckLayout } from "./truck.ts";
@@ -108,6 +109,8 @@ export class Crew {
   private teamStart: number[] = [];
   private doorNow = 0;   // the roll-up door's opening during a door chore (work sets it with the pose)   // a team lift's two carriers, truck frame (work)
   get workerRoot() { return this.helper.root; }   // the dock worker / team-lift carrier, for FrontDoorFx
+  forkDoor = 0;   // how far the facility's front door is open for the forklift at a flatbed (FrontDoorFx)
+  private fp = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];   // its path out of the door
   inSeat = true;   // the driver is sitting in the cab (seat() this frame); main turns the driver spotlight on otherwise
   // The springs and per-stop state that carry over between frames (main.ts: preview snapshots and
   // part-ticks); everything else follows from the journey each frame.
@@ -120,10 +123,11 @@ export class Crew {
     const st = j.st, d = this.driver;
     const controls = { cab: 0, otherCab: 0, rear: 0, ramp: 0, gate: 0, drop: 0, doors: 0 };
     this.helper.root.visible = false;
-    if (this.load) this.load.group.visible = false;
+    if (this.load) { this.load.group.visible = false; this.load.group.scale.set(1, 1, 1); }
     this.herd?.hide();
     this.tools.handTruck.visible = this.tools.palletJack.visible = false;
     this.forklift.visible = false;
+    this.forkDoor = 0;
     this.gagPoint = null;
     d.root.visible = true;
     const stop = st.stops[0];
@@ -182,8 +186,39 @@ export class Crew {
         h.rotation.set(0, truck.heading + r.yaw, 0);
       }
     }
+    this.foldAtDoor(j);
     this.applyTruck(truck, other, controls);
     this.firstPerson(cam);
+  }
+
+  // A load too big for the facility's front door squashes to fit as it goes through, whoever
+  // carries it (the driver, a team lift, the forklift), and springs back out, wobbling, once it's
+  // clear: folded flat while it overlaps the doorway, its full size again a metre or two out. It
+  // depends only on where the load is, so a scrub shows the same thing.
+  private foldAtDoor(j: Journey) {
+    const load = this.load, d = j.kerbDoor;
+    if (!load || !d || !load.group.visible) return;
+    const g = load.group, [l, h, w] = load.size;
+    g.updateMatrixWorld();
+    const e = g.matrixWorld.elements, ax = [e[0], e[2]], az = [e[8], e[10]];   // the load's own x and z, level
+    const tx = -d.nz, tz = d.nx;
+    const along = (vx: number, vz: number) => Math.abs(ax[0] * vx + ax[1] * vz) * l + Math.abs(az[0] * vx + az[1] * vz) * w;
+    const across = along(tx, tz), deep = along(d.nx, d.nz) / 2;
+    const ox = g.position.x - d.x, oz = g.position.z - d.z;
+    if (Math.abs(ox * tx + oz * tz) > d.half + across / 2 + 1) return;   // not in front of the door
+    // How it must shrink: under the head of the doorway (from where it rides), and between the jambs.
+    const bottom = g.position.y - (load.round ? h / 2 : 0), top = CURB_H + d.h - 0.05;
+    let fy = Math.min(1, Math.max(0.15, (top - bottom) / h)), fw = Math.min(1, (d.half * 2 - 0.1) / across);
+    if (fy >= 1 && fw >= 1) return;
+    // More than it needs, and always enough to see (a load only just too big still gets squeezed).
+    fy = fy < 1 ? Math.min(fy * 0.9, 0.62) : 1; fw = fw < 1 ? Math.min(fw * 0.9, 0.62) : 1;
+    // Clear of the doorway by `out` metres: a damped spring back to full size, overshooting, with
+    // squash and stretch (taller while it's narrower, and the other way).
+    const out = Math.max(0, ox * d.nx + oz * d.nz - deep - 0.15) / 1.2;
+    const k = out <= 0 ? 0 : 1 - Math.exp(-2.5 * out) * Math.cos(8 * out);
+    const wob = out <= 0 ? 0 : 0.22 * Math.exp(-2.5 * out) * Math.sin(8 * out);
+    const sy = fy + (1 - fy) * k, sw = fw + (1 - fw) * k;
+    g.scale.set(sw * (1 - wob), sy * (1 + wob), sw * (1 - wob));
   }
 
   // The trip under way: `i` of `trips` (one per stow). A pickup's trip runs up to and through
@@ -538,14 +573,35 @@ export class Crew {
     const pickup = stop.kind === "pickup";
     const k = c?.forklift ? (u < 0.4 ? ease(u / 0.4) : u < 0.5 ? 1 : u < 0.9 ? 1 - ease((u - 0.5) / 0.4) : 0) : 0;
     const [A, B, yaw, lift, travel] = [fork.A, fork.B, fork.yaw, fork.lift, fork.travel];
-    const x = A[0] + (B[0] - A[0]) * k, y = A[1], z = A[2] + (B[2] - A[2]) * k;
-    let fy = travel + (lift - travel) * THREE.MathUtils.smoothstep(k, 0.55, 1);
+    // At a flatbed with a front door, the forklift lives inside: out through the door (forks
+    // first, load and all) and round to the deck's side, and back in; hidden while parked inside.
+    const kd = !dock && L.flatbed ? j.kerbDoor : null;
+    if (kd && k < 0.004) return;
+    let fy = travel + (lift - travel) * THREE.MathUtils.smoothstep(k, kd ? 0.8 : 0.55, 1);
     if (c?.forklift && u >= 0.4 && u < 0.5) fy += (pickup ? -1 : 1) * 0.06 * ((u - 0.4) / 0.1);   // set down / pick up
     else if (c?.forklift && u >= 0.5 && u < 0.9 && !pickup) fy += 0.06;
     truck.root.updateMatrixWorld();
-    this.v.set(x, y, z).applyMatrix4(truck.root.matrixWorld);
     const fl = this.forklift;
-    fl.visible = true; fl.position.copy(this.v); fl.rotation.set(0, truck.heading + yaw, 0);
+    fl.visible = true;
+    if (kd) {
+      // A cubic from inside the doorway (deep enough to hide the load: it rides ahead of the
+      // forks), straight out of the door, to the deck's side, arriving square to the truck.
+      const [p0, p1, p2, p3] = this.fp, out = 0.6 + (this.load?.size[0] ?? 1.2) / 2 + 0.3;
+      p3.set(B[0], 0, B[2]).applyMatrix4(truck.root.matrixWorld);
+      p2.set(p3.x + Math.sin(truck.heading) * 2.5, 0, p3.z + Math.cos(truck.heading) * 2.5);
+      p0.set(kd.x - kd.nx * out, 0, kd.z - kd.nz * out);
+      p1.set(kd.x + kd.nx * 1.5, 0, kd.z + kd.nz * 1.5);
+      const m = 1 - k, b0 = m * m * m, b1 = 3 * m * m * k, b2 = 3 * m * k * k, b3 = k * k * k;
+      fl.position.set(p0.x * b0 + p1.x * b1 + p2.x * b2 + p3.x * b3, 0, p0.z * b0 + p1.z * b1 + p2.z * b2 + p3.z * b3);
+      const t0 = 3 * m * m, t1 = 6 * m * k, t2 = 3 * k * k;
+      const dx = (p1.x - p0.x) * t0 + (p2.x - p1.x) * t1 + (p3.x - p2.x) * t2, dz = (p1.z - p0.z) * t0 + (p2.z - p1.z) * t1 + (p3.z - p2.z) * t2;
+      fl.rotation.set(0, Math.atan2(-dz, dx), 0);   // forks along the way it goes out
+      this.forkDoor = c?.forklift ? THREE.MathUtils.smoothstep(u, 0, 0.06) * (1 - THREE.MathUtils.smoothstep(u, 0.86, 0.9)) : 0;
+    } else {
+      const x = A[0] + (B[0] - A[0]) * k, y = A[1], z = A[2] + (B[2] - A[2]) * k;
+      this.v.set(x, y, z).applyMatrix4(truck.root.matrixWorld);
+      fl.position.copy(this.v); fl.rotation.set(0, truck.heading + yaw, 0);
+    }
     this.forks.position.y = fy;
     // At a dock the worker walks from where they waved the truck in to the forklift first.
     const walkIn = dock && ph.phase === "park";
@@ -607,9 +663,11 @@ export class Crew {
     if (ph.phase === "close" || ph.phase === "enter" || ph.phase === "startup") done = steps.length;
     else if (ph.chore) {
       const idx = j.chores.indexOf(ph.chore);
-      // A load lands in the bed when it is set down (pickup) and leaves it as it is lifted (drop).
+      // A load lands in the bed when it is set down (pickup) and leaves it as it is lifted (drop):
+      // late in a stow, early in a drop's; halfway through a forklift trip, as it lets go or lifts (worker).
       const pickup = stop.kind === "pickup";
-      for (const c of steps) { const k = j.chores.indexOf(c); if (k < idx || (k === idx && ph.ct > (pickup && c.kind === "stow" ? c.len * 0.97 : c.len * 0.03))) done++; }
+      const at = (c: Chore) => c.kind === "wait" ? c.len * 0.5 : pickup ? c.len * 0.97 : c.len * 0.03;
+      for (const c of steps) { const k = j.chores.indexOf(c); if (k < idx || (k === idx && ph.ct > at(c))) done++; }
     }
     // Trip by trip, exactly what each trip carries (chores.ts tripUnits).
     const moved = steps.length ? Math.min(stop.units, done * Math.ceil(stop.units / steps.length)) : stop.units;

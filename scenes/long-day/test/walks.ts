@@ -6,6 +6,7 @@ import { readConfig } from "../src/env.ts";
 import { Journey, setDoorProbe, setPavementProbe } from "../src/journey.ts";
 import { kerbDoors, pavementObstacles } from "../src/city.ts";
 import { planChores } from "../src/chores.ts";
+import { siteLayout } from "../src/facilities.ts";
 
 {
   const proc = (globalThis as any).process;
@@ -30,7 +31,7 @@ import { planChores } from "../src/chores.ts";
     }
     return n;
   };
-  let stops = 0, withObs = 0, before = 0, after = 0, legs = 0, prevMode = j.st.mode;
+  let stands = 0, stops = 0, withObs = 0, before = 0, after = 0, legs = 0, prevMode = j.st.mode;
   const errs: string[] = [];
   while (j.st.simTime < minutes * 60) {
     j.step();
@@ -39,6 +40,8 @@ import { planChores } from "../src/chores.ts";
       const stop = (j as any).dwellStop ?? st.stops[0];
       if (stop?.site && stop.kind !== "swap" && !j.isDockStop(stop)) {
         stops++;
+        // A stand (park building, service bay container) always has a door for the driver (things don't appear from thin air).
+        if (siteLayout(j.plan, stop.site.bx, stop.site.bz).kind === "stand") { stands++; if (!j.kerbDoor) errs.push(`t${st.simTime.toFixed(0)} ${stop.site.name ?? ""}: no door at the stand`); }
         const h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
         const obs = pavementObstacles(j.plan, stop.site.bx, stop.site.bz).map((o) => {
           const px = o.x - j.pose.x, pz = o.z - j.pose.z;
@@ -62,7 +65,7 @@ import { planChores } from "../src/chores.ts";
     }
     prevMode = st.mode;
   }
-  console.log(`walks: ${stops} kerb stops (${withObs} with pavement obstacles), crossings planned straight ${before}, routed ${after}, walk legs ${legs}`);
+  console.log(`walks: ${stops} kerb stops (${stands} at stands, ${withObs} with pavement obstacles), crossings planned straight ${before}, routed ${after}, walk legs ${legs}`);
   if (!stops) errs.push("no kerb stops");
   if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
 }

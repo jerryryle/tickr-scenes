@@ -367,7 +367,8 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     // Flatbed: the dock worker forklifts the load on from the facility side, then it's strapped.
     const deck: [number, number, number] = [(rear + L.bedFront) / 2, 0, -L.hw - 0.7];
     walk("load", side, deck, WALK);
-    for (let i = 0; i < trips; i++) add({ kind: "wait", group: "load", len: 7, face: -Math.PI / 2, gesture: i % 2 ? "wave" : "clipboard", forklift: true });
+    // (Out of the facility's door and back in, when it has one: a longer drive.)
+    for (let i = 0; i < trips; i++) add({ kind: "wait", group: "load", len: kerbDoor ? 9.5 : 7, face: -Math.PI / 2, gesture: i % 2 ? "wave" : "clipboard", forklift: true });
     add({ kind: "wait", group: "close", len: 3, face: Math.PI / 2, gesture: "stretch" });
     walk("close", deck, door, WALK);
   } else {

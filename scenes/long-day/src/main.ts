@@ -404,7 +404,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     placeTruck(dt, fresh);
     stopAnimation();
     updateTablet();
-    crew.update(dt, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot);
+    crew.update(dt, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);
     truck.update(dt, time);
     other?.update(dt, time);
     puffs.update(dt);
@@ -524,7 +524,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       setSignalTime(base);
       streamer.fill(truck.root.position);
       if (TOUR_VIEW) { tourCamera(0); streamer.fill(focus); }
-      crew.update(0, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot);
+      crew.update(0, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);
       truck.update(0);
       placeCamera(0);
       // Compile what only appears later too (rain, snow, stars, the country road and its cars),

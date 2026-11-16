@@ -186,7 +186,7 @@ export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: num
 // edge, the back of the sidewalk. The kerb lane's centre is at n = -4.5, the kerb face at n = -3.
 export interface DockLayout {
   kind: "dock"; side: number;
-  deep: boolean;        // an industrial yard deep enough for a tractor-trailer
+  deep: boolean;        // a yard deep enough for a tractor-trailer (industrial, and stores that take them)
   edge: number;         // n of the dock platform's edge, where a truck's rear stops
   wall: number;         // n of the building wall behind the platform
   a0: number; a1: number;   // the dock building's frontage
@@ -211,7 +211,23 @@ export const dockBayFor = (L: DockLayout, model: TruckModel) => L.bays[model ===
 export const dockUsedBays = (L: DockLayout) => L.deep && L.active !== L.activeBox ? [L.active, L.activeBox] : [L.activeBox];
 export interface LotLayout { kind: "lot"; side: number; stalls: { a: number; model: TruckModel | null }[]; tractorA: number }
 interface KerbLayout { kind: "kerb" }
-export type SiteLayout = DockLayout | LotLayout | KerbLayout;
+// A park facility has no building to deliver to, so it gets a small structure of its own on one
+// side, beside the park's entrance path, with a door at frontage `a` (see city.ts buildStand);
+// trucks stop on that side. An industrial yard's warehouse is set back behind its yard, so every
+// industrial kerb facility (a Ryder service bay, a lumber yard...) gets a shipping container at
+// the kerb the same way.
+export type StandKind = "farmStand" | "pottingShed" | "salesHut" | "ticketBooth" | "baitShack" | "pavilion" | "container";
+// `forklift`: a flatbed's forklift drives out of it and parks inside, so it's deeper: a container
+// stands end-on to the street, its cargo doors facing the kerb, in a deeper gap before the
+// warehouse; a park's building goes further back.
+export interface StandLayout { kind: "stand"; side: number; a: number; stand: StandKind; look: number; forklift: boolean }
+export type SiteLayout = DockLayout | LotLayout | KerbLayout | StandLayout;
+const STANDS: Partial<Record<FacilityId, StandKind>> = {
+  farm: "farmStand", farmCoop: "farmStand", greenhouse: "pottingShed", treeFarm: "pottingShed",
+  pumpkinPatch: "salesHut", treeLot: "salesHut", countyFair: "ticketBooth", pettingZoo: "ticketBooth",
+  marina: "baitShack", boatyard: "baitShack", weddingVenue: "pavilion",
+};
+export const STAND_DOOR_A = 25;   // the door's frontage: near where a kerb stop leaves the truck's back
 
 export const DOCK_PLATFORM = 1.25;   // dock height: a trailer's floor
 export const DOCK_DEPTH = 2;         // platform depth in front of the doors
@@ -230,8 +246,14 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
       stalls.push({ a: 14.5 + i * 4.2, model: h(0x57a1 + i) < 0.8 ? FLEET[Math.floor(h(0x57b1 + i) * FLEET.length)] : null });
     return { kind: "lot", side, stalls, tractorA: 33 };
   }
-  if (!isDock(fac)) return { kind: "kerb" };
-  const deep = plan.district(bx, bz) === "industrial";
+  if (!isDock(fac)) {
+    const district = plan.district(bx, bz);
+    if (district === "industrial") return { kind: "stand", side, a: STAND_DOOR_A, stand: "container", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
+    if (district !== "park") return { kind: "kerb" };
+    return { kind: "stand", side, a: STAND_DOOR_A, stand: STANDS[fac] ?? "farmStand", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
+  }
+  // Stores that take pallets by tractor-trailer have a truck yard as deep as an industrial one.
+  const deep = plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery";
   const edge = deep ? 22.5 : 12;
   const a0 = 11.5, a1 = deep ? 48.5 : 29.5;
   // Bay spacing varies by site: tight van docks to wide truck bays.
@@ -252,5 +274,10 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
 }
 
 // Name signs: which facilities get one, and Ryder's own (the logo on a red board).
+// Where loads go on and off a flatbed by forklift: the forklift comes out of the front door and
+// goes back in through it, so these facilities have wide double service doors (city.ts kerbDoors).
+const WIDE_DOOR = new Set<FacilityId>(["lumberYard", "plumbingSupply", "construction", "signShop", "doughnutShop", "sanitationDepot",
+  "treeFarm", "treeLot", "boatyard", "marina"]);
+export const wideDoor = (id: FacilityId) => WIDE_DOOR.has(id);
 export const isRyderFacility = (id: FacilityId) => id === "rentalLot" || id === "ryderWarehouse" || id === "ryderService" || id === "ryderOffice";
 export const hasSign = (id: FacilityId) => id !== "residence" && id !== "apartment";

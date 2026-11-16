@@ -24,8 +24,8 @@ import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
-import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout } from "./facilities.ts";
-import type { DockLayout, LotLayout, SiteLayout } from "./facilities.ts";
+import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
+import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BIOME_OF } from "./country.ts";
@@ -180,9 +180,10 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
       case "downtown": buildDowntown(ground, solid, B, plan.downtownHeight(cx, cz), rnd); break;
       case "commercial": buildCommercial(ground, solid, B, rnd); break;
       case "residential": buildResidential(ground, solid, B, rnd); break;
-      case "industrial": buildIndustrial(ground, solid, B, rnd); break;
-      case "park": buildPark(ground, solid, B, rnd); break;
+      case "industrial": buildIndustrial(ground, solid, B, rnd, site.kind === "stand" ? site : null); break;
+      case "park": buildPark(ground, solid, B, rnd, site.kind === "stand" ? standKeepOut(site) : null); break;
     }
+    if (site.kind === "stand") buildStand(ground, solid, site, rnd);
     if (uv) for (let side = 0; side < 4; side++) bladeSign(solid, side, DC.quads, uv);
     // Main Street towns have a water tower with the town's name, over a back garden.
     if (CS.townSquare && district === "residential" && hash2(cx, cz, seed, 0x77e) < 0.06)
@@ -230,7 +231,8 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
 // the street, near where a truck stopping on that side has its back. The chunk draws a door
 // there (entranceDoor), the driver walks to it (journey.ts DOOR_PROBE), and FrontDoorFx opens it.
 // Cached per block: a pure function of the city.
-export interface KerbDoor { side: number; a: number; n: number; x: number; z: number; nx: number; nz: number; frame: number; panel: number }   // world centre of its foot, outward normal, colours
+// `plain`: a container's cargo doors (locking bars, no windows or light).
+export interface KerbDoor { side: number; a: number; n: number; x: number; z: number; nx: number; nz: number; frame: number; panel: number; half: number; h: number; plain: boolean }   // world centre of its foot, outward normal, colours, half width and height
 const KERB_DOORS = new Map<string, (KerbDoor | null)[]>();
 let kerbDoorsSeed = NaN;
 const DOOR_PROBE_MAT = new THREE.MeshBasicMaterial();
@@ -303,14 +305,38 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   const hit = KERB_DOORS.get(key);
   if (hit) return hit;
   const none: (KerbDoor | null)[] = [null, null, null, null];
-  const fac = facilityAt(plan, bx, bz);
-  if (!fac || siteLayout(plan, bx, bz).kind !== "kerb") { KERB_DOORS.set(key, none); return none; }
-  const { solid } = cityBatches(plan, bx, bz, null);
-  const mesh = solid.build(DOOR_PROBE_MAT);
+  const fac = facilityAt(plan, bx, bz), site = siteLayout(plan, bx, bz);
+  if (!fac || (site.kind !== "kerb" && site.kind !== "stand")) { KERB_DOORS.set(key, none); return none; }
+  const spots: number[] = [];
+  DOOR_SPOTS.out = spots;
+  let built: ReturnType<typeof cityBatches>;
+  try { built = cityBatches(plan, bx, bz, null); } finally { DOOR_SPOTS.out = null; }
   const out = none.slice();
+  // A facility that loads flatbeds by forklift has wide double service doors.
+  const [half, dh] = wideDoor(fac) ? [WIDE_DOOR_HALF, WIDE_DOOR_H] : [DOOR_HALF, DOOR_H];
+  const door = (side: number, a: number, n: number): KerbDoor => {
+    const [fx, fz] = frontPt(side, a, n), [rx, rz] = RIGHT[FRONT_NODE[side][2]];
+    const r = (salt: number) => hash2(bx * 7 + side, bz, plan.seed, salt);
+    return { side, a, n, x: bx * BLOCK + fx, z: bz * BLOCK + fz, nx: -rx, nz: -rz,
+      frame: [0xf2efe8, 0x2a2b2e, 0x5b4636][Math.floor(r(1) * 3)], panel: [0x7a2b22, 0x23365e, 0x2e5a3a, 0x5b4636, 0xd8d2c4, 0x3a3c40][Math.floor(r(2) * 6)], half, h: dh, plain: false };
+  };
+  // Doors the builders placed themselves (row houses, park stands): the one nearest the truck's back.
+  for (let i = 0; i < spots.length; i += SPOT) {
+    const side = spots[i], a = spots[i + 1], cur = out[side];
+    if (cur && Math.abs(a - 25) >= Math.abs(cur.a - 25)) continue;
+    const dd = out[side] = door(side, a, spots[i + 2]), [, , , h, hf, panel, frame, plain] = spots.slice(i, i + SPOT);
+    if (h) dd.h = h;
+    if (hf) dd.half = hf;
+    if (panel >= 0) dd.panel = panel;
+    if (frame >= 0) dd.frame = frame;
+    dd.plain = plain > 0;
+  }
+  // Elsewhere, look for a wall to put one in (a park has none).
+  const mesh = site.kind === "kerb" && out.some((d) => !d) ? built.solid.build(DOOR_PROBE_MAT) : null;
   if (mesh) {
     const probe = new LevelProbe(mesh.geometry.getAttribute("position").array, 24), o = new THREE.Vector3(), dir = new THREE.Vector3();
     for (let side = 0; side < 4; side++) {
+      if (out[side]) continue;
       const d = FRONT_NODE[side][2], [rx, rz] = RIGHT[d];
       for (let k = 0; k <= 30; k++) {
         let a = 25 + (k % 2 ? -1 : 1) * Math.ceil(k / 2);   // 25, 24, 26, 23, ... out to 10 and 40
@@ -340,23 +366,22 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
         while (w0 > 9 && Math.abs(at(w0 - 0.25) - n) < 0.05) w0 -= 0.25;
         while (w1 < 51 && Math.abs(at(w1 + 0.25) - n) < 0.05) w1 += 0.25;
         const len = w1 - w0, bays = Math.max(1, Math.round(len / BAY));
-        if (bays < 2) continue;                                   // one window, nowhere to put a door
+        // (A wide service door takes a whole bay, over its window.)
+        const wideD = half > DOOR_HALF;
+        if (wideD ? len < 2 * half + 0.6 : bays < 2) continue;    // one window, nowhere to put a door
         let best = -1;
-        for (let i = 1; i < bays; i++) { const b = w0 + (len * i) / bays; if (best < 0 || Math.abs(b - 25) < Math.abs(best - 25)) best = b; }
+        for (let i = wideD ? 0 : 1; i < bays; i++) { const b = w0 + (len * (wideD ? i + 0.5 : i)) / bays; if (best < 0 || Math.abs(b - 25) < Math.abs(best - 25)) best = b; }
         a = best;
         // Room for the door: the wall is there a door's width either side too.
         let wide = true;
-        for (const da of [-DOOR_HALF - 0.1, DOOR_HALF + 0.1]) {
+        for (const da of [-half - 0.1, half + 0.1]) {
           const [qx, qz] = frontPt(side, a + da, n - 0.4);
           o.set(qx, 1.2, qz);
           const h2 = probe.first(o, dir);
           if (!h2 || h2.distance > 0.6) { wide = false; break; }
         }
         if (!wide) continue;
-        const [fx, fz] = frontPt(side, a, n);
-        const r = (salt: number) => hash2(bx * 7 + side, bz, plan.seed, salt);
-        out[side] = { side, a, n, x: bx * BLOCK + fx, z: bz * BLOCK + fz, nx: -rx, nz: -rz,
-          frame: [0xf2efe8, 0x2a2b2e, 0x5b4636][Math.floor(r(1) * 3)], panel: [0x7a2b22, 0x23365e, 0x2e5a3a, 0x5b4636, 0xd8d2c4, 0x3a3c40][Math.floor(r(2) * 6)] };
+        out[side] = door(side, a, n);
         break;
       }
     }
@@ -365,17 +390,39 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   KERB_DOORS.set(key, out);
   return out;
 }
-// A front door on the wall: frame, panel with a window, a step and a light over it.
+// A builder's own door for a block side (frontage a, n: the wall's face, and a height when it
+// can't take the usual one), for kerbDoors.
+const DOOR_SPOTS: { out: number[] | null } = { out: null };
+interface SpotLook { h?: number; half?: number; panel?: number; frame?: number; plain?: boolean }
+const SPOT = 8;
+const doorSpot = (side: number, a: number, n: number, o: SpotLook = {}) => {
+  DOOR_SPOTS.out?.push(side, a, n, o.h ?? 0, o.half ?? 0, o.panel ?? -1, o.frame ?? -1, o.plain ? 1 : 0);
+};
+// A front door on the wall: frame, panel with a window, a step and a light over it. A wide service
+// door: two leaves with a window each, a flush sill for the forklift instead of the step.
 function entranceDoor(s: Batch, d: KerbDoor) {
-  const side = d.side, a = d.a, n = d.n, frame = d.frame, panel = d.panel;
+  const side = d.side, a = d.a, n = d.n, frame = d.frame, panel = d.panel, H = d.half, DH = d.h, wide = H > DOOR_HALF;
   const y0 = CURB_H;
-  fspan(s, side, a - DOOR_HALF - 0.1, a + DOOR_HALF + 0.1, y0, y0 + DOOR_H + 0.12, n - 0.06, n + 0.01, frame);
-  fspan(s, side, a - DOOR_HALF, a + DOOR_HALF, y0, y0 + DOOR_H, n - 0.09, n - 0.05, panel);
-  fspan(s, side, a - DOOR_HALF + 0.15, a + DOOR_HALF - 0.15, y0 + 1.25, y0 + 1.9, n - 0.1, n - 0.09, 0x2a3644);   // window
-  fspan(s, side, a - DOOR_HALF - 0.25, a + DOOR_HALF + 0.25, 0, y0 + 0.03, n - 0.5, n, 0x9d9a91);                 // step (above a garden path's top: shared planes flicker)
-  fspan(s, side, a - 0.12, a + 0.12, y0 + DOOR_H + 0.3, y0 + DOOR_H + 0.45, n - 0.2, n, 0x2a2b2e);                 // light
+  fspan(s, side, a - H - 0.1, a + H + 0.1, y0, y0 + DH + 0.12, n - 0.06, n + 0.01, frame);
+  fspan(s, side, a - H, a + H, y0, y0 + DH, n - 0.09, n - 0.05, panel);
+  if (d.plain) {
+    // Cargo doors: four locking bars with their cams (inside the doorway's own depth, so they go
+    // with the leaves when it opens: FrontDoorFx), no windows, no light.
+    for (const k of [-0.62, -0.22, 0.22, 0.62]) fspan(s, side, a + k * H - 0.025, a + k * H + 0.025, y0 + 0.15, y0 + DH - 0.15, n - 0.1, n - 0.09, 0x8d9296);
+    fspan(s, side, a - 0.025, a + 0.025, y0, y0 + DH, n - 0.1, n - 0.09, shade(panel, 0.6));
+    return;
+  }
+  if (wide) {
+    fspan(s, side, a - 0.03, a + 0.03, y0, y0 + DH, n - 0.1, n - 0.09, shade(panel, 0.6));                        // the leaves' meeting line
+    for (const k of [-1, 1]) fspan(s, side, a + k * H / 2 - 0.3, a + k * H / 2 + 0.3, y0 + 1.5, y0 + 2.1, n - 0.1, n - 0.09, 0x2a3644);
+    fspan(s, side, a - H, a + H, y0, y0 + 0.02, n - 0.14, n, 0x9d9a91);                                           // sill
+  } else {
+    fspan(s, side, a - H + 0.15, a + H - 0.15, y0 + 1.25, y0 + 1.9, n - 0.1, n - 0.09, 0x2a3644);   // window
+    fspan(s, side, a - H - 0.25, a + H + 0.25, 0, y0 + 0.03, n - 0.5, n, 0x9d9a91);                 // step (above a garden path's top: shared planes flicker)
+  }
+  fspan(s, side, a - 0.12, a + 0.12, y0 + DH + 0.3, y0 + DH + 0.45, n - 0.2, n, 0x2a2b2e);                 // light
 }
-export const DOOR_HALF = 0.55, DOOR_H = 2.25;
+export const DOOR_HALF = 0.55, DOOR_H = 2.25, WIDE_DOOR_HALF = 1.2, WIDE_DOOR_H = 2.7;
 
 // ---- frontages ------------------------------------------------------------------------------
 // A block side in its goal's frame (facilities.ts, "site layouts"): node centre in chunk-local
@@ -419,6 +466,7 @@ function streetFrontage(plan: CityPlan, bx: number, bz: number, side: number): F
   if (L.kind === "dock") return { side, drive: L.side === side ? [Math.min(...dockUsedBays(L).map((i) => L.bays[i])) - 4.5, Math.max(...dockUsedBays(L).map((i) => L.bays[i])) + 18] : null, sign: null,
     clear: PREV_SIDE[L.side] === side ? [16, 51] : undefined };
   if (L.kind === "kerb" && hasSign(facilityAt(plan, bx, bz))) return { side, drive: null, sign: BLADE_A };
+  if (L.kind === "stand") { const b = standBox(L); return { side, drive: null, sign: BLADE_A, clear: L.side === side ? [b.a0 - 1, b.a1 + 0.5] : undefined }; }
   return { side, drive: null, sign: null };
 }
 // Frontage `a` to the street segment's own `along` coordinate (see buildStreet).
@@ -689,9 +737,11 @@ export function streetSide(r: Rect, B: Rect, eps = 6): number {
 function buildDowntown(g: Batch, s: Batch, B: Rect, hs: number, rnd: Rand) {
   g.span(B.x0, 0, B.z0, B.x1, CURB_H, B.z1, CS.pavers);
   const lots = splitLots(B, rnd() < 0.35 ? 1 : rnd() < 0.6 ? 2 : 4, rnd);
-  let tallest = 0, tallestAt: [number, number] = [0, 0], marqueeDone = false;
+  let tallest = 0, tallestAt: [number, number] = [0, 0], marqueeDone = false, plazaDone = false;
   for (const lot of lots) {
-    if (lots.length > 1 && rnd() < 0.12) { plaza(g, s, lot, rnd); continue; }
+    // A plaza takes one corner lot at most: a whole block side without a building has no front
+    // door for a delivery (kerbDoors).
+    if (lots.length > 1 && rnd() < 0.12 && lots.length === 4 && !plazaDone) { plaza(g, s, lot, rnd); plazaDone = true; continue; }
     const r = inset(lot, 0.4);
     const wall = pick(rnd, CS.walls.downtown);
     const podFloors = irange(rnd, 2, 4);
@@ -889,6 +939,8 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
     const [lo, hi] = side < 2 ? [9.4, 50.6] : [9 + setback + depth + 0.6, 51 - setback - depth - 0.6];
     const n0 = setback, n1 = setback + depth;
     let a = lo, alt = 0;
+    const stoops: number[] = [];
+    let doorAt = -1, doorD = Infinity;
     while (hi - a > 4.2) {
       const w = Math.min(hi - a, hi - a < 9 ? hi - a : range(rnd, 4.8, 6.4));
       const r = frontRect(side, a, a + w, n0, n1);
@@ -896,6 +948,8 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
       const floors = victorian ? irange(rnd, 2, 3) : irange(rnd, 3, 4);
       const tile = victorian ? FACADE.SIDING : pick(rnd, [FACADE.BRICK, FACADE.RESIDENTIAL, FACADE.APARTMENT]);
       const top = facadeBox(s, r.x0, r.z0, r.x1, r.z1, CURB_H, [{ tile, floors, floorH: 3.1 }], wall, FACE_OF[side], FACADE.DOOR);
+      // The painted door's bay (facadeBox: the middle bay of the street wall, in its corner order).
+      { const da = doorBayA(side, a, w); if (Math.abs(da - 25) < doorD) { doorD = Math.abs(da - 25); doorAt = da; } }
       if (victorian) {
         // Gable to the street, and a bay window on the upper floor.
         const d = FRONT_NODE[side][2], ridgeAlongX = RIGHT[d][0] !== 0;
@@ -906,10 +960,13 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
       } else {
         flatRoof(s, r, top, wall, rnd, 0);
         fspan(s, side, a, a + w, top - 0.35, top + 0.1, n0 - 0.35, n0, shade(wall, 0.7));   // cornice
-        fspan(s, side, a + w / 2 - 0.9, a + w / 2 + 0.9, CURB_H, CURB_H + 0.9, n0 - 1.6, n0, 0x8a8278); // stoop
+        stoops.push(a + w / 2);
       }
       a += w;
     }
+    // The stoops, but not at the house whose door the driver uses (its own step: entranceDoor).
+    for (const sa of stoops) if (doorAt < 0 || Math.abs(sa - doorAt) > 2.6) fspan(s, side, sa - 0.9, sa + 0.9, CURB_H, CURB_H + 0.9, n0 - 1.6, n0, 0x8a8278);
+    if (doorAt >= 0) doorSpot(side, doorAt, n0);
   }
   // Back gardens.
   for (let i = 0; i < 4; i++) {
@@ -918,15 +975,23 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
   }
 }
 
-function buildIndustrial(g: Batch, s: Batch, B: Rect, rnd: Rand) {
+// `stand`: a service bay's container at the kerb (buildStand); no yard faces it.
+function buildIndustrial(g: Batch, s: Batch, B: Rect, rnd: Rand, stand: StandLayout | null = null) {
   g.span(B.x0, 0, B.z0, B.x1, CURB_H, B.z1, C.concrete);
   const two = rnd() < 0.45;
   const lots = two ? splitLots(B, 2, rnd) : [B];
   for (const lot of lots) {
     // Warehouse set back from the streets with a yard on one side for the docks.
-    const yardSide = irange(rnd, 0, 3);
+    let yardSide = irange(rnd, 0, 3);
+    if (stand && yardSide === FACE_OF[stand.side]) yardSide = (yardSide + 1) % 4;
     const yard = range(rnd, 11, 15);
     const r = inset(lot, 2.5);
+    // (Further back behind an end-on container, on its side of the block.)
+    if (stand?.forklift) {
+      const f = FACE_OF[stand.side], gap = END_ON_DEPTH + 0.6;
+      if (f === 0 && lot.z1 === B.z1) r.z1 = B.z1 - gap; else if (f === 1 && lot.x1 === B.x1) r.x1 = B.x1 - gap;
+      else if (f === 2 && lot.z0 === B.z0) r.z0 = B.z0 + gap; else if (f === 3 && lot.x0 === B.x0) r.x0 = B.x0 + gap;
+    }
     if (yardSide === 0) r.z1 -= yard; else if (yardSide === 1) r.x1 -= yard; else if (yardSide === 2) r.z0 += yard; else r.x0 += yard;
     if (r.x1 - r.x0 < 8 || r.z1 - r.z0 < 8) continue;
     const wall = pick(rnd, CS.walls.industrial);
@@ -946,7 +1011,8 @@ function buildIndustrial(g: Batch, s: Batch, B: Rect, rnd: Rand) {
     g.span(Y.x0, CURB_H, Y.z0, Y.x1, CURB_H + 0.01, Y.z1, 0x5c5c58);
     const along = yardSide % 2 === 0; // dock wall runs along x
     // A port yard holds containers under a gantry crane; an old brick one has a rail spur.
-    const special = CS.cranes && rnd() < 0.45 ? "crane" : CS.rail && rnd() < 0.45 ? "rail" : "";
+    let special = CS.cranes && rnd() < 0.45 ? "crane" : CS.rail && rnd() < 0.45 ? "rail" : "";
+    if (stand) special = "";   // a yard can reach the kerb at the block's corners
     if (special === "crane") portCrane(s, Y, along, rnd);
     else if (special === "rail") railSpur(g, s, Y, along, rnd);
     const n = special ? 0 : Math.floor(((along ? r.x1 - r.x0 : r.z1 - r.z0) - 2) / 4.5);
@@ -982,13 +1048,14 @@ function buildIndustrial(g: Batch, s: Batch, B: Rect, rnd: Rand) {
   }
 }
 
-function buildPark(g: Batch, s: Batch, B: Rect, rnd: Rand) {
+function buildPark(g: Batch, s: Batch, B: Rect, rnd: Rand, keep: Rect | null = null) {
   g.span(B.x0, 0, B.z0, B.x1, CURB_H, B.z1, CS.grass);
   const cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2, w = B.x1 - B.x0;
   // Cross paths and a ring.
   g.span(B.x0, CURB_H, cz - 1.2, B.x1, CURB_H + 0.02, cz + 1.2, C.path);
   g.span(cx - 1.2, CURB_H, B.z0, cx + 1.2, CURB_H + 0.02, B.z1, C.path);
-  const pond = rnd() < 0.4;
+  // (No pond where it would reach a deep stand's back.)
+  const pond = rnd() < 0.4 && !(keep && Math.max(keep.x0 - (cx + w * 0.22), 0, (cx + w * 0.22) - keep.x1) ** 2 + Math.max(keep.z0 - (cz + w * 0.22), 0, (cz + w * 0.22) - keep.z1) ** 2 < 6.3 ** 2);
   if (pond) {
     const px = cx + w * 0.22, pz = cz + w * 0.22;
     s.cyl(px, CURB_H + 0.02, pz, 6.2, 0.06, 0xcabf9e, 14);
@@ -1003,11 +1070,183 @@ function buildPark(g: Batch, s: Batch, B: Rect, rnd: Rand) {
     const x = range(rnd, B.x0 + 2, B.x1 - 2), z = range(rnd, B.z0 + 2, B.z1 - 2);
     if (Math.abs(x - cx) < 2.6 || Math.abs(z - cz) < 2.6) continue;
     if (pond && Math.hypot(x - (cx + w * 0.22), z - (cz + w * 0.22)) < 7.5) continue;
+    if (keep && x > keep.x0 && x < keep.x1 && z > keep.z0 && z < keep.z1) continue;   // the stand's corner of the park
     if (rnd() < 0.25) conifer(s, x, CURB_H, z, range(rnd, 6, 9), pick(rnd, [0x1f5a34, 0x24663a]));
     else cityTree(s, x, CURB_H, z, range(rnd, 5.5, 9), range(rnd, 1.6, 2.6), pick(rnd, CS.trees.greens), rnd);
   }
   for (const [bx, bz, rot] of [[cx - 6, cz + 1.9, 0], [cx + 6, cz - 1.9, 0]] as const) // benches
     s.box(bx, CURB_H + 0.45, bz, 1.8, 0.1, 0.5, 0x7a5232, rot);
+}
+
+// The frontage `a` of the painted door on a row house spanning [a, a + w] (facadeBox puts it in
+// bay floor(bays / 2) of the street wall, counted along the wall's corner order).
+function doorBayA(side: number, a: number, w: number): number {
+  const bays = Math.max(1, Math.round(w / BAY)), f = (Math.floor(bays / 2) + 0.5) / bays;
+  // Corner order runs +z x0->x1, +x z1->z0, -z x1->x0, -x z0->z1: with the frontage or against it.
+  const face = FACE_OF[side], dirs: [number, number][] = [[1, 0], [0, -1], [-1, 0], [0, 1]];
+  const [fx, fz] = FWD[FRONT_NODE[side][2]], along = dirs[face][0] * fx + dirs[face][1] * fz > 0;
+  return along ? a + w * f : a + w * (1 - f);
+}
+
+// ---- park stands ---------------------------------------------------------------------------
+// A park facility's own small building (facilities.ts StandLayout): on one side, just behind the
+// pavement and left of the park's entrance path (a = 30), with its door at L.a facing the street
+// for the driver (kerbDoors finds it through doorSpot; the chunk draws the door, entranceDoor).
+// Each kind dresses it for the business: a farm stand, a potting shed, a pumpkin or tree-lot
+// hut, a fair's ticket booth, a marina's bait shack, a wedding venue's caterer's cottage.
+// Its footprint in frontage: a shed beside the park path; a 20 ft container (6.06 x 2.44 m) right
+// at the back of the pavement, in front of a warehouse set 2.5 m back.
+const standBox = (L: StandLayout) => L.stand !== "container" ? { a0: 23.2, a1: 28.3, n0: 0.9, n1: L.forklift ? 6.6 : 4.1 }
+  : L.forklift ? { a0: L.a - 1.22, a1: L.a + 1.22, n0: 0.03, n1: 6.09 } : { a0: 23.0, a1: 29.06, n0: 0.03, n1: 2.47 };
+export const END_ON_DEPTH = 6.06;   // room behind an end-on container's doors (crew.ts parks the forklift in it)
+const standKeepOut = (L: StandLayout): Rect => { const b = standBox(L); return frontRect(L.side, b.a0 - 3.5, b.a1 + 2.5, -1, b.n1 + 3); };
+interface StandLook { wall: number; trim: number; roof: number; win: number; pitch: number }
+const STAND_LOOKS: Record<StandLayout["stand"], StandLook[]> = {
+  farmStand: [{ wall: 0x9b2f26, trim: 0xf2efe8, roof: 0x3d4440, win: 0x2a3644, pitch: 1.5 }, { wall: 0x8a3a2a, trim: 0xe8e2d0, roof: 0x5b4636, win: 0x2a3644, pitch: 1.5 }],
+  pottingShed: [{ wall: 0x6f8f6a, trim: 0xf2efe8, roof: 0x8d9296, win: 0xbfe0d8, pitch: 1.1 }, { wall: 0x4f6f5a, trim: 0xe8e2d0, roof: 0x6b6f72, win: 0xbfe0d8, pitch: 1.1 }],
+  salesHut: [{ wall: 0xa87a4a, trim: 0x6a4a2a, roof: 0x5b3a22, win: 0x2a3644, pitch: 0.9 }, { wall: 0xb88a5a, trim: 0x5b4636, roof: 0x3d4440, win: 0x2a3644, pitch: 0.9 }],
+  ticketBooth: [{ wall: 0xf2efe8, trim: 0xc0392b, roof: 0xc0392b, win: 0x2a3644, pitch: 1.6 }, { wall: 0xf2efe8, trim: 0x2d5f9a, roof: 0x2d5f9a, win: 0x2a3644, pitch: 1.6 }],
+  baitShack: [{ wall: 0x5b7a8c, trim: 0xf2efe8, roof: 0x6b6f72, win: 0x2a3644, pitch: 1.2 }, { wall: 0x8a9a8a, trim: 0xf2efe8, roof: 0x4f5d6e, win: 0x2a3644, pitch: 1.2 }],
+  container: [{ wall: 0xb03a2e, trim: 0x7a2820, roof: 0, win: 0x2a3644, pitch: 0 }, { wall: 0x2d5f9a, trim: 0x1f4270, roof: 0, win: 0x2a3644, pitch: 0 },
+    { wall: 0xc4c8cc, trim: 0x8a8f94, roof: 0, win: 0x2a3644, pitch: 0 }, { wall: 0x3d6b3a, trim: 0x2a4a28, roof: 0, win: 0x2a3644, pitch: 0 }],
+  pavilion: [{ wall: 0xf2efe8, trim: 0xd8c89a, roof: 0x8aa0b0, win: 0x2a3644, pitch: 1.4 }, { wall: 0xeae4d8, trim: 0xb5a58a, roof: 0x6a7a8a, win: 0x2a3644, pitch: 1.4 }],
+};
+function buildStand(g: Batch, s: Batch, L: StandLayout, rnd: Rand) {
+  const side = L.side, k = L.stand, look = STAND_LOOKS[k][Math.floor(L.look * STAND_LOOKS[k].length)];
+  if (k === "container") { buildContainer(s, L, look); return; }
+  const { a0, a1, n0, n1 } = standBox(L), y0 = CURB_H;
+  const [dHalf, dH] = wideDoor(DC.fac) ? [WIDE_DOOR_HALF, WIDE_DOOR_H] : [DOOR_HALF, DOOR_H];
+  const top = y0 + dH + 0.75;   // room over the door for its frame and light
+  const d = FRONT_NODE[side][2], ridgeX = FWD[d][0] !== 0;
+  const at = (a: number, n: number) => frontPt(side, a, n);
+  // Body, corner boards and a fascia under the eaves (proud of the wall: shared planes flicker).
+  fspan(s, side, a0, a1, y0, top, n0, n1, look.wall);
+  for (const [p, q] of [[a0 - 0.06, a0 + 0.12], [a1 - 0.12, a1 + 0.06]]) fspan(s, side, p, q, y0, top, n0 - 0.06, n0 + 0.12, look.trim);
+  fspan(s, side, a0 - 0.06, a1 + 0.06, top - 0.18, top, n0 - 0.07, n1 + 0.07, look.trim);
+  // A path in from the pavement to the door.
+  fspan(g, side, L.a - 0.7, L.a + 0.7, CURB_H, CURB_H + 0.02, 0, n0, C.path);
+  // The window right of the door, with a sill.
+  const w0 = L.a + dHalf + 0.45, w1 = a1 - 0.4;
+  fspan(s, side, w0, w1, y0 + 1.0, y0 + 2.0, n0 - 0.05, n0 + 0.02, look.win);
+  fspan(s, side, w0 - 0.08, w1 + 0.08, y0 + 0.92, y0 + 1.0, n0 - 0.14, n0 + 0.02, look.trim);
+  // The roof: a gable with its ridge along the street, overhanging the walls.
+  { const [cx, cz] = at((a0 + a1) / 2, (n0 + n1) / 2);
+    s.prism(cx, top + look.pitch / 2, cz, a1 - a0 + 0.5, look.pitch, n1 - n0 + 0.7, look.roof, ridgeX ? 0 : Math.PI / 2); }
+  doorSpot(side, L.a, n0);
+  const awning = (c0: number, c1: number) => {   // striped, over the window
+    for (let i = 0, n = 5; i < n; i++) {
+      const p = w0 - 0.2 + ((w1 - w0 + 0.4) * i) / n, q = w0 - 0.2 + ((w1 - w0 + 0.4) * (i + 1)) / n;
+      fspan(s, side, p, q, y0 + 2.12, y0 + 2.22, n0 - 0.85, n0 + 0.02, i % 2 ? c1 : c0);
+    }
+  };
+  const obstacle = (a: number, n: number, r: number) => { const [x, z] = at(a, n); pavementObstacle(x, z, r); };
+  switch (k) {
+    case "farmStand": {
+      // Crates of produce on a bench at the side.
+      fspan(s, side, a0 - 1.6, a0 - 0.1, y0, y0 + 0.75, n0 + 0.3, n0 + 1.3, 0x7a5232);
+      for (let i = 0; i < 3; i++) {
+        const c = [0xc0392b, 0x6aa84f, 0xe0a020, 0x8a4a8a][Math.floor(rnd() * 4)];
+        fspan(s, side, a0 - 1.5 + i * 0.47, a0 - 1.1 + i * 0.47, y0 + 0.75, y0 + 1.05, n0 + 0.4, n0 + 1.2, 0xa87a4a);
+        fspan(s, side, a0 - 1.45 + i * 0.47, a0 - 1.15 + i * 0.47, y0 + 1.05, y0 + 1.15, n0 + 0.45, n0 + 1.15, c);
+      }
+      break;
+    }
+    case "pottingShed": {
+      // Glazing along the side, and terracotta pots out front of it.
+      fspan(s, side, a0 + 0.4, a1 - 0.4, y0 + 1.0, top - 0.3, n1 - 0.02, n1 + 0.05, look.win);
+      for (let i = 0; i < 4; i++) { const [x, z] = at(a0 - 0.5 - (i % 2) * 0.55, n0 + 0.5 + Math.floor(i / 2) * 0.7); s.cyl(x, y0 + 0.2, z, 0.2 + rnd() * 0.06, 0.4, 0xb5562e, 8); s.ico(x, y0 + 0.55, z, 0.26, pick(rnd, CS.trees.greens)); }
+      break;
+    }
+    case "salesHut": {
+      // A striped awning over the window, and the stock by the side: pumpkins or cut trees.
+      awning(0xc0392b, 0xf2efe8);
+      if (DC.fac === "treeLot") for (let i = 0; i < 4; i++) { const [x, z] = at(a0 - 0.6 - (i % 2) * 0.9, n0 + 0.6 + Math.floor(i / 2) * 1.1); conifer(s, x, y0, z, range(rnd, 1.6, 2.2), 0x1f5a34); }
+      else for (let i = 0; i < 6; i++) { const [x, z] = at(a0 - 0.4 - range(rnd, 0, 1.6), n0 + range(rnd, 0.2, 2.6)); s.ico(x, y0 + 0.2, z, range(rnd, 0.2, 0.3), 0xe07a1f, 0.75); }
+      break;
+    }
+    case "ticketBooth": {
+      // A striped awning in the booth's colour, and a pennant on the ridge.
+      awning(look.trim, 0xf2efe8);
+      const [px, pz] = at((a0 + a1) / 2, (n0 + n1) / 2);
+      s.cyl(px, top + look.pitch + 0.6, pz, 0.04, 1.2, C.pole, 5);
+      const [fx, fz] = at((a0 + a1) / 2 + 0.35, (n0 + n1) / 2);
+      s.box(fx, top + look.pitch + 1.0, fz, ridgeX ? 0.6 : 0.03, 0.35, ridgeX ? 0.03 : 0.6, 0xf2c200);
+      break;
+    }
+    case "baitShack": {
+      // A life ring on the wall beside the door (where it fits), an upturned rowboat at the side, a mooring post.
+      if (L.a - dHalf - 0.1 - (a0 + 0.12) > 0.75) { const [x, z] = at((a0 + 0.12 + L.a - dHalf - 0.1) / 2, n0 - 0.04), rx = RIGHT[d][0] !== 0;
+        s.cyl(x, y0 + 1.7, z, 0.34, 0.07, 0xe0601e, 10, rx ? 0 : Math.PI / 2, rx ? Math.PI / 2 : 0);
+        s.cyl(x, y0 + 1.7, z, 0.17, 0.09, look.wall, 10, rx ? 0 : Math.PI / 2, rx ? Math.PI / 2 : 0); }
+      fspan(s, side, a0 - 2.4, a0 - 0.2, y0, y0 + 0.45, n0 + 0.4, n0 + 1.3, 0x2d5f9a);
+      fspan(s, side, a0 - 2.3, a0 - 0.3, y0 + 0.45, y0 + 0.55, n0 + 0.5, n0 + 1.2, 0xf2efe8);
+      { const [x, z] = at(a0 - 2.9, n0 + 0.6); s.cyl(x, y0 + 0.9, z, 0.08, 1.8, 0x7a5232, 5); }   // a mooring post
+      break;
+    }
+    case "pavilion": {
+      // Potted topiaries either side of the door, and a lantern on a post by the path.
+      for (const da of [-1.15, 1.15]) {
+        const [x, z] = at(L.a + da, n0 - 0.35);
+        s.cyl(x, y0 + 0.25, z, 0.24, 0.5, 0xd8d2c4, 8); s.ico(x, y0 + 0.85, z, 0.36, 0x2e5a3a, 1.2);
+        obstacle(L.a + da, n0 - 0.35, 0.36);
+      }
+      break;
+    }
+  }
+}
+
+// A shipping container fitted out as a site office or yard store: a door (man or service) cut into its long side facing the
+// street, a window beside it with a little canopy over both, corrugated walls (ribs proud of the
+// sides, except where the door and window are cut), corner posts and a pair of cargo doors at
+// one end, on timber sleepers.
+function buildContainer(s: Batch, L: StandLayout, look: StandLook) {
+  if (L.forklift) { buildContainerEndOn(s, L, look); return; }
+  const side = L.side, { a0, a1, n0, n1 } = standBox(L), y0 = CURB_H, top = y0 + 2.9, y1 = y0 + 0.1;   // high cube, on sleepers
+  for (const a of [a0 + 0.5, (a0 + a1) / 2, a1 - 0.5]) fspan(s, side, a - 0.12, a + 0.12, y0, y1, n0 + 0.1, n1 - 0.1, 0x5a4030);
+  fspan(s, side, a0, a1, y1, top, n0, n1, look.wall);
+  // Corner posts, top and bottom rails (proud of the walls).
+  for (const a of [a0, a1 - 0.16]) for (const n of [n0 - 0.03, n1 - 0.13]) fspan(s, side, a - 0.02, a + 0.18, y1, top + 0.02, n, n + 0.16, look.trim);
+  for (const [p, q] of [[y1, y1 + 0.16], [top - 0.14, top + 0.01]]) {
+    fspan(s, side, a0 + 0.1, a1 - 0.1, p, q, n0 - 0.04, n0 + 0.1, look.trim);
+    fspan(s, side, a0 + 0.1, a1 - 0.1, p, q, n1 - 0.1, n1 + 0.04, look.trim);
+  }
+  // Ribs on both long sides; the street side's stop short of the door and the window.
+  // (A wide service door, for the forklift, is lower than usual: the light over it stays under the roof.)
+  const wide = wideDoor(DC.fac), dHalf = wide ? WIDE_DOOR_HALF : DOOR_HALF;
+  const door0 = L.a - dHalf - 0.2, door1 = L.a + dHalf + 0.2, w0 = door1 + 0.35, w1 = Math.min(w0 + 1.3, a1 - 0.5);
+  for (let a = a0 + 0.35; a < a1 - 0.3; a += 0.3) {
+    if (!(a > door0 - 0.08 && a < w1 + 0.08)) fspan(s, side, a - 0.05, a + 0.05, y1 + 0.16, top - 0.14, n0 - 0.035, n0 + 0.02, shade(look.wall, 0.86));
+    fspan(s, side, a - 0.05, a + 0.05, y1 + 0.16, top - 0.14, n1 - 0.02, n1 + 0.035, shade(look.wall, 0.86));
+  }
+  // The window, framed, and a canopy over door and window.
+  fspan(s, side, w0 - 0.06, w1 + 0.06, y0 + 1.04, y0 + 2.06, n0 - 0.03, n0 + 0.02, 0xd8d4c8);
+  fspan(s, side, w0, w1, y0 + 1.1, y0 + 2.0, n0 - 0.05, n0 + 0.02, look.win);
+  fspan(s, side, door0 - 0.2, w1 + 0.25, top - 0.02, top + 0.05, n0 - 0.8, n0 + 0.02, 0xd8d4c8);   // above the door's light
+  // Cargo doors at the far end: two leaves and their locking bars.
+  const a = a1 + 0.03;
+  fspan(s, side, a - 0.03, a + 0.01, y1 + 0.16, top - 0.14, n0 + 0.13, n1 - 0.13, shade(look.wall, 0.94));
+  for (const n of [n0 + 0.45, n0 + 0.85, n1 - 0.85, n1 - 0.45]) fspan(s, side, a, a + 0.04, y1 + 0.2, top - 0.18, n - 0.025, n + 0.025, C.metal);
+  doorSpot(side, L.a, n0, { h: wide ? 2.4 : 0 });
+}
+// End-on to the street, for a flatbed yard: its own cargo doors face the kerb and are the door,
+// with room inside for the forklift and what it carries. Ribs along both long sides, corner
+// posts and rails, plain cargo doors at the back too.
+function buildContainerEndOn(s: Batch, L: StandLayout, look: StandLook) {
+  const side = L.side, { a0, a1, n0, n1 } = standBox(L), y0 = CURB_H, top = y0 + 2.9, y1 = y0 + 0.1, rib = shade(look.wall, 0.86);
+  for (const n of [n0 + 0.5, (n0 + n1) / 2, n1 - 0.5]) fspan(s, side, a0 + 0.1, a1 - 0.1, y0, y1, n - 0.12, n + 0.12, 0x5a4030);   // sleepers
+  fspan(s, side, a0, a1, y1, top, n0, n1, look.wall);
+  for (const a of [a0 - 0.03, a1 - 0.13]) for (const n of [n0 - 0.02, n1 - 0.16]) fspan(s, side, a, a + 0.16, y1, top + 0.02, n, n + 0.18, look.trim);
+  for (const [p, q] of [[y1, y1 + 0.16], [top - 0.14, top + 0.01]]) {
+    fspan(s, side, a0 - 0.04, a0 + 0.1, p, q, n0 + 0.1, n1 - 0.1, look.trim);
+    fspan(s, side, a1 - 0.1, a1 + 0.04, p, q, n0 + 0.1, n1 - 0.1, look.trim);
+    fspan(s, side, a0 + 0.1, a1 - 0.1, p, q, n0 - 0.04, n0 + 0.05, look.trim);   // over and under the doors
+  }
+  for (let n = n0 + 0.35; n < n1 - 0.3; n += 0.3)
+    for (const [p, q] of [[a0 - 0.035, a0 + 0.02], [a1 - 0.02, a1 + 0.035]]) fspan(s, side, p, q, y1 + 0.16, top - 0.14, n - 0.05, n + 0.05, rib);
+  // The back doors (never opened) and their bars.
+  fspan(s, side, a0 + 0.13, a1 - 0.13, y1 + 0.16, top - 0.14, n1 - 0.01, n1 + 0.03, shade(look.wall, 0.94));
+  for (const a of [a0 + 0.45, a0 + 0.85, a1 - 0.85, a1 - 0.45]) fspan(s, side, a - 0.025, a + 0.025, y1 + 0.2, top - 0.18, n1, n1 + 0.04, C.metal);
+  doorSpot(side, L.a, n0, { h: top - 0.16 - y0 - 0.02, half: (a1 - a0) / 2 - 0.16, panel: shade(look.wall, 0.94), frame: look.trim, plain: true });
 }
 
 // ---- warehouses ----------------------------------------------------------------------------

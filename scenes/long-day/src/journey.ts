@@ -493,7 +493,11 @@ export class Journey {
       else if (stop.kind === "swap") {
         const all = blockGoals(bx, bz, 47 - truckExtents(stop.truck!).front, true), L = siteLayout(this.plan, bx, bz);
         goals = L.kind === "lot" ? [all[L.side]] : all;
-      } else goals = blockGoals(bx, bz, 30 - this.centerX);
+      } else {
+        // A park's stand is on one side of it: stop there.
+        const all = blockGoals(bx, bz, 30 - this.centerX), L = siteLayout(this.plan, bx, bz);
+        goals = L.kind === "stand" ? [all[L.side]] : all;
+      }
       st.route = planRoute(st.at.ix, st.at.iz, st.at.dir, st.at.before, goals, 6000, cityStreet);
       if (!st.route) { this.log(`no route to ${stop.site!.name}; skipping`); st.stops.shift(); return; }
       st.spare = stop.kind === "swap" ? stop.truck! : null;
@@ -596,14 +600,14 @@ export class Journey {
   }
 
   // The city's front doors (city.ts kerbDoors; set by the scene, absent in tests) and the one
-  // the current kerb stop uses: on the truck's right, within a short walk of its back.
+  // the current kerb stop uses: on the truck's right, the nearest to its back.
   kerbDoor: KerbDoor | null = null;
   private findKerbDoor(stop: Stop): KerbDoor | null {
     if (!DOOR_PROBE || !stop.site || stop.kind === "swap") return null;
     const L = truckLayout(this.st.truck);
-    if (L.trailer || L.flatbed) return null;
+    if (L.trailer) return null;   // (a flatbed's forklift uses the door: crew.ts)
     const h = this.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
-    let best: KerbDoor | null = null, bestD = 16;
+    let best: KerbDoor | null = null, bestD = 45;   // anywhere along the block side: a longer walk beats no door
     for (const d of DOOR_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
       if (!d) continue;
       const px = d.x - this.pose.x, pz = d.z - this.pose.z, ax = px * fx + pz * fz, az = px * rx + pz * rz;

@@ -59,39 +59,49 @@ export class DockFx {
 
 // A kerb stop's front door (journey.kerbDoor): it swings open into the building as the driver
 // reaches it, stays open while the load goes in or comes out, and closes before the driver turns
-// away; it also opens for the worker of a team lift going in or out. Drawn over the closed door
-// the city draws (city.ts entranceDoor): the dark doorway, and the panel as it is seen swung in,
-// a narrowing strip of it on the hinge side (the walls are solid, so it is drawn in the doorway).
+// away; it also opens for the worker of a team lift going in or out, and for the forklift at a
+// flatbed (`forkOpen`, from the crew). Drawn over the closed door the city draws (city.ts
+// entranceDoor): the dark doorway, and each leaf as it is seen swung in, a narrowing strip of it
+// on its hinge side (the walls are solid, so it is drawn in the doorway). A wide service door has
+// two leaves, hinged at either side.
 export class FrontDoorFx {
   private hole: THREE.Mesh;
-  private panel: THREE.Mesh;
+  private leaves: THREE.Mesh[];
   private pmat = new THREE.MeshLambertMaterial({ color: 0x7a2b22 });
   constructor(scene: THREE.Scene) {
     this.hole = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x15161a }));
-    this.panel = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.pmat);
-    this.hole.visible = this.panel.visible = false;
-    scene.add(this.hole, this.panel);
+    this.leaves = [0, 1].map(() => new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), this.pmat));
+    this.hole.visible = false;
+    for (const l of this.leaves) l.visible = false;
+    scene.add(this.hole, ...this.leaves);
   }
 
-  update(j: Journey, worker: THREE.Object3D | null) {
+  update(j: Journey, worker: THREE.Object3D | null, forkOpen = 0) {
     const d = j.st.mode === "dwell" ? j.kerbDoor : null;
     let open = 0;
     if (d) {
       const ph = j.dwellPhase(), c = ph.chore;
       if (c?.kind === "fetch") { const u = ph.ct / c.len; open = THREE.MathUtils.smoothstep(u, 0.05, 0.3) * (1 - THREE.MathUtils.smoothstep(u, 0.7, 0.95)); }
       if (worker?.visible) open = Math.max(open, THREE.MathUtils.clamp((2.0 - Math.hypot(worker.position.x - d.x, worker.position.z - d.z)) / 0.9, 0, 1));
+      open = Math.max(open, forkOpen);
     }
-    this.hole.visible = this.panel.visible = !!d && open > 0.01;
-    if (!d || !this.hole.visible) return;
-    const tx = -d.nz, tz = d.nx, yaw = Math.atan2(-tz, tx), y0 = CURB_H, W = DOOR_HALF * 2;   // t: along the wall
-    this.hole.position.set(d.x + d.nx * 0.1, y0 + DOOR_H / 2, d.z + d.nz * 0.1);
+    const show = !!d && open > 0.01;
+    this.hole.visible = show;
+    const two = !!d && d.half > DOOR_HALF;
+    this.leaves[0].visible = show; this.leaves[1].visible = show && two;
+    if (!d || !show) return;
+    const tx = -d.nz, tz = d.nx, yaw = Math.atan2(-tz, tx), y0 = CURB_H, W = d.half * 2, H = d.h;   // t: along the wall
+    this.hole.position.set(d.x + d.nx * 0.1, y0 + H / 2, d.z + d.nz * 0.1);
     this.hole.rotation.set(0, yaw, 0);
-    this.hole.scale.set(W, DOOR_H, 0.02);
-    // Swung in by up to ~80 degrees: from outside it covers W cos(angle) of the doorway, in shade.
-    const w = Math.max(0.04, W * Math.cos(1.4 * ease(open)));
-    this.panel.position.set(d.x + d.nx * 0.115 - tx * (DOOR_HALF - w / 2), y0 + DOOR_H / 2, d.z + d.nz * 0.115 - tz * (DOOR_HALF - w / 2));
-    this.panel.rotation.set(0, yaw, 0);
-    this.panel.scale.set(w, DOOR_H, 0.02);
-    this.pmat.color.setHex(shade(d.panel, 0.6 + 0.4 * (w / W)));
+    this.hole.scale.set(W, H, 0.02);
+    // Swung in by up to ~80 degrees: from outside a leaf covers its width cos(angle), in shade.
+    const LW = two ? d.half : W, w = Math.max(0.04, LW * Math.cos(1.4 * ease(open)));
+    (two ? [-1, 1] : [-1]).forEach((k, i) => {
+      const off = k * (d.half - w / 2), leaf = this.leaves[i];
+      leaf.position.set(d.x + d.nx * 0.115 + tx * off, y0 + H / 2, d.z + d.nz * 0.115 + tz * off);
+      leaf.rotation.set(0, yaw, 0);
+      leaf.scale.set(w, H, 0.02);
+    });
+    this.pmat.color.setHex(shade(d.panel, 0.6 + 0.4 * (w / LW)));
   }
 }
