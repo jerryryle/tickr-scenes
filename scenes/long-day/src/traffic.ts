@@ -532,7 +532,7 @@ function busBody(b: Batch) {
   b.box(0, 2.95, 0, L - 0.5, 0.18, W - 0.1, BODY);                         // roof, rounded in by a step
   b.box(-1.0, 3.18, 0, 3.4, 0.3, 1.8, 0xd8dad6); b.box(R + 1.4, 3.15, 0, 1.6, 0.25, 1.6, 0xd8dad6);   // AC and battery pods
   // Front: windscreen, destination sign, bumper, lamps.
-  b.box(F - 0.06, 1.95, 0, 0.12, 1.45, W - 0.18, GLASS);
+  b.box(F - 0.055, 1.95, 0, 0.12, 1.45, W - 0.18, GLASS);   // (5 mm proud of the livery band: shared planes flicker)
   b.box(F - 0.04, 2.83, 0, 0.1, 0.28, W - 0.5, 0x101010); b.box(F + 0.005, 2.83, 0, 0.02, 0.16, W - 0.8, 0xffb000);
   b.box(F - 0.05, 0.5, 0, 0.14, 0.32, W, 0x1a1a1a);
   for (const z of [-W / 2 + 0.3, W / 2 - 0.3]) headLamp(b, F + 0.01, 0.95, z, 0.04, 0.16, 0.34);

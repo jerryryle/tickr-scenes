@@ -644,9 +644,9 @@ function freightTrain(b: Batch) {
   // and a flared radiator section with its fans at the back.
   const BLUE = 0x1f4f8f, NAVY = 0x173c6c, YEL = 0xf2c200, GREY = 0x3a3d42;
   const deckY = 1.45, top = 4.25;
-  b.box(-L / 2, 1.25, 0, L - 0.6, 0.4, 3.0, DARK);                          // frame
+  b.box(-L / 2, 1.24, 0, L - 0.6, 0.38, 3.0, DARK);                         // frame (its top under the deck's: shared planes flicker)
   b.box(-L / 2, deckY - 0.03, 0, L - 0.6, 0.06, 3.04, GREY);                // walkway deck
-  b.box(-L / 2, 1.18, 0, L - 0.6, 0.16, 3.06, YEL);                         // sill safety stripe
+  b.box(-L / 2, 1.18, 0, L - 0.64, 0.16, 3.06, YEL);                        // sill safety stripe (short of the frame's ends)
   truck(-3.6, 3); truck(-L + 3.6, 3);
   for (const x of [-3.6, -L + 3.6]) for (const z of [-1, 1]) b.box(x, 0.7, z * 1.16, 3.8, 0.45, 0.08, 0x2e3034);   // truck side frames
   b.box(-L / 2, 0.95, 0, 5.4, 0.7, 2.3, GREY);                              // fuel tank

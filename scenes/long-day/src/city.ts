@@ -347,7 +347,7 @@ function entranceDoor(s: Batch, d: KerbDoor) {
   fspan(s, side, a - DOOR_HALF - 0.1, a + DOOR_HALF + 0.1, y0, y0 + DOOR_H + 0.12, n - 0.06, n + 0.01, frame);
   fspan(s, side, a - DOOR_HALF, a + DOOR_HALF, y0, y0 + DOOR_H, n - 0.09, n - 0.05, panel);
   fspan(s, side, a - DOOR_HALF + 0.15, a + DOOR_HALF - 0.15, y0 + 1.25, y0 + 1.9, n - 0.1, n - 0.09, 0x2a3644);   // window
-  fspan(s, side, a - DOOR_HALF - 0.25, a + DOOR_HALF + 0.25, 0, y0 + 0.02, n - 0.5, n, 0x9d9a91);                 // step
+  fspan(s, side, a - DOOR_HALF - 0.25, a + DOOR_HALF + 0.25, 0, y0 + 0.03, n - 0.5, n, 0x9d9a91);                 // step (above a garden path's top: shared planes flicker)
   fspan(s, side, a - 0.12, a + 0.12, y0 + DOOR_H + 0.3, y0 + DOOR_H + 0.45, n - 0.2, n, 0x2a2b2e);                 // light
 }
 export const DOOR_HALF = 0.55, DOOR_H = 2.25;
@@ -452,8 +452,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     for (let p = a0 + 6; p + 3 <= a1 - 6; p += 9) box(g, p + 1.5, M, lane, 3, MH, 0.12, C.white);
   // Stop lines (forward traffic stops before the next intersection at a1, backward before a0),
   // then continental crosswalks at both ends.
-  box(g, a1 - 3.9, M, (fwdLo + fwdHi) / 2, 0.4, MH, fwdHi - fwdLo - 0.3, C.white);
-  box(g, a0 + 3.9, M, (backLo + backHi) / 2, 0.4, MH, backHi - backLo - 0.3, C.white);
+  // (Short of the yellow centre lines: overlapping markings flicker.)
+  box(g, a1 - 3.9, M, (fwdLo + fwdHi) / 2, 0.4, MH, fwdHi - fwdLo - 0.5, C.white);
+  box(g, a0 + 3.9, M, (backLo + backHi) / 2, 0.4, MH, backHi - backLo - 0.5, C.white);
   for (const c0 of [a0 + 0.3, a1 - 3.3])
     for (let ac = KERB + 0.6; ac < STREET - KERB - 0.4; ac += 1.0) box(g, c0 + 1.4, M, ac, 2.8, MH, 0.5, C.white);
   // Streetlights on both sidewalks, staggered; street trees where the district has them.
@@ -584,7 +585,7 @@ function palm(s: Batch, x: number, y: number, z: number, h: number, rnd: Rand) {
   const seg = 5;
   for (let k = 0; k < seg; k++) {
     const f = (k + 0.5) / seg, off = lean * h * f * f;
-    s.cyl(x + lx * off, y + h * f, z + lz * off, 0.19 - 0.05 * f, h / seg + 0.02, k % 2 ? 0x8a6a48 : 0x7a5c3e, 6);
+    s.cyl(x + lx * off, y + h * f, z + lz * off, 0.19 - 0.05 * f + (k % 2) * 0.02, h / seg + 0.02, k % 2 ? 0x8a6a48 : 0x7a5c3e, 6);   // (alternate rings fatter: overlapping segments of near-equal radius flicker)
   }
   const tx = x + lx * lean * h, tz = z + lz * lean * h, ty = y + h;
   const green = pick(rnd, [0x3f8a32, 0x4a9a3a, 0x357a2c]);
@@ -1049,7 +1050,7 @@ function buildWarehouse(s: Batch, side: number, face: number, L: DockLayout, r: 
   }
   // A rooftop office with a strip of windows at one end, on some of the bigger ones.
   if (L.deep ? rnd() < 0.45 : rnd() < 0.2) {
-    const end = rnd() < 0.5, oa0 = end ? L.a1 - 9 : L.a0 + 0.02, oa1 = end ? L.a1 - 0.02 : L.a0 + 9;   // (off the roof's end planes: shared planes flicker)
+    const end = rnd() < 0.5, oa0 = end ? L.a1 - 9 : L.a0 + 0.05, oa1 = end ? L.a1 - 0.05 : L.a0 + 9;   // (off the roof's end and parapet planes: shared planes flicker)
     const o = frontRect(side, oa0, oa1, L.wall + 0.5, L.wall + 9);
     const otop = facadeBox(s, o.x0, o.z0, o.x1, o.z1, top, [{ tile: FACADE.RIBBON, floors: 1, floorH: 3.6 }], pick(rnd, [wall, 0xe2ddd2, 0x4f5d6e, accent]));
     s.span(o.x0 - 0.05, otop - 0.05, o.z0 - 0.05, o.x1 + 0.05, otop + 0.25, o.z1 + 0.05, shade(wall, 0.7));
@@ -1100,7 +1101,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   const lr = (salt: number) => hash2(Math.floor(L.look * 1e6), salt, 0x77, 0);   // the dressing's own randoms (stable per site)
   fspan(s, side, L.a0, L.a1, 0, P, L.edge, L.wall, 0x9d9a91);
   fspan(s, side, L.a0, L.a1, P - 0.08, P + 0.004, L.edge - 0.01, L.edge + 0.1, C.yellow);
-  for (const b of L.bays) for (const k of [-1.0, 1.0]) fspan(s, side, b + k - 0.14, b + k + 0.14, 0.6, 1.1, L.edge - 0.14, L.edge, C.dark);
+  for (const b of L.bays) for (const k of [-1.0, 1.0]) fspan(s, side, b + k - 0.14, b + k + 0.14, 0.6, 1.1, L.edge - 0.14, L.edge + 0.01, C.dark);   // (into the platform, off the steps' plane)
   const dw = bw * 0.41;
   const doorC = pick(rnd, [0xc4c8cc, 0xc4c8cc, 0x2d5f9a, 0xd8d2c4, 0x9b2a24, 0x3d6b3a, 0x5b6470, 0xe0b02a]);
   const doorH = dockDoorH(L), ribs = rnd() < 0.7, windows = rnd() < 0.35, shelter = rnd() < 0.4, frameC = rnd() < 0.5 ? C.dark : shade(doorC, 0.6);

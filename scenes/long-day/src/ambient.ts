@@ -84,7 +84,7 @@ function elevatedTrain(b: Batch) {
     b.box(x, 2.25, 0, L - 0.8, 0.85, W + 0.02, GLASS);                   // window band
     for (let k = -3; k <= 3; k++) b.box(x + k * 1.9, 2.25, 0, 0.16, 0.87, W + 0.04, STEEL);
     b.box(x, 1.15, 0, L + 0.01, 0.22, W + 0.03, 0xce1126);                // stripe
-    for (let k = 0; k < 7; k++) b.box(x, 0.6 + k * 0.07, 0, L + 0.005, 0.02, W + 0.035, 0xb4b9c0);   // fluting
+    for (let k = 0; k < 7; k++) b.box(x, 0.6 + k * 0.07, 0, L + 0.02, 0.02, W + 0.035, 0xb4b9c0);   // fluting (1 cm proud of the ends: near-shared planes flicker)
     for (const dx of [-4.6, 0, 4.6]) for (const z of [-1, 1]) {           // doors
       b.box(x + dx, 1.75, z * (W / 2 + 0.01), 1.5, 2.3, 0.03, DOOR);
       b.box(x + dx, 2.15, z * (W / 2 + 0.025), 1.2, 0.8, 0.02, GLASS);
@@ -97,10 +97,10 @@ function elevatedTrain(b: Batch) {
     if (i < 3) b.box(x + 7.2, 1.8, 0, 0.5, 2.3, 1.6, DARK);              // gangway to the next car
     if (i === 0 || i === 3) {                                             // cab end
       const e = i === 0 ? -1 : 1, ex = x + e * (L / 2 + 0.05);
-      b.box(ex, 1.7, 0, 0.12, 2.6, W - 0.1, 0xb4b9c0);
+      b.box(ex, 1.7, 0, 0.12, 2.56, W - 0.1, 0xb4b9c0);   // (inside the body's top and bottom)
       b.box(ex + e * 0.02, 2.3, 0, 0.1, 0.8, W - 0.5, GLASS);
-      b.box(ex + e * 0.03, 3.0, 0, 0.06, 0.2, 1.2, 0x101010); b.box(ex + e * 0.05, 3.0, 0, 0.02, 0.12, 0.9, 0xffb000);   // route sign
-      for (const z of [-0.95, 0.95]) b.box(ex + e * 0.04, 1.0, z, 0.04, 0.16, 0.3, e > 0 ? 0xfff4d0 : 0xc01818);
+      b.box(ex + e * 0.03, 3.0, 0, 0.06, 0.2, 1.2, 0x101010); b.box(ex + e * 0.055, 3.0, 0, 0.02, 0.12, 0.9, 0xffb000);   // route sign (its face proud of the board's)
+      for (const z of [-0.95, 0.95]) b.box(ex + e * 0.045, 1.0, z, 0.04, 0.16, 0.3, e > 0 ? 0xfff4d0 : 0xc01818);   // lamps, proud of the cab end
     }
   }
 }
