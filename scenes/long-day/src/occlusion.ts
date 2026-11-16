@@ -90,6 +90,20 @@ class OcclusionMap {
     return best;
   }
 
+  // Roughly how far `p` is from the nearest mapped tall thing (each sample a column from the
+  // ground to its height), up to `r`: a camera closer than the near clip (cutaway.ts uNearClip)
+  // to a wall sees a round hole cut in it.
+  clearance(p: THREE.Vector3, r: number): number {
+    let best = r;
+    for (let x = Math.floor(p.x - r); x <= Math.ceil(p.x + r); x++) for (let z = Math.floor(p.z - r); z <= Math.ceil(p.z + r); z++) {
+      const h = this.heightAt(x + 0.5, z + 0.5);
+      if (h < HF_MIN_Y) continue;
+      const dh = Math.max(0, Math.hypot(p.x - x - 0.5, p.z - z - 0.5) - 0.5), dy = Math.max(0, p.y - h);
+      best = Math.min(best, Math.hypot(dh, dy));
+    }
+    return best;
+  }
+
   // How much of the line from `a` to `b` is hidden (0 clear .. 1 hidden all along), ignoring the
   // last `skipEnd` metres (what is filmed stands there) and `skipStart` at the camera.
   blocked(a: THREE.Vector3, b: THREE.Vector3, boxes: OccluderBox[] = [], skipEnd = 0.7, skipStart = 0.5): number {

@@ -54,6 +54,9 @@ const LOAD_VARIANTS = ["classic", "dolly", "rear"] as const;
 // much less they are liked: high over the street side, from ahead of the cab, over the top, and the
 // truck's other side.
 const LOAD_EXTRA: [string, number][] = [["high", 0.08], ["front", 0.1], ["right", 0.12], ["over", 0.16]];
+// A load angle's camera keeps this far from anything mapped as tall (occlusion.ts): the near clip
+// (cutaway.ts, 3 m) and a margin. (Rising to see over, it only gets further from what is below it.)
+const LOAD_CLEARANCE = 3.5;
 const ARRIVE_VARIANTS = ["dive", "passenger", "tablet"] as const;
 const BACKUP_VARIANTS = ["straight", "arc", "low"] as const;
 const DEPART_VARIANTS = ["crane", "whip", "hold", "reveal"] as const;
@@ -525,8 +528,29 @@ export class Director {
     }
   }
 
-  // A load angle's camera and look at time t into the beat (truck frame set).
+  // A load angle's camera and look at time t into the beat (truck frame set). In a tight spot (a
+  // dock yard between buildings, a canopy overhead) the camera moves, level, to the nearest place
+  // clear of anything tall and not too close to what it films: closer than the near clip
+  // (cutaway.ts) to a wall, it would see a round hole cut in it, sliding about as the camera rises
+  // to see over.
   private loadCam(v: string, t: number, truck: Truck, pos: THREE.Vector3, look: THREE.Vector3) {
+    this.loadCamRaw(v, t, truck, pos, look);
+    if (OCCLUSION.clearance(pos, LOAD_CLEARANCE) >= LOAD_CLEARANCE) return;
+    const x0 = pos.x, z0 = pos.z;
+    let bx = x0, bz = z0, bestC = OCCLUSION.clearance(pos, LOAD_CLEARANCE);
+    for (let d = 0.5; d <= 8; d += 0.5) {
+      for (let k = 0; k < 16; k++) {
+        const a = k / 16 * Math.PI * 2;
+        pos.x = x0 + Math.cos(a) * d; pos.z = z0 + Math.sin(a) * d;
+        if (Math.hypot(pos.x - look.x, pos.z - look.z) < 6) continue;   // still a view, not a close-up
+        const c = OCCLUSION.clearance(pos, LOAD_CLEARANCE);
+        if (c >= LOAD_CLEARANCE) return;
+        if (c > bestC) { bestC = c; bx = pos.x; bz = pos.z; }
+      }
+    }
+    pos.x = bx; pos.z = bz;   // nowhere clear: the clearest
+  }
+  private loadCamRaw(v: string, t: number, truck: Truck, pos: THREE.Vector3, look: THREE.Vector3) {
     // The work happens at the back: frame the bed's end with room behind it for the walk to the
     // facility (a trailer is long, so its frame sits further forward on the trailer).
     const lay = truckLayout(truck.model), ex = truckExtents(truck.model), back = lay.trailer ? lay.bedRear + 3 : lay.bedRear - 3.5;
@@ -565,8 +589,14 @@ export class Director {
     const score = (v: string) => {
       let sum = 0;
       let wsum = 0;
-      for (const tt of v === "dolly" ? [0, 20] : [0]) { this.loadCam(v, tt, truck, cam, look); pts.forEach((p, i) => { sum += OCCLUSION.blocked(cam, p, boxes) * wts[i]; wsum += wts[i]; }); }
-      return sum / wsum;
+      let near = false;
+      for (const tt of v === "dolly" ? [0, 20] : [0]) {
+        this.loadCam(v, tt, truck, cam, look);
+        pts.forEach((p, i) => { sum += OCCLUSION.blocked(cam, p, boxes) * wts[i]; wsum += wts[i]; });
+        // Too close to a building: the near clip would cut a hole in it (worse as the camera rises).
+        if (OCCLUSION.clearance(cam, LOAD_CLEARANCE) < LOAD_CLEARANCE) near = true;
+      }
+      return sum / wsum + (near ? 1 : 0);
     };
     const usuals = (this.atDock ? LOAD_VARIANTS.filter((v) => v !== "rear") : [...LOAD_VARIANTS]) as string[];
     const order: [string, number][] = [[usual, 0], ...usuals.filter((v) => v !== usual).map((v) => [v, 0.02] as [string, number]), ...LOAD_EXTRA.filter(([v]) => !(this.atDock && v === "over"))];
