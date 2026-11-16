@@ -18,11 +18,12 @@ import { BLOCK, RING } from "./grid.ts";
 import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
+import { FW_REACH, rampLift } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
   | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass";
-export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string }
+export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number }
 // A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
 // y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
 // and the camera director uses it to film them so they can be read. (Billboards: one entry per
@@ -31,7 +32,7 @@ export interface RoadSign { s: number; n: number; y: number; w: number; h: numbe
 export function pieceSigns(p: RoadPiece): RoadSign[] {
   const S = p.s, side = p.side;
   switch (p.kind) {
-    case "leave": case "distance": case "welcome": return [{ s: S, n: 11, y: 5.2, w: 12.8, h: 1.6 }];
+    case "leave": case "distance": case "welcome": return [{ s: S, n: p.n ?? 11, y: 5.2, w: 12.8, h: 1.6 }];
     case "billboards": return [0, 1, 2].map((k) => ({ s: S + 30 + k * 110 - 0.05, n: (k % 2 ? -1 : 1) * 22, y: 9.0, w: 14.6, h: 5.0, billboard: true }));
     case "truckstop": return [{ s: S - 60, n: 20, y: 14.2, w: 9.0, h: 1.1 }];
     case "construction": return [{ s: S, n: 9, y: 2.6, w: 5.2, h: 0.7 }];
@@ -63,6 +64,9 @@ export const ARRIVE_LEN = V_GATE * ARRIVE_DUR + (V_JOIN - V_GATE) * ARRIVE_DUR *
 const LAND_SEAM = (RING - 1) * BLOCK;
 const STRAIGHT_OUT = LAND_SEAM + 120;   // straight out of town
 const STRAIGHT_IN = 150;                 // straight before the hand-over (and the arrival straight)
+// Into a freeway city (freeway.ts) the road runs straight on for longer, beside the freeway, and
+// the land is level for longer still, under it.
+const FW_STRAIGHT_IN = 560, FW_FLAT_IN = 760;
 // Distance and speed into the arrival straight, u seconds after the hand-over.
 function arriveS(u: number) {
   if (u >= ARRIVE_DUR) return ARRIVE_LEN + V_GATE * (u - ARRIVE_DUR);
@@ -99,6 +103,7 @@ interface CountryInput {
   fromTruck: TruckModel; toTruck: TruckModel;
   fromStyle: CityStyle; toStyle: CityStyle; fromName: string; toName: string;
   fromClimate: Climate; toClimate: Climate;
+  toFreeway?: boolean;   // the next city has a freeway: the road comes up onto a flyover beside it
 }
 
 export class CountryRoad {
@@ -152,6 +157,18 @@ export class CountryRoad {
       if (this.zone) this.pieces.push({ kind: "construction", s: this.zone[0] - 60, side: 1, len: this.zone[1] - this.zone[0] + 140, variant: 0 });
       m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
       SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
+      // Into a freeway city, nothing that stops the truck or sprawls by the road out where the
+      // freeway and the flyover are (the drive is replanned without it: it only gets longer).
+      const fwClash = (p: RoadPiece) => inp.toFreeway && p.s + p.len > SB - 1150;
+      if (this.pieces.some(fwClash)) {
+        for (const p of this.pieces.filter(fwClash)) {
+          this.pieces.splice(this.pieces.indexOf(p), 1);
+          if (p.kind === "construction") this.zone = null;
+          if (p.kind === "rail") this.planStops = this.planStops.filter((x) => x.kind !== "rail");
+        }
+        m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
+        SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
+      }
       this.S = m.S; this.V = m.V; this.D = dur; this.stops = m.stops;
     }
     this.SB = SB;
@@ -164,13 +181,13 @@ export class CountryRoad {
       if (SB > 1700) this.pieces.push({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: 0,
         text: `${inp.toName.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` });
     }
-    this.pieces.push({ kind: "welcome", s: L - 230, side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}` });
+    this.pieces.push({ kind: "welcome", s: L - 230, side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? 16 : undefined });
     if (!arrival) {
       const extras: [PieceKind, number][] = [["attraction", 120], ["weigh", 200], ["fruit", 80], ["watertower", 90], ["bridge", 120], ["gas", 110]];
       for (let i = extras.length - 1; i > 0; i--) { const j = Math.floor(h(20 + i) * (i + 1)); [extras[i], extras[j]] = [extras[j], extras[i]]; }
       extras.unshift(["billboards", 320]);   // billboards on every drive long enough for them
       let k = 0;
-      const lo = 900, hi = SB - 500;
+      const lo = 900, hi = SB - (inp.toFreeway ? 1150 : 500);
       for (const [kind, len] of extras) {
         for (let tries = 0; tries < 8 && hi - len > lo; tries++) {
           const s = lo + h(40 + k * 9 + tries) * (hi - len - lo);
@@ -213,7 +230,7 @@ export class CountryRoad {
     let base = 0, wsum = 0;
     for (let i = 0; i < n; i++) {
       const s = i * ROAD_DS;
-      let mask = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / 120, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - STRAIGHT_IN - s) / 120, 0, 1));
+      let mask = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / 120, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - (inp.toFreeway ? FW_STRAIGHT_IN : STRAIGHT_IN) - s) / 120, 0, 1));
       for (const p of this.pieces) {
         if (p.kind === "billboards" || p.kind === "leave" || p.kind === "distance" || p.kind === "welcome") continue;
         const d = Math.max(p.s - 150 - s, s - (p.s + p.len + 150), 0);
@@ -242,7 +259,7 @@ export class CountryRoad {
     let u = 0;
     for (let i = 0; i < n; i++) {
       const s = i * ROAD_DS;
-      let m = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / HILL_EASE, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - STRAIGHT_IN - s) / HILL_EASE, 0, 1));
+      let m = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / HILL_EASE, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - (inp.toFreeway ? FW_FLAT_IN : STRAIGHT_IN) - s) / HILL_EASE, 0, 1));
       for (const p of this.pieces) {
         const d = Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0);
         m = Math.min(m, smooth(Math.min(1, d / HILL_EASE)));
@@ -374,11 +391,14 @@ export class CountryRoad {
     out.k = (this.H[i + 1] - this.H[i]) / ROAD_DS;
     return out;
   }
-  // The road's height at distance s, and its grade (rise per metre).
-  heightAt(s: number) {
+  // The road's height at distance s (on a flyover into a freeway city, up off the land), and its
+  // grade (rise per metre); the land's own level under the road (where the pieces stand).
+  heightAt(s: number) { return this.baseAt(s) + this.liftAt(s); }
+  baseAt(s: number) {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, this.Y.length - 1.001), i = Math.floor(f);
     return this.Y[i] + (this.Y[i + 1] - this.Y[i]) * (f - i);
   }
+  liftAt(s: number) { return this.inp.toFreeway ? rampLift(this.length - s) : 0; }
   gradeAt(s: number) { return (this.heightAt(s + 3) - this.heightAt(s - 3)) / 6; }
   private at(A: Float64Array, s: number) {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, A.length - 1.001), i = Math.floor(f);
@@ -400,7 +420,7 @@ export class CountryRoad {
   // road runs in cuttings and on embankments. On a coast the land falls away to the beach on the
   // left, under the sea beyond it.
   groundAt(s: number, n: number) {
-    const y = this.heightAt(s), sm = this.smAt(s), an = Math.abs(n);
+    const y = this.baseAt(s), sm = this.smAt(s), an = Math.abs(n);
     let g = y;
     if (sm > 0 && an > 11) {
       const seed = this.inp.seed + this.inp.city * 977;
@@ -523,7 +543,7 @@ export class CountryRoad {
       const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome";
       if (!stop && !isSign && hash2(i, Math.floor(p.s), this.inp.seed, 0x5a0) > 0.7) continue;
       const F: Record<PieceKind, [number, number, number]> = {
-        leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
+        leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 22, 3],
         tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2],
@@ -566,6 +586,7 @@ export class CountryRoad {
   // Is (s, n) clear of the road furniture and set pieces (for scenery)?
   clearAt(s: number, n: number) {
     if (Math.abs(n) < 11) return false;
+    if (this.inp.toFreeway && this.length - s < FW_REACH + 60 && n > -27 && n < 8.5) return false;   // under the freeway and the flyover
     for (const p of this.pieces) {
       if (s < p.s - 40 || s > p.s + p.len + 40) continue;
       if (p.kind === "rail" || p.kind === "bridge") return false;

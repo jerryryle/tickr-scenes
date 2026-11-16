@@ -660,11 +660,12 @@ export class Director {
   private signShot(j: Journey) {
     const r = j.country!, p = r.pieces[this.signPiece], g = pieceSigns(p)[this.signIdx];
     // (Heights above the road there: a sign stands on the level the road holds round it.)
-    const pt = (s: number, n: number, y: number) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y + r.heightAt(s), this.pose.z); };
+    // (The camera and the lane over the road, which may be up on a flyover; the sign over the land.)
+    const pt = (s: number, n: number, y: number, road = false) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y + (road ? r.heightAt(s) : r.baseAt(s)), this.pose.z); };
     const cs = g.s - SIGN_CAM_BACK;
-    this.anchorPos.copy(pt(cs, r.laneAt(cs), SIGN_CAM_Y));
+    this.anchorPos.copy(pt(cs, r.laneAt(cs), SIGN_CAM_Y, true));
     const sign = [-1, 1].flatMap((k) => [-1, 1].map((m) => pt(g.s, g.n + k * g.w / 2, g.y + m * g.h / 2)));
-    const lane = r.laneAt(g.s), pts = [...sign, pt(g.s, lane, 0.2), pt(g.s, lane, 3.9)];
+    const lane = r.laneAt(g.s), pts = [...sign, pt(g.s, lane, 0.2, true), pt(g.s, lane, 3.9, true)];
     if (p.kind === "attraction") pts.push(pt(p.s + 50, p.side * 40, 0.5), pt(p.s + 50, p.side * 40, 15));
     this.eventFov = this.frameFit(this.anchorPos, pts, this.anchorLook, { at: pt(g.s, g.n, g.y), h: g.h * (g.billboard ? 0.3 : 1), pts: sign });
   }

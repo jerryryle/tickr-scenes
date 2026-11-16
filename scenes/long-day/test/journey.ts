@@ -43,13 +43,14 @@ import { Journey } from "../src/journey.ts";
         const y = r.heightAt(s), g = Math.abs(r.heightAt(s + 1) - y);
         top = Math.max(top, y); steep = Math.max(steep, g);
         if (!Number.isFinite(y)) { err(`road height not finite at ${s} (c${j.st.city})`); break; }
-        if ((s < 300 || s > r.SB - 150) && Math.abs(y) > 1e-6) { err(`road not level near a city at s${s}: ${y.toFixed(3)} (c${j.st.city})`); break; }
-        if (Math.abs(r.floorAt(s, 3) - y) > 1e-9) { err(`ground under the road is not the road at s${s} (c${j.st.city})`); break; }
+        if ((s < 300 || s > r.SB - 150) && Math.abs(r.baseAt(s)) > 1e-6) { err(`land not level near a city at s${s}: ${r.baseAt(s).toFixed(3)} (c${j.st.city})`); break; }
+        if (s > r.length - 100 && Math.abs(y) > 1e-6) { err(`road not down at the gate at s${s} (c${j.st.city})`); break; }
+        if (Math.abs(r.floorAt(s, 3) - (r.tunnelAt(s) ? y : r.baseAt(s))) > 1e-9) { err(`ground under the road is not the road at s${s} (c${j.st.city})`); break; }
       }
       for (const p of r.pieces) for (let s = p.s - 30; s <= p.s + p.len + 30; s += 5)
-        if (Math.abs(r.heightAt(s) - r.heightAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.heightAt(s) - r.heightAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
-      if (steep > 0.0551) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
-      console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
+        if (Math.abs(r.baseAt(s) - r.baseAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.baseAt(s) - r.baseAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
+      if (steep > (r.inp.toFreeway ? 0.062 : 0.0551)) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome}${r.inp.toFreeway ? " (freeway)" : ""} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
     }
     if (j.st.mode === "country" && pmode !== "country") {
       // The train must cross only while the truck waits at the crossing, and only near it.

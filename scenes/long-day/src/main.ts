@@ -40,6 +40,7 @@ import { DockFx, FrontDoorFx } from "./dockfx.ts";
 import { FleetBaker } from "./fleet.ts";
 import { COUNTRY_CLEAR, CountryWorld } from "./countryworld.ts";
 import { ElevatedReach, elevatedLift } from "./elevated.ts";
+import { Frame, FreewayReach, FreewayTraffic, FW_REACH } from "./freeway.ts";
 import { Backdrop } from "./backdrop.ts";
 import { Traffic } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
@@ -59,6 +60,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const backdrop = new Backdrop();
   let seekMs = 0;   // the last seek's cost (debug HUD)
   let traffic: Traffic, crowd: Crowd, ambient: Ambient, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
+  let freewayReach: FreewayReach, cityCars: FreewayTraffic, roadCars: FreewayTraffic;
+  let roadFrame: { road: CountryRoad; F: Frame } | null = null;
   let atmosphere: Atmosphere;
   let roadShown: CountryRoad | null = null;
   const skyTmp = new THREE.Color(), skyTmp2 = new THREE.Color();
@@ -430,7 +433,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (!pr) { if (roadShown) { countryWorld.setRoad(null); roadShown = null; } }
     else if (pr.road !== roadShown) {
       countryWorld.setRoad(pr.road); roadShown = pr.road; countryWorld.setOffset(pr.dx, pr.dz); switched = true;
-      if (DEBUG_CAMLOG) sys.log(`ROAD ${pr.road.inp.kind} c${pr.road.inp.city} at u${pr.u.toFixed(1)} s${pr.s.toFixed(0)}: ${pr.road.pieces.map((p) => `${p.kind}@${p.s.toFixed(0)}`).join(" ")}`);
+      if (DEBUG_CAMLOG) sys.log(`ROAD ${pr.road.inp.kind}${pr.road.inp.toFreeway ? " to-freeway" : ""} c${pr.road.inp.city} at u${pr.u.toFixed(1)} s${pr.s.toFixed(0)}: ${pr.road.pieces.map((p) => `${p.kind}@${p.s.toFixed(0)}`).join(" ")}`);
     }
     else {
       const o = countryWorld.offset;
@@ -442,6 +445,18 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (ex) rr.push({ road: ex, dx: 0, dz: 0 });
       if (pv && pv !== ex) { pv.center(pv.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2); rr.push({ road: pv, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }); }
       elevatedReach.update(journey.plan, rr);
+      freewayReach.update(journey.plan, rr);
+    }
+    // A freeway city's freeway: hidden on the entry side where the road coming in draws it; its
+    // cars (and those on the next city's, out on the road to it).
+    {
+      const inbound = roadShown && (roadShown === journey.previousExit || roadShown === journey.arrivalRoad) && roadShown.inp.toFreeway;
+      freewayReach.cover(inbound ? (roadShown === journey.arrivalRoad ? ARRIVE_LEN : FW_REACH) : 0);
+      const t = journey.st.simTime + journey.frac, cam = engine.camera.position;
+      cityCars.update(journey.plan.freewayFrame, t, cam, false);
+      const ahead = roadShown && roadShown === journey.exitRoad && roadShown.inp.toFreeway ? roadShown : null;
+      if (ahead && roadFrame?.road !== ahead) roadFrame = { road: ahead, F: Frame.ofRoad(ahead) };
+      roadCars.update(ahead ? roadFrame!.F : null, t, cam, true);
     }
     // The road (its cars and train at this moment), and the far land under everything in the city's
     // own countryside colour in town.
@@ -549,6 +564,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       director = new Director(engine.camera, cfg.seed);
       director.avoidBuildings = chaseTargetOutOfBuildings;
       director.confine = (pos) => {
+        // Under a freeway's deck with the truck: below it.
+        for (const F of [journey.plan.freewayFrame, roadFrame && roadShown === roadFrame.road ? roadFrame.F : null]) {
+          const c = F?.under(pos.x, pos.z);
+          if (c != null && truck.root.position.y < c - 2.5) pos.y = Math.min(pos.y, c - 0.6);
+        }
         const pr = pickRoad();
         if (!pr || pr.s < 0) return;
         const r = pr.road, at = r.locate(pos.x - pr.dx, pos.z - pr.dz, pr.s, 160);
@@ -572,6 +592,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers);
       traffic = new Traffic(engine.scene, movers, (model) => fleet.build([{ model, x: 0, z: 0, h: 0 }]));
       crowd = new Crowd(engine.scene, movers);
+      cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);
       const tl = performance.now();
       journey.attachLife(new StreetLife(traffic, crowd, ambient));
@@ -584,6 +605,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
+      freewayReach = new FreewayReach(engine.world, mats.solid);
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
       atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
       setSignalTime(base);

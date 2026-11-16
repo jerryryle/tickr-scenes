@@ -24,6 +24,7 @@ import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop } from "./country.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
+import { buildFreeway, Frame, FW_REACH } from "./freeway.ts";
 
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
@@ -356,9 +357,21 @@ export class CountryWorld {
       g.dy = road.heightAt(sm);
       this.rbox(g, sm, 0, -0.064, 6.2, 0.12, half * 2, CW.asphalt, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
       for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, 6.2, 0.1, 1.8, CW.shoulder, 0, gr); this.rbox(g, sm, k * (half - 0.25), 0.005, 6.2, 0.02, 0.14, CW.white, 0, gr); }
-      if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, 6.0, 0.02, 0.24, CW.yellow, 0, gr);
+      // (Up on a flyover it is one way: a dashed white line.)
+      const up = road.liftAt(sm) > 0.05;
+      if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, up ? 5 : 6.0, 0.02, up ? 0.14 : 0.24, up ? CW.white : CW.yellow, 0, gr);
     }
     g.dy = 0;
+    // Into a freeway city: the freeway, and the flyover the road comes up on (freeway.ts), in
+    // 60 m stretches out from the gate end, each drawn with the segment its middle is beside.
+    if (road.inp.toFreeway) {
+      const F = Frame.ofRoad(road), L = road.length;
+      for (let d = 0; d < FW_REACH; d += 60) {
+        const sc = L - (d + 30);
+        if (sc < s0 || sc >= s1) continue;
+        buildFreeway(s, F, d, Math.min(FW_REACH, d + 60), this.ox, this.oz, { main: true, ramp: true });
+      }
+    }
     // Utility poles on the right, every 50 m where the land is clear, with wires only between two
     // poles. Where the line stops, the wires either end at the last pole or, now and then, have
     // snapped and hang from its crossarm to the ground, the slack lying in the grass.
@@ -433,7 +446,7 @@ export class CountryWorld {
     // Set pieces that start in this segment.
     // (Each on the level ground the road holds round it.)
     for (const p of road.pieces) if (p.s >= s0 && p.s < s1) {
-      const q0 = this.quads.length, y = road.heightAt(p.s);
+      const q0 = this.quads.length, y = road.baseAt(p.s);
       g.dy = s.dy = glow.dy = y; this.pieceY = y;
       this.piece(g, s, p, rnd);
       for (let k = q0; k < this.quads.length; k++) this.quads[k].y += y;
@@ -556,7 +569,7 @@ export class CountryWorld {
   // ---- set pieces ---------------------------------------------------------------------------
   // A big overhead-height highway sign on two posts (big enough to read across the room).
   private greenSign(s: Batch, p: RoadPiece, text: string) {
-    const n = 11, uv = this.slot(text, { bg: "#1e6b3a", fg: "#ffffff", logo: false });
+    const n = p.n ?? 11, uv = this.slot(text, { bg: "#1e6b3a", fg: "#ffffff", logo: false });
     for (const k of [-5.4, 5.4]) this.rbox(s, p.s + 0.27, n + k, 3.2, 0.25, 6.4, 0.25, 0x8d9296);   // behind the board
     this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, CW.green);
     this.rbox(s, p.s + 0.08, n, 5.2, 0.08, 2.75, 13.6, 0xf2f2ee);   // white border (its faces inside the board's: shared planes flicker)

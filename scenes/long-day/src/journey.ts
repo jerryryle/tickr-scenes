@@ -44,6 +44,7 @@ import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
 import { blockGoals, DIR_X, DIR_Z, LANE_KERB, nodeX, nodeZ, Path, planRoute } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
+import { freewayGate } from "./freeway.ts";
 import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from "./country.ts";
 import { bedRearX, handTrips, maxHandUnits, planChores, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup } from "./chores.ts";
@@ -966,7 +967,7 @@ export class Journey {
     let best: { route: Route; gate: number; dEst: number; cost: number } | null = null;
     for (let i = 0; i < GATES.length; i++) {
       const g = GATES[i], turn = (inward - g.dir + 4) % 4;
-      if (turn === 2) continue;
+      if (turn === 2 || g === this.plan.freeway) continue;   // (not out under the flyover the highway came in on)
       const route = planRoute(at.ix, at.iz, at.dir, at.before, [{ ix: g.ix, iz: g.iz, dir: g.dir, after }], 6000, cityStreet);
       if (!route) continue;
       const len = new Path(route).length;
@@ -997,7 +998,7 @@ export class Journey {
     const st = this.st;
     if (!st.exit) {
       const inward = (entryGateOf(citySeedOf(this.cfg.seed, st.city + 1)).dir + 2) % 4;
-      const i = GATES.findIndex((g) => g.dir === inward);
+      const i = GATES.findIndex((g) => g.dir === inward && g !== this.plan.freeway);
       st.exit = { gate: Math.max(0, i), dEst: Math.max(COUNTRY_MIN, this.period - st.cityTime) };
     }
     st.v = 8;
@@ -1027,7 +1028,8 @@ export class Journey {
     const e = gateEnd(GATES[gate]), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
     const toStyle = seasonalStyle(journeyStyle(this.cfg.seed, N1), toClimate), fromStyle = seasonalStyle(journeyStyle(this.cfg.seed, N), fromClimate);
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
-    return new CountryRoad({
+    const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle);
+    return new CountryRoad({ toFreeway,
       seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
@@ -1057,7 +1059,7 @@ export class Journey {
       const g = this.plan.entryGate, e = gateEnd(g), h = e.h + Math.PI;
       const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival",
+        seed: this.cfg.seed, city: st.city, kind: "arrival", toFreeway: !!this.plan.freeway,
         frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
         fromTruck: st.truck, toTruck: st.truck,
         fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,

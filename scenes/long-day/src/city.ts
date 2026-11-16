@@ -23,6 +23,7 @@ import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
+import { buildFreewayStreet, Frame, freewayGate, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
@@ -83,6 +84,17 @@ export class CityPlan {
   constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal) { this.name = cityName(seed, style); }
   // The gate the highway comes in through: pure, from the city's seed.
   get entryGate(): Gate { return entryGateOf(this.seed); }
+  // The gate whose street line the freeway runs along, if the city has one (freeway.ts).
+  private fw: Gate | null | undefined;
+  get freeway(): Gate | null { if (this.fw === undefined) this.fw = freewayGate(this.seed, this.style); return this.fw; }
+  private fwFrame: Frame | null | undefined;
+  get freewayFrame(): Frame | null { if (this.fwFrame === undefined) this.fwFrame = this.freeway ? Frame.ofCity(this, this.freeway) : null; return this.fwFrame; }
+  // Whether the street leaving node (ix, iz) along axis (0: east, 1: south) is under the freeway.
+  freewayStreet(axis: number, ix: number, iz: number) {
+    const g = this.freeway;
+    if (!g || !insideCity(ix, iz)) return false;
+    return axis === 0 ? (g.dir === 0 || g.dir === 2) && iz === g.iz : (g.dir === 1 || g.dir === 3) && ix === g.ix;
+  }
 
   // Smooth value noise on a grid of `scale` blocks, in [0, 1).
   private noise(bx: number, bz: number, scale: number, salt: number) {
@@ -169,6 +181,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   buildCorners(ground); buildMouths(ground, cx, cz);
   buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, seed));
   if (elevatedLine(CS, cz)) buildElevated(solid);
+  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) buildFreewayStreet(solid, axis);
   if (CS.cableCar && cableColumn(cx)) buildCableTracks(ground);
   const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
   let stalls: StallPose[] = [];
@@ -552,12 +565,12 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // Under an elevated line (on an east-west street: elevatedLine), its bents: about every 17 m, at
   // the first spot near each where neither sidewalk has a driveway, streetlight or sign in the way
   // (a dock's side view is kept clear too, unless there is nowhere else). No street trees here.
-  const el = axis === 0 && elevatedLine(CS, DC.cz);
-  if (el) {
+  const el = axis === 0 && elevatedLine(CS, DC.cz), fw = DC.plan.freewayStreet(axis, DC.cx, DC.cz);
+  if (el || fw) {
     const ok = (p: number, soft: boolean) => !inDrive(loD, p, 1.5) && !inDrive(hiD, p, 1.5) && Math.abs(p - (a0 + 10)) > 1.5 && Math.abs(p - (a0 + 31)) > 1.5
       && (loS === null || Math.abs(p - loS) > 2) && (hiS === null || Math.abs(p - hiS) > 2) && (!soft || (!inDrive(loC, p, 0.5) && !inDrive(hiC, p, 0.5)));
     let last = -Infinity;
-    for (const base of [22, 39, 56]) {
+    for (const base of fw ? [26, 50] : [22, 39, 56]) {
       let at = NaN;
       for (const soft of [true, false]) {
         for (const o of [0, 2, -2, 4, -4, 6]) {
@@ -568,11 +581,16 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       }
       if (Number.isNaN(at)) continue;
       last = at;
-      elevatedBent(s, at, ELEVATED_Y + 0.5);
-      EL_COLUMNS.forEach((z, i) => { busy[i].push([at - 0.9, at + 0.9]); pavementObstacle(at, z, 0.5); });
+      if (fw) {
+        freewayStreetBent(s, axis, at);
+        FW_STREET_COLS.forEach((c, i) => { busy[i].push([at - 0.9, at + 0.9]); if (axis === 0) pavementObstacle(at, c, 0.6); else pavementObstacle(c, at, 0.6); });
+      } else {
+        elevatedBent(s, at, ELEVATED_Y + 0.5);
+        EL_COLUMNS.forEach((z, i) => { busy[i].push([at - 0.9, at + 0.9]); pavementObstacle(at, z, 0.5); });
+      }
     }
   }
-  if (district !== "industrial" && !el) {
+  if (district !== "industrial" && !el && !fw) {
     const step = district === "downtown" ? 12 : 9;
     for (const side of [1.6, STREET - 1.6]) {
       const d = side < cl ? loD : hiD, sg = side < cl ? loS : hiS, cz = side < cl ? loC : hiC;
@@ -654,11 +672,11 @@ function buildOutskirts(ground: Batch, solid: Batch, lamps: Batch, plan: CityPla
     const area = (r.x1 - r.x0) * (r.z1 - r.z0), n = Math.floor(b.density * 0.0024 * area + rnd());
     for (let k = 0; k < n; k++) {
       const x = r.x0 + 2 + rnd() * (r.x1 - r.x0 - 4), z = r.z0 + 2 + rnd() * (r.z1 - r.z0 - 4);
-      if (inGateCorridor(ox + x, oz + z) || (line && Math.abs(z - 9) < 7)) continue;   // (nor under an elevated line)
+      if (inGateCorridor(ox + x, oz + z) || (line && Math.abs(z - 9) < 7) || plan.freewayFrame?.corridor(ox + x, oz + z)) continue;   // (nor under an elevated line, nor the freeway)
       const kind = b.trees[Math.floor(rnd() * b.trees.length)], gs = kind === "conifer" || kind === "cypress" || kind === "cactus" ? cgreens : greens;
       landTree(solid, x, z, kind, gs[Math.floor(rnd() * gs.length)], rnd);
     }
-    if (rnd() < b.rocks) { const x = r.x0 + rnd() * (r.x1 - r.x0), z = r.z0 + rnd() * (r.z1 - r.z0); if (!inGateCorridor(ox + x, oz + z) && !(line && Math.abs(z - 9) < 7)) { const rr = 0.5 + rnd() * 1.4; solid.ico(x, rr * 0.3, z, rr, 0x8a8478, 0.6, rnd() * 6); } }
+    if (rnd() < b.rocks) { const x = r.x0 + rnd() * (r.x1 - r.x0), z = r.z0 + rnd() * (r.z1 - r.z0); if (!inGateCorridor(ox + x, oz + z) && !(line && Math.abs(z - 9) < 7) && !plan.freewayFrame?.corridor(ox + x, oz + z)) { const rr = 0.5 + rnd() * 1.4; solid.ico(x, rr * 0.3, z, rr, 0x8a8478, 0.6, rnd() * 6); } }
   }
 }
 
