@@ -9,7 +9,7 @@
 // choice is hashed from the seed and the block, so a block is identical whenever it is rebuilt.
 import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
-import { Batch, quadGeometry } from "./geom.ts";
+import { Batch, BATCH, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import type { ChunkBuild } from "./chunks.ts";
 import { LAMP_SITES, PoolBuilder } from "./atmosphere.ts";
@@ -289,8 +289,8 @@ export function pavementObstacles(plan: CityPlan, bx: number, bz: number): Pavem
   // hold the other two.
   for (const [cx, cz] of [[bx, bz], [bx + 1, bz], [bx, bz + 1]]) {
     const rec: number[] = [];
-    PAVEMENT.out = rec;
-    try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = null; }
+    PAVEMENT.out = rec; BATCH.dry = true;   // placement only: no geometry
+    try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = null; BATCH.dry = false; }
     for (let i = 0; i < rec.length; i += 3) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2] });
   }
   PAVEMENT_CACHE.set(key, out);

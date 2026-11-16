@@ -685,7 +685,23 @@ export class Journey {
 
   // ---- simulation -----------------------------------------------------------------------------
   // One fixed step of the simulation, then street life.
-  step() { this.stepJourney(); this.life?.step(this); }
+  step() { this.stepJourney(); this.life?.step(this); this.prefetch(); }
+
+  // On the way to a stop, look up its block's front doors and pavement (cached by the city), so
+  // the work isn't all on the step the driver gets out. They are pure functions of the city, so
+  // when they run changes nothing else.
+  // (One lookup per step: the doors' build is the dearer, so it doesn't share a step.)
+  private prefetchKey = ""; private prefetchStage = 0;
+  private prefetch() {
+    const st = this.st, stop = st.stops[0];
+    if (st.mode !== "drive" || !stop?.site || stop.kind === "swap" || (!DOOR_PROBE && !PAVEMENT_PROBE)) return;
+    const key = `${st.city}|${stop.site.bx},${stop.site.bz}`;
+    if (key !== this.prefetchKey) { this.prefetchKey = key; this.prefetchStage = 0; }
+    if (this.prefetchStage === 0) DOOR_PROBE?.(this.plan, stop.site.bx, stop.site.bz);
+    else if (this.prefetchStage === 1) PAVEMENT_PROBE?.(this.plan, stop.site.bx, stop.site.bz);
+    else return;
+    this.prefetchStage++;
+  }
   private stepJourney() {
     const dt = SIM_DT;
     this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k;

@@ -23,6 +23,10 @@ function batchTemplate(key: string, make: () => THREE.BufferGeometry): BatchTemp
   return t;
 }
 
+// Dry run: every Batch drops what it is given. For probe builds that only want to know where
+// things go (city.ts pavementObstacles), not their geometry.
+export const BATCH = { dry: false };
+
 export class Batch {
   private pos = new Float32Array(36 * 3 * 64);
   private nrm = new Float32Array(36 * 3 * 64);
@@ -73,6 +77,7 @@ export class Batch {
   // (u0, v0) by `uLen` across and `vLen` up, aux.z = `tile` (see FACADE in facade.ts).
   wall(x0: number, z0: number, x1: number, z1: number, y0: number, y1: number, color: number,
        tile: number, u0: number, uLen: number, v0: number, vLen: number) {
+    if (BATCH.dry) return;
     this.reserve(6);
     this.auxUsed = true;
     const dx = x1 - x0, dz = z1 - z0, len = Math.hypot(dx, dz) || 1;
@@ -93,6 +98,7 @@ export class Batch {
 
   private emit(t: BatchTemplate, x: number, y: number, z: number, color: number,
                rotY: number, rotX: number, rotZ: number, sx: number, sy: number, sz: number) {
+    if (BATCH.dry) return;
     this.reserve(t.count);
     this.e.set(rotX, rotY, rotZ); this.q.setFromEuler(this.e);
     this.m.compose(this.p.set(x, y, z), this.q, this.s.set(sx, sy, sz));
