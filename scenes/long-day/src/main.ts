@@ -40,7 +40,7 @@ import { DockFx, FrontDoorFx } from "./dockfx.ts";
 import { FleetBaker } from "./fleet.ts";
 import { COUNTRY_CLEAR, CountryWorld } from "./countryworld.ts";
 import { ElevatedReach, elevatedLift } from "./elevated.ts";
-import { Frame, FreewayReach, FreewayTraffic, FW_REACH } from "./freeway.ts";
+import { Frame, FreewayReach, FreewayTraffic, FW_TIP } from "./freeway.ts";
 import { Backdrop } from "./backdrop.ts";
 import { Traffic } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
@@ -99,11 +99,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const moved = jumped || Number.isNaN(lastX) ? 0 : Math.hypot(p.x - lastX, p.z - lastZ) * (journey.st.mode === "reverse" ? -1 : 1);
     lastX = p.x; lastZ = p.z;
     truck.follow(p.x, p.z, p.h, p.k, moved);
-    // Out of town, the road's hills (in town, and at both ends of the road, all level).
-    // In town, up a garage's ramps and on its roof.
-    const pr = pickRoad0(), lift = journey.truckLift();
-    if (lift.y > 0.001 || lift.grade !== 0) truck.setGrade(lift.y, lift.grade);
-    else if (pr && pr.s > 0) truck.setGrade(pr.road.heightAt(pr.s), pr.road.gradeAt(pr.s)); else truck.setGrade(0, 0);
+    // Out of town, the road's hills (and up an on-ramp onto a freeway); in town, up a garage's
+    // ramps and on its roof, or down a freeway's off-ramp.
+    const m = journey.st.mode, pr = m === "country" || m === "inbound" ? pickRoad0() : null;
+    if (pr && pr.s > 0) truck.setGrade(pr.road.truckY(pr.s), pr.road.truckGrade(pr.s));
+    else { const lift = journey.truckLift(); truck.setGrade(lift.y, lift.grade); }
     truck.speed = journey.st.v; truck.accel = journey.accel;
     // Reversing into a bay, the trailer leads along the bay path; ease into it from however the
     // hitch left it on the way in.
@@ -453,7 +453,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // cars (and those on the next city's, out on the road to it).
     {
       const inbound = roadShown && (roadShown === journey.previousExit || roadShown === journey.arrivalRoad) && roadShown.inp.toFreeway;
-      freewayReach.cover(inbound ? (roadShown === journey.arrivalRoad ? ARRIVE_LEN : FW_REACH) : 0);
+      freewayReach.cover(inbound ? (roadShown === journey.arrivalRoad ? ARRIVE_LEN : FW_TIP) : 0);
       const t = journey.st.simTime + journey.frac, cam = engine.camera.position;
       cityCars.update(journey.plan.freewayFrame, t, cam, false);
       const ahead = roadShown && roadShown === journey.exitRoad && roadShown.inp.toFreeway ? roadShown : null;
@@ -496,12 +496,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const st = journey.st, ex = journey.exitRoad;
     const rise = (d: number) => 1 - smooth(THREE.MathUtils.clamp(d / 1000, 0, 1));
     if (pr && ex && pr.road === ex) {
-      const s = pr.s, L = ex.length, fall = (x: number) => 1 - smooth(THREE.MathUtils.clamp((x - 100) / 500, 0, 1));
+      const s = pr.s, L = ex.gateS, fall = (x: number) => 1 - smooth(THREE.MathUtils.clamp((x - 100) / 500, 0, 1));
       let mid = (600 + L - 1000) / 2;
       if (L < 1600) { let lo = 100, hi = L; for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; if (fall(m) > rise(L - m)) lo = m; else hi = m; } mid = lo; }
       return s < mid ? { city: st.city, p: fall(s) } : { city: st.city + 1, p: rise(L - s) };
     }
-    if (pr && pr.road === journey.previousExit) return { city: st.city, p: rise(pr.road.length - pr.s) };
+    if (pr && pr.road === journey.previousExit) return { city: st.city, p: rise(pr.road.gateS - pr.s) };
     if (pr && pr.road === journey.arrivalRoad) return { city: st.city, p: rise(ARRIVE_LEN - pr.s) };
     return { city: st.city, p: 1 };
   }

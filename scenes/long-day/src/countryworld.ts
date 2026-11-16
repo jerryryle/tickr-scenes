@@ -24,7 +24,7 @@ import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop } from "./country.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
-import { buildFreeway, Frame, FW_REACH } from "./freeway.ts";
+import { buildFreeway, FW_TIP } from "./freeway.ts";
 
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
@@ -352,24 +352,22 @@ export class CountryWorld {
     // The road: asphalt, gravel shoulders, edge lines and the double yellow (dashed while passing
     // is allowed on the straights is overkill at this size: solid).
     // Near a gate it widens to a city street's carriageway, to meet the gate street.
-    for (let a = s0; a < s1 && a < road.length; a += 6) {
+    for (let a = s0; a < s1 && a < road.gateS; a += 6) {
       const sm = a + 3, w = road.widthAt(sm), half = 4.1 + 1.9 * w, gr = road.gradeAt(sm);
       g.dy = road.heightAt(sm);
       this.rbox(g, sm, 0, -0.064, 6.2, 0.12, half * 2, CW.asphalt, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
       for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, 6.2, 0.1, 1.8, CW.shoulder, 0, gr); this.rbox(g, sm, k * (half - 0.25), 0.005, 6.2, 0.02, 0.14, CW.white, 0, gr); }
-      // (Up on a flyover it is one way: a dashed white line.)
-      const up = road.liftAt(sm) > 0.05;
-      if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, up ? 5 : 6.0, 0.02, up ? 0.14 : 0.24, up ? CW.white : CW.yellow, 0, gr);
+      if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, 6.0, 0.02, 0.24, CW.yellow, 0, gr);
     }
     g.dy = 0;
     // Into a freeway city: the freeway, and the flyover the road comes up on (freeway.ts), in
     // 60 m stretches out from the gate end, each drawn with the segment its middle is beside.
     if (road.inp.toFreeway) {
-      const F = Frame.ofRoad(road), L = road.length;
-      for (let d = 0; d < FW_REACH; d += 60) {
+      const F = road.freewayFrame!, L = road.gateS;
+      for (let d = 0; d < FW_TIP; d += 60) {
         const sc = L - (d + 30);
         if (sc < s0 || sc >= s1) continue;
-        buildFreeway(s, F, d, Math.min(FW_REACH, d + 60), this.ox, this.oz, { main: true, ramp: true });
+        buildFreeway(s, F, d, Math.min(FW_TIP, d + 60), this.ox, this.oz, { main: true, ramp: true });
       }
     }
     // Utility poles on the right, every 50 m where the land is clear, with wires only between two

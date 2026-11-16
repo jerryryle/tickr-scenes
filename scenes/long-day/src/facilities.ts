@@ -224,7 +224,9 @@ export interface StandLayout { kind: "stand"; side: number; a: number; stand: St
 // A parking garage with a rooftop stop (garage.ts): trucks come along `side`, drive up onto its
 // roof and leave down its far ramp.
 export interface GarageLayout { kind: "garage"; side: number }
-export type SiteLayout = DockLayout | LotLayout | KerbLayout | StandLayout | GarageLayout;
+// A freeway's off-ramp, spiralling down in the block beside it (interchange.ts): no facility.
+export interface InterchangeLayout { kind: "interchange"; side: number }
+export type SiteLayout = DockLayout | LotLayout | KerbLayout | StandLayout | GarageLayout | InterchangeLayout;
 const STANDS: Partial<Record<FacilityId, StandKind>> = {
   farm: "farmStand", farmCoop: "farmStand", greenhouse: "pottingShed", treeFarm: "pottingShed",
   pumpkinPatch: "salesHut", treeLot: "salesHut", countyFair: "ticketBooth", pettingZoo: "ticketBooth",
@@ -240,6 +242,7 @@ export const LOT_TRACTOR_N = 33;     // n of the tractor-trailer parked along th
 const FLEET: TruckModel[] = ["box16", "box26", "box26", "reefer", "flatbed", "box16", "box26"];
 
 export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
+  if (plan.interchangeAt(bx, bz)) return { kind: "interchange", side: plan.interchange!.side };
   const fac = facilityAt(plan, bx, bz);
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
   const side = Math.floor(h(0x51de) * 4);

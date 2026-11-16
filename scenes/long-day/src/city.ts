@@ -24,8 +24,9 @@ import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
+import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, INTERCHANGE_OPEN } from "./interchange.ts";
 import { GARAGE_H } from "./route.ts";
-import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
+import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
@@ -90,6 +91,30 @@ export class CityPlan {
   private fw: Gate | null | undefined;
   get freeway(): Gate | null { if (this.fw === undefined) this.fw = freewayGate(this.seed, this.style); return this.fw; }
   get freewayMerge(): boolean { return !!this.freeway && freewayMerge(this.seed); }
+  // Where the truck comes off the freeway (interchange.ts), in a city it takes it into: the block
+  // on the right a couple of blocks in, the side of it along the freeway (FRONT_NODE's), the node
+  // the off-ramp leaves past and the way in.
+  private ic: { bx: number; bz: number; side: number; ix: number; iz: number; dir: number } | null | undefined;
+  get interchange() {
+    if (this.ic !== undefined) return this.ic;
+    const g = this.freeway;
+    if (!g || !this.freewayMerge) return (this.ic = null);
+    const d = (g.dir + 2) % 4, ix = g.ix + [1, 0, -1, 0][d] * FW_OFF_K, iz = g.iz + [0, -1, 0, 1][d] * FW_OFF_K;
+    const [bx, bz] = d === 0 ? [ix, iz] : d === 2 ? [ix - 1, iz - 1] : d === 1 ? [ix, iz - 1] : [ix - 1, iz];
+    return (this.ic = { bx, bz, side: [0, 2, 1, 3][d], ix, iz, dir: d });
+  }
+  interchangeAt(bx: number, bz: number) { const c = this.interchange; return !!c && c.bx === bx && c.bz === bz; }
+  // On the freeway's street beside the interchange (the chunk's street along `axis`): where along
+  // it (street-local) the deck's parapet opens for the off-ramp (and on which side, as
+  // buildFreewayStreet's k), and where the way down crosses the sidewalk (no bents there).
+  interchangeStreet(axis: number, cx: number, cz: number): { open: [number, number]; clear: [number, number]; k: number } | null {
+    const c = this.interchange;
+    if (!c) return null;
+    const d = c.dir, [sx, sz, sa] = d === 0 ? [c.ix, c.iz, 0] : d === 2 ? [c.ix - 1, c.iz, 0] : d === 1 ? [c.ix, c.iz - 1, 1] : [c.ix, c.iz, 1];
+    if (sx !== cx || sz !== cz || sa !== axis) return null;
+    const at = (a: number) => (d === 0 || d === 3 ? 9 + a : 69 - a), span = (a0: number, a1: number): [number, number] => [Math.min(at(a0), at(a1)), Math.max(at(a0), at(a1))];
+    return { open: span(INTERCHANGE_OPEN[0], INTERCHANGE_OPEN[1]), clear: span(INTERCHANGE_CLEAR[0], INTERCHANGE_CLEAR[1]), k: d === 0 || d === 3 ? -1 : 1 };
+  }
   private fwFrame: Frame | null | undefined;
   get freewayFrame(): Frame | null { if (this.fwFrame === undefined) this.fwFrame = this.freeway ? Frame.ofCity(this, this.freeway) : null; return this.fwFrame; }
   // Whether the street leaving node (ix, iz) along axis (0: east, 1: south) is under the freeway.
@@ -184,11 +209,12 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   buildCorners(ground); buildMouths(ground, cx, cz);
   buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, seed));
   if (elevatedLine(CS, cz)) buildElevated(solid);
-  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) buildFreewayStreet(solid, axis);
+  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) { const ic = plan.interchangeStreet(axis, cx, cz); buildFreewayStreet(solid, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null); }
   if (CS.cableCar && cableColumn(cx)) buildCableTracks(ground);
   const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
   let stalls: StallPose[] = [];
   if (site.kind === "garage") buildGarage(ground, solid, site.side, rnd, plan.seed);
+  else if (site.kind === "interchange") buildInterchange(ground, solid, site.side, plan.seed);
   else if (site.kind === "dock") buildDockSite(ground, solid, site, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
   else if (site.kind === "lot") stalls = buildRentalLot(ground, solid, site, rnd, DC.quads, uv);
   else if (CS.townSquare && district === "downtown" && plan.coreDistance(cx, cz) < 0.8) buildTownSquare(ground, solid, B, rnd);
@@ -489,6 +515,7 @@ function streetFrontage(plan: CityPlan, bx: number, bz: number, side: number): F
   if (L.kind === "dock") return { side, drive: L.side === side ? [Math.min(...dockUsedBays(L).map((i) => L.bays[i])) - 4.5, Math.max(...dockUsedBays(L).map((i) => L.bays[i])) + 18] : null, sign: null,
     clear: PREV_SIDE[L.side] === side ? [16, 51] : undefined };
   if (L.kind === "garage") return { side, drive: L.side === side ? GARAGE_DRIVE : null, sign: null };
+  if (L.kind === "interchange") return { side, drive: L.side === side ? INTERCHANGE_DRIVE : null, sign: null };
   if (L.kind === "kerb" && hasSign(facilityAt(plan, bx, bz))) return { side, drive: null, sign: BLADE_A };
   if (L.kind === "stand") { const b = standBox(L); return { side, drive: null, sign: BLADE_A, clear: L.side === side ? [b.a0 - 1, b.a1 + 0.5] : undefined }; }
   return { side, drive: null, sign: null };
@@ -578,7 +605,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // (a dock's side view is kept clear too, unless there is nowhere else). No street trees here.
   const el = axis === 0 && elevatedLine(CS, DC.cz), fw = DC.plan.freewayStreet(axis, DC.cx, DC.cz);
   if (el || fw) {
-    const ok = (p: number, soft: boolean) => !inDrive(loD, p, 1.5) && !inDrive(hiD, p, 1.5) && Math.abs(p - (a0 + 10)) > 1.5 && Math.abs(p - (a0 + 31)) > 1.5
+    const icClear = fw ? DC.plan.interchangeStreet(axis, DC.cx, DC.cz)?.clear ?? null : null;
+    const ok = (p: number, soft: boolean) => !(icClear && p > icClear[0] - 1.5 && p < icClear[1] + 1.5) && !inDrive(loD, p, 1.5) && !inDrive(hiD, p, 1.5) && Math.abs(p - (a0 + 10)) > 1.5 && Math.abs(p - (a0 + 31)) > 1.5
       && (loS === null || Math.abs(p - loS) > 2) && (hiS === null || Math.abs(p - hiS) > 2) && (!soft || (!inDrive(loC, p, 0.5) && !inDrive(hiC, p, 0.5)));
     let last = -Infinity;
     for (const base of fw ? [26, 50] : [22, 39, 56]) {

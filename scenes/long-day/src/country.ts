@@ -18,7 +18,7 @@ import { BLOCK, RING } from "./grid.ts";
 import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
-import { FW_REACH, mergeLane, rampLift } from "./freeway.ts";
+import { Frame, FW_OFF_D, FW_OFF_V, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
@@ -67,6 +67,16 @@ const STRAIGHT_IN = 150;                 // straight before the hand-over (and t
 // Into a freeway city (freeway.ts) the road runs straight on for longer, beside the freeway, and
 // the land is level for longer still, under it.
 const FW_STRAIGHT_IN = 560, FW_FLAT_IN = 760;
+// The slowing on the freeway for its off-ramp: about 90 m, just so that the arrival ends on a
+// simulation step (the city's route takes over there, exactly at the off-ramp).
+// (Worked out on first use: it needs constants from modules loaded after this one.)
+let mergeDecM = 0;
+function mergeDec() {
+  if (mergeDecM) return mergeDecM;
+  const total = ARRIVE_LEN + FW_OFF_D, V = V_JOIN, v = FW_OFF_V, k = (V - v) / (V * (V + v));
+  const dur = Math.ceil((total / V + 90 * k) / SIM_DT - 1e-9) * SIM_DT;
+  return (mergeDecM = (dur - total / V) / k);
+}
 // Distance and speed into the arrival straight, u seconds after the hand-over.
 function arriveS(u: number) {
   if (u >= ARRIVE_DUR) return ARRIVE_LEN + V_GATE * (u - ARRIVE_DUR);
@@ -112,7 +122,8 @@ export class CountryRoad {
   readonly fromBiome: BiomeId; readonly toBiome: BiomeId;
   readonly pieces: RoadPiece[] = [];
   stops: CountryStop[] = [];
-  readonly length: number;         // to the next city's gate street
+  readonly length: number;         // to the next city's gate street (on into town, along a freeway the truck takes)
+  readonly gateS: number;          // where the next city's gate street begins
   readonly SB: number;             // where the next city takes over (the arrival straight begins)
   readonly swapU: number = -1;     // drive time of a truck change (none: trucks change in town)
   readonly swapS: number = 0;
@@ -173,7 +184,8 @@ export class CountryRoad {
       this.S = m.S; this.V = m.V; this.D = dur; this.stops = m.stops;
     }
     this.SB = SB;
-    const L = this.length = SB + ARRIVE_LEN;
+    const L = this.gateS = SB + ARRIVE_LEN;
+    this.length = L + (inp.toFreewayMerge ? FW_OFF_D : 0);
     this.landFrom = arrival ? 0 : LAND_SEAM; this.landTo = L - LAND_SEAM;
     // Signs and the rest of the set pieces, wherever there is room (never near the cities, so
     // nothing the cities' ends can see depends on how long the drive turns out to be).
@@ -224,7 +236,7 @@ export class CountryRoad {
     // Geometry: straight out of town, gentle curves, straight into the hand-over and the arrival
     // straight. The curves also turn the road onto the next city's way in (endH): the city's exit
     // gate is chosen so that is never more than a quarter turn.
-    const n = Math.ceil((L + 40) / ROAD_DS) + 1;
+    const n = Math.ceil((this.length + 40) / ROAD_DS) + 1;
     this.X = new Float64Array(n); this.Z = new Float64Array(n); this.H = new Float64Array(n);
     const kap = new Float64Array(n), msk = new Float64Array(n);
     const A = [0.0011 + 0.0011 * h(80), 0.0007 * h(81)], W = [2 * Math.PI / (700 + 500 * h(82)), 2 * Math.PI / (260 + 200 * h(83))], P = [h(84) * 6.3, h(85) * 6.3];
@@ -374,11 +386,32 @@ export class CountryRoad {
   // Distance along the road at drive time t (interpolated between steps); past the hand-over, the
   // arrival straight.
   sAt(t: number) {
-    if (t > this.D) return this.SB + arriveS(t - this.D);
+    if (t > this.D) return this.SB + this.arriveS(t - this.D);
     const f = THREE.MathUtils.clamp(t / SIM_DT, 0, this.S.length - 1), i = Math.floor(f), j = Math.min(i + 1, this.S.length - 1);
     return this.S[i] + (this.S[j] - this.S[i]) * (f - i);
   }
-  vAt(t: number) { return t > this.D ? arriveV(t - this.D) : this.V[THREE.MathUtils.clamp(Math.round(t / SIM_DT), 0, this.V.length - 1)]; }
+  vAt(t: number) { return t > this.D ? this.arriveV(t - this.D) : this.V[THREE.MathUtils.clamp(Math.round(t / SIM_DT), 0, this.V.length - 1)]; }
+  // The arrival into the next city, u seconds after the hand-over. By the highway: ARRIVE_DUR
+  // seconds to the gate, slowing to V_GATE. By the freeway: on at V_JOIN up the on-ramp and along
+  // it into town, slowing to FW_OFF_V where the off-ramp leaves it (mergeDec() metres before).
+  private arriveS(u: number) {
+    if (!this.inp.toFreewayMerge) return arriveS(u);
+    const total = ARRIVE_LEN + FW_OFF_D, a1 = total - mergeDec(), t1 = a1 / V_JOIN, acc = (V_JOIN * V_JOIN - FW_OFF_V * FW_OFF_V) / (2 * mergeDec()), t2 = (V_JOIN - FW_OFF_V) / acc;
+    if (u <= t1) return V_JOIN * Math.max(0, u);
+    if (u <= t1 + t2) { const w = u - t1; return a1 + V_JOIN * w - acc * w * w / 2; }
+    return total + FW_OFF_V * (u - t1 - t2);
+  }
+  private arriveV(u: number) {
+    if (!this.inp.toFreewayMerge) return arriveV(u);
+    const total = ARRIVE_LEN + FW_OFF_D, t1 = (total - mergeDec()) / V_JOIN, acc = (V_JOIN * V_JOIN - FW_OFF_V * FW_OFF_V) / (2 * mergeDec());
+    return u <= t1 ? V_JOIN : Math.max(FW_OFF_V, V_JOIN - acc * (u - t1));
+  }
+  // How long the arrival takes (to the gate, or to the off-ramp).
+  get arriveDur() {
+    if (!this.inp.toFreewayMerge) return ARRIVE_DUR;
+    const acc = (V_JOIN * V_JOIN - FW_OFF_V * FW_OFF_V) / (2 * mergeDec());
+    return (ARRIVE_LEN + FW_OFF_D - mergeDec()) / V_JOIN + (V_JOIN - FW_OFF_V) / acc;
+  }
   stoppedAt(t: number) { return this.stops.find((s) => t >= s.arrive && t < s.arrive + s.dwell) ?? null; }
 
   // A point on the centre line at distance s (world), its heading and curvature.
@@ -394,13 +427,18 @@ export class CountryRoad {
   }
   // The road's height at distance s (on a flyover into a freeway city, up off the land), and its
   // grade (rise per metre); the land's own level under the road (where the pieces stand).
-  heightAt(s: number) { return this.baseAt(s) + this.liftAt(s); }
+  heightAt(s: number) { return this.baseAt(s); }
   baseAt(s: number) {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, this.Y.length - 1.001), i = Math.floor(f);
     return this.Y[i] + (this.Y[i + 1] - this.Y[i]) * (f - i);
   }
-  liftAt(s: number) { return this.inp.toFreeway ? rampLift(this.length - s, this.inp.toFreewayMerge) : 0; }
   gradeAt(s: number) { return (this.heightAt(s + 3) - this.heightAt(s - 3)) / 6; }
+  // The truck's height and grade at s: the road's, or up the on-ramp and on the freeway.
+  truckY(s: number) { return this.baseAt(s) + (this.inp.toFreewayMerge ? (s > this.gateS ? FW_TOP : onRampY(this.gateS - s)) : 0); }
+  truckGrade(s: number) { return (this.truckY(s + 3) - this.truckY(s - 3)) / 6; }
+  // The freeway's frame, on a road into a freeway city (freeway.ts).
+  private fwFrame: Frame | null = null;
+  get freewayFrame(): Frame | null { if (!this.inp.toFreeway) return null; if (!this.fwFrame) this.fwFrame = Frame.ofRoad(this); return this.fwFrame; }
   private at(A: Float64Array, s: number) {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, A.length - 1.001), i = Math.floor(f);
     return A[i] + (A[i + 1] - A[i]) * (f - i);
@@ -495,13 +533,13 @@ export class CountryRoad {
   // gates at both ends.
   laneAt(s: number) {
     if (s < 60 && this.inp.kind === "exit") return LANE_KERB + (LANE - LANE_KERB) * smooth(THREE.MathUtils.clamp(s / 60, 0, 1));
-    if (s > this.length - 60) return LANE + (LANE_KERB - LANE) * smooth(THREE.MathUtils.clamp((s - (this.length - 60)) / 60, 0, 1));
-    // Into a city where the highway joins the freeway: over into its right-hand lane and back.
-    if (this.inp.toFreewayMerge) return mergeLane(this.length - s, LANE);
+    // Into a city by the freeway: off the highway up its on-ramp and into its right-hand lane.
+    if (this.inp.toFreewayMerge) return onRampN(this.gateS - s, LANE);
+    if (s > this.gateS - 60) return LANE + (LANE_KERB - LANE) * smooth(THREE.MathUtils.clamp((s - (this.gateS - 60)) / 60, 0, 1));
     return LANE;
   }
   // How far the road has widened to a city street's width near a gate (0 on the open road, 1 at the gate).
-  widthAt(s: number) { return Math.max(this.inp.kind === "exit" ? 1 - smooth(THREE.MathUtils.clamp(s / 70, 0, 1)) : 0, smooth(THREE.MathUtils.clamp((s - (this.length - 70)) / 70, 0, 1))); }
+  widthAt(s: number) { return Math.max(this.inp.kind === "exit" ? 1 - smooth(THREE.MathUtils.clamp(s / 70, 0, 1)) : 0, smooth(THREE.MathUtils.clamp((s - (this.gateS - 70)) / 70, 0, 1))); }
   // The truck's pose at drive time t.
   poseAt(t: number, out: Pose): Pose {
     const s = this.sAt(t), n = this.laneAt(s), dn = (this.laneAt(s + 0.5) - this.laneAt(s - 0.5));
@@ -589,7 +627,7 @@ export class CountryRoad {
   // Is (s, n) clear of the road furniture and set pieces (for scenery)?
   clearAt(s: number, n: number) {
     if (Math.abs(n) < 11) return false;
-    if (this.inp.toFreeway && this.length - s < FW_REACH + 60 && n > -27 && n < 8.5) return false;   // under the freeway and the flyover
+    if (this.inp.toFreeway) { this.point(s, n, this.tmpQ); if (this.freewayFrame!.corridor(this.tmpQ.x, this.tmpQ.z)) return false; }   // under the freeway and its on-ramp
     for (const p of this.pieces) {
       if (s < p.s - 40 || s > p.s + p.len + 40) continue;
       if (p.kind === "rail" || p.kind === "bridge") return false;

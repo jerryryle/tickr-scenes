@@ -44,9 +44,10 @@ import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
 import { blockGoals, DIR_X, DIR_Z, LANE_KERB, nodeX, nodeZ, Path, planRoute } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
-import { freewayGate, freewayMerge } from "./freeway.ts";
+import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
+import { interchangeTrack } from "./interchange.ts";
 import { GARAGE_IN_A } from "./garage.ts";
-import { GARAGE_H } from "./route.ts";
+import { GARAGE_H, HELIX_TOP } from "./route.ts";
 import type { GarageGeom } from "./route.ts";
 import type { GarageLayout } from "./facilities.ts";
 // Debug builds: every journey log line, from the start (main.ts).
@@ -198,6 +199,17 @@ export class Journey {
       lastSwap: start - 60 * 15 * hash2(N, 1, this.cfg.seed, 0x5a9), jobsSinceSwap: 0, intercity: false,
       committed: "", redWait: 0, preempt: [], stopsDone: N * 1000, events: [],
     };
+    // By the freeway: the arrival ends at its off-ramp, where the city's route starts: down the
+    // off-ramp (a "helix" tail) and out into the kerb lane under the freeway, towards the next node.
+    const ic = this.plan.interchange;
+    if (ic) {
+      const ox = ic.bx * BLOCK, oz = ic.bz * BLOCK, track = interchangeTrack(ic.side), q = { x: 0, z: 0, h: 0, k: 0 };
+      track.eval(0, q);
+      st.garageExit = { x: ox + q.x, z: oz + q.z, h: q.h, kind: "helix" };
+      track.eval(track.length, q);
+      const nx = ic.ix + DIR_X[ic.dir], nz = ic.iz + DIR_Z[ic.dir];
+      st.at = { ix: nx, iz: nz, dir: ic.dir, before: (nodeX(nx) - (ox + q.x)) * DIR_X[ic.dir] + (nodeZ(nz) - (oz + q.z)) * DIR_Z[ic.dir] };
+    }
     this.st = st;
     if (freight) {
       const c = CARGO_BY_ID.get(freight.cargo)!;
@@ -321,7 +333,7 @@ export class Journey {
         const d = Math.abs(dx) + Math.abs(dz);
         if (d < minDist || d > radius) continue;
         const x = bx + dx, z = bz + dz;
-        if (!insideCity(x, z) || avoid.has(`${x},${z}`)) continue;
+        if (!insideCity(x, z) || avoid.has(`${x},${z}`) || this.plan.interchangeAt(x, z)) continue;
         if (types.includes(this.facility(x, z))) out.push({ s: this.site(x, z), d });
       }
     out.sort((a, b) => a.d - b.d);
@@ -579,11 +591,11 @@ export class Journey {
     const st = this.st;
     if (st.mode === "country" || st.mode === "inbound") return { y: 0, grade: 0 };
     if (this.path && this.path.ramps.length) { const s = st.s - (1 - this.alpha) * this.lastStep; return { y: this.path.yAt(s), grade: this.path.gradeAt(s) }; }
-    if (st.garageExit) return { y: GARAGE_H, grade: 0 };
+    if (st.garageExit) return { y: st.garageExit.kind === "helix" ? HELIX_TOP : GARAGE_H, grade: 0 };
     return { y: 0, grade: 0 };
   }
   // The height of the current path at s (0 off a garage).
-  pathY(s: number) { return this.path ? this.path.yAt(s) : this.st.garageExit ? GARAGE_H : 0; }
+  pathY(s: number) { return this.path ? this.path.yAt(s) : this.st.garageExit ? (this.st.garageExit.kind === "helix" ? HELIX_TOP : GARAGE_H) : 0; }
 
   isDockStop(stop: Stop | undefined | null) { return this.dockPlan(stop) !== null; }
 
@@ -1135,8 +1147,8 @@ export class Journey {
     const st = this.st, px = this.pose.x, pz = this.pose.z;
     this.countryPose();
     this.lastStep = Math.hypot(this.pose.x - px, this.pose.z - pz);
-    if (st.cityTime >= ARRIVE_DUR - 1e-6) {
-      st.mode = "drive"; st.modeTime = 0; st.v = V_GATE;
+    if (st.cityTime >= this.arrivalRoad.arriveDur - 1e-6) {
+      st.mode = "drive"; st.modeTime = 0; st.v = this.plan.interchange ? FW_OFF_V : V_GATE;
       this.path = null; st.route = null;
     }
   }

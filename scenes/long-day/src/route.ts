@@ -52,10 +52,17 @@ export interface Route { ix: number; iz: number; dir: number; before: number; mo
 // down the far side's ramp and turns left out across the street, into the kerb lane back the
 // way the truck came. Each step goes on from where the last ended.
 export const GARAGE_H = 4.8;
-export interface GarageGeom { x: number; z: number; h: number }
+// `helix`: a freeway's off-ramp instead (interchange.ts), from its right-hand lane at the deck's
+// height: a right turn off it into the block beside, a spiral down two right-hand turns and a half
+// to the ground, and a right turn out into the street's kerb lane beneath the freeway.
+export const HELIX_TOP = 9.6;   // (freeway.ts FW_TOP)
+export interface GarageGeom { x: number; z: number; h: number; kind?: "helix" }
 type TailStep = { turn: number; sgn: 1 | -1; v: number } | { line: number; v: number };
 const GARAGE_IN: TailStep[] = [{ turn: 7, sgn: -1, v: 2.8 }, { line: 26.5, v: 3.4 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 3, v: 2.5 }];
 const GARAGE_OUT: TailStep[] = [{ line: 9, v: 3 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 33.5, v: 3.4 }, { turn: 9, sgn: 1, v: 3 }];
+const HELIX_Q: TailStep = { turn: 12.5, sgn: -1, v: 4.5 };
+const HELIX_OUT: TailStep[] = [{ turn: 11, sgn: -1, v: 6 }, { line: 17.6, v: 5 }, HELIX_Q, HELIX_Q, HELIX_Q, HELIX_Q, HELIX_Q, HELIX_Q, { line: 20.5, v: 5 }, { turn: 9, sgn: -1, v: 4 }];
+const HELIX_RAMP = [1, 7];
 // Where on the way in the ramp rises (from the start of step 1 to the end of step 2), and where on
 // the way out it comes down.
 const GARAGE_IN_RAMP = [1, 2], GARAGE_OUT_RAMP = [1, 2];
@@ -152,8 +159,8 @@ export class Path {
   gradeAt(s: number) { return this.ramps.length ? (this.yAt(s + 1) - this.yAt(s - 1)) / 2 : 0; }
   // Just a garage's way in (from the kerb lane at x, z on heading h) or out (from the stop): for
   // drawing its ramps (garage.ts).
-  static garageTrack(out: boolean, x: number, z: number, h: number): Path {
-    const p = new Path({ ix: 0, iz: 0, dir: 0, before: 0, moves: "", after: 0, garageOut: out ? { x, z, h } : undefined }, true);
+  static garageTrack(out: boolean, x: number, z: number, h: number, kind?: "helix"): Path {
+    const p = new Path({ ix: 0, iz: 0, dir: 0, before: 0, moves: "", after: 0, garageOut: out ? { x, z, h, kind } : undefined }, true);
     if (!out) p.tail(GARAGE_IN, x, z, h, GARAGE_IN_RAMP, 0, GARAGE_H);
     return p;
   }
@@ -180,7 +187,8 @@ export class Path {
     if (route.garageOut) {
       // Down out of a garage: the route starts at its rooftop stop.
       const g = route.garageOut;
-      this.tail(GARAGE_OUT, g.x, g.z, g.h, GARAGE_OUT_RAMP, GARAGE_H, 0);
+      if (g.kind === "helix") this.tail(HELIX_OUT, g.x, g.z, g.h, HELIX_RAMP, HELIX_TOP, 0);
+      else this.tail(GARAGE_OUT, g.x, g.z, g.h, GARAGE_OUT_RAMP, GARAGE_H, 0);
       legS = this.length;
       if (trackOnly) { this.endDir = 0; this.endNode = [0, 0]; return; }
     } else if (trackOnly) { this.endDir = 0; this.endNode = [0, 0]; return; }

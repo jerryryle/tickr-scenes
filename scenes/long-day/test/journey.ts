@@ -49,7 +49,14 @@ import { Journey } from "../src/journey.ts";
       }
       for (const p of r.pieces) for (let s = p.s - 30; s <= p.s + p.len + 30; s += 5)
         if (Math.abs(r.baseAt(s) - r.baseAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.baseAt(s) - r.baseAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
-      if (steep > (r.inp.toFreeway ? 0.066 : 0.0551)) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      if (steep > 0.0551) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      // By the freeway: the truck's way up the on-ramp, and along the freeway to its off-ramp.
+      if (r.inp.toFreewayMerge) {
+        let ts = 0;
+        for (let s = r.gateS - 700; s < r.length; s += 1) ts = Math.max(ts, Math.abs(r.truckY(s + 1) - r.truckY(s)));
+        if (ts > 0.07) err(`on-ramp too steep: ${(ts * 100).toFixed(1)}% (c${j.st.city})`);
+        if (Math.abs(r.truckY(r.length) - 9.6) > 1e-6) err(`not on the freeway at its off-ramp (c${j.st.city})`);
+      }
       console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome}${r.inp.toFreeway ? (r.inp.toFreewayMerge ? " (freeway, merging)" : " (freeway)") : ""} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
     }
     if (j.st.mode === "country" && pmode !== "country") {

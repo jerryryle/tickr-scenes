@@ -663,7 +663,7 @@ export class Director {
     const r = j.country!, p = r.pieces[this.signPiece], g = pieceSigns(p)[this.signIdx];
     // (Heights above the road there: a sign stands on the level the road holds round it.)
     // (The camera and the lane over the road, which may be up on a flyover; the sign over the land.)
-    const pt = (s: number, n: number, y: number, road = false) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y + (road ? r.heightAt(s) : r.baseAt(s)), this.pose.z); };
+    const pt = (s: number, n: number, y: number, road = false) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y + (road ? r.truckY(s) : r.baseAt(s)), this.pose.z); };
     const cs = g.s - SIGN_CAM_BACK;
     this.anchorPos.copy(pt(cs, r.laneAt(cs), SIGN_CAM_Y, true));
     const sign = [-1, 1].flatMap((k) => [-1, 1].map((m) => pt(g.s, g.n + k * g.w / 2, g.y + m * g.h / 2)));
