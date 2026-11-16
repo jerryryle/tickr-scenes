@@ -17,6 +17,10 @@ import type { FacilityId } from "./facilities.ts";
 import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, signAtlas, SignAtlas } from "./signs.ts";
 
 interface RoofSpot { r: Rect; top: number }
+// What stands on the pavement, as circles (x, z, radius, chunk-local), recorded while a probe
+// build (city.ts pavementObstacles) runs, so the driver can walk round it; null otherwise.
+export const PAVEMENT: { out: number[] | null } = { out: null };
+export function pavementObstacle(x: number, z: number, r: number) { PAVEMENT.out?.push(x, z, r); }
 export const DC = {
   lamps: null as unknown as Batch,     // neon and flags (the lamp material animates them)
   quads: [] as Quad[],                 // sign atlas quads: name signs and billboards
@@ -184,11 +188,12 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
     axis === 0 ? s.box(al, y, ac, lal, h, lac, color) : s.box(ac, y, al, lac, h, lal, color);
   const cyl = (al: number, y: number, ac: number, r: number, h: number, color: number, seg = 8) =>
     axis === 0 ? s.cyl(al, y, ac, r, h, color, seg) : s.cyl(ac, y, al, r, h, color, seg);
+  const rec = (p: number, across: number, r: number) => axis === 0 ? pavementObstacle(p, across, r) : pavementObstacle(across, p, r);
   const free = (p: number, half: number) => p - half > STREET + 2.5 && p + half < BLOCK - 2.5 && busy.every(([a, b]) => p + half < a || p - half > b);
   const place = (half: number, f: (p: number) => void) => {
     for (let t = 0; t < 12; t++) {
       const p = range(rnd, STREET + 3, BLOCK - 3);
-      if (free(p, half)) { f(p); busy.push([p - half - 0.4, p + half + 0.4]); return true; }
+      if (free(p, half)) { f(p); busy.push([p - half - 0.4, p + half + 0.4]); rec(p, ac, half + 0.15); return true; }
     }
     return false;
   };
@@ -210,7 +215,7 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
       const p = start + i * 6;
       if (!free(p, 0.15)) continue;
       cyl(p, y0 + 0.6, kerbAcross + inward * 0.45, 0.04, 1.2, 0x55585c, 5); box(p, y0 + 1.28, kerbAcross + inward * 0.45, 0.2, 0.28, 0.16, 0x9aa0a6);
-      busy.push([p - 0.3, p + 0.3]);
+      busy.push([p - 0.3, p + 0.3]); rec(p, kerbAcross + inward * 0.45, 0.15);
     }
     if (rnd() < 0.3) place(1.9, (p) => {     // bus shelter
       const back = kerbAcross + inward * 1.75, front = kerbAcross + inward * 0.35;   // open to the kerb, clear of the walkway

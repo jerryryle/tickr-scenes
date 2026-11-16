@@ -22,7 +22,7 @@ import type { LiveryName, TruckModel } from "./truck.ts";
 import { makeFacadeMaterial } from "./facade.ts";
 import { makeLampMaterial, setSignalPreempt, setSignalTime } from "./signals.ts";
 import { realSeason, weatherMix } from "./climate.ts";
-import { cityDistance, insideCity, kerbDoors, makeCityChunkBuilder } from "./city.ts";
+import { cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, pavementObstacles } from "./city.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
 import type { CityMaterials } from "./city.ts";
 import { facilityAt, facilityName } from "./facilities.ts";
@@ -31,7 +31,7 @@ import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { smooth } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { ARRIVE_LEN, BIOME_OF, citySeedOf, CountryRoad } from "./country.ts";
-import { Journey, setDoorProbe } from "./journey.ts";
+import { Journey, setDoorProbe, setPavementProbe } from "./journey.ts";
 import type { Mode } from "./journey.ts";
 import { Director } from "./director.ts";
 import { Crew } from "./crew.ts";
@@ -479,7 +479,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const daySeed = Math.floor(hash2(today.getFullYear() * 1000 + today.getMonth() * 40 + today.getDate(), 7, 0, 0x5eed) * 2 ** 31) || 1;
       if (random) cfg.seed = saved?.seed ?? (sys.isPreview ? daySeed : ((Math.floor(Math.random() * 2 ** 31) ^ Date.now()) >>> 0 || 1));
       base = (saved?.simTime ?? 0) + DEBUG_SKIP_MINUTES * 60;   // the skip: test renders only
-      setDoorProbe(kerbDoors);
+      setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles);
       journey = new Journey(cfg, base, saved?.season ?? realSeason());
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // For reproducing what was seen: the journey and where it starts (journey time = this + scene time).

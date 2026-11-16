@@ -65,6 +65,37 @@ export const STYLE: Record<Handling, TripStyle> = {
 
 const dist3 = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+// Something on the pavement the driver walks round: a circle in the truck's frame (x, z, radius).
+export interface WalkObstacle { x: number; z: number; r: number }
+const BODY_R = 0.32;   // the driver's half-width, and a load carried in front
+// The legs of a walk from a to b (on the ground) that keep clear of `obs`: where the straight line
+// meets an obstacle, step out beside it on the nearer side (or the other, if that is blocked),
+// and route each half the same way. Obstacles at either end (standing at a door beside a tree)
+// are ignored.
+function walkRoute(a: [number, number, number], b: [number, number, number], obs: WalkObstacle[], depth = 0): [number, number, number][] {
+  const dx = b[0] - a[0], dz = b[2] - a[2], len = Math.hypot(dx, dz);
+  if (len < 0.3 || depth > 6) return [b];
+  const ux = dx / len, uz = dz / len;
+  let hit: WalkObstacle | null = null, hitT = Infinity;
+  for (const o of obs) {
+    const r = o.r + BODY_R;
+    if (Math.hypot(a[0] - o.x, a[2] - o.z) < r || Math.hypot(b[0] - o.x, b[2] - o.z) < r) continue;
+    const t = (o.x - a[0]) * ux + (o.z - a[2]) * uz;
+    if (t < 0 || t > len) continue;
+    const side = Math.abs((o.x - a[0]) * -uz + (o.z - a[2]) * ux);
+    if (side < r && t < hitT) { hit = o; hitT = t; }
+  }
+  if (!hit) return [b];
+  const s = (hit.x - a[0]) * -uz + (hit.z - a[2]) * ux;   // which side of the line the obstacle is on
+  const off = (hit.r + BODY_R) * 1.35 + 0.1;
+  for (const dir of s > 0 ? [-1, 1] : [1, -1]) {
+    const w: [number, number, number] = [hit.x - uz * off * dir, 0, hit.z + ux * off * dir];
+    if (obs.some((o) => o !== hit && Math.hypot(w[0] - o.x, w[2] - o.z) < o.r + BODY_R)) continue;
+    return [...walkRoute(a, w, obs, depth + 1), ...walkRoute(w, b, obs, depth + 1)];
+  }
+  return [b];   // boxed in: straight through
+}
+
 // Units moved per trip by hand, matching what the driver is seen carrying (loads.ts
 // buildCarried): a hand truck's stack, a pallet jack's pallet, one or two in the arms, one
 // rolled, one on the dolly, one lifted between two. Every trip carries
@@ -198,15 +229,20 @@ function stowSpots(L: TruckLayout, model: TruckModel, stop: Stop, slot0: number,
 // `kerbDoor`: at the kerb, the building's front door (truck frame: where to stand in front of it,
 // and the yaw that faces it), or null for a spot on the pavement behind the truck.
 export function planChores(model: TruckModel, stop: Stop, dockStair: number | null = null, slot0 = 0, rearBefore: number | null = null, rearAfter: number | null = null,
-                    kerbDoor: { x: number; z: number; yaw: number } | null = null): Chore[] {
+                    kerbDoor: { x: number; z: number; yaw: number } | null = null, obstacles: WalkObstacle[] = []): Chore[] {
   const L = truckLayout(model);
   const cargo = CARGO_BY_ID.get(stop.cargo)!;
   const st = STYLE[cargo.handling];
   const pickup = stop.kind === "pickup";
   const out: Chore[] = [];
   const add = (c: Chore) => { out.push(c); return c; };
-  const walk = (group: ChoreGroup, a: [number, number, number], b: [number, number, number], speed: number, extra: Partial<Chore> = {}) =>
-    add({ kind: "walk", group, len: Math.max(0.4, dist3(a, b) / speed), a, b, ...extra });
+  // A walk on the ground goes round what stands in the way (trees, lights, furniture), in legs.
+  const walk = (group: ChoreGroup, a: [number, number, number], b: [number, number, number], speed: number, extra: Partial<Chore> = {}) => {
+    const legs = obstacles.length && !extra.linear && a[1] === 0 && b[1] === 0 ? walkRoute(a, b, obstacles) : [b];
+    let c: Chore | null = null, from = a;
+    for (const to of legs) { c = add({ kind: "walk", group, len: Math.max(0.4, dist3(from, to) / speed), a: from, b: to, ...extra }); from = to; }
+    return c!;
+  };
 
   const door: [number, number, number] = [L.doorX, 0, L.doorZ];
   const rear = L.bedRear;

@@ -23,7 +23,7 @@ import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
-import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
+import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout } from "./facilities.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
@@ -272,6 +272,31 @@ class LevelProbe {
   }
   first(o: THREE.Vector3, d: THREE.Vector3) { const h = this.hits(o, d); return h.length ? h[0] : null; }
 }
+// What stands on the pavements round block (bx, bz) and in front of its buildings (street trees,
+// lights, furniture, sign posts, yard trees), as world circles, for the driver's walks
+// (chores.ts): found by building the chunks that hold the block and its four streets with the
+// recorder on. Cached per block, like the doors: a pure function of the city.
+export interface PavementObstacle { x: number; z: number; r: number }
+const PAVEMENT_CACHE = new Map<string, PavementObstacle[]>();
+let pavementSeed = NaN;
+export function pavementObstacles(plan: CityPlan, bx: number, bz: number): PavementObstacle[] {
+  if (plan.seed !== pavementSeed) { PAVEMENT_CACHE.clear(); pavementSeed = plan.seed; }
+  const key = `${plan.seed}|${plan.style.id}|${bx},${bz}`;
+  const hit = PAVEMENT_CACHE.get(key);
+  if (hit) return hit;
+  const out: PavementObstacle[] = [];
+  // The block's own chunk holds its north and west streets; the next chunks east and south
+  // hold the other two.
+  for (const [cx, cz] of [[bx, bz], [bx + 1, bz], [bx, bz + 1]]) {
+    const rec: number[] = [];
+    PAVEMENT.out = rec;
+    try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = null; }
+    for (let i = 0; i < rec.length; i += 3) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2] });
+  }
+  PAVEMENT_CACHE.set(key, out);
+  return out;
+}
+
 export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | null)[] {
   if (plan.seed !== kerbDoorsSeed) { KERB_DOORS.clear(); kerbDoorsSeed = plan.seed; }   // one city's doors at a time
   const key = `${plan.seed}|${plan.style.id}|${bx},${bz}`;
@@ -404,6 +429,7 @@ function bladeSign(s: Batch, side: number, quads: Quad[], uv: ReturnType<SignAtl
   const a = BLADE_A, d = FRONT_NODE[side][2], [fx, fz] = FWD[d];
   const y0 = CURB_H + 4.15, y1 = y0 + 0.4;
   fspan(s, side, a - 0.07, a + 0.07, CURB_H, y1 + 0.25, -0.32, -0.18, C.pole);
+  { const [px, pz] = frontPt(side, a, -0.25); pavementObstacle(px, pz, 0.12); }
   fspan(s, side, a - 0.05, a + 0.05, y1 + 0.12, y1 + 0.2, -2.6, -0.18, C.pole);
   fspan(s, side, a - 0.04, a + 0.04, y0 - 0.04, y1 + 0.04, -2.55, -0.35, C.dark);
   for (const k of [1, -1]) signQuad(quads, uv, side, a + k * 0.05, -1.45, (y0 + y1) / 2, 2.1, 0.4, fx * k, fz * k);
@@ -462,7 +488,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (inDrive(d, at, 2) || inDrive(c, at, 0)) continue;
     const dir = side < cl ? 1 : -1; // arm reaches over the road
     const [px, pz] = axis === 0 ? [at, side] : [side, at];
-    s.cyl(px, 3.75, pz, 0.1, 7.5, C.pole, 6);
+    s.cyl(px, 3.75, pz, 0.1, 7.5, C.pole, 6); pavementObstacle(px, pz, 0.15);
     const [hx, hz] = axis === 0 ? [px, side + dir * 1.6] : [side + dir * 1.6, pz];
     s.span(Math.min(px, hx) - 0.06, 7.35, Math.min(pz, hz) - 0.06, Math.max(px, hx) + 0.06, 7.47, Math.max(pz, hz) + 0.06, C.pole);
     s.aux.set(0, 0, -2); s.box(hx, 7.3, hz, axis === 0 ? 0.35 : 0.7, 0.16, axis === 0 ? 0.7 : 0.35, C.lampHead); s.aux.set(0, 0, -1);
@@ -575,6 +601,7 @@ function tree(s: Batch, x: number, y: number, z: number, h: number, r: number, c
 // A tree of the city's kind: broadleaf, conifer or palm.
 export function cityTree(s: Batch, x: number, y: number, z: number, h: number, r: number, color: number, rnd: Rand) {
   const kind = pick(rnd, CS.trees.kinds);
+  pavementObstacle(x, z, 0.45);   // the trunk (and a street tree's pit), for the driver's walks
   if (kind === "palm") palm(s, x, y, z, h * 1.25, rnd);
   else if (kind === "conifer") conifer(s, x, y, z, h, BARE.includes(color) ? 0x2c4a34 : shade(color, 0.8), BARE.includes(color));
   else tree(s, x, y, z, h, r, color);
@@ -596,6 +623,7 @@ function palm(s: Batch, x: number, y: number, z: number, h: number, rnd: Rand) {
   s.ico(tx, ty, tz, 0.35, 0x5a4a30);
 }
 function conifer(s: Batch, x: number, y: number, z: number, h: number, color: number, snow = false) {
+  pavementObstacle(x, z, 0.6);
   s.cyl(x, y + 0.5, z, 0.14, 1, C.trunk, 5);
   s.cone(x, y + 0.8 + h * 0.4, z, h * 0.28, h * 0.8, color, 7);
   if (snow) s.cone(x, y + 0.8 + h * 0.62, z, h * 0.15, h * 0.36, SNOW, 7);

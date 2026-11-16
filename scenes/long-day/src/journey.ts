@@ -112,6 +112,10 @@ export const siteKey = (s: Site) => `${s.bx},${s.bz}`;
 // leave it unset and the driver uses a spot on the pavement instead.
 let DOOR_PROBE: ((plan: CityPlan, bx: number, bz: number) => (KerbDoor | null)[]) | null = null;
 export function setDoorProbe(probe: ((plan: CityPlan, bx: number, bz: number) => (KerbDoor | null)[]) | null) { DOOR_PROBE = probe; }
+// What stands on the pavement round a block (city.ts pavementObstacles), for the driver's walks to
+// go round; set by the scene, absent in tests (where the walks go straight).
+let PAVEMENT_PROBE: ((plan: CityPlan, bx: number, bz: number) => { x: number; z: number; r: number }[]) | null = null;
+export function setPavementProbe(probe: typeof PAVEMENT_PROBE) { PAVEMENT_PROBE = probe; }
 
 export class Journey {
   st!: JourneyState;
@@ -647,7 +651,16 @@ export class Journey {
         const px = kd.x + kd.nx * 0.5 - this.pose.x, pz = kd.z + kd.nz * 0.5 - this.pose.z;
         door = { x: px * fx + pz * fz, z: px * rx + pz * rz, yaw: Math.atan2(-(-kd.nx * rx - kd.nz * rz), -kd.nx * fx - kd.nz * fz) };
       }
-      this.chores = planChores(st.truck, stop, dp ? dp.stair : null, stop.slot, before, after, door);
+      // At the kerb, what stands near the truck's back (trees, lights, furniture), in its frame.
+      const obstacles: { x: number; z: number; r: number }[] = [];
+      if (!dp && PAVEMENT_PROBE && stop.site) {
+        const h = this.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+        for (const o of PAVEMENT_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
+          const px = o.x - this.pose.x, pz = o.z - this.pose.z, x = px * fx + pz * fz, z = px * rx + pz * rz;
+          if (Math.abs(x - L.bedRear) < 30 && Math.abs(z) < 25) obstacles.push({ x, z, r: o.r });
+        }
+      }
+      this.chores = planChores(st.truck, stop, dp ? dp.stair : null, stop.slot, before, after, door, obstacles);
     }
     this.choreStart = [];
     let t = 0;
