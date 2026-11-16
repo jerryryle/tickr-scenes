@@ -81,6 +81,7 @@ const ARRIVE_DIST = 45, CURB_DIST = 13, DEPART_LEN = 12;
 const READ_ROWS = 20;   // (of the sign board: its letters are about half of it)
 // A road sign is filmed from the truck's lane this far before it, up above the truck's roof: the
 // truck drives out from under the camera and away to the sign, which reads above the road.
+const GROUND_CLEAR = 1.2;       // the camera keeps at least this far above the country's ground
 const SIGN_CAM_BACK = 62, SIGN_CAM_Y = 4.7, SIGN_PREROLL = 60;
 // At a kerb stop with a name sign, the stop's shot starts this far out, on the sign.
 const CURB_SIGN_DIST = 45, CURB_SIGN_HOLD = 2.8, CURB_SIGN_ZOOM = 3.4;
@@ -139,6 +140,7 @@ export class Director {
   private yaw = 0; private yawV = 0; private pitch = -0.4; private pitchV = 0;
   private started = false;
   avoidBuildings: ((pos: THREE.Vector3, truck: THREE.Vector3, rise: boolean) => boolean) | null = null;   // main: keeps a camera out of buildings
+  groundAt: ((x: number, z: number) => number | null) | null = null;   // main: the country's ground height (null in town)
   // The truck's heading, smoothed, for rigs that turn with the truck (a corner is a turn, not a jolt).
   private refYaw = 0; private refYawV = 0;
   private anchorPos = new THREE.Vector3(); private anchorLook = new THREE.Vector3(); private anchorH = 0;
@@ -337,8 +339,8 @@ export class Director {
         const road = j.country!, f = this.feature;
         if (!f) { this.signShot(j); this.variant = "sign"; break; }
         // Fixed beside the road, framing the truck with the set piece.
-        road.point(f.cam[0], f.cam[1], this.pose); this.anchorPos.set(this.pose.x, f.cam[2], this.pose.z);
-        road.point(f.look[0], f.look[1], this.pose); this.anchorLook.set(this.pose.x, f.look[2], this.pose.z);
+        road.point(f.cam[0], f.cam[1], this.pose); this.anchorPos.set(this.pose.x, f.cam[2] + road.groundAt(f.cam[0], f.cam[1]), this.pose.z);
+        road.point(f.look[0], f.look[1], this.pose); this.anchorLook.set(this.pose.x, f.look[2] + road.groundAt(f.look[0], f.look[1]), this.pose.z);
         break;
       }
     }
@@ -368,6 +370,8 @@ export class Director {
     // stop's camera (or cuts once, itself); depart and the road coverage carry on from it.
     if (beatChanged && (beat === "arrive" || beat === "curb" || beat === "backup" || beat === "roadside" || beat === "swap")) shot.cut = true;
     this.keepInView(shot, inp);
+    // Out of town, never under the hills (main.ts says where the ground is).
+    if (this.groundAt && !this.interior) { const g = this.groundAt(shot.pos.x, shot.pos.z); if (g !== null && shot.pos.y < g + GROUND_CLEAR) shot.pos.y = g + GROUND_CLEAR; }
     this.apply(shot, dt);
     truck.cutaway = false;
   }
@@ -454,7 +458,7 @@ export class Director {
         const f = this.feature, ahead = f ? j.countryS - f.cam[0] : 0;
         const k = f?.fixed ? (ahead < 8 ? 1 : THREE.MathUtils.clamp(0.9 - (ahead - 8) / 120, 0.5, 0.9)) : THREE.MathUtils.clamp((d - 15) / 80, 0.15, 0.4);
         s.pos.copy(this.anchorPos);
-        s.look.set(this.T.x + (this.anchorLook.x - this.T.x) * k, 1.6 + (this.anchorLook.y - 1.6) * k, this.T.z + (this.anchorLook.z - this.T.z) * k);
+        s.look.set(this.T.x + (this.anchorLook.x - this.T.x) * k, this.T.y + 1.6 + (this.anchorLook.y - this.T.y - 1.6) * k, this.T.z + (this.anchorLook.z - this.T.z) * k);
         s.pan = 3; s.cutaway = false; s.fov = 34;
         this.variant = "roadside";
         return s;
@@ -655,7 +659,8 @@ export class Director {
   // roadside attraction, the attraction itself), never too wide to read.
   private signShot(j: Journey) {
     const r = j.country!, p = r.pieces[this.signPiece], g = pieceSigns(p)[this.signIdx];
-    const pt = (s: number, n: number, y: number) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y, this.pose.z); };
+    // (Heights above the road there: a sign stands on the level the road holds round it.)
+    const pt = (s: number, n: number, y: number) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y + r.heightAt(s), this.pose.z); };
     const cs = g.s - SIGN_CAM_BACK;
     this.anchorPos.copy(pt(cs, r.laneAt(cs), SIGN_CAM_Y));
     const sign = [-1, 1].flatMap((k) => [-1, 1].map((m) => pt(g.s, g.n + k * g.w / 2, g.y + m * g.h / 2)));
@@ -798,7 +803,7 @@ export class Director {
         // room ahead of it.
         const lat = st.mode === "drive" ? -11.5 : -(j.country ? j.country.laneAt(j.countryS) : 1.85) - 11;
         if (!this.onRoute(j, ex.center + 1.5, lat, 2.0, s.pos)) { this.atRef(s.pos, ex.center, 1.5, 2.0, -12); onRoute = false; }
-        s.look.copy(C).setY(1.7); s.sx = 0.22; s.fov = 38;
+        s.look.copy(C).setY(this.T.y + 1.7); s.sx = 0.22; s.fov = 38;
         break;
       }
       case "aerial": {

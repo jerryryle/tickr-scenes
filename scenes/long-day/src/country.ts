@@ -71,6 +71,13 @@ function arriveS(u: number) {
 }
 function arriveV(u: number) { return V_GATE + (V_JOIN - V_GATE) * (1 - smooth(THREE.MathUtils.clamp(u / ARRIVE_DUR, 0, 1))); }
 
+// Hills: how hilly each land is (0 flat to 1), and the steepest grade the road takes.
+export const HILLS: Record<BiomeId, number> = { coastal: 0.9, forest: 1, desert: 0.7, farmland: 0.55, prairie: 0.35, wetlands: 0 };
+const MAX_GRADE = 0.055;
+const HILL_FLAT = 35, HILL_EASE = 90;   // set pieces sit on the level: this far either side, then eased over this
+const SIDE_HILL = 16;                   // the land beside the road rises or falls up to about this much (m)
+export const COAST_N = -57, SEA_N = -75; // the beach (coastal land, on the left) and the sea beyond it
+
 export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands" };
 
 export function citySeedOf(seed: number, N: number) { return N === 0 ? seed : Math.floor(hash2(N, 0, seed, 0xc17) * 2 ** 31); }
@@ -99,6 +106,9 @@ export class CountryRoad {
   readonly swapS: number = 0;
   readonly landFrom: number; readonly landTo: number;   // the road's own land (the city rings' outside)
   private X: Float64Array; private Z: Float64Array; private H: Float64Array;
+  private Y: Float64Array;          // the road's height at each geometry sample
+  private SM: Float64Array;         // how far the land beside the road may rise and fall there (0..1)
+  private PM: Float64Array;         // 0 at the set pieces (the land level round them), 1 clear of them
   private S: Float64Array = new Float64Array(1); private V: Float32Array = new Float32Array(1);   // per motion step, to the hand-over
   private zone: [number, number] | null = null;
   private planStops: { s: number; dwell: number; kind: "truckstop" | "rail" }[] = [];
@@ -197,6 +207,43 @@ export class CountryRoad {
       x += Math.cos(hd) * ROAD_DS; z -= Math.sin(hd) * ROAD_DS;
     }
     this.geo = true;
+    // Heights. The road rises and falls over two sets of rounded hills, but holds level through
+    // every set piece and at both ends (the cities are at 0): the hills are laid out along a
+    // distance `u` that only runs where the road may climb, so they pause at each piece and end
+    // exactly at the last city's level (a whole number of hills fits between). The land beside
+    // the road has hills of its own (groundAt), likewise level around the pieces.
+    this.Y = new Float64Array(n); this.SM = new Float64Array(n); this.PM = new Float64Array(n);
+    const U = new Float64Array(n);
+    let u = 0;
+    for (let i = 0; i < n; i++) {
+      const s = i * ROAD_DS;
+      let m = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / HILL_EASE, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - STRAIGHT_IN - s) / HILL_EASE, 0, 1));
+      for (const p of this.pieces) {
+        const d = Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0);
+        m = Math.min(m, smooth(Math.min(1, d / HILL_EASE)));
+      }
+      let pm = 1;
+      for (const p of this.pieces) pm = Math.min(pm, smooth(Math.min(1, Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0) / HILL_EASE)));
+      U[i] = u; this.SM[i] = m; this.PM[i] = pm; u += m * ROAD_DS;
+    }
+    const Ut = u, hilly = 0.45 + 0.75 * h(86);
+    if (Ut > 500) {
+      const k1 = Math.max(1, Math.round(Ut / (1000 + 900 * h(87)))), k2 = Math.max(2, Math.round(Ut / (330 + 260 * h(88))));
+      const A1 = 16 * hilly, A2 = (4 + 4 * h(89)) * hilly;
+      const a0 = HILLS[this.fromBiome], a1 = HILLS[this.toBiome];
+      let steep = 0;
+      for (let i = 0; i < n; i++) {
+        const w = U[i] / Ut, amp = a0 + (a1 - a0) * smooth(THREE.MathUtils.clamp((w - 0.35) / 0.3, 0, 1));
+        this.Y[i] = amp * (A1 * (1 - Math.cos(2 * Math.PI * k1 * w)) / 2 + A2 * (1 - Math.cos(2 * Math.PI * k2 * w)) / 2);
+        if (i > 0) steep = Math.max(steep, Math.abs(this.Y[i] - this.Y[i - 1]) / ROAD_DS);
+      }
+      if (steep > MAX_GRADE) for (let i = 0; i < n; i++) this.Y[i] *= MAX_GRADE / steep;
+    }
+    for (let i = 0; i < n; i++) {
+      const s = i * ROAD_DS, b = this.blendAt(s);
+      this.SM[i] *= hilly * (HILLS[this.fromBiome] + (HILLS[this.toBiome] - HILLS[this.fromBiome]) * b);
+    }
+    this.coastFrom = this.fromBiome === "coastal" ? 1 : 0; this.coastTo = this.toBiome === "coastal" ? 1 : 0;
     if (arrival) this.D = 0;
     else this.computeMeetings();
   }
@@ -302,6 +349,62 @@ export class CountryRoad {
     out.k = (this.H[i + 1] - this.H[i]) / ROAD_DS;
     return out;
   }
+  // The road's height at distance s, and its grade (rise per metre).
+  heightAt(s: number) {
+    const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, this.Y.length - 1.001), i = Math.floor(f);
+    return this.Y[i] + (this.Y[i + 1] - this.Y[i]) * (f - i);
+  }
+  gradeAt(s: number) { return (this.heightAt(s + 3) - this.heightAt(s - 3)) / 6; }
+  private at(A: Float64Array, s: number) {
+    const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, A.length - 1.001), i = Math.floor(f);
+    return A[i] + (A[i + 1] - A[i]) * (f - i);
+  }
+  private smAt(s: number) { return this.at(this.SM, s); }
+  // Lower than any ground between s0 and s1 (for the far land under the fog).
+  lowBetween(s0: number, s1: number) {
+    let lo = 0;
+    const i0 = Math.max(0, Math.floor(s0 / ROAD_DS)), i1 = Math.min(this.Y.length - 1, Math.ceil(s1 / ROAD_DS));
+    for (let i = i0; i <= i1; i += 4) lo = Math.min(lo, this.Y[i] - SIDE_HILL * 0.9 * this.SM[i]);
+    return lo - 1;
+  }
+  // How much of the land at s is coast (the sea on the left), easing from one land to the next.
+  private coastFrom = 0; private coastTo = 0;
+  coastAt(s: number) { return this.coastFrom + (this.coastTo - this.coastFrom) * this.blendAt(s); }
+  // The height of the ground at (s, n): the road's level out to the ditches, then the land's own
+  // hills (smooth noise, rising more often than falling), eased in over the first 40 m, so the
+  // road runs in cuttings and on embankments. On a coast the land falls away to the beach on the
+  // left, under the sea beyond it.
+  groundAt(s: number, n: number) {
+    const y = this.heightAt(s), sm = this.smAt(s), an = Math.abs(n);
+    let g = y;
+    if (sm > 0 && an > 11) {
+      const seed = this.inp.seed + this.inp.city * 977;
+      const noise = valueNoise(s / 95, n / 70, seed, 0x41) + 0.4 * valueNoise(s / 38, n / 30, seed, 0x42);
+      g += sm * smooth(Math.min(1, (an - 11) / 40)) * SIDE_HILL * (noise * 0.75 + 0.2);
+    }
+    const c = n < -11 ? this.coastAt(s) : 0;
+    if (c > 0) {
+      // (By a set piece the land holds level until just short of the beach.)
+      const n0 = -11 + (COAST_N + 4 + 11) * (1 - this.at(this.PM, s));
+      const shore = n > n0 ? y : n > COAST_N ? y * (1 - smooth((n0 - n) / (n0 - COAST_N))) : n > SEA_N ? 0 : -1;
+      g += (shore - g) * c;
+    }
+    return g;
+  }
+  // The road point nearest (x, z), searched within `range` metres of distance `near`: its
+  // distance along the road and offset to the right.
+  locate(x: number, z: number, near: number, range = 400): { s: number; n: number } {
+    const q = this.tmpQ;
+    let best = near, bd = Infinity;
+    const s0 = Math.max(0, near - range), s1 = Math.min(this.length + 40, near + range);
+    for (let s = s0; s <= s1; s += 8) { this.center(s, q); const d = (q.x - x) ** 2 + (q.z - z) ** 2; if (d < bd) { bd = d; best = s; } }
+    for (let step = 4; step > 0.2; step /= 2) {
+      for (const s of [best - step, best + step]) { this.center(s, q); const d = (q.x - x) ** 2 + (q.z - z) ** 2; if (d < bd) { bd = d; best = s; } }
+    }
+    this.center(best, q);
+    return { s: best, n: (x - q.x) * Math.sin(q.h) + (z - q.z) * Math.cos(q.h) };
+  }
+  private tmpQ: Pose = { x: 0, z: 0, h: 0, k: 0 };
   // A point `n` metres to the right of the centre line.
   point(s: number, n: number, out: Pose): Pose {
     this.center(s, out);
@@ -401,4 +504,13 @@ export class CountryRoad {
     }
     return true;
   }
+}
+
+// Smooth value noise in [-1, 1] on a unit grid (smoothstep between hashed corners).
+function valueNoise(x: number, y: number, seed: number, salt: number) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const v = (a: number, b: number) => hash2(ix + a, iy + b, seed, salt) * 2 - 1;
+  const top = v(0, 0) + (v(1, 0) - v(0, 0)) * sx, bot = v(0, 1) + (v(1, 1) - v(0, 1)) * sx;
+  return top + (bot - top) * sy;
 }

@@ -96,6 +96,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const moved = jumped || Number.isNaN(lastX) ? 0 : Math.hypot(p.x - lastX, p.z - lastZ) * (journey.st.mode === "reverse" ? -1 : 1);
     lastX = p.x; lastZ = p.z;
     truck.follow(p.x, p.z, p.h, p.k, moved);
+    // Out of town, the road's hills (in town, and at both ends of the road, all level).
+    const pr = pickRoad0();
+    if (pr && pr.s > 0) truck.setGrade(pr.road.heightAt(pr.s), pr.road.gradeAt(pr.s)); else truck.setGrade(0, 0);
     truck.speed = journey.st.v; truck.accel = journey.accel;
     // Reversing into a bay, the trailer leads along the bay path; ease into it from however the
     // hitch left it on the way in.
@@ -542,6 +545,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       syncTrucks();
       director = new Director(engine.camera, cfg.seed);
       director.avoidBuildings = chaseTargetOutOfBuildings;
+      director.groundAt = (x, z) => {
+        const pr = pickRoad();
+        if (!pr || pr.s < 0) return null;
+        const at = pr.road.locate(x - pr.dx, z - pr.dz, pr.s, 160), g = pr.road.groundAt(at.s, at.n);
+        return Math.abs(g) < 0.05 ? null : g;   // (where the land is level, the shots are as they are in town)
+      };
       const crewMat = engine.mats.ground.clone(); applyLampLight(crewMat);   // streetlight falls on the driver and the load
       // The crew material (driver, worker, loads and tools) never thins out in the driver spotlight.
       crew = new Crew(engine.scene, crewMat);

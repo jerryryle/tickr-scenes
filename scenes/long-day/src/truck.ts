@@ -262,8 +262,11 @@ export class Truck {
   get rearX() { return this.trailer ? (this.spec.fifthWheel ?? 0) + TRAILER.rear : this.spec.cargo ? this.spec.cargo.x0 - 0.1 : -1.4; }
   get wheelbase() { return this.spec.frontAxle; }
 
+  // The road's height under the rear axle and its grade (out of town: country.ts hills).
+  setGrade(y: number, grade: number) { this.root.position.y = y; this.root.rotation.z = Math.atan(grade); }
+
   setPose(x: number, z: number, heading: number) {
-    this.root.position.set(x, 0, z); this.heading = heading; this.root.rotation.y = heading;
+    this.root.position.set(x, this.root.position.y, z); this.heading = heading; this.root.rotation.y = heading;
   }
 
   // Bicycle-model integration from speed and steer (positive steer turns left).

@@ -35,6 +35,8 @@ export class Batch {
   private auxUsed = false;
   // Aux value written with each primitive vertex; set it before emitting (see header).
   readonly aux = new THREE.Vector3(0, 0, -1);
+  // Added to the height of every primitive (box, cyl, ...) emitted: the ground under it.
+  dy = 0;
   private n = 0; // vertices written
   private m = new THREE.Matrix4();
   private nm = new THREE.Matrix3();
@@ -96,12 +98,31 @@ export class Batch {
     this.n += 6;
   }
 
+  // One flat-shaded triangle facing up (wound so, whatever order its corners come in), as given: no dy.
+  tri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, color: number) {
+    if (BATCH.dry) return;
+    this.reserve(3);
+    const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const l = (ny < 0 ? -1 : 1) * (Math.hypot(nx, ny, nz) || 1); nx /= l; ny /= l; nz /= l;
+    if (l < 0) { [bx, by, bz, cx, cy, cz] = [cx, cy, cz, bx, by, bz]; }
+    this.c.set(color);
+    const { pos, nrm, col, auxArr } = this;
+    let o = this.n * 3;
+    for (const [x, y, z] of [[ax, ay, az], [bx, by, bz], [cx, cy, cz]]) {
+      pos[o] = x; pos[o + 1] = y; pos[o + 2] = z; nrm[o] = nx; nrm[o + 1] = ny; nrm[o + 2] = nz;
+      col[o] = this.c.r; col[o + 1] = this.c.g; col[o + 2] = this.c.b; auxArr[o] = 0; auxArr[o + 1] = 0; auxArr[o + 2] = -1;
+      o += 3;
+    }
+    this.n += 3;
+  }
+
   private emit(t: BatchTemplate, x: number, y: number, z: number, color: number,
                rotY: number, rotX: number, rotZ: number, sx: number, sy: number, sz: number) {
     if (BATCH.dry) return;
     this.reserve(t.count);
     this.e.set(rotX, rotY, rotZ); this.q.setFromEuler(this.e);
-    this.m.compose(this.p.set(x, y, z), this.q, this.s.set(sx, sy, sz));
+    this.m.compose(this.p.set(x, y + this.dy, z), this.q, this.s.set(sx, sy, sz));
     this.nm.getNormalMatrix(this.m);
     this.c.set(color);
     const { pos, nrm, col, auxArr } = this;

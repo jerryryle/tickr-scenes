@@ -35,6 +35,23 @@ import { Journey } from "../src/journey.ts";
     if (j.st.mode === "country" && pmode !== "country") { const r = j.country!; if ((globalThis as any).process.env.JTPIECES) for (const p of r.pieces) { let t = 0; while (t < r.duration && r.sAt(t) < p.s) t += 0.5; console.log(`PIECE c${j.st.city} ${p.kind} v${p.variant} side${p.side} at journey ${((j.st.cityStart + j.st.departAt + t) / 60).toFixed(2)}min`); }
     departs.push(`city ${j.st.city} left ${(j.st.departAt / 60).toFixed(1)}min ${j.countryLength.toFixed(0)}s (planned ${j.st.exit!.dEst}) gate ${j.st.exit!.gate} ${r.fromBiome}->${r.toBiome} SB ${(r.SB / 1000).toFixed(2)}km stops ${r.stops.map((x) => x.kind + '@' + x.arrive.toFixed(0)).join(',')} | ${r.pieces.map((p) => p.kind).join(',')} | end v${r.vAt(r.duration).toFixed(2)} ${st0truck}->${r.inp.toTruck} ${(() => { let km = 0, la = 0; const q = { x: 0, z: 0, h: 0, k: 0 }; for (let t = 0; t < r.duration; t += 0.5) { r.center(r.sAt(t), q); km = Math.max(km, Math.abs(q.k)); la = Math.max(la, r.vAt(t) ** 2 * Math.abs(q.k)); } return `minR ${(1 / km).toFixed(0)}m lat ${la.toFixed(2)}`; })()}`); }
     if (j.st.mode === "country" && pmode !== "country") {
+      // The hills: level at both ends (the cities) and through every set piece, never steeper
+      // than the grade limit, and the ground under the road is the road.
+      const r = j.country!;
+      let top = 0, steep = 0;
+      for (let s = 0; s <= r.length; s += 1) {
+        const y = r.heightAt(s), g = Math.abs(r.heightAt(s + 1) - y);
+        top = Math.max(top, y); steep = Math.max(steep, g);
+        if (!Number.isFinite(y)) { err(`road height not finite at ${s} (c${j.st.city})`); break; }
+        if ((s < 300 || s > r.SB - 150) && Math.abs(y) > 1e-6) { err(`road not level near a city at s${s}: ${y.toFixed(3)} (c${j.st.city})`); break; }
+        if (Math.abs(r.groundAt(s, 5) - y) > 1e-9) { err(`ground under the road is not the road at s${s} (c${j.st.city})`); break; }
+      }
+      for (const p of r.pieces) for (let s = p.s - 30; s <= p.s + p.len + 30; s += 5)
+        if (Math.abs(r.heightAt(s) - r.heightAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.heightAt(s) - r.heightAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
+      if (steep > 0.0551) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      console.log(`HILLS c${j.st.city} ${r.fromBiome}->${r.toBiome} top ${top.toFixed(1)}m steepest ${(steep * 100).toFixed(1)}%`);
+    }
+    if (j.st.mode === "country" && pmode !== "country") {
       // The train must cross only while the truck waits at the crossing, and only near it.
       const r = j.country!, rp = r.pieces.find((p) => p.kind === "rail");
       if (rp && r.trainT >= 0) {
