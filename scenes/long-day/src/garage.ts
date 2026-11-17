@@ -46,21 +46,27 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
   const H = GARAGE_H, h = heading(side);
   // The ground floor's slab and its painted bays.
   fbox(ground, side, 9, 51, 0, 42, -0.05, 0.03, 0x8d8a82);
-  // The roof deck: over the middle of the block, and the level lane across the back.
-  // (A few centimetres under the ramps' decks, which run onto it through their widened turns.)
-  const roof: [number, number, number, number][] = [[22.6, 41.4, 3, 33.2], [29, 38.5, 33.2, 42]];
-  for (const [a0, a1, n0, n1] of roof) { fbox(solid, side, a0, a1, n0, n1, H - 0.5, H - 0.1, DECK); fbox(solid, side, a0 + 0.05, a1 - 0.05, n0 + 0.05, n1 - 0.05, H - 0.1, H - 0.05, DECK_TOP); }
-  // Its parapets (open where the ramps and the back lane meet it) and the columns under it.
-  fbox(solid, side, 22.6, 41.4, 3, 3.3, H - 0.01, H + 1.0, RAIL);
-  fbox(solid, side, 22.6, 22.9, 3, 24, H - 0.05, H + 1.0, RAIL);   // (short of where a truck's back cuts across on the turn up)
-  fbox(solid, side, 41.1, 41.4, 3, 24, H - 0.05, H + 1.0, RAIL);   // (open where the ramp down leaves it)
-  for (let a = 24; a <= 40; a += 8) for (let n = 5; n <= 33; n += 7) { const [x, z] = fp(side, a, n); solid.box(x, (H - 0.45) / 2, z, 0.6, H - 0.45, 0.6, COLUMN); }
+  // The roof deck: everywhere over the middle of the block and across its back that the ramps'
+  // decks don't cover (garageRoof), so it meets them without gaps; its edges walled except where
+  // a ramp comes up level with it (cars drive on and off there). Columns under it.
+  const R = garageRoof(), { a0: RA, n0: RN, cell: RC } = R;
+  for (let j = 0; j < R.nn; j++) {
+    for (let i = 0; i < R.na; ) {
+      if (R.slab[j * R.na + i] !== 1) { i++; continue; }
+      let e = i; while (e < R.na && R.slab[j * R.na + e] === 1) e++;
+      const a0 = RA + i * RC, a1 = RA + e * RC, n0 = RN + j * RC, n1 = n0 + RC;
+      fbox(solid, side, a0, a1, n0, n1, H - 0.5, H - 0.1, DECK); fbox(solid, side, a0, a1, n0, n1, H - 0.1, H - 0.05, DECK_TOP);
+      i = e;
+    }
+  }
+  for (const w of R.walls) fbox(solid, side, w[0], w[1], w[2], w[3], H - 0.05, H + 1.0, RAIL);
+  for (let a = 24; a <= 40; a += 8) for (let n = 5; n <= 33; n += 7) if (R.at(a, n) === 1) { const [x, z] = fp(side, a, n); solid.box(x, (H - 0.5) / 2, z, 0.6, H - 0.5, 0.6, COLUMN); }
   // Parked cars: in the bays under the deck and on it, and the bays' lines.
   for (let row = 0; row < 2; row++) for (let k = 0; k < 7; k++) {
     const a = 24.6 + k * 2.6, n = row ? 26 : 9.5;
     for (const [y, salt] of [[0.03, 1], [H - 0.05, 2]] as const) {
       const [lx, lz] = fp(side, a - 1.3, n); (y < 1 ? ground : solid).box(lx, y + 0.01, lz, 0.1, 0.02, 4.8, STRIPE, h);
-      if (hash2(k + row * 7, salt, seed, 0x9a7) < 0.62) { const [x, z] = fp(side, a, n); car(solid, x, y, z, h + Math.PI / 2, CARS[Math.floor(hash2(k, row + salt * 3, seed, 0xca7) * CARS.length)]); }
+      if (hash2(k + row * 7, salt, seed, 0x9a7) < 0.62 && (y < 1 || (R.at(a, n - 2.4) === 1 && R.at(a, n + 2.4) === 1))) { const [x, z] = fp(side, a, n); car(solid, x, y, z, h + Math.PI / 2, CARS[Math.floor(hash2(k, row + salt * 3, seed, 0xca7) * CARS.length)]); }
     }
   }
   // The ramps: the deck under each track, eased to the ground at its ends; low walls up the sides.
@@ -68,12 +74,12 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
   // gaps): the deck's top, sides and underside, a parapet along each edge once it is up, and
   // under it a solid wall low down, columns higher up.
   const { up, down } = garageTracks(side), p: Pose = { x: 0, z: 0, h: 0, k: 0 };
-  // Whether a block-local point is on (or at the edge of) the roof's parking deck or the lane
-  // across its back.
+  // Whether a block-local point is at the edge of the roof deck (within a cell of it).
   const [nx0, nz0, nd] = FRONT_NODE[side], FW = [[1, 0], [0, -1], [-1, 0], [0, 1]][nd], RT = [[0, 1], [1, 0], [0, -1], [-1, 0]][nd];
   const onRoof = (x: number, _y: number, z: number) => {
     const a = (x - nx0) * FW[0] + (z - nz0) * FW[1], n = (x - nx0) * RT[0] + (z - nz0) * RT[1] - 9;
-    return (a > 21.6 && a < 42.4 && n > 2 && n < 34.2) || (a > 28 && a < 39.5 && n > 32.2 && n < 43);
+    for (const da of [-0.8, 0, 0.8]) for (const dn of [-0.8, 0, 0.8]) if (R.at(a + da, n + dn) === 1) return true;
+    return false;
   };
   type V = [number, number, number];
   // (In the ground batch, like a road: the truck's see-through spotlight leaves it be.)
@@ -97,12 +103,15 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
         // The deck's edge, down to the ground where it is low (a wall under it).
         const lo = my < 2.2 ? -a.y + 0.01 : -T, lob = my < 2.2 ? -b.y + 0.01 : -T;
         quad(at(i, ea, lo), at(i + 1, eb, lob), at(i + 1, eb, 0), at(i, ea, 0), my < 2.2 ? COLUMN : DECK, side);
-        // (No wall where it has come up level with the roof beside it: cars drive between them.)
-        if (Math.min(a.y, b.y) > 0.6 && !(Math.min(a.y, b.y) > H - 0.6 && onRoof(...at(i, ea, 0)) && onRoof(...at(i + 1, eb, 0)))) {
+        // (No wall where it has come up level with the roof beside it: cars drive between them.
+        // Where it runs beside the roof lower down, its wall rises to the roof's.)
+        const adjA = onRoof(...at(i, ea, 0)), adjB = onRoof(...at(i + 1, eb, 0));
+        if (Math.min(a.y, b.y) > 0.6 && !(Math.min(a.y, b.y) > H - 0.6 && adjA && adjB)) {
           const n0a = ea - k * 0.22, n0b = eb - k * 0.22;
-          quad(at(i, n0a, 0), at(i + 1, n0b, 0), at(i + 1, n0b, 0.85), at(i, n0a, 0.85), RAIL, [-side[0], 0, -side[2]]);
-          quad(at(i, ea, 0), at(i + 1, eb, 0), at(i + 1, eb, 0.85), at(i, ea, 0.85), RAIL, side);
-          quad(at(i, n0a, 0.85), at(i, ea, 0.85), at(i + 1, eb, 0.85), at(i + 1, n0b, 0.85), RAIL, [0, 1, 0]);
+          const ha = adjA ? Math.max(0.85, H + 1.0 - a.y) : 0.85, hb = adjB ? Math.max(0.85, H + 1.0 - b.y) : 0.85;
+          quad(at(i, n0a, 0), at(i + 1, n0b, 0), at(i + 1, n0b, hb), at(i, n0a, ha), RAIL, [-side[0], 0, -side[2]]);
+          quad(at(i, ea, 0), at(i + 1, eb, 0), at(i + 1, eb, hb), at(i, ea, ha), RAIL, side);
+          quad(at(i, n0a, ha), at(i, ea, ha), at(i + 1, eb, hb), at(i + 1, n0b, hb), RAIL, [0, 1, 0]);
         }
       }
       // Its ends where it meets the ground or another deck: closed off.
@@ -122,4 +131,56 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
   solid.box(sx + Math.sin(h) * 0.08, 5.2, sz + Math.cos(h) * 0.08, 0.16, 0.9, 0.04, 0xf2f2ee, h);
   solid.box(sx + Math.sin(h) * 0.08 + Math.cos(h) * 0.18, 5.42, sz + Math.cos(h) * 0.08 - Math.sin(h) * 0.18, 0.4, 0.46, 0.04, 0xf2f2ee, h);
   void rnd;
+}
+
+// The roof deck as cells (frontage frame, the same for every side, so worked out once): 1 where
+// the deck is, 2 where a ramp's deck is (its height in `y`), 0 open. Its edges' walls, as runs
+// of [a0, a1, n0, n1]: round its outside, and against a ramp where that is still well below it.
+interface GarageRoof { a0: number; n0: number; cell: number; na: number; nn: number; slab: Uint8Array; rampY: Float32Array; walls: [number, number, number, number][]; at: (a: number, n: number) => number }
+let GARAGE_ROOF: GarageRoof | null = null;
+function garageRoof(): GarageRoof {
+  if (GARAGE_ROOF) return GARAGE_ROOF;
+  const H = GARAGE_H, C = 0.5, A0 = 12, A1 = 50.5, N0 = 2.5, N1 = 42.5, na = Math.round((A1 - A0) / C), nn = Math.round((N1 - N0) / C);
+  // (All of it between the ramps' outer sides, so the deck runs right up to them along their whole
+  // length: no slot between a ramp and the deck to see down through.)
+  const inside = (a: number, n: number) => a > 17.5 && a < 48 && n > 3 && n < 42;
+  // The ramps' decks, sampled, in this frame (x = a, z = n): which cells they cover, and how high.
+  const cover = new Int8Array(na * nn), rampY = new Float32Array(na * nn).fill(-1), q: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  for (const [t, kind] of [[Path.garageTrack(false, GARAGE_IN_A, -4.5, 0), "up"], [Path.garageTrack(true, GARAGE_STOP[0], GARAGE_STOP[1], 0), "down"]] as const) {
+    const STEP = 0.75, sw = trackSweep(kind, 3.1, STEP);
+    for (let i = 0, s = 0; s <= t.length + 1e-6; i++, s += STEP) {
+      const ss = Math.min(s, t.length), y = t.yAt(ss);
+      if (y < 0.04) continue;
+      t.eval(ss, q);
+      const fx = Math.cos(q.h), fz = -Math.sin(q.h), rx = Math.sin(q.h), rz = Math.cos(q.h), l = sw.l[Math.min(i, sw.l.length - 1)], r = sw.r[Math.min(i, sw.r.length - 1)];
+      for (let u = -STEP / 2 - 0.1; u <= STEP / 2 + 0.1; u += 0.2) for (let o = l; o <= r + 1e-6; o += 0.2) {
+        const a = q.x + fx * u + rx * o, n = q.z + fz * u + rz * o, ci = Math.floor((a - A0) / C), cj = Math.floor((n - N0) / C);
+        if (ci < 0 || cj < 0 || ci >= na || cj >= nn) continue;
+        const k = cj * na + ci; cover[k] = 1; rampY[k] = Math.max(rampY[k], y);
+      }
+    }
+  }
+  const slab = new Uint8Array(na * nn);
+  for (let j = 0; j < nn; j++) for (let i = 0; i < na; i++) { const k = j * na + i; if (cover[k]) slab[k] = 2; else if (inside(A0 + (i + 0.5) * C, N0 + (j + 0.5) * C)) slab[k] = 1; }
+  // Walls along its edges that face open air, in straight runs (against a ramp, the ramp's own
+  // wall stands, raised to the roof's: see buildGarage).
+  const walls: [number, number, number, number][] = [], W = 0.3;
+  const open = (i: number, j: number) => i < 0 || j < 0 || i >= na || j >= nn || slab[j * na + i] === 0;
+  const deck = (i: number, j: number) => slab[j * na + i] === 1;
+  for (let j = 0; j < nn; j++) for (const [dj, lo] of [[-1, true], [1, false]] as const) {
+    for (let i = 0; i < na; ) {
+      if (!(deck(i, j) && open(i, j + dj))) { i++; continue; }
+      let e = i; while (e < na && deck(e, j) && open(e, j + dj)) e++;
+      const n0 = N0 + j * C; walls.push([A0 + i * C, A0 + e * C, lo ? n0 : n0 + C - W, lo ? n0 + W : n0 + C]); i = e;
+    }
+  }
+  for (let i = 0; i < na; i++) for (const [di, lo] of [[-1, true], [1, false]] as const) {
+    for (let j = 0; j < nn; ) {
+      if (!(deck(i, j) && open(i + di, j))) { j++; continue; }
+      let e = j; while (e < nn && deck(i, e) && open(i + di, e)) e++;
+      const a0 = A0 + i * C; walls.push([lo ? a0 : a0 + C - W, lo ? a0 + W : a0 + C, N0 + j * C, N0 + e * C]); j = e;
+    }
+  }
+  const at = (a: number, n: number) => { const i = Math.floor((a - A0) / C), j = Math.floor((n - N0) / C); return i < 0 || j < 0 || i >= na || j >= nn ? 0 : slab[j * na + i]; };
+  return (GARAGE_ROOF = { a0: A0, n0: N0, cell: C, na, nn, slab, rampY, walls, at });
 }
