@@ -658,7 +658,7 @@ export class Crew {
   // (yardLegs); or on the pavement just behind the truck, the forklift unloading it from the road
   // side and coming round its back (roadLegs: traffic waits, life.ts). One bundle a trip. The stack and the parked forklift stay when the truck leaves (`yard`: world space,
   // saved), and are there before it arrives.
-  private yard: { city: number; x: number; y: number; z: number; h: number; sz: number; cols: number[][]; cargo: string;
+  private yard: { city: number; x: number; y: number; z: number; h: number; sz: number; cols: number[][]; cargo: string; units: number;
     fx: number; fy: number; fz: number; fyaw: number; fork: number } | null = null;
   private stack: THREE.Mesh | null = null; private stackKey = "";
 
@@ -711,7 +711,7 @@ export class Crew {
     this.v.set(p.x, ry, p.z).applyMatrix4(truck.root.matrixWorld);
     fl.visible = true; fl.position.copy(this.v); fl.rotation.set(0, truck.heading + p.yaw, 0);
     this.forks.position.y = p.fy; this.forks.scale.x = LONG_TINES;
-    this.yard = { city: j.st.city, x: tp.x, y: tp.y, z: tp.z, h: truck.heading, sz: P.sz, cols, cargo: stop.cargo,
+    this.yard = { city: j.st.city, x: tp.x, y: tp.y, z: tp.z, h: truck.heading, sz: P.sz, cols, cargo: stop.cargo, units: stop.units,
       fx: fl.position.x, fy: fl.position.y, fz: fl.position.z, fyaw: fl.rotation.y, fork: p.fy };
     // The worker in the seat, and the bundle on the forks.
     const hp = this.helper;
@@ -739,20 +739,21 @@ export class Crew {
         if (P.trips.length) {
           const p = legsAt(this.stackLegs(L, P, 0, CARGO_MODELS[stop.cargo].size[1], pickup), 0), h = ap.h;
           const ry = CURB_H * THREE.MathUtils.smoothstep(p.cz, P.kerb - 0.5, P.kerb + 0.5);
-          this.yard = { city: st.city, x: ap.x, y: 0, z: ap.z, h, sz: P.sz, cols: P.cols.map((cx) => [cx, pickup ? P.initial.get(cx) ?? 0 : 0]), cargo: stop.cargo,
+          this.yard = { city: st.city, x: ap.x, y: 0, z: ap.z, h, sz: P.sz, cols: P.cols.map((cx) => [cx, pickup ? P.initial.get(cx) ?? 0 : 0]), cargo: stop.cargo, units: stop.units,
             fx: ap.x + Math.cos(h) * p.x + Math.sin(h) * p.z, fy: ry, fz: ap.z - Math.sin(h) * p.x + Math.cos(h) * p.z, fyaw: h + p.yaw, fork: p.fy };
         }
       }
     }
     const Y = this.yard;
     if (Y && (Y.city !== st.city || Math.hypot(truck.root.position.x - Y.x, truck.root.position.z - Y.z) > 250)) this.yard = null;
-    const key = this.yard ? `${Y!.cargo}|${Y!.cols.map((q) => q.join(":")).join(",")}|${Y!.x}|${Y!.z}|${Y!.h}|${Y!.sz}` : "";
+    const key = this.yard ? `${Y!.cargo}|${Y!.units}|${Y!.cols.map((q) => q.join(":")).join(",")}|${Y!.x}|${Y!.z}|${Y!.h}|${Y!.sz}` : "";
     if (key !== this.stackKey) {
       this.stackKey = key;
       if (this.stack) { this.stack.removeFromParent(); this.stack.geometry.dispose(); this.stack = null; }
       if (Y && Y.cols.some((q) => q[1] > 0)) {
         const m = CARGO_MODELS[Y.cargo], b = new Batch();
-        for (const [cx, n] of Y.cols) for (let k = 0; k < n; k++) m.build(b, cx, CURB_H + k * (m.size[1] + 0.005), Y.sz, k + Math.round(cx));
+        // (Layer k holds the stop's unit units - 1 - k, either way: stackPlan; coloured as in the bed.)
+        for (const [cx, n] of Y.cols) for (let k = 0; k < n; k++) m.build(b, cx, CURB_H + k * (m.size[1] + 0.005), Y.sz, Y.units - 1 - k);
         const mesh = b.build(this.material);
         if (mesh) { mesh.position.set(Y.x, Y.y, Y.z); mesh.rotation.set(0, Y.h, 0); this.scene.add(mesh); this.stack = mesh; }
       }
@@ -764,9 +765,10 @@ export class Crew {
     }
   }
   // When in a stacking trip the bundle leaves or reaches the truck's deck (bedView).
-  private stackTruckAt(mode: "yard" | "road", pickup: boolean) {
+  // (Only a road-side stop's first trip starts with the drive out from where it's parked.)
+  private stackTruckAt(mode: "yard" | "road", pickup: boolean, first: boolean) {
     const L = truckLayout("flatbed"), P = { s: 1, kerb: 4.5, front: 7.5, sx: 0, sz: 10 };
-    const legs = mode === "yard" ? yardLegs(L, P, 0, L.floor, CURB_H, pickup) : roadLegs(L, { ...P, sx: -5 }, 0, L.floor, CURB_H, pickup, true, false);
+    const legs = mode === "yard" ? yardLegs(L, P, 0, L.floor, CURB_H, pickup) : roadLegs(L, { ...P, sx: -5 }, 0, L.floor, CURB_H, pickup, first, false);
     let t = 0;
     for (const g of legs) { t += g.d; if (g.truck) return t; }
     return t;
@@ -816,7 +818,8 @@ export class Crew {
       // A load lands in the bed when it is set down (pickup) and leaves it as it is lifted (drop):
       // late in a stow, early in a drop's; halfway through a forklift trip, as it lets go or lifts (worker).
       const pickup = stop.kind === "pickup";
-      const at = (c: Chore) => c.kind === "wait" ? (j.stackMode ? this.stackTruckAt(j.stackMode, pickup) : c.len * 0.5) : pickup ? c.len * 0.97 : c.len * 0.03;
+      const first = steps[0];
+      const at = (c: Chore) => c.kind === "wait" ? (j.stackMode ? this.stackTruckAt(j.stackMode, pickup, c === first) : c.len * 0.5) : pickup ? c.len * 0.97 : c.len * 0.03;
       for (const c of steps) { const k = j.chores.indexOf(c); if (k < idx || (k === idx && ph.ct > at(c))) done++; }
     }
     // Trip by trip, exactly what each trip carries (chores.ts tripUnits).
@@ -841,10 +844,11 @@ export class Crew {
     if (!id) { this.load = null; return; }
     // Built for the units on the current trip (a stack's height follows them).
     const trip = this.tripNow(j, stop!), [u0, u1] = tripUnits(stop!, Math.max(1, trip.trips), trip.i);
-    const key = `${id}|${Math.max(1, u1 - u0)}`;
+    // (Each unit coloured as it is in the bed: chores.ts bedUnits, loads.ts BedLoad.)
+    const key = `${id}|${Math.max(1, u1 - u0)}|${u0}`;
     let load = this.loads.get(key);
     if (!load) {
-      load = buildCarried(id, this.material, Math.max(1, u1 - u0)); load.group.visible = false; this.scene.add(load.group);
+      load = buildCarried(id, this.material, Math.max(1, u1 - u0), u0); load.group.visible = false; this.scene.add(load.group);
       // Keep the last few loads built (a stop's trips reuse them); older ones give back their geometry.
       for (const [k, old] of this.loads) {
         if (this.loads.size < 8) break;

@@ -26,7 +26,8 @@ const DOLLY_H = 0.12;
 
 // `n`: units on this trip, for loads carried as a stack (a flat pair of mattresses, two small
 // things in the arms); the hand truck and pallet jack keep their own arrangement.
-export function buildCarried(id: string, material: THREE.Material, n = 1): CarriedLoad {
+// `variant`: the first unit's colour variant (as the bed has it: BedLoad).
+export function buildCarried(id: string, material: THREE.Material, n = 1, variant = 0): CarriedLoad {
   const c = CARGO_BY_ID.get(id)!, m = CARGO_MODELS[id];
   const [l, h, w] = m.size;
   const b = new Batch();
@@ -58,7 +59,7 @@ export function buildCarried(id: string, material: THREE.Material, n = 1): Carri
       break;
     default:
       // One, or a stack (small things in twos, mattresses in a flat pair).
-      for (let k = 0; k < Math.max(1, n); k++) m.build(b, 0, k * h, 0, k);
+      for (let k = 0; k < Math.max(1, n); k++) m.build(b, 0, k * h, 0, variant + k);
       size = [l, Math.max(1, n) * h, w];
   }
   group.add(b.build(material)!);
