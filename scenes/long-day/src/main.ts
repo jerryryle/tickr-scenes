@@ -409,7 +409,6 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // A new city: carried straight on from the road out of the last one (continuous playback), or
     // from scratch.
     if (journey.st.city !== presCity) {
-      if (!fresh) sys.log(`Long Day: city ${journey.st.city} (${journey.plan.name}) at journey time ${time.toFixed(1)}s`);
       const prev = journey.previousExit;
       if (!fresh && presCity >= 0 && journey.st.city === presCity + 1 && prev) {
         prev.center(prev.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2);
@@ -550,8 +549,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
       journey = new Journey(cfg, base, saved?.season ?? realSeason());
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
-      // For reproducing what was seen: the journey and where it starts (journey time = this + scene time).
-      sys.log(`Long Day: seed ${cfg.seed}${random ? " (random)" : ""}, starting at journey time ${base.toFixed(1)}s (city ${journey.st.city}, ${Math.floor(journey.st.cityTime / 60)}:${String(Math.floor(journey.st.cityTime % 60)).padStart(2, "0")} in), cityMinutes ${cfg.cityMinutes}, countrySeconds ${cfg.countrySeconds}, season ${journey.startSeason}`);
+      // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
+      // where it starts (journey time = this + scene time).
+      sys.log(`Long Day: seed ${cfg.seed}, starting at journey time ${base.toFixed(1)}s`);
       const images = {} as Record<LiveryName, CanvasImageSource>;
       for (const n of LIVERY_ASSETS) images[n] = uploadable(await assets[n].loadImage());
       const atlas = uploadable(await assets.facades.loadImage());
