@@ -474,6 +474,7 @@ const FW_LANES = [{ n: 2.0, v: 27, dir: -1 }, { n: 5.4, v: 24, dir: -1 }, { n: -
 const FW_PER_LANE = 16, FW_MAX_CARS = 40;
 export class FreewayTraffic {
   private cars: CarFleet;
+  private poses: number[] = [];   // the cars drawn: x, z, heading, road height
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private e = new THREE.Euler(); private v = new THREE.Vector3(); private one = new THREE.Vector3(1, 1, 1);
   constructor(scene: THREE.Object3D, material: THREE.Material) {
     this.cars = new CarFleet(scene, material, 14);
@@ -482,7 +483,7 @@ export class FreewayTraffic {
   // only the stretch out on the entry side (the city beyond isn't there yet).
   update(F: Frame | null, t: number, near: { x: number; z: number }, entryOnly: boolean) {
     let n = 0;
-    this.cars.begin();
+    this.cars.begin(); this.poses.length = 0;
     if (F) {
       const lo = (entryOnly ? -40 : F.far - FW_TIP_FAR + 10), hi = FW_TIP - 10, span = hi - lo;
       for (let li = 0; li < FW_LANES.length; li++) {
@@ -499,10 +500,20 @@ export class FreewayTraffic {
           this.e.set(0, heading, 0); this.q.setFromEuler(this.e);
           this.m4.compose(this.v.set(x, F.y(d), z), this.q, this.one);
           this.cars.add(carKindAt(hash2(k, li, 0x5cb, 0xf01)), this.m4, FW_CAR_COLORS[(k * 3 + li) % FW_CAR_COLORS.length]);
+          this.poses.push(x, z, heading, F.y(d));
           n++;
         }
       }
     }
     this.cars.end();
+  }
+  // Headlight patches on the deck ahead of the cars within `reach` of `at` (atmosphere.ts
+  // HEAD_LIGHTS): x, z, heading, strength and the deck's height, nearest first.
+  headlights(at: { x: number; z: number }, reach: number, out: number[][]) {
+    const d = this.poses;
+    for (let i = 0; i < d.length; i += 4) {
+      const h = d[i + 2], x = d[i] + Math.cos(h) * 7.5, z = d[i + 1] - Math.sin(h) * 7.5, dist = Math.hypot(x - at.x, z - at.z);
+      if (dist < reach) out.push([dist, x, z, h, 0.7, d[i + 3]]);
+    }
   }
 }

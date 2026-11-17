@@ -680,8 +680,22 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         HEAD_LIGHTS.value[0].set(truck.root.position.x + Math.cos(h) * ahead, truck.root.position.z - Math.sin(h) * ahead, h, on ? 1 : 0);
         HEAD_Y.value[0] = truck.root.position.y;   // (up on a freeway, a garage roof, a hill)
         if (!on) for (let k = 1; k < HEAD_LIGHTS.value.length; k++) HEAD_LIGHTS.value[k].w = 0;   // the other vehicles' too
-        else if (roadShown && journey.st.mode === "country" && journey.countryS > 400) countryWorld.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
-        else traffic.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
+        else {
+          if (roadShown && journey.st.mode === "country" && journey.countryS > 400) countryWorld.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
+          else traffic.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
+          // Freeway cars' too: the nearest of them and of the vehicles above share the slots.
+          const spots: number[][] = [];
+          cityCars.headlights(truck.root.position, 120, spots); roadCars.headlights(truck.root.position, 120, spots);
+          if (spots.length) {
+            const p = truck.root.position;
+            for (let k = 1; k < HEAD_LIGHTS.value.length; k++) { const V = HEAD_LIGHTS.value[k]; if (V.w > 0) spots.push([Math.hypot(V.x - p.x, V.y - p.z), V.x, V.y, V.z, V.w, HEAD_Y.value[k]]); }
+            spots.sort((a, b) => a[0] - b[0]);
+            for (let k = 1; k < HEAD_LIGHTS.value.length; k++) {
+              const q = spots[k - 1];
+              if (q) { HEAD_LIGHTS.value[k].set(q[1], q[2], q[3], q[4]); HEAD_Y.value[k] = q[5]; } else HEAD_LIGHTS.value[k].w = 0;
+            }
+          }
+        }
       }
       // Dome lights after dark: the cargo box always, the cab while the truck is stopped for a job.
       truck.interiorLight(INTERIOR_LIGHT.value, LAMPS_ON.value > 0, LAMPS_ON.value > 0 && journey.st.mode === "dwell");
