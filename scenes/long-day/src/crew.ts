@@ -130,6 +130,7 @@ export class Crew {
     this.forkDoor = 0;
     this.gagPoint = null;
     d.root.visible = true;
+    d.vestOn = false;   // (on for a dock stop, below: set on every update, so a scrub back takes it off)
     const stop = st.stops[0];
     this.bed.update(truck, st.mode === "dwell" && stop && stop.kind !== "swap" ? this.bedView(j, stop) : st.aboard);
     this.prepareCargo(st.mode === "dwell" && stop && stop.kind !== "swap" ? stop : null, j);
@@ -932,9 +933,11 @@ export class Crew {
     this.driver.root.rotation.set(0, truck.heading + yaw, 0);
   }
 
-  // Hide the driver's head when the camera is looking out through their eyes.
-  private firstPerson(cam: THREE.Camera) {
-    this.driver.root.updateMatrixWorld();
+  // Hide the driver's head when the camera is looking out through their eyes. (main.ts calls this
+  // again just before drawing, with the camera where this frame has it: update runs before the
+  // camera moves, so on its own it would go by wherever the last frame left the camera.)
+  firstPerson(cam: THREE.Camera) {
+    this.driver.root.updateWorldMatrix(true, false);   // (with its parents': the truck it sits in has moved since the last frame)
     this.v2.set(0, CHARACTER_HIP_Y + 0.74, 0).applyMatrix4(this.driver.root.matrixWorld);
     this.driver.headVisible = cam.position.distanceTo(this.v2) > 0.45;
   }

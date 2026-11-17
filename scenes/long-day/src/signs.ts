@@ -1,7 +1,7 @@
 // Signs, billboards and the marquee.
-// Facility name signs and billboard ads share one atlas texture (1024x1024): the top half holds
-// 64 name slots of 256x32 that chunks take when built and give back when disposed; the bottom
-// half holds up to 24 billboard ads of 256x96, drawn once. So a chunk's signs and billboards are a
+// Facility name signs and billboard ads share one atlas texture (1024 wide): the top holds 256
+// name slots of 256x32 that chunks take when built and give back when disposed (cached chunks
+// keep theirs); below them, up to 24 billboard ads of 256x96, drawn once. So a chunk's signs and billboards are a
 // single quad mesh with a single material. Everything is drawn lazily (bake(), called from
 // render) because canvases only exist once the first frame has captured the canvas class; a
 // chunk's sign mesh stays hidden until what it shows has been drawn.
@@ -15,8 +15,8 @@ import { CityPlan } from "./city.ts";
 import { FAC, facilityAt, facilityName, hasSign, isRyderFacility } from "./facilities.ts";
 import type { FacilityDef } from "./facilities.ts";
 
-const SIGN_W = 256, SIGN_H = 32, SIGN_COLS = 4, SIGN_ROWS = 16;
-export const AD_W = 256, AD_H = 96, AD_COLS = 4, AD_ROWS = 6, AD_Y0 = 512;
+const SIGN_W = 256, SIGN_H = 32, SIGN_COLS = 4, SIGN_ROWS = 64;   // 256 name slots: room for the chunks ChunkStreamer keeps cached
+export const AD_W = 256, AD_H = 96, AD_COLS = 4, AD_ROWS = 6, AD_Y0 = SIGN_ROWS * SIGN_H;
 const ATLAS_W = 1024, ATLAS_H = AD_Y0 + AD_ROWS * AD_H;
 
 export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean }
@@ -43,6 +43,7 @@ export class SignAtlas {
     this.jobs.set(slot, { slot, text, style, baked: false });
     return slot;
   }
+  get freeSlots() { return this.free.length; }
   release(slot: number) {
     if (!this.jobs.delete(slot)) return;
     this.free.push(slot);
@@ -274,7 +275,7 @@ export const signAtlas = new SignAtlas();
 // of them say the same thing (a street's name at every corner along it), so each text is drawn
 // once and shared, counted in and out by the chunks and road pieces that show it; its own atlas
 // (1024x1024: 128 slots of 256x32), so they never crowd out the facilities' name signs.
-const PLATE_W = 256, PLATE_H = 32, PLATE_COLS = 4, PLATE_ROWS = 32;
+const PLATE_W = 256, PLATE_H = 32, PLATE_COLS = 4, PLATE_ROWS = 64;
 export const PLATE_GREEN: SignStyle = { bg: "#1e6b3a", fg: "#ffffff", logo: false };
 interface PlateJob { key: string; text: string; style: SignStyle; refs: number; baked: boolean }
 export class PlateAtlas {
@@ -287,6 +288,7 @@ export class PlateAtlas {
   private meshes = new Set<{ mesh: THREE.Mesh; slots: number[] }>();
   constructor() { for (let i = PLATE_COLS * PLATE_ROWS - 1; i >= 0; i--) this.free.push(i); }
   // A slot showing `text` (shared with whoever already shows it); -1 when the atlas is full.
+  get freeSlots() { return this.free.length; }
   acquire(text: string, style: SignStyle = PLATE_GREEN): number {
     const key = `${style.bg}|${style.fg}|${text}`, hit = this.byKey.get(key);
     if (hit !== undefined) { this.jobs.get(hit)!.refs++; return hit; }

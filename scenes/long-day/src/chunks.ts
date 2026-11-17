@@ -3,26 +3,59 @@
 // keeps vertex coordinates small for float32 precision however far the journey runs (three.js
 // composes object and camera matrices in float64 on the CPU).
 // Chunks within `radius` are built, nearest first, at most `budget` per frame; chunks beyond
-// `radius + 1` are disposed (hysteresis). The wanted set is only recomputed when the focus
+// `radius + 1` leave the scene (hysteresis). The wanted set is only recomputed when the focus
 // crosses into a new chunk. Chunk keys are numbers, so steady frames allocate nothing; they
 // cover ±2^25 chunks per axis (over a million km at 40 m chunks).
 // A builder may also be a generator that yields between stages of the work: the streamer then
 // spreads one chunk over several frames, within a time budget per frame.
+//
+// Cache (cacheLimit > 0): a chunk that leaves the scene is kept, detached, instead of disposed,
+// up to cacheLimit bytes of geometry, oldest dropped first; one wanted again comes straight back
+// (builders are pure functions of the cell, so a kept chunk is the one a rebuild would make). A
+// chunk's root may carry onStash / onRestore hooks for what it registers outside the scene graph
+// (lamp sites, the occlusion map); `keepCached` says when something else is running short (sign
+// atlas slots a kept chunk holds on to) and the cache sheds its oldest.
+// Exact (for a timeline that scrubs): what is in the scene is a pure function of the focus cell,
+// whatever came before: exactly the cells within `radius` (no hysteresis), all built before
+// update returns, nothing built ahead into the scene (into the cache instead). Costs a hitch
+// whenever the focus crosses into a new cell and something in range is not cached.
+// Prefetch (setPrefetch): cells the caller expects to want soon (the cells round the truck's
+// route) are built in frames with nothing in range left to build, straight into the cache.
 import * as THREE from "three@0.187.0";
 
 export type ChunkBuild = Generator<void, THREE.Object3D | null, void>;
 type ChunkBuilder = (cx: number, cz: number) => THREE.Object3D | null | ChunkBuild;
 const isChunkBuild = (v: unknown): v is ChunkBuild => !!v && typeof (v as any).next === "function" && typeof (v as any)[Symbol.iterator] === "function";
-interface Chunk { cx: number; cz: number; obj: THREE.Object3D }
+interface Chunk { cx: number; cz: number; obj: THREE.Object3D; bytes: number }
 const CHUNK_KEY_OFFSET = 2 ** 25, CHUNK_KEY_SPAN = 2 ** 26;
-function chunkKey(cx: number, cz: number) { return (cx + CHUNK_KEY_OFFSET) * CHUNK_KEY_SPAN + (cz + CHUNK_KEY_OFFSET); }
+export function chunkKey(cx: number, cz: number) { return (cx + CHUNK_KEY_OFFSET) * CHUNK_KEY_SPAN + (cz + CHUNK_KEY_OFFSET); }
+
+// Bytes of vertex and index data a subtree owns (shared geometry not counted).
+function geometryBytes(root: THREE.Object3D): number {
+  let n = 0;
+  root.traverse((o: any) => {
+    const g = o.geometry; if (!g || g.userData?.shared) return;
+    for (const a of Object.values(g.attributes) as any[]) n += a?.array?.byteLength ?? 0;
+    n += g.index?.array?.byteLength ?? 0;
+  });
+  return n;
+}
 
 export class ChunkStreamer {
   readonly chunks = new Map<number, Chunk>();
-  built = 0; disposed = 0;
+  readonly cache = new Map<number, Chunk>();   // detached chunks, oldest first
+  built = 0; disposed = 0; restored = 0; prefetched = 0;
   lastBuildMs = 0; maxBuildMs = 0;
+  cacheBytes = 0;
+  cacheLimit = 0;                               // bytes of geometry kept out of the scene (0: none)
+  keepCached: () => boolean = () => true;       // false: shed cached chunks (something they hold runs short)
+  exact = false;                                // see above
   private queue: [number, number][] = [];
   private fx = NaN; private fz = NaN;
+  private prefetchList: [number, number][] = [];
+  private prefetchKeys = new Set<number>();
+  private prefetchAt = 0;
+  private filling = false;
   constructor(
     private parent: THREE.Object3D,
     readonly size: number,
@@ -35,36 +68,64 @@ export class ChunkStreamer {
   // Build everything in range at once (for setup, before the first frame).
   fill(focus: THREE.Vector3) {
     const b = this.budget, ms = this.frameMs;
-    this.budget = Infinity; this.frameMs = Infinity; this.update(focus); this.budget = b; this.frameMs = ms;
+    this.budget = Infinity; this.frameMs = Infinity; this.filling = true;
+    try { this.update(focus); } finally { this.budget = b; this.frameMs = ms; this.filling = false; }
   }
   // Each frame builds for about this long (at least one stage of one chunk), and when nothing in
-  // range is left to build, builds ahead: the next ring out on the side `ahead` points to.
+  // range is left to build, builds ahead: prefetched cells, then the next ring out on the side
+  // `ahead` points to.
   frameMs = 3;
   private job: { cx: number; cz: number; gen: ChunkBuild; ms: number } | null = null;
   get pending() { return this.queue.length + (this.job ? 1 : 0); }
+  get prefetchPending() { return this.prefetchList.length - this.prefetchAt; }
+
+  // The cells to build ahead of need, most urgent first (replaces the previous list).
+  setPrefetch(cells: [number, number][]) {
+    this.prefetchList = cells; this.prefetchAt = 0;
+    this.prefetchKeys.clear();
+    for (const [cx, cz] of cells) this.prefetchKeys.add(chunkKey(cx, cz));
+  }
 
   update(focus: THREE.Vector3, ahead: { x: number; z: number } | null = null) {
     const fx = Math.floor(focus.x / this.size), fz = Math.floor(focus.z / this.size);
     if (fx !== this.fx || fz !== this.fz) {
       this.fx = fx; this.fz = fz;
       for (const [key, c] of this.chunks)
-        if (Math.max(Math.abs(c.cx - fx), Math.abs(c.cz - fz)) > this.radius + 1) {
-          this.parent.remove(c.obj); disposeTree(c.obj); this.chunks.delete(key); this.disposed++;
-        }
+        if (Math.max(Math.abs(c.cx - fx), Math.abs(c.cz - fz)) > this.keepRadius) this.retire(key, c);
       this.queue.length = 0;
       for (let dz = -this.radius; dz <= this.radius; dz++)
-        for (let dx = -this.radius; dx <= this.radius; dx++)
-          if (!this.chunks.has(chunkKey(fx + dx, fz + dz))) this.queue.push([fx + dx, fz + dz]);
+        for (let dx = -this.radius; dx <= this.radius; dx++) {
+          const key = chunkKey(fx + dx, fz + dz);
+          if (this.chunks.has(key)) continue;
+          if (this.cache.has(key)) this.restore(key);
+          else this.queue.push([fx + dx, fz + dz]);
+        }
       this.queue.sort((a, b) => ((a[0] - fx) ** 2 + (a[1] - fz) ** 2) - ((b[0] - fx) ** 2 + (b[1] - fz) ** 2));
+      this.trim();
+    }
+    if (this.exact) {   // everything in range, now
+      while (this.job) { const j = this.job, r = j.gen.next(); if (r.done) { this.job = null; this.place(j.cx, j.cz, r.value, j.ms); } }
+      for (let next = this.queue.shift(); next; next = this.queue.shift()) {
+        const key = chunkKey(next[0], next[1]);
+        if (this.chunks.has(key)) continue;
+        if (this.cache.has(key)) { this.restore(key); continue; }
+        const t0 = performance.now(), r = this.build(next[0], next[1]);
+        let obj: THREE.Object3D | null;
+        if (isChunkBuild(r)) { let x = r.next(); while (!x.done) x = r.next(); obj = x.value; } else obj = r;
+        this.place(next[0], next[1], obj, performance.now() - t0);
+      }
+      ahead = null;   // (built ahead: prefetched cells only, into the cache)
     }
     const start = performance.now();
     let started = 0;
     for (;;) {
       if (!this.job) {
         if (started >= this.budget) break;
-        const next = this.queue.shift() ?? (ahead ? this.aheadCell(ahead) : null);
+        const next = (this.exact ? null : this.queue.shift()) ?? this.nextPrefetch() ?? (ahead ? this.aheadCell(ahead) : null);
         if (!next) break;
-        if (this.chunks.has(chunkKey(next[0], next[1]))) continue;
+        const key = chunkKey(next[0], next[1]);
+        if (this.chunks.has(key)) continue;
+        if (this.cache.has(key)) { if (this.near(next[0], next[1])) this.restore(key); continue; }
         const t0 = performance.now(), r = this.build(next[0], next[1]);
         started++;
         if (isChunkBuild(r)) this.job = { cx: next[0], cz: next[1], gen: r, ms: performance.now() - t0 };
@@ -79,11 +140,57 @@ export class ChunkStreamer {
       if (performance.now() - start >= this.frameMs) break;
     }
   }
+  private get keepRadius() { return this.exact ? this.radius : this.radius + 1; }
+  private near(cx: number, cz: number) { return Math.max(Math.abs(cx - this.fx), Math.abs(cz - this.fz)) <= this.keepRadius; }
+  // A finished chunk: into the scene if it is in range, else (prefetched) into the cache.
   private place(cx: number, cz: number, obj: THREE.Object3D | null, ms: number) {
     const o = obj ?? new THREE.Group();
     this.lastBuildMs = ms; this.maxBuildMs = Math.max(this.maxBuildMs, ms);
     o.position.set(cx * this.size, 0, cz * this.size);
-    this.parent.add(o); this.chunks.set(chunkKey(cx, cz), { cx, cz, obj: o }); this.built++;
+    const c: Chunk = { cx, cz, obj: o, bytes: geometryBytes(o) }, key = chunkKey(cx, cz);
+    this.built++;
+    if (this.near(cx, cz) || this.cacheLimit <= 0) { this.parent.add(o); this.chunks.set(key, c); return; }
+    o.userData.onStash?.();
+    this.cache.set(key, c); this.cacheBytes += c.bytes; this.prefetched++;
+    this.trim();
+  }
+  // Out of the scene: kept in the cache, or disposed.
+  private retire(key: number, c: Chunk) {
+    this.parent.remove(c.obj); this.chunks.delete(key);
+    if (this.cacheLimit > 0 && c.bytes > 0 && this.keepCached()) {   // (an empty cell costs nothing to make again)
+      c.obj.userData.onStash?.();
+      this.cache.delete(key); this.cache.set(key, c); this.cacheBytes += c.bytes;
+    } else { disposeTree(c.obj); this.disposed++; }
+  }
+  private restore(key: number) {
+    const c = this.cache.get(key)!;
+    this.cache.delete(key); this.cacheBytes -= c.bytes;
+    c.obj.userData.onRestore?.();
+    this.parent.add(c.obj); this.chunks.set(key, c); this.restored++;
+  }
+  // Shed the oldest cached chunks while over the limit or short of what they hold: first those not
+  // about to be wanted (prefetched), then any.
+  private trim() {
+    const over = () => this.cacheBytes > this.cacheLimit || (this.cache.size > 0 && !this.keepCached());
+    for (const spare of [true, false]) {
+      if (!over()) return;
+      for (const [key, c] of this.cache) {
+        if (spare && this.prefetchKeys.has(key)) continue;
+        this.cache.delete(key); this.cacheBytes -= c.bytes; disposeTree(c.obj); this.disposed++;
+        if (!over()) return;
+      }
+    }
+  }
+  // The next prefetch cell not yet built, kept or empty; null when there is none, or no room.
+  private nextPrefetch(): [number, number] | null {
+    if (this.filling || this.cacheLimit <= 0 || !this.keepCached()) return null;
+    while (this.prefetchAt < this.prefetchList.length) {
+      const c = this.prefetchList[this.prefetchAt++], key = chunkKey(c[0], c[1]);
+      if (this.chunks.has(key) || this.cache.has(key) || this.voidCell?.(c[0], c[1])) continue;
+      if (this.job && this.job.cx === c[0] && this.job.cz === c[1]) continue;
+      return c;
+    }
+    return null;
   }
   // The nearest unbuilt cell of the ring just outside the radius (kept, not disposed) on the side
   // the truck is heading, so the next row in is mostly built before it is needed.
@@ -131,7 +238,9 @@ export class ChunkStreamer {
       this.job = null;
     }
     for (const c of this.chunks.values()) { this.parent.remove(c.obj); disposeTree(c.obj); }
-    this.chunks.clear(); this.queue.length = 0; this.fx = this.fz = NaN;
+    for (const c of this.cache.values()) disposeTree(c.obj);
+    this.chunks.clear(); this.cache.clear(); this.cacheBytes = 0; this.queue.length = 0; this.fx = this.fz = NaN;
+    this.setPrefetch([]);
   }
 }
 

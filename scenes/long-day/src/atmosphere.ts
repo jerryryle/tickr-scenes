@@ -66,7 +66,9 @@ export function updateLampLights(at: THREE.Vector3) {
       best.push({ d, x: lampTmp.x, y: lampTmp.y, z: lampTmp.z });
     }
   }
-  best.sort((a, b) => a.d - b.d);
+  // (Ties broken by position: LAMP_SITES's order depends on which chunks were built when, and a
+  // scrubbed frame must light the same lamps as the played one.)
+  best.sort((a, b) => a.d - b.d || a.x - b.x || a.z - b.z || a.y - b.y);
   for (let i = 0; i < LAMP_N; i++) {
     const b = best[i];
     LAMP_LIGHTS.value[i].set(b ? b.x : 0, b ? b.y : -100, b ? b.z : 0, b ? 1 : 0);

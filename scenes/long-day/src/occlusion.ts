@@ -69,6 +69,8 @@ class OcclusionMap {
     for (const key of f.tiles) { const l = this.byTile.get(key); if (l) { const i = l.indexOf(f); if (i >= 0) l.splice(i, 1); if (!l.length) this.byTile.delete(key); } }
     f.tiles = [];
   }
+  // Put back a field taken out with remove() (a chunk back from ChunkStreamer's cache).
+  restore(f: HeightField | null | undefined) { if (f && !f.tiles.length) this.place(f); }
   // Move the fields tagged `tag` by (dx, dz) (the road's scenery when the world is rebased).
   shift(tag: string, dx: number, dz: number) {
     const fs = new Set<HeightField>();

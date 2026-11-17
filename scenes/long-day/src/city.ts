@@ -15,7 +15,7 @@ import type { ChunkBuild } from "./chunks.ts";
 import { LAMP_SITES, PoolBuilder } from "./atmosphere.ts";
 import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
-import { BAY, facadeBox } from "./facade.ts";
+import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE } from "./facadetiles.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, signalOffset } from "./signals.ts";
@@ -205,6 +205,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   CS = plan.style;
   const ground = new Batch(), solid = new Batch(), lamps = new Batch();
   const rnd = mulberry32(Math.floor(hash2(cx, cz, seed, 99) * 4294967296));
+  setFacadeChunk(cx, cz, seed);
   const district = plan.district(cx, cz);
   const plates = takeSlot ? new PlateSet() : null;
   if (!insideCity(cx, cz)) {
@@ -281,8 +282,13 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
     const plateMesh = DC.plates?.build() ?? null;
     if (plateMesh) group.add(plateMesh.mesh);
     const pools = DC.pools.build(); if (pools) group.add(pools);
-    if (DC.lampSites.length) LAMP_SITES.set(group, DC.lampSites.slice());   // their light: applyLampLight
+    const lampSites = DC.lampSites.slice();
+    if (lampSites.length) LAMP_SITES.set(group, lampSites);   // their light: applyLampLight
     group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (signMesh) signAtlas.detach(signMesh); plateMesh?.dispose(); LAMP_SITES.delete(group); };
+    // Kept out of the scene (ChunkStreamer's cache): its lamps light nothing meanwhile. Its sign and
+    // plate slots stay held, so it comes back as it was.
+    group.userData.onStash = () => { LAMP_SITES.delete(group); };
+    group.userData.onRestore = () => { if (lampSites.length) LAMP_SITES.set(group, lampSites); };
     if (stalls.length && fleet) { const f = fleet(stalls); if (f) group.add(f); }
     group.userData.district = district;
     return group;

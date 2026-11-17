@@ -31,6 +31,20 @@ To watch one in a test render:
 make debug SCENE=long-day DEFINE="DEBUG_VIEW=vignette DEBUG_VIGNETTE=hydrant DEBUG_HOUR=14 DEBUG_CLIMATE=summer/clear DEBUG_SKIP_MINUTES=1"
 ```
 
+`src/chunks.ts` streams the city's blocks round the truck. City chunks that leave the view are
+kept, detached, in a cache (up to `CHUNK_CACHE_BYTES` of geometry, `src/main.ts`) instead of being
+disposed, so streets driven again come straight back, and the blocks round the rest of the truck's
+route and its next stops are built ahead into that cache in otherwise idle frames. A kept chunk
+holds its sign and plate atlas slots, so the cache sheds its oldest chunks when either atlas runs
+low. `DEBUG_MEMLOG` reports the cache's size and hits.
+
+`src/facadeart.ts` paints the facade atlas on the first frame: the 16 facade kinds in
+`src/facadetiles.ts`, four variants of each (each building gets one), at 128 px a tile, with a
+mask saying which pixels take the building's colour, which are glass lit from inside after dark,
+and how brightly. The `facades` asset (the old 16-tile atlas) is what the material starts with,
+and stays in use if painting fails. To look at the atlas, bundle a script that captures a
+canvas class with `captureCanvasClass` and writes `paintFacadeAtlas()`'s canvases to PNG.
+
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,
 `DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_CAMLOG`).
 Shipping builds use its defaults; a debug build overrides them, since the board only passes env

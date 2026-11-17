@@ -19,7 +19,8 @@ import { Hud } from "./hud.ts";
 import { PuffSystem } from "./puffs.ts";
 import { LIVERY_ASSETS, Truck, truckExtents, TruckKit, truckLayout } from "./truck.ts";
 import type { LiveryName, TruckModel } from "./truck.ts";
-import { makeFacadeMaterial } from "./facade.ts";
+import { makeFacadeMaterial, setFacadeAtlas } from "./facade.ts";
+import { paintFacadeAtlas } from "./facadeart.ts";
 import { makeLampMaterial, setSignalPreempt, setSignalTime } from "./signals.ts";
 import { realSeason, weatherMix } from "./climate.ts";
 import { CITY_HI, CITY_LO, cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, parkedObstacles, pavementObstacles } from "./city.ts";
@@ -49,6 +50,15 @@ import { Ambient } from "./ambient.ts";
 import { StreetLife } from "./life.ts";
 
 const STREAM_RADIUS = 3;
+// City chunks that leave the view are kept (ChunkStreamer's cache) up to this much geometry
+// (about as much again in GPU buffers), so streets driven again come straight back, and the
+// cells round the truck's route are built ahead into it. Kept chunks hold their sign and plate
+// slots, so the cache sheds its oldest when either atlas runs low.
+const CHUNK_CACHE_BYTES = 512e6;
+const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
+// Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
+// round the next stops, at most PREFETCH_MAX of them.
+const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door";   // test renders with a tour camera
 
 const rnd01 = mulberry32(0x5eed);
@@ -106,11 +116,57 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
       const g = yield* build(cx, cz);
       yield;
-      if (g) { const f = OCCLUSION.add(g, cx * BLOCK, cz * BLOCK, [mats.ground], "city"), prev = g.userData.onDispose; g.userData.onDispose = () => { prev?.(); OCCLUSION.remove(f); }; }
+      if (g) {
+        const f = OCCLUSION.add(g, cx * BLOCK, cz * BLOCK, [mats.ground], "city"), u = g.userData;
+        const prev = u.onDispose, stash = u.onStash, restore = u.onRestore;
+        u.onDispose = () => { prev?.(); OCCLUSION.remove(f); };
+        u.onStash = () => { stash?.(); OCCLUSION.remove(f); };
+        u.onRestore = () => { restore?.(); OCCLUSION.restore(f); };
+      }
       return g;
     };
     streamer = new ChunkStreamer(engine.world, BLOCK, withOcclusion, STREAM_RADIUS, 1, (cx, cz) => cityDistance(cx, cz) > RING);
+    streamer.cacheLimit = CHUNK_CACHE_BYTES;
+    streamer.exact = PREVIEW;   // a scrubbed frame shows the same blocks as the played one
+    streamer.keepCached = () => signAtlas.freeSlots >= SIGN_RESERVE && plateAtlas.freeSlots >= PLATE_RESERVE;
+    prefetchKey = "";
     cityShown = journey.st.city;
+  }
+
+  // The cells the truck will want next (ChunkStreamer.setPrefetch): along the rest of its route,
+  // nearest the route first, then round its next stops. Worked out again when the route or the
+  // stops change.
+  let prefetchKey = "";
+  const prefetchPose: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  function updatePrefetch() {
+    const st = journey.st, path = st.mode === "drive" ? journey.path : null;
+    const key = `${st.city}|${st.mode}|${path && st.route ? `${st.route.ix},${st.route.iz},${st.route.moves}` : ""}|${st.stops.slice(0, PREFETCH_STOPS).map((p) => p.site ? p.site.bx + "," + p.site.bz : "-").join(";")}`;
+    if (key === prefetchKey) return;
+    prefetchKey = key;
+    const cells: [number, number][] = [], seen = new Set<string>();
+    const ring = (bx: number, bz: number, r: number) => {
+      const round: [number, number, number][] = [];
+      for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+        const k = `${bx + dx},${bz + dz}`;
+        if (!seen.has(k)) { seen.add(k); round.push([bx + dx, bz + dz, dx * dx + dz * dz]); }
+      }
+      round.sort((a, b) => a[2] - b[2]);
+      for (const [x, z] of round) cells.push([x, z]);
+    };
+    if (path) {
+      // (eval moves the path's search cursor and sets lastOffset, which traffic reads: both put back)
+      const p = path as any, cursor = p.cursor, lastOffset = path.lastOffset;
+      let lx = NaN, lz = NaN;
+      for (let s = st.s; s <= path.length && cells.length < PREFETCH_MAX; s += PREFETCH_STEP) {
+        path.eval(Math.min(s, path.length), prefetchPose);
+        const bx = Math.floor(prefetchPose.x / BLOCK), bz = Math.floor(prefetchPose.z / BLOCK);
+        if (bx !== lx || bz !== lz) { lx = bx; lz = bz; ring(bx, bz, STREAM_RADIUS); }
+      }
+      p.cursor = cursor; path.lastOffset = lastOffset;
+    }
+    for (const p of st.stops.slice(0, PREFETCH_STOPS)) if (p.site && cells.length < PREFETCH_MAX) ring(p.site.bx, p.site.bz, STREAM_RADIUS);
+    if (cells.length > PREFETCH_MAX) cells.length = PREFETCH_MAX;
+    streamer.setPrefetch(cells);
   }
 
   function placeTruck(dt: number, jumped: boolean) {
@@ -418,8 +474,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       journey.seekTo(best / TICK_HZ);
       countryWorld.setRoad(null); roadShown = null;
       presLoad(snaps.get(best)!);
+      tabletKey = "";   // (the tablet's canvas still shows where the scrub came from: draw it again)
       if (journey.st.city !== cityShown) buildCity();
       streamer.fill(new THREE.Vector3(journey.pose.x, 0, journey.pose.z));
+      // Landing on the snapshot itself: no tick follows to put the truck, crew, doors and camera
+      // where the snapshot has them (they still show where the scrub came from), so step to its
+      // own moment, then put back the state exactly as saved.
+      if (best === K) { const h = presSave(); step(K / TICK_HZ, 0, false); presLoad(h); }
     } else freshAt(boundaryAtOrBefore(K));
     while (presK < K) tick();
   }
@@ -549,7 +610,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const road = journey.country;
     if (road) {
       const key = "country" + road.inp.toName;
-      if (key !== tabletKey) { truck.setTablet(road.inp.toName, `${journey.aboardUnits} aboard`); tabletKey = key; }
+      if (key !== tabletKey && truck.setTablet(road.inp.toName, `${journey.aboardUnits} aboard`)) tabletKey = key;
       return;
     }
     const stop = journey.nextStop;
@@ -557,7 +618,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const what = stop && stop.kind !== "swap" && stop.kind !== "depart" ? `${stop.kind === "pickup" ? "Pick up" : "Drop"} ${stop.units} ${CARGO_BY_ID.get(stop.cargo)!.name}`
       : stop?.kind === "swap" ? `Swap to ${stop.truck}` : `${journey.aboardUnits} aboard`;
     const key = name + what;
-    if (key !== tabletKey) { truck.setTablet(name, what); tabletKey = key; }
+    if (key !== tabletKey && truck.setTablet(name, what)) tabletKey = key;   // (none before canvases exist: drawn on the first frame)
   }
 
   return {
@@ -659,7 +720,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       let { t, dt } = frame;
       if (DEBUG_SCRUBTEST) t = scrubTestTime(t);
       if (DEBUG_VIEW === "scrub") { const t2 = t < 6 ? t : t - 4; dt = t2 - scrubPrev; scrubPrev = t2; t = t2; }   // test renders: a scrub back
-      if (!baked) { captureCanvasClass(ctx); baked = true; }
+      if (!baked) {
+        captureCanvasClass(ctx); baked = true;
+        // Canvases exist now: paint the full facade atlas over the asset one the city started with.
+        try { setFacadeAtlas(mats.solid, paintFacadeAtlas()); } catch (e: any) { sys.log("facade atlas: kept the asset (" + (e?.message ?? e) + ")"); }
+      }
       const target = Math.max(0, base + t);
       // The presentation runs on fixed ticks of journey time (see step); a scrub, a long jump ahead
       // or the first frame lands on a tick from a snapshot or from scratch, and replays from there.
@@ -688,6 +753,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         if (outside) streamer.setRadius(5);
         else if (streamer.radius > STREAM_RADIUS && fogClear >= 0 && fogClear <= (STREAM_RADIUS + 0.6) * BLOCK) streamer.setRadius(STREAM_RADIUS);
         aheadDir.x = Math.cos(truck.heading); aheadDir.z = -Math.sin(truck.heading);
+        if (!outside) updatePrefetch();
         if (!((DEBUG_VIEW as string) === "vignette" && crowd.vig.view())) streamer.update(truck.root.position, aheadDir);   // (test renders: streamed round the vignette instead)
       }
       {
@@ -696,7 +762,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         if (backdrop.built !== `${bc.style.id}/${bc.seed}`) backdrop.build(bc.style, bc.seed);
         backdrop.setPresence(bd.p);
       }
-      signAtlas.bake(); plateAtlas.bake();
+      // (The preview draws every sign before the frame, so a scrubbed frame shows the same signs.)
+      if (PREVIEW) { signAtlas.bake(Infinity); plateAtlas.bake(Infinity); } else { signAtlas.bake(); plateAtlas.bake(); }
       marquee.update(target);
       // Time of day from the clock, weather from the city (blended along the country road).
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);
@@ -733,6 +800,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       atmosphere.applyFog(engine);
       atmosphere.precipitation(t, engine.camera);
       engine.followSun(focus);
+      crew.firstPerson(engine.camera);
       engine.draw(ctx);
       if (held) presLoad(held);
       persist.tick(target, snapshot);
@@ -746,7 +814,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
           for (const a of [...Object.values(g.attributes), g.index] as any[]) { const arr = a?.array; if (arr && !seenA.has(arr.buffer)) { seenA.add(arr.buffer); sceneAB += arr.buffer.byteLength; } }
         });
         const mi = engine.renderer.info.memory, pm = (globalThis as any).process?.memoryUsage?.();
-        sys.log("MEMLOG " + JSON.stringify({ t: Math.round(t), city: journey.st.city, mode: journey.st.mode, geo: mi.geometries, tex: mi.textures, prog: engine.renderer.info.programs?.length ?? 0, objs, heap: pm ? Math.round(pm.heapUsed / 1e6) : -1, ext: pm ? Math.round(pm.external / 1e6) : -1, ab: pm ? Math.round(pm.arrayBuffers / 1e6) : -1, sceneAB: Math.round(sceneAB / 1e6), gc: typeof (globalThis as any).gc, rss: pm ? Math.round(pm.rss / 1e6) : -1, chunks: streamer.chunks.size }));
+        sys.log("MEMLOG " + JSON.stringify({ t: Math.round(t), city: journey.st.city, mode: journey.st.mode, geo: mi.geometries, tex: mi.textures, prog: engine.renderer.info.programs?.length ?? 0, objs, heap: pm ? Math.round(pm.heapUsed / 1e6) : -1, ext: pm ? Math.round(pm.external / 1e6) : -1, ab: pm ? Math.round(pm.arrayBuffers / 1e6) : -1, sceneAB: Math.round(sceneAB / 1e6), gc: typeof (globalThis as any).gc, rss: pm ? Math.round(pm.rss / 1e6) : -1, chunks: streamer.chunks.size, cached: streamer.cache.size, cacheMB: Math.round(streamer.cacheBytes / 1e6), restored: streamer.restored, prefetched: streamer.prefetched, pfPending: streamer.prefetchPending, plateFree: plateAtlas.freeSlots, built: streamer.built, signsFree: signAtlas.freeSlots }));
       }
       if (cfg.debugHud) {
         const st = journey.st, ns = journey.nextStop;
