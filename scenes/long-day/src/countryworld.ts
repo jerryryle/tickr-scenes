@@ -21,7 +21,8 @@ import { bareTree, shade } from "./city.ts";
 import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, PlateSet, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
-import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop } from "./country.ts";
+import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
+  WEIGH_BACK, WEIGH_GREEN, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE } from "./country.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -65,6 +66,7 @@ export class CountryWorld {
   private train: THREE.Group | null = null;
   private gates: THREE.Group[] = [];
   private lights: THREE.Mesh[] = [];
+  private weighLamps: THREE.Mesh[] = [];   // an open weigh station's flashers (k 0, 1) and its scale's signal (k 2 red, 3 green)
   private eul = new THREE.Euler();
   private m4 = new THREE.Matrix4(); private quat = new THREE.Quaternion(); private one = new THREE.Vector3(1, 1, 1); private v = new THREE.Vector3();
   // Per segment build state.
@@ -158,14 +160,28 @@ export class CountryWorld {
         }
       }
     }
+    const weigh = road.pieces.find((p) => p.kind === "weigh" && p.open);
+    if (weigh) {
+      const lamp = (s: number, n: number, y: number, w: number, color: number, k: number) => {
+        const lb = new Batch(); lb.box(0, 0, 0, 0.1, w, w, color);
+        const l = lb.build(this.lightMat)!;
+        road.point(s, n, this.q);
+        l.position.set(this.q.x, y + road.baseAt(s), this.q.z); l.rotation.y = this.q.h;
+        l.userData.k = k; l.visible = false; this.group.add(l); this.weighLamps.push(l);
+      };
+      const sg = pieceSigns(weigh)[0];
+      for (const [k, d] of [[0, -3.9], [1, 3.9]]) lamp(sg.s - 0.25, sg.n + d, sg.y + 1.3, 0.38, 0xffa020, k);   // amber flashers over the board's ends
+      lamp(weigh.s + WEIGH_LIGHT - 0.22, WEIGH_N + 3.2, 4.45, 0.3, 0xff3020, 2);
+      lamp(weigh.s + WEIGH_LIGHT - 0.22, WEIGH_N + 3.2, 3.95, 0.3, 0x30ff70, 3);
+    }
   }
 
   clear() {
     for (const g of this.segs.values()) { this.group.remove(g); disposeTree(g); }
     this.segs.clear();
     if (this.train) { this.group.remove(this.train); disposeTree(this.train); this.train = null; }
-    for (const g of [...this.gates, ...this.lights]) { this.group.remove(g); disposeTree(g); }
-    this.gates = []; this.lights = [];
+    for (const g of [...this.gates, ...this.lights, ...this.weighLamps]) { this.group.remove(g); disposeTree(g); }
+    this.gates = []; this.lights = []; this.weighLamps = [];
     this.cars.count = 0;
   }
 
@@ -197,6 +213,7 @@ export class CountryWorld {
     }
     this.updateCars(road, u, sTruck);
     this.updateCrossing(road, u);
+    this.updateWeigh(road, u);
   }
 
   // Headlight patches ahead of the oncoming cars nearest `at` (atmosphere.ts HEAD_LIGHTS).
@@ -254,6 +271,15 @@ export class CountryWorld {
     for (const g of this.gates) g.rotation.x = (1 - down) * Math.PI / 2 * 0.95;   // up: the arm points to the sky
     const flash = down > 0 && Math.floor(u * 2) % 2 === 0;
     for (const l of this.lights) l.visible = down > 0 && (l.userData.k > 0 ? flash : !flash);
+  }
+
+  // An open weigh station: its flashers alternate; its signal is red, and goes green as the truck
+  // on the scale is done with, for a while after it pulls off.
+  private updateWeigh(road: CountryRoad, u: number) {
+    if (!this.weighLamps.length) return;
+    const stop = road.stops.find((x) => x.kind === "weigh"), go = stop ? stop.arrive + stop.dwell - WEIGH_GREEN : 1e9;
+    const green = u >= go && u < go + 14, flash = Math.floor(u * 1.6) % 2;
+    for (const l of this.weighLamps) { const k = l.userData.k; l.visible = k < 2 ? k === flash : k === 3 ? green : !green; }
   }
 
   private buildTrain(road: CountryRoad, rs: number): THREE.Group {
@@ -699,13 +725,23 @@ export class CountryWorld {
         break;
       }
       case "weigh": {
-        for (let a = S; a < S + p.len; a += 10) this.rbox(g, a + 5, 12.5, -0.045, 10.2, 0.1, 7, CW.asphalt);
-        this.rbox(g, S + 100, 12.5, 0.01, 20, 0.04, 3.2, 0x8d9296);
-        this.rbox(s, S + 100, 22, 2, 8, 4, 6, 0xe8e2d6); this.rbox(s, S + 100, 22, 4.3, 8.6, 0.5, 6.6, 0x5b6470);
-        this.rbox(s, S + 100, 18.9, 2.4, 6, 1.4, 0.1, 0x2a3440);
-        const uv = this.slot("WEIGH STATION · CLOSED", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
+        // Its lane beside the road (the scale on it, the scale house beyond), paved over to the
+        // road's shoulder where the lane leaves it and comes back.
+        const N = WEIGH_N, open = !!p.open;
+        for (let a = S; a < S + WEIGH_LEN; a += 10) { this.rbox(g, a + 5, N, -0.045, 10.2, 0.1, 7, CW.asphalt); this.rbox(g, a + 5, N + 3.1, 0.005, 10, 0.02, 0.14, CW.white); }
+        for (const [a0, a1] of [[S + WEIGH_OUT[0], S + WEIGH_OUT[1]], [S + WEIGH_BACK[0], S + WEIGH_BACK[1]]]) for (let a = a0; a < a1; a += 10) this.rbox(g, a + 5, 7.45, -0.05, 10.2, 0.1, 3.1, CW.asphalt);
+        const sc = (WEIGH_SCALE[0] + WEIGH_SCALE[1]) / 2, sl = WEIGH_SCALE[1] - WEIGH_SCALE[0];
+        this.rbox(g, S + sc, N, 0.01, sl, 0.04, 3.4, 0x8d9296);
+        for (const a of WEIGH_SCALE) this.rbox(g, S + a, N, 0.02, 0.3, 0.04, 3.6, CW.yellow);
+        this.rbox(s, S + sc, 22, 2, 8, 4, 6, 0xe8e2d6); this.rbox(s, S + sc, 22, 4.3, 8.6, 0.5, 6.6, 0x5b6470);
+        this.rbox(s, S + sc, 18.9, 2.4, 6, 1.4, 0.1, 0x2a3440);
+        // The scale's signal, on a post past its far end, facing the truck on it.
+        this.rbox(s, S + WEIGH_LIGHT, N + 3.2, 2.0, 0.16, 4.0, 0.16, 0x5a5f66);
+        this.rbox(s, S + WEIGH_LIGHT, N + 3.2, 4.2, 0.3, 1.1, 0.5, CW.dark);
+        const uv = this.slot(open ? "WEIGH STATION · OPEN" : "WEIGH STATION · CLOSED", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
         for (const k of [-3.6, 3.6]) this.rbox(s, S - 79.8, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);   // behind the board
         this.rbox(s, S - 79.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
+        if (open) for (const k of [-3.9, 3.9]) this.rbox(s, S - 79.85, 10 + k, 5.3, 0.3, 0.55, 0.55, CW.dark);   // the flashers' housings
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
       }

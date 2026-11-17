@@ -249,9 +249,9 @@ export class Director {
         if (id !== this.skipFeature) { if (this.beat !== "roadside" || id !== this.featureKey) { this.feature = null; this.signPiece = sg.piece; this.signIdx = sg.idx; this.pendingKey = id; } return "roadside"; }
       }
       // (A piece with a sign is filmed only by its sign's shot, which reads; except a truck stop
-      // the truck stops at, whose set piece is the stop.)
+      // or an open weigh station, whose set piece is the stop: its sign's shot comes first.)
       const road = j.country, f0 = road && j.countryU >= 0 ? road.featureShot(j.countryS) : null;
-      const f = f0 && road && (f0.key === ONRAMP_SHOT || road.pieces[f0.key]?.kind === "truckstop" || !pieceSigns(road.pieces[f0.key]).length) ? f0 : null;
+      const f = f0 && road && (f0.key === ONRAMP_SHOT || road.pieces[f0.key]?.kind === "truckstop" || road.pieces[f0.key]?.open || !pieceSigns(road.pieces[f0.key]).length) ? f0 : null;
       // A set piece is a cut there and a cut back, so it has to be worth it: not within
       // ROADSIDE_GAP of the last one, and not while the road setup has only just started. (A piece
       // passed over stays passed over for its whole stretch.)

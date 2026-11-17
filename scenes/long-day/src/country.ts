@@ -23,7 +23,7 @@ import { Frame, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN,
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
   | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign";
-export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number }
+export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number; open?: boolean }
 // A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
 // y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
 // and the camera director uses it to film them so they can be read. (Billboards: one entry per
@@ -46,7 +46,16 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     default: return [];
   }
 }
-interface CountryStop { s: number; dwell: number; kind: "truckstop" | "rail"; arrive: number }
+type RoadStopKind = "truckstop" | "rail" | "weigh";
+interface CountryStop { s: number; dwell: number; kind: RoadStopKind; arrive: number }
+// A weigh station (piece "weigh", from its s): its lane beside the road, the scale on it and the
+// signal at the scale's far end. When it is open (`open`) every truck has to cross the scale: the
+// truck signals and leaves the road along WEIGH_OUT, stops with its rear axle at WEIGH_STOP until
+// the light goes green, and comes back on along WEIGH_BACK.
+export const WEIGH_N = 12.5, WEIGH_LEN = 200;
+export const WEIGH_OUT: [number, number] = [-30, 70], WEIGH_BACK: [number, number] = [125, 200];
+export const WEIGH_SCALE: [number, number] = [84, 110], WEIGH_STOP = 96, WEIGH_LIGHT = 113;
+export const WEIGH_DWELL = 7, WEIGH_GREEN = 1.5;   // (the light goes green this long before the truck pulls off)
 
 const ROAD_DS = 2;               // geometry sample spacing (m)
 export const LANE = 1.85;               // right lane centre from the centre line
@@ -138,7 +147,7 @@ export class CountryRoad {
   private PM: Float64Array;         // 0 at the set pieces (the land level round them), 1 clear of them
   private S: Float64Array = new Float64Array(1); private V: Float32Array = new Float32Array(1);   // per motion step, to the hand-over
   private zone: [number, number] | null = null;
-  private planStops: { s: number; dwell: number; kind: "truckstop" | "rail" }[] = [];
+  private planStops: { s: number; dwell: number; kind: RoadStopKind }[] = [];
   trainT = -1;                     // drive time the train front reaches the far side of the road, start
   meetings: number[] = [];         // drive times oncoming cars pass the truck
   private D = 0;                   // seconds to the hand-over
@@ -207,7 +216,7 @@ export class CountryRoad {
     }
     this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 940 : 230), side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city, on the left: the freeway is on the right)
     if (!arrival) {
-      const extras: [PieceKind, number][] = [["attraction", 120], ["weigh", 200], ["fruit", 80], ["watertower", 90], ["bridge", 120], ["gas", 110]];
+      const extras: [PieceKind, number][] = [["attraction", 120], ["weigh", WEIGH_LEN], ["fruit", 80], ["watertower", 90], ["bridge", 120], ["gas", 110]];
       for (let i = extras.length - 1; i > 0; i--) { const j = Math.floor(h(20 + i) * (i + 1)); [extras[i], extras[j]] = [extras[j], extras[i]]; }
       extras.unshift(["billboards", 320]);   // billboards on every drive long enough for them
       let k = 0;
@@ -222,6 +231,15 @@ export class CountryRoad {
           break;
         }
         k++;
+      }
+      // An open weigh station, on a drive with time to spare for it: the truck crosses its scale.
+      const weigh = this.pieces.find((p) => p.kind === "weigh");
+      if (weigh && this.D > 150 && h(130) < 0.5) {
+        weigh.open = true;
+        this.planStops.push({ s: weigh.s + WEIGH_STOP, dwell: WEIGH_DWELL, kind: "weigh" });
+        this.planStops.sort((a, b) => a.s - b.s);
+        const m = this.simulate(this.planStops, COUNTRY_VMAX, this.D, 9, 0);
+        this.S = m.S; this.V = m.V; this.stops = m.stops;
       }
       // Tunnels through the hills of hilly land, and an overpass now and then (drawn apart from the
       // rest, so the drives that had no room for them keep their pieces where they were).
@@ -359,7 +377,7 @@ export class CountryRoad {
 
   // The truck's motion at 0.1 s steps from the gate: up to cruising speed, slowing for the work
   // zone, stopping for each stop, and settling to V_JOIN well before the hand-over.
-  private simulate(stops: { s: number; dwell: number; kind: "truckstop" | "rail" }[], vmax: number, D: number, v0: number, s0: number, acc = COUNTRY_ACCEL) {
+  private simulate(stops: { s: number; dwell: number; kind: RoadStopKind }[], vmax: number, D: number, v0: number, s0: number, acc = COUNTRY_ACCEL) {
     const dt = SIM_DT, n = Math.max(1, Math.round(D / dt)) + 1;
     const S = new Float64Array(n), V = new Float32Array(n);
     let s = s0, v = v0, next = 0, dwell = -1;
@@ -542,7 +560,19 @@ export class CountryRoad {
   }
   // The truck's lane offset: the right lane, easing to and from a city street's kerb lane at the
   // gates at both ends.
-  laneAt(s: number) {
+  laneAt(s: number) { return this.baseLane(s) + this.weighOffset(s); }
+  private weighP: RoadPiece | null | undefined;
+  private weighOffset(s: number) {
+    if (this.weighP === undefined) this.weighP = this.pieces.find((p) => p.kind === "weigh" && p.open) ?? null;
+    const p = this.weighP;
+    if (!p) return 0;
+    const d = s - p.s, w = WEIGH_N - LANE;
+    if (d <= WEIGH_OUT[0] || d >= WEIGH_BACK[1]) return 0;
+    if (d < WEIGH_OUT[1]) return w * smooth((d - WEIGH_OUT[0]) / (WEIGH_OUT[1] - WEIGH_OUT[0]));
+    if (d > WEIGH_BACK[0]) return w * (1 - smooth((d - WEIGH_BACK[0]) / (WEIGH_BACK[1] - WEIGH_BACK[0])));
+    return w;
+  }
+  private baseLane(s: number) {
     if (s < 60 && this.inp.kind === "exit") return LANE_KERB + (LANE - LANE_KERB) * smooth(THREE.MathUtils.clamp(s / 60, 0, 1));
     // Into a city by the freeway: off the highway up its on-ramp and into its right-hand lane.
     if (this.inp.toFreewayMerge) return onRampN(this.gateS - s, LANE);
@@ -594,7 +624,7 @@ export class CountryRoad {
     if (this.inp.toFreewayMerge) { const d = this.gateS - s; if (d < 790 && d > 545) return { key: ONRAMP_SHOT, cam: [this.gateS - 515, 36, 3.4], look: [this.gateS - 650, 16, 1.5], fixed: false }; }
     for (let i = 0; i < this.pieces.length; i++) {
       const p = this.pieces[i];
-      const stop = this.stops.find((x) => (p.kind === "rail" && x.kind === "rail") || (p.kind === "truckstop" && x.kind === "truckstop"));
+      const stop = this.stops.find((x) => x.kind === p.kind);
       const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome";
       if (!stop && !isSign && hash2(i, Math.floor(p.s), this.inp.seed, 0x5a0) > 0.7) continue;
       const F: Record<PieceKind, [number, number, number]> = {
@@ -613,6 +643,12 @@ export class CountryRoad {
         if (s < start || s > end) continue;
         return tun ? { key: i, cam: [cs, -5.6, 3.4], look: [p.s, 0, 3.6], fixed: true }
           : { key: i, cam: [cs, -2.2, OVER_DECK + 2.6], look: [p.s - 60, LANE, 1.4], fixed: true };
+      }
+      // An open weigh station: from the far shoulder short of the scale, locked off on the truck
+      // on it and the signal past it, so the shot sees it pull on, the light go green and it leave.
+      if (p.kind === "weigh" && stop) {
+        if (s < p.s + 64 || s > p.s + 125) continue;
+        return { key: i, cam: [p.s + 80, -6.5, 3.0], look: [p.s + 106, WEIGH_N + 1.5, 2.0], fixed: true };
       }
       const [fa, fn, fy] = F[p.kind];
       const fs = p.s + fa;

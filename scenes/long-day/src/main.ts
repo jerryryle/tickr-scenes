@@ -434,7 +434,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (!pr) { if (roadShown) { countryWorld.setRoad(null); roadShown = null; } }
     else if (pr.road !== roadShown) {
       countryWorld.setRoad(pr.road); roadShown = pr.road; countryWorld.setOffset(pr.dx, pr.dz); switched = true;
-      if (DEBUG_CAMLOG) sys.log(`ROAD ${pr.road.inp.kind}${pr.road.inp.toFreeway ? " to-freeway" : ""} c${pr.road.inp.city} at u${pr.u.toFixed(1)} s${pr.s.toFixed(0)}: ${pr.road.pieces.map((p) => `${p.kind}@${p.s.toFixed(0)}`).join(" ")}`);
+      if (DEBUG_CAMLOG) sys.log(`ROAD ${pr.road.inp.kind}${pr.road.inp.toFreeway ? " to-freeway" : ""} c${pr.road.inp.city} at u${pr.u.toFixed(1)} s${pr.s.toFixed(0)}: ${pr.road.pieces.map((p) => `${p.kind}${p.open ? "(open)" : ""}@${p.s.toFixed(0)}`).join(" ")} stops ${pr.road.stops.map((x) => `${x.kind}@u${x.arrive.toFixed(1)}`).join(" ")}`);
     }
     else {
       const o = countryWorld.offset;
