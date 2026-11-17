@@ -52,6 +52,24 @@ const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== 
 
 const rnd01 = mulberry32(0x5eed);
 
+// The cutaway cone's radius at the truck (cutaway.ts): enough to take in every corner of the truck
+// (a box `half` long either way from `centre`, heading `h`, CUT_HW to each side and up to CUT_TOP)
+// as seen from `cam`, where the cone is narrower for a corner nearer the camera; plus a margin.
+const CUT_HW = 1.35, CUT_TOP = 4.2, CUT_MARGIN = 1.2, CUT_Y = 2.0;   // (CUT_Y: updateCutaway's lift)
+const cutU = new THREE.Vector3(), cutV = new THREE.Vector3();
+function cutRadius(cam: THREE.Vector3, centre: THREE.Vector3, h: number, half: number) {
+  const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+  cutU.set(centre.x - cam.x, centre.y + CUT_Y - cam.y, centre.z - cam.z);
+  const dist = cutU.length(); cutU.divideScalar(dist);
+  let r = 0;
+  for (const a of [-half, half]) for (const b of [-CUT_HW, CUT_HW]) for (const y of [0, CUT_TOP]) {
+    cutV.set(fx * a + rx * b, y - CUT_Y, fz * a + rz * b);
+    const along = cutV.dot(cutU), t = Math.max(0.3, (dist + along) / dist);
+    r = Math.max(r, Math.sqrt(Math.max(0, cutV.lengthSq() - along * along)) / t);
+  }
+  return r + CUT_MARGIN;
+}
+
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const cfg = readConfig(env);
   let engine: Engine, streamer: ChunkStreamer, hud: Hud, persist: Persistence;
@@ -266,10 +284,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     truck.interiorView = director.interior;
     focus.copy(truck.root.position);
     // The see-through cone is centred on the middle of the truck (its origin is the rear axle) and
-    // sized to its length, trailer included, so it rings the whole truck.
+    // sized to the truck as the camera sees it, trailer included: wide from the side, narrow end-on
+    // from ahead or behind, so it rings the truck without eating into the buildings beside it.
     const ex = truckExtents(truck.model), h = truck.heading;
     cutCentre.set(focus.x + Math.cos(h) * ex.center, focus.y, focus.z - Math.sin(h) * ex.center);
-    cutUniforms.uCutRadius.value = (ex.front - ex.rear) / 2 + 2;
+    cutUniforms.uCutRadius.value = cutRadius(cam.position, cutCentre, h, (ex.front - ex.rear) / 2);
     // Held shots at a stop: street trees, poles and the like within 7 m of the camera are left out,
     // so nothing near the lens blocks the work at the truck (3 m otherwise).
     const held = director.beat === "curb" || director.beat === "load" || director.beat === "swap";
