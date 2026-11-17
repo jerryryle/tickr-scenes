@@ -311,7 +311,7 @@ const K: Record<VK, Kind> = {
     },
     step(v, c, V) { if (v.t > 25) release(v, 0, V, { a: v.a + v.c[4] * (2 + (v.t - 18) * 1.2), n: -0.95, dir: v.c[4] > 0 ? 1 : -1, ...castAt(v, 0) }); },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), s = v.c[4], seatN = v.n - 0.1, backN = v.n - 0.33;   // (the back on the kerb side)
+      const f = frameOf(v.bx, v.bz, v.side), s = v.c[4], seatN = v.n + 0.1, backN = v.n + 0.33;   // (the bench faces the street: its back on the building side)
       // The fresh coat, a little proud of the bench underneath, the sign, the can and brush.
       { let [x, z] = P(f, v.a, seatN); F.box(x, Y0 + 0.45, z, 1.84, 0.11, 0.47, f.h0, 0, PAINT);
         [x, z] = P(f, v.a, backN); F.box(x, Y0 + 0.75, z, 1.84, 0.42, 0.07, f.h0, 0, PAINT);
@@ -320,34 +320,44 @@ const K: Record<VK, Kind> = {
         [x, z] = P(f, v.a - 1.25, v.n + 0.25); F.box(x, Y0 + 0.11, z, 0.2, 0.22, 0.2, 0, 0, 0xb8bcc0); F.box(x, Y0 + 0.225, z, 0.2, 0.02, 0.2, 0, 0, PAINT);
         F.box(x + 0.05, Y0 + 0.3, z, 0.04, 0.2, 0.06, 0.4, 0.5, 0x8a5a2a); }
       if (v.rel & 1) return;
-      const cs = castAt(v, 0), a0 = v.a - s * 12, standN = v.n + 0.75;
+      const cs = castAt(v, 0), a0 = v.a - s * 12, standN = v.n - 0.5, sitN = seatN + 0.07;
       let body: Body;
-      if (t < 10) {   // along, reading
-        const [x, z] = P(f, a0 + s * t * 1.2, -1.0), w = walkSwing(t * 1.2);
+      if (t < 10) {   // along, reading, on the kerb side of the furniture row
+        const [x, z] = P(f, a0 + s * t * 1.2, standN), w = walkSwing(t * 1.2);
         body = { x, z, yaw: along(f, s), y: Y0 + w.bob, legs: w.legs, arms: [w.arms[0], 0.9], fore: [w.arms[0], 1.9], nod: 0.45, ...cs };
-      } else if (t < 11.2) {   // turn and step up to the bench
-        const k = vEase(ramp(t, 10, 11.2)), [x, z] = P(f, v.a, lerp(-1.0, standN, k));
-        body = { x, z, yaw: lerp(along(f, s), toBldg(f) + (s > 0 ? 0 : -Math.PI * 2), k), legs: [0, 0], arms: [0.1, 0.9], fore: [0.1, 1.9], nod: 0.45, ...cs };
-      } else if (t < 14.3) {   // turn about and sit down; settle in
-        const k = vEase(ramp(t, 11.2, 12)), [x, z] = P(f, v.a, lerp(standN, seatN - 0.05, k));
+      } else if (t < 11.2) {   // stop in front of the bench and turn about, back to it
+        const k = vEase(ramp(t, 10, 11.2)), [x, z] = P(f, v.a, standN);
+        body = { x, z, yaw: lerp(along(f, s), toStreet(f) + (s > 0 ? 0 : -Math.PI * 2), k), legs: [0, 0], arms: [0.1, 0.9], fore: [0.1, 1.9], nod: 0.45, ...cs };
+      } else if (t < 14.3) {   // sit down; settle in
+        const k = vEase(ramp(t, 11.2, 12)), [x, z] = P(f, v.a, lerp(standN, sitN, k));
         const sit = sitting(0.5);
-        body = { x, z, yaw: toBldg(f), hip: lerp(0.86, sit.hip!, k), legs: [lerp(0, 1.45, k), lerp(0, 1.45, k)], shins: [0.1, 0.1], arms: [0.1, 0.9], fore: [0.1, 1.9], nod: 0.45, lean: 0.1 - k * 0.2, ...cs };
+        body = { x, z, yaw: toStreet(f), hip: lerp(0.86, sit.hip!, k), legs: [lerp(0, 1.45, k), lerp(0, 1.45, k)], shins: [0.1, 0.1], arms: [0.1, 0.9], fore: [0.1, 1.9], nod: 0.45, lean: 0.1 - k * 0.2, ...cs };
       } else if (t < 14.8) {   // ...and up like a shot
-        const k = vEase(ramp(t, 14.3, 14.6)), [x, z] = P(f, v.a, lerp(seatN - 0.05, standN + 0.2, k)), hop = Math.sin(ramp(t, 14.3, 14.8) * Math.PI) * 0.18;
-        body = { x, z, yaw: toBldg(f), y: Y0 + hop, hip: lerp(0.56, 0.86, k), legs: [lerp(1.45, 0, k), lerp(1.45, 0, k)], shins: [lerp(0.1, 0, k), lerp(0.1, 0, k)], arms: [1.2, 1.2], armOut: [0.6, 0.6], ...cs };
-      } else {   // twist round to look, arms out; then off, muttering
-        const [x, z] = P(f, v.a, standN + 0.2), look = ramp(t, 14.8, 15.4) * (1 - ramp(t, 17.6, 18));
-        if (t < 18) body = { x, z, yaw: toBldg(f) + look * 0.5, legs: [0, 0], arms: [0.4, 0.4], armOut: [0.9 * look, 0.9 * look], turn: look * 1.9, nod: look * 0.5, tilt: look * 0.15, ...cs };
+        const k = vEase(ramp(t, 14.3, 14.6)), [x, z] = P(f, v.a, lerp(sitN, standN, k)), hop = Math.sin(ramp(t, 14.3, 14.8) * Math.PI) * 0.18;
+        body = { x, z, yaw: toStreet(f), y: Y0 + hop, hip: lerp(0.56, 0.86, k), legs: [lerp(1.45, 0, k), lerp(1.45, 0, k)], shins: [lerp(0.1, 0, k), lerp(0.1, 0, k)], arms: [1.2, 1.2], armOut: [0.6, 0.6], ...cs };
+      } else {   // turn round to the bench and look back over a shoulder at the damage, arms out (the
+        // painted back to the street); then off, muttering
+        const [x, z] = P(f, v.a, standN), look = ramp(t, 14.8, 15.4) * (1 - ramp(t, 17.6, 18));
+        const spin = vEase(ramp(t, 14.8, 15.3)) * Math.PI + vEase(ramp(t, 17.6, 18)) * s * Math.PI / 2;
+        if (t < 18) body = { x, z, yaw: toStreet(f) + spin, legs: [0, 0], arms: [0.4, 0.4], armOut: [0.9 * look, 0.9 * look], turn: look * 1.7 * s, nod: look * 0.5, tilt: look * 0.12 * s, ...cs };
         else {
-          const u = (t - 18) * 1.2, k = vEase(ramp(t, 18, 19)), [wx, wz] = P(f, v.a + s * u, lerp(standN + 0.2, -0.95, k)), w = walkSwing(u);
+          const u = (t - 18) * 1.2, k = vEase(ramp(t, 19, 20.2)), [wx, wz] = P(f, v.a + s * u, lerp(standN, -0.95, k)), w = walkSwing(u);
           body = { x: wx, z: wz, yaw: along(f, s), y: Y0 + w.bob, legs: w.legs, arms: w.arms, ...cs };
         }
       }
       F.person(body);
-      if (t > 14.3) {   // the stripes, across the seat of the trousers and the backs of the legs
-        const yaw = body.yaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), hy = (body.y ?? Y0) + (body.hip ?? 0.86);
-        for (const dy of [-0.04, -0.16, -0.28]) F.box(body.x - fx * 0.075, hy + dy, body.z - fz * 0.075, 0.02, 0.035, 0.34, yaw, 0, PAINT);
-        for (const dy of [0.12, 0.3]) F.box(body.x - fx * 0.125, hy + dy, body.z - fz * 0.125, 0.02, 0.035, 0.3, yaw, 0, PAINT);
+      if (t > 14.3) {   // the solid seat and back, printed on: the back of the shirt and the backs of the legs
+        const yaw = body.yaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw), hy = (body.y ?? Y0) + (body.hip ?? 0.86);
+        const lean = body.lean ?? 0, tilt = body.tilt ?? 0, sl = Math.sin(lean), cl = Math.cos(lean);
+        // The backrest's 0.42 m, from just above the waist, across the shirt's width (Figures.person's torso: 0.24 deep, 0.36 wide).
+        const up = 0.27, cx = body.x + (fx * sl + rx * Math.sin(tilt)) * up - fx * cl * 0.13, cy = hy + cl * Math.cos(tilt) * up + sl * 0.13, cz = body.z + (fz * sl + rz * Math.sin(tilt)) * up - fz * cl * 0.13;
+        F.box(cx, cy, cz, 0.02, 0.42, 0.37, yaw, -lean, PAINT, -tilt);
+        // The seat's 0.42 m down the back of each thigh, swung with the leg (legs 0.13 thick, 0.1 either side of the middle).
+        for (let i = 0; i < 2; i++) {
+          const k = i === 0 ? -1 : 1, sw = body.legs?.[i] ?? 0, ss = Math.sin(sw), cs2 = Math.cos(sw), d = 0.21, b = 0.075;
+          const px = body.x + rx * k * 0.1 + fx * (ss * d - cs2 * b), pz = body.z + rz * k * 0.1 + fz * (ss * d - cs2 * b), py = hy - cs2 * d - ss * b;
+          F.box(px, py, pz, 0.02, 0.42, 0.14, yaw, sw, PAINT);
+        }
       }
     },
     foot: (v) => [v.a - 1.4, v.a + 1.4, -2.7, -1.6],
@@ -362,38 +372,42 @@ const K: Record<VK, Kind> = {
       if (!b.length) return false;
       [v.a, v.n] = pick(r, b);
       v.c.push(pick(r, [0x7a5a6a, 0x5a6a7a, 0x8a6a4a, 0x4a5a4a]), pick(r, PANTS), pick(r, SKINS), pick(r, OLD_HAIR));
-      for (let i = 0; i < 9; i++) v.c.push((r() - 0.5) * 4.6, -1.85 + r() * 1.4, r() * 10, r() < 0.15 ? 1 : 0);
+      for (let i = 0; i < 9; i++) {   // (along, across): five on the strip in front, the rest past the ends
+        const ua = r(), un = r();
+        v.c.push(i < 5 ? (ua - 0.5) * 2.4 : (i % 2 ? 1 : -1) * (1.35 + ua * 1.1), i < 5 ? v.n - 0.36 - un * 0.12 : v.n - 0.5 + un * 1.1, r() * 10, r() < 0.15 ? 1 : 0);
+      }
       v.st = [0, -99]; v.pst = [0, -99];
       return true;
     },
     step(v, c) {
       // Flushed by anyone close (a runner from further off), or by the truck; back after 9 s.
       if (v.st[0] === 0) {
-        const f = frameOf(v.bx, v.bz, v.side), [cx, cz] = P(f, v.a, -1.2);
+        const f = frameOf(v.bx, v.bz, v.side), [cx, cz] = P(f, v.a, v.n - 0.5);
         const near = c.peds.some((p) => Math.hypot(p.x - cx, p.z - cz) < (p.run ? 3.6 : 1.9)) || c.truck.some((o) => Math.hypot(o.x - cx, o.z - cz) < o.r + 2.5);
         if (near) { v.st[0] = 1; v.st[1] = v.t; }
       } else if (v.t - v.st[1] > 9) v.st[0] = 0;
     },
     draw(v, F, t, D) {
       const f = frameOf(v.bx, v.bz, v.side), cs = castAt(v, 0);
-      const [x, z] = P(f, v.a + 0.3, v.n - 0.15), toss = Math.max(0, Math.sin((t % 4.5) / 4.5 * Math.PI * 2 - 1.2));
-      F.person({ x, z, yaw: toBldg(f), ...sitting(0.5), lean: 0.32, arms: [0.5, 0.5 + toss * 1.1], fore: [1.3, 0.8 + toss * 1.2], foreOut: [-0.5, 0.2], nod: 0.35, ...cs });
-      { const [bx, bz] = P(f, v.a - 0.35, v.n - 0.1); F.box(bx, Y0 + 0.56, bz, 0.2, 0.14, 0.12, f.h0, 0, 0xe8dcc0); }   // the bag of crumbs
+      const [x, z] = P(f, v.a + 0.3, v.n + 0.17), toss = Math.max(0, Math.sin((t % 4.5) / 4.5 * Math.PI * 2 - 1.2));
+      F.person({ x, z, yaw: toStreet(f), ...sitting(0.5), lean: 0.32, arms: [0.5, 0.5 + toss * 1.1], fore: [1.3, 0.8 + toss * 1.2], foreOut: [-0.5, 0.2], nod: 0.35, ...cs });
+      { const [bx, bz] = P(f, v.a - 0.35, v.n + 0.12); F.box(bx, Y0 + 0.56, bz, 0.2, 0.14, 0.12, f.h0, 0, 0xe8dcc0); }   // the bag of crumbs
       const flushT = D.st[0] === 1 ? t - D.st[1] : -1;
       for (let i = 0; i < 9; i++) {
         const o = 4 + i * 4, ua = v.c[o], un = v.c[o + 1], ph = v.c[o + 2], wh = v.c[o + 3] ? 0xdedede : 0x7a7f88;
-        const pa = v.a + ua + Math.sin(t * 0.3 + ph) * 0.35, pn = un + Math.cos(t * 0.27 + ph) * 0.2;
+        const pa = v.a + ua + Math.sin(t * 0.3 + ph) * 0.35, pn = un + Math.cos(t * 0.27 + ph) * 0.08;
         let [bx, bz] = P(f, pa, pn), by = Y0, yaw = f.h0 + ph + Math.sin(t * 0.5 + ph) * 1.5;
         if (flushT >= 0 && flushT < 9) {
-          const k = flushT / 9, up = Math.sin(Math.min(1, k * 1.25) * Math.PI) * (3.5 + (i % 3)), ang = ph + k * 7;
-          bx += Math.cos(ang) * 2.5 * Math.sin(k * Math.PI); bz += Math.sin(ang) * 2.5 * Math.sin(k * Math.PI); by += up;
+          // (up and round, and down again on the spot they left)
+          const k = flushT / 9, arc = Math.sin(Math.min(1, k * 1.25) * Math.PI), up = arc * (3.5 + (i % 3)), ang = ph + k * 7;
+          bx += Math.cos(ang) * 2.5 * arc; bz += Math.sin(ang) * 2.5 * arc; by += up;
           if (up > 0.05) { F.pigeon(bx, by, bz, ang + Math.PI / 2, 0, t * 22 + i, wh); continue; }
         }
         F.pigeon(bx, by, bz, yaw, Math.max(0, Math.sin(t * 5 + ph * 3)) ** 3, null, wh);
       }
       // Crumbs in the air.
       const ct = t % 4.5;
-      if (ct > 2.0 && ct < 2.7) { const k = (ct - 2.0) / 0.7, [cx, cz] = P(f, v.a + 0.3, lerp(v.n + 0.3, -0.7, k)); F.box(cx, Y0 + 0.9 * Math.sin(k * Math.PI) + 0.2, cz, 0.04, 0.04, 0.04, 0, 0, 0xf0e2b8); }
+      if (ct > 2.0 && ct < 2.7) { const k = (ct - 2.0) / 0.7, [cx, cz] = P(f, v.a + 0.3, lerp(v.n - 0.1, v.n - 0.55, k)); F.box(cx, Y0 + 0.9 * Math.sin(k * Math.PI) + 0.2, cz, 0.04, 0.04, 0.04, 0, 0, 0xf0e2b8); }
     },
   },
 
