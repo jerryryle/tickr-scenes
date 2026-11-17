@@ -3,14 +3,16 @@
 //            runs 12-40 s and the camera glides from one to the next (no cut)
 //   country  the same coverage out of town, with a rising aerial reveal for the landscape; it
 //            carries on through the gates without a cut
-//   roadside a sign by the road, framed so it can be read, the truck driving out from under the
-//            camera towards it (a roadside attraction's sign with the attraction behind it); or a
+//   roadside a sign by the road, from beside the road at an angle, framed so it can be read with
+//            the road running on past it, cut to as the truck is about to drive by it (a roadside
+//            attraction's sign with the attraction behind it); or a
 //            set piece from a spot beside it (country.ts): the level crossing from across the
 //            tracks, so the train passes between camera and waiting truck. At most one every
 //            ROADSIDE_GAP seconds
 //   arrive   (half the dock stops) into the cab: back through the windshield, or the passenger seat
-//   curb     with a name sign: from up the street, opening tight on the sign, then zooming out to
-//            the truck pulling in; else across the street, panning with the truck
+//   curb     with a name sign: from up the street, opening on the sign and the kerb where the
+//            truck stops, cut to as it drives in, then zooming out with it; else across the street,
+//            panning with the truck
 //   backup   from the yard, panning with the truck as it backs in, settling on the bay with the
 //            facility's name readable over it
 //   load     the camera that filmed the truck in stays for the whole stop, easing in closer and
@@ -80,11 +82,18 @@ const ARRIVE_DIST = 45, CURB_DIST = 13, DEPART_LEN = 12;
 // Lettering is readable on the 128-row panel at about this many rows high: a shot that is there to
 // show a sign keeps its frame tight enough for that.
 const READ_ROWS = 20;   // (of the sign board: its letters are about half of it)
-// A road sign is filmed from the truck's lane this far before it, up above the truck's roof: the
-// truck drives out from under the camera and away to the sign, which reads above the road.
-const SIGN_CAM_BACK = 62, SIGN_CAM_Y = 4.7, SIGN_PREROLL = 60;
-// At a kerb stop with a name sign, the stop's shot starts this far out, on the sign.
-const CURB_SIGN_DIST = 45, CURB_SIGN_HOLD = 2.8, CURB_SIGN_ZOOM = 3.4;
+// A road sign is filmed from beside the road short of it, at an angle, framed so it reads with
+// the truck's lane at the sign and the road on past it in shot: a shot of the truck going by the
+// sign, never of the sign alone. The cut comes as the truck is at most SIGN_LEAD seconds from the
+// sign, and the shot holds until its tail is SIGN_PAST metres beyond it.
+const SIGN_LEAD = 1.8, SIGN_PAST = 14;
+// (With the road in the frame too, the board may read a little smaller than READ_ROWS.)
+const SIGN_READ_ROWS = 14;
+// At a kerb stop with a name sign, the stop's shot opens on the sign where it reads with the kerb
+// the truck stops at in frame (else the shot across the street), cut to when the truck is
+// CURB_SIGN_LEAD seconds at most from driving into that frame (looked for from CURB_SIGN_DIST out),
+// and holds there CURB_SIGN_HOLD before zooming out.
+const CURB_SIGN_DIST = 45, CURB_SIGN_LEAD = 1.8, CURB_SIGN_HOLD = 2.8, CURB_SIGN_ZOOM = 3.4;
 const LOAD_VARIANTS = ["side", "rear"] as const;
 const DOCK_VARIANTS = ["dock", "side"] as const;   // backed into a dock: the bay from the yard, or the truck's street side
 const LOAD_ALT_AFTER = 45;   // a load longer than this (s) gets one cut to a second angle, half way
@@ -148,7 +157,13 @@ export class Director {
   private skipFeature = -1; private roadsideEnd = -1e9;
   // A road sign being filmed (its piece and sign), and the lens; a kerb stop's name sign.
   private signPiece = -1; private signIdx = 0; private eventFov = FOV;
+  private signPos = new THREE.Vector3(); private signLook = new THREE.Vector3(); private signFov = FOV;   // (planSign's)
+  private departHold = true;   // (false when a start or a seek lands in a depart: there is no stop's camera to hold)
   private curbSign = false; private curbSignPos = new THREE.Vector3(); private curbTele = FOV;
+  // (curbPlan's, for the stop `curbKey`: the camera, the settled aim, and where along the path the
+  // truck's front is when it comes into the sign's frame.)
+  private curbKey = -1; private curbOk = false; private curbCam = new THREE.Vector3(); private curbAim = new THREE.Vector3(); private curbEnter = 0;
+  private curbOpen = new THREE.Vector3();   // (the opening frame's aim)
   private backLook = new THREE.Vector3(); private backFov = FOV; private backDocked = new THREE.Vector3();
   private time = 0;
   private feature: ReturnType<CountryRoad["featureShot"]> = null; private featureKey = -1; private pendingKey = -1;
@@ -168,7 +183,7 @@ export class Director {
   // The world moved by (dx, dz) under the camera (main.ts: the next city takes over out on the
   // road): move with it, so nothing on screen changes.
   rebase(dx: number, dz: number) {
-    for (const v of [this.pos, this.anchorPos, this.anchorLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.backLook, this.backDocked]) { v.x += dx; v.z += dz; }
+    for (const v of [this.pos, this.anchorPos, this.anchorLook, this.signPos, this.signLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.curbCam, this.curbAim, this.curbOpen, this.backLook, this.backDocked]) { v.x += dx; v.z += dz; }
   }
   // The director's whole state and the camera's (main.ts: preview snapshots and part-ticks).
   save() { const c = this.cam; return { f: saveFields(this, null, ["cam", "avoidBuildings", "seed"]), p: c.position.clone(), q: c.quaternion.clone(), fov: c.fov }; }
@@ -213,7 +228,10 @@ export class Director {
       case "backup": return st.modeTime;
       case "depart": return this.departed(j) < 1e8 ? this.departed(j) : 0;
       case "arrive": return j.path ? Math.max(0, (ARRIVE_DIST - (st.stopS - st.s)) / Math.max(st.v, 2)) : 0;
-      case "curb": { const cd = this.kerbSign(j, st.stops[0]) ? CURB_SIGN_DIST : CURB_DIST; return st.mode === "dwell" ? cd / 3 + st.modeTime : j.path ? Math.max(0, (cd - (st.stopS - st.s)) / Math.max(st.v, 1.5)) : 0; }
+      case "curb": {
+        if (this.curbPlan(j)) return st.mode === "dwell" ? CURB_SIGN_LEAD + 2 + st.modeTime : Math.max(0, CURB_SIGN_LEAD - this.curbLead(j));
+        return st.mode === "dwell" ? CURB_DIST / 3 + st.modeTime : j.path ? Math.max(0, (CURB_DIST - (st.stopS - st.s)) / Math.max(st.v, 1.5)) : 0;
+      }
       default: return 0;
     }
   }
@@ -222,10 +240,12 @@ export class Director {
   private chooseBeat(inp: DirectorInput): Beat {
     const j = inp.journey, st = j.st, stop = st.stops[0];
     if (st.mode === "country" || st.mode === "inbound") {
-      // A sign coming up: filmed so it can be read (see signShot).
+      // A sign the truck is about to pass: filmed going by it, so it can be read (see planSign).
       for (const sg of j.country && j.countryU >= 0 ? this.signsAhead(j) : []) {
         const id = 500000 + sg.piece * 10 + sg.idx + 1000 * Math.round(sg.sign.s);
         if (id !== this.featureKey && id !== this.skipFeature && (this.time - this.roadsideEnd < ROADSIDE_GAP || (this.road && this.time - this.roadStart < 6))) this.skipFeature = id;
+        // (A sign with nowhere to film it going by from is passed over.)
+        if (id !== this.featureKey && id !== this.skipFeature && !this.planSign(j, sg.piece, sg.sign)) this.skipFeature = id;
         if (id !== this.skipFeature) { if (this.beat !== "roadside" || id !== this.featureKey) { this.feature = null; this.signPiece = sg.piece; this.signIdx = sg.idx; this.pendingKey = id; } return "roadside"; }
       }
       // (A piece with a sign is filmed only by its sign's shot, which reads; except a truck stop
@@ -255,7 +275,8 @@ export class Director {
     if (this.departed(j) < DEPART_LEN) return "depart";
     if (stop && stop.kind !== "depart" && j.path) {
       const d = st.stopS - st.s;
-      if (!j.isDockStop(stop) && d < (this.kerbSign(j, stop) ? CURB_SIGN_DIST : CURB_DIST)) return "curb";
+      // (With a name sign to open on: only once the truck is about to drive into its frame.)
+      if (!j.isDockStop(stop) && (d < CURB_SIGN_DIST && this.curbPlan(j) ? this.curbLead(j) <= CURB_SIGN_LEAD : d < CURB_DIST)) return "curb";
       // (Only before a dock: at the kerb the curb shot would follow within seconds.)
       if (d < ARRIVE_DIST && j.isDockStop(stop) && hash3(st.stopsDone, 3, st.city, this.seed, 0xa77) < ARRIVE_SHARE) return "arrive";
     }
@@ -313,11 +334,11 @@ export class Director {
         break;
       }
       case "swap": this.variant = "walk"; this.atDock = false; this.loadShot = ""; break;
-      case "depart": this.variant = "hold"; this.road = ""; break;
+      case "depart": this.variant = "hold"; this.road = ""; this.departHold = this.started; break;
       case "curb": {
-        // With a name sign: from up the street on the far side, opening tight on the sign.
-        this.curbSign = this.curbSignSpot(j);
-        if (this.curbSign) break;
+        // With a name sign: from up the street on the far side, opening on the sign and the kerb.
+        this.curbSign = this.curbPlan(j);
+        if (this.curbSign) { this.anchorPos.copy(this.curbCam); this.anchorLook.copy(this.curbAim); break; }
         // Fixed across the street from where the truck will stop.
         const p = j.path!.eval(st.stopS, this.pose);
         const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
@@ -339,7 +360,7 @@ export class Director {
       case "roadside": {
         this.featureKey = this.pendingKey;
         const road = j.country!, f = this.feature;
-        if (!f) { this.signShot(j); this.variant = "sign"; break; }
+        if (!f) { this.anchorPos.copy(this.signPos); this.anchorLook.copy(this.signLook); this.eventFov = this.signFov; this.variant = "sign"; break; }
         // Fixed beside the road, framing the truck with the set piece.
         road.point(f.cam[0], f.cam[1], this.pose); this.anchorPos.set(this.pose.x, f.cam[2] + road.groundAt(f.cam[0], f.cam[1]), this.pose.z);
         road.point(f.look[0], f.look[1], this.pose); this.anchorLook.set(this.pose.x, f.look[2] + road.groundAt(f.look[0], f.look[1]), this.pose.z);
@@ -444,7 +465,7 @@ export class Director {
 
       case "roadside": {
         if (!this.feature) {
-          // A sign: locked off, framed to read it, the truck driving out from under the camera to it.
+          // A sign: locked off, framed to read it, the truck driving by it.
           s.pos.copy(this.anchorPos); s.look.copy(this.anchorLook); s.fov = this.eventFov; s.cutaway = false;
           this.variant = "sign";
           return s;
@@ -503,11 +524,11 @@ export class Director {
         if (st.mode === "dwell") s.look.copy(this.anchorLook);
         s.pan = 2.6; s.cutaway = false; s.fov = 32;
         if (this.curbSign) {
-          // The destination's name first, held long enough to read; then one move, zooming out and
-          // panning down the street to the truck coming in.
+          // The destination's name with the street where the truck stops, held long enough to read
+          // as the truck drives into it; then one move, zooming out and panning with the truck.
           const u = smoother((t - CURB_SIGN_HOLD) / CURB_SIGN_ZOOM);
           if (u < 1) {
-            s.look.lerpVectors(this.curbSignPos, this.v3.copy(s.look), u); s.pan = 0;
+            s.look.lerpVectors(this.curbOpen, this.v3.copy(s.look), u); s.pan = 0;
             const t0 = Math.tan(this.curbTele * Math.PI / 360), t1 = Math.tan(32 * Math.PI / 360);
             s.fov = Math.atan(t0 * Math.pow(t1 / t0, u)) * 360 / Math.PI;   // (an even zoom: geometric in the lens)
           }
@@ -574,12 +595,13 @@ export class Director {
         // The stop's camera watches the truck pull away, then moves off with it into the follow
         // (from behind on the route; from above at a dock, whose building is behind the truck).
         if (!this.road) {
-          if (t < DEPART_HOLD) {
+          if (t < DEPART_HOLD && this.departHold) {
             s.pos.copy(this.anchorPos); this.at(s.look, ex.center, 1.5, 0);
             s.pan = 2.4; s.cutaway = false; s.fov = this.cam.fov;
             return s;
           }
-          this.startRoad(inp, this.atDock ? "high" : "chase", GLIDE + 1);
+          // (Started or sought into a depart: straight into the follow, not a glide from nowhere.)
+          this.startRoad(inp, this.atDock ? "high" : "chase", this.departHold ? GLIDE + 1 : 0);
         }
         return this.roadCoverage(inp, s);
       }
@@ -633,16 +655,17 @@ export class Director {
   }
   private up = new THREE.Vector3(0, 1, 0);
 
-  // The road sign the truck is coming up to, if it is in its shot's stretch of road: from when the
-  // truck is SIGN_PREROLL short of the camera until it reaches the sign. One board of a billboard
-  // row (whichever the road's seed picks).
+  // The road sign the truck is about to pass, if it is time for its shot: from when the truck's
+  // front is SIGN_LEAD seconds short of it (no less than a second, so the shot has the truck coming
+  // up to it) until its tail is SIGN_PAST metres past it. One board of a billboard row (whichever the
+  // road's seed picks).
   private signsAhead(j: Journey): { piece: number; idx: number; sign: RoadSign }[] {
-    const r = j.country!, s0 = j.countryS, ex = truckExtents(j.st.truck);
-    // (The sign being filmed keeps the shot until the truck reaches it, whatever comes up next.)
-    const inWindow = (g: RoadSign) => s0 > g.s - SIGN_CAM_BACK - SIGN_PREROLL && s0 + ex.center < g.s + 1 && g.s - SIGN_CAM_BACK > 0;
+    const r = j.country!, s0 = j.countryS, ex = truckExtents(j.st.truck), v = Math.max(j.st.v, 3);
+    const inWindow = (g: RoadSign) => s0 + ex.rear < g.s + SIGN_PAST && s0 + ex.front < g.s + 2;
+    // (The sign being filmed keeps the shot until the truck is past it, whatever comes up next.)
     if (this.beat === "roadside" && !this.feature && this.signPiece >= 0 && this.signPiece < r.pieces.length) {
       const g = pieceSigns(r.pieces[this.signPiece])[this.signIdx];
-      if (g && inWindow(g)) return [{ piece: this.signPiece, idx: this.signIdx, sign: g }];
+      if (g && s0 + ex.rear < g.s + SIGN_PAST) return [{ piece: this.signPiece, idx: this.signIdx, sign: g }];
     }
     const out: { piece: number; idx: number; sign: RoadSign }[] = [];
     for (let i = 0; i < r.pieces.length; i++) {
@@ -651,26 +674,55 @@ export class Director {
       const signs = pieceSigns(p);
       if (!signs.length) continue;
       const idx = p.kind === "billboards" ? Math.floor(hash2(i, Math.floor(p.s), r.inp.seed, 0xb1b) * signs.length) : 0;
-      const g = signs[idx];
-      // (A shot is only started with time for it: at least 3 s before the truck gets there.)
-      if (inWindow(g) && (g.s - s0 - ex.center) / Math.max(j.st.v, 3) > 3) out.push({ piece: i, idx, sign: g });
+      const g = signs[idx], lead = (g.s - s0 - ex.front) / v;
+      if (inWindow(g) && lead <= SIGN_LEAD && lead > 1) out.push({ piece: i, idx, sign: g });
     }
     return out;
   }
-  // Set up the shot of the sign picked by chooseBeat: the camera over the truck's lane
-  // SIGN_CAM_BACK short of it, the frame fitted to the sign and the lane at the sign (and, for a
-  // roadside attraction, the attraction itself), never too wide to read.
-  private signShot(j: Journey) {
-    const r = j.country!, p = r.pieces[this.signPiece], g = pieceSigns(p)[this.signIdx];
-    // (Heights above the road there: a sign stands on the level the road holds round it.)
-    // (The camera and the lane over the road, which may be up on a flyover; the sign over the land.)
+  // Plan the shot of sign `g` of piece `piece` (signPos, signLook, signFov): from beside the road
+  // short of the sign, beyond it from the road or (a sign well off the road) between them, seen at
+  // an angle; the frame fitted to the sign, the truck's lane at the sign and just past it
+  // (and, for a roadside attraction, the attraction too if that still reads), the sign big enough
+  // to read and in clear view (past its own board and posts), and so is the lane. Of the spots that work, the furthest back (the
+  // truck is in the frame longest), at a moderate angle. False when there is none.
+  private planSign(j: Journey, piece: number, g: RoadSign): boolean {
+    const r = j.country!, p = r.pieces[piece];
+    // (Heights: the camera and the lane over the road, which may be up on a flyover; the sign over the land.)
     const pt = (s: number, n: number, y: number, road = false) => { r.point(s, n, this.pose); return new THREE.Vector3(this.pose.x, y + (road ? r.truckY(s) : r.baseAt(s)), this.pose.z); };
-    const cs = g.s - SIGN_CAM_BACK;
-    this.anchorPos.copy(pt(cs, r.laneAt(cs), SIGN_CAM_Y, true));
+    const lane = r.laneAt(g.s), side = g.n === 0 ? Math.sign(lane) || 1 : Math.sign(g.n);
     const sign = [-1, 1].flatMap((k) => [-1, 1].map((m) => pt(g.s, g.n + k * g.w / 2, g.y + m * g.h / 2)));
-    const lane = r.laneAt(g.s), pts = [...sign, pt(g.s, lane, 0.2, true), pt(g.s, lane, 3.9, true)];
-    if (p.kind === "attraction") pts.push(pt(p.s + 50, p.side * 40, 0.5), pt(p.s + 50, p.side * 40, 15));
-    this.eventFov = this.frameFit(this.anchorPos, pts, this.anchorLook, { at: pt(g.s, g.n, g.y), h: g.h * (g.billboard ? 0.3 : 1), pts: sign });
+    const at = pt(g.s, g.n, g.y), h = g.h * (g.billboard ? 0.3 : 1);
+    const past = g.s + 6, ln2 = r.laneAt(past);
+    const road = [pt(g.s, lane, 0.2, true), pt(g.s, lane, 3.9, true), pt(past, ln2, 0.2, true), pt(past, ln2, 3.9, true)];
+    const extra = p.kind === "attraction" ? [pt(p.s + 50, p.side * 40, 0.5), pt(p.s + 50, p.side * 40, 15)] : [];
+    const above = g.y + r.baseAt(g.s) - r.truckY(g.s);   // (the sign's height over the road there)
+    const look = new THREE.Vector3();
+    for (const withExtra of extra.length ? [true, false] : [false]) {
+      let best = -Infinity;
+      for (const D of [56, 46, 38, 30, 24, 18, 13]) for (const k of [6, 11, 17, 0]) {
+        const cs = g.s - D;
+        if (cs < 1) continue;
+        const lc = r.laneAt(cs);
+        if (k === 0 && Math.abs(g.n - lc) < 14) continue;
+        const n = k ? g.n + side * k : (g.n + lc) / 2;
+        // (Clear of the truck's lane and of the oncoming one, which traffic uses.)
+        if (Math.abs(n - lc) < 5.5 || Math.abs(n) < 6) continue;
+        const ang = Math.atan2(Math.abs(n - g.n), D) * 180 / Math.PI;
+        if (ang > 55) continue;
+        const c = pt(cs, n, 0);
+        c.y = Math.max(r.baseAt(cs) + 1.8, r.truckY(cs) + THREE.MathUtils.clamp(above - 1.2, 2.2, 6));
+        const pts = withExtra ? [...sign, ...road, ...extra] : [...sign, ...road];
+        const fov = this.frameFit(c, pts, look, null);
+        if (fov > 48) continue;
+        const rows = h * 128 / (2 * Math.tan(fov * Math.PI / 360) * c.distanceTo(at));
+        if (rows < SIGN_READ_ROWS) continue;
+        if (OCCLUSION.clearance(c, 1.5) < 1.5 || OCCLUSION.blocked(c, at, [], 1 + Math.min(g.w / 2, 4)) > 0.1 || OCCLUSION.blocked(c, road[1], [], 0.5) > 0.2) continue;
+        const score = D - Math.abs(ang - 25) * 0.3;
+        if (score > best) { best = score; this.signPos.copy(c); this.signLook.copy(look); this.signFov = fov; }
+      }
+      if (best > -Infinity) return true;
+    }
+    return false;
   }
 
   // Whether a kerb stop's facility has a name sign (city.ts: a blade sign over each sidewalk).
@@ -702,14 +754,50 @@ export class Director {
       const c = new THREE.Vector3(B.x + fx * along + rx * lat, y, B.z + fz * along + rz * lat);
       // (The last metre and a half, the sign's own post and the building behind it, don't count.)
       if (OCCLUSION.clearance(c, 1.2) < 1.2 || OCCLUSION.blocked(c, B, [], 1.5) > 0.1) continue;
-      this.anchorPos.copy(c); this.curbSignPos.copy(B);
-      this.anchorLook.set(P.x + fx * truckExtents(st.truck).center, 1.5, P.z + fz * truckExtents(st.truck).center);
-      // Tight enough to read the sign (2.1 m by 0.4 m), seen at an angle: its width half the frame.
-      // (The blade hangs out from the building line: its lettering runs across the street.)
-      this.curbTele = this.frameFit(c, [-1, 1].map((k) => B.clone().add(new THREE.Vector3(rx * k * 1.05, 0.2 * k, rz * k * 1.05))), this.v4, null, 1 / 0.55);
+      // The sign (2.1 m by 0.4 m, seen at an angle; the blade hangs out from the building line, so
+      // its lettering runs across the street) and the street where the truck stops, in one frame
+      // that still reads: never the sign alone.
+      const blade = [-1, 1].map((k) => B.clone().add(new THREE.Vector3(rx * k * 1.05, 0.2 * k, rz * k * 1.05)));
+      const ex = truckExtents(st.truck), y0 = j.pathY(st.stopS);
+      const at = (x: number, y: number) => new THREE.Vector3(P.x + fx * x, y0 + y, P.z + fz * x);
+      const stopPts = [at(ex.center, 0.3), at(ex.center, 3.6), at(ex.front, 0.3), at(ex.front, 3.6)];
+      const fov = this.frameFit(c, [...blade, ...stopPts], this.v4, null);
+      if (fov > 40 || 0.4 * 128 / (2 * Math.tan(fov * Math.PI / 360) * c.distanceTo(B)) < SIGN_READ_ROWS) continue;
+      if (OCCLUSION.blocked(c, at(ex.front - 1, 2.2), [], 0.5) > 0.2) continue;
+      // Where the truck comes into that frame in clear view (its front, along the path).
+      const fwd = this.v4.clone().sub(c).normalize(), right = new THREE.Vector3().crossVectors(fwd, this.up).normalize(), up = new THREE.Vector3().crossVectors(right, fwd);
+      const tan = Math.tan(fov * Math.PI / 360), d = new THREE.Vector3(), q3 = new THREE.Vector3();
+      const inFrame = (ps: number) => {
+        const q = j.path!.eval(ps, this.pose);
+        q3.set(q.x, j.pathY(ps) + 2, q.z); d.copy(q3).sub(c);
+        const z = d.dot(fwd);
+        return z > 1 && Math.abs(d.dot(right) / z) < tan * this.cam.aspect * 0.9 && Math.abs(d.dot(up) / z) < tan && OCCLUSION.blocked(c, q3, [], 0.5) <= 0.2;
+      };
+      let enter = -1;
+      for (let fs = Math.max(0, st.stopS - CURB_SIGN_DIST) + ex.front; fs <= st.stopS + ex.front && enter < 0; fs += 0.5)
+        if (inFrame(fs)) enter = fs;
+      j.path.eval(st.s, this.pose2);   // (leave the path's cursor where the journey keeps it)
+      if (enter < 0) continue;
+      this.curbCam.copy(c); this.curbSignPos.copy(B); this.curbOpen.copy(this.v4); this.curbTele = fov; this.curbEnter = enter;
+      this.curbAim.set(P.x + fx * ex.center, 1.5, P.z + fz * ex.center);
       return true;
     }
+    j.path.eval(st.s, this.pose2);
     return false;
+  }
+  // The kerb stop's name-sign shot (curbSignSpot), worked out once per stop; false if it has none.
+  private curbPlan(j: Journey): boolean {
+    const st = j.st, key = st.city * 100000 + st.stopsDone;
+    if (key !== this.curbKey) { this.curbKey = key; this.curbOk = this.curbSignSpot(j); }
+    return this.curbOk;
+  }
+  // Seconds until the truck drives into the name sign's frame: at its speed, or braking evenly to
+  // a stop at the kerb if that takes longer.
+  private curbLead(j: Journey): number {
+    const st = j.st, x = this.curbEnter - (st.s + truckExtents(st.truck).front);
+    if (x <= 0) return 0;
+    const v = Math.max(st.v, 0.5), rem = Math.max(st.stopS - st.s, x + 0.01), a = v * v / (2 * rem);
+    return Math.max(x / v, (v - Math.sqrt(Math.max(0, v * v - 2 * a * x))) / a);
   }
 
   // ---- road coverage --------------------------------------------------------------------------
