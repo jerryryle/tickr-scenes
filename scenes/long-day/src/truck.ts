@@ -272,16 +272,29 @@ export class Truck {
   // Bicycle-model integration from speed and steer (positive steer turns left).
   drive(dt: number) {
     const d = this.speed * dt;
+    const x0 = this.root.position.x, z0 = this.root.position.z, h0 = this.heading;
     this.distance += d;
     this.heading += (d / this.spec.frontAxle) * Math.tan(this.steer);
     this.root.position.x += Math.cos(this.heading) * d;
     this.root.position.z -= Math.sin(this.heading) * d;
     this.root.rotation.y = this.heading;
-    if (this.trailer) {
-      const trailerHeading = this.heading + this.trailerYaw;
-      const next = trailerHeading + (d / TRAILER.kingpinToAxles) * Math.sin(this.heading - trailerHeading);
-      this.trailerYaw = THREE.MathUtils.clamp(next - this.heading, -1.4, 1.4);
-    }
+    this.hitch(x0, z0, h0);
+  }
+
+  // The trailer from the tractor's move since (x0, z0, h0): its axles are dragged (or pushed)
+  // along the line to the kingpin, so through a turn they cut inside the tractor's path and the
+  // trailer swings in behind it (a tractrix), rather than turning rigidly with the cab.
+  private hitch(x0: number, z0: number, h0: number) {
+    if (!this.trailer) return;
+    const fw = this.spec.fifthWheel ?? 0, Lk = TRAILER.kingpinToAxles;
+    const th0 = h0 + this.trailerYaw;
+    // Old kingpin and trailer axles, then the new kingpin (world x/z; heading h points along (cos h, -sin h)).
+    const kx0 = x0 + Math.cos(h0) * fw, kz0 = z0 - Math.sin(h0) * fw;
+    const ax = kx0 - Math.cos(th0) * Lk, az = kz0 + Math.sin(th0) * Lk;
+    const kx = this.root.position.x + Math.cos(this.heading) * fw, kz = this.root.position.z - Math.sin(this.heading) * fw;
+    const th = Math.atan2(-(kz - az), kx - ax);
+    const yaw = Math.atan2(Math.sin(th - this.heading), Math.cos(th - this.heading));
+    this.trailerYaw = THREE.MathUtils.clamp(yaw, -1.4, 1.4);
   }
 
   // Where the load sits: the trailer's body for a tractor (its frame starts at the fifth wheel),
@@ -294,14 +307,11 @@ export class Truck {
   // derived from the path's curvature, so the wheels, body roll and trailer behave as if driven.
   // `d` is the signed distance moved this step (negative when reversing).
   follow(x: number, z: number, heading: number, curvature: number, d: number) {
+    const x0 = this.root.position.x, z0 = this.root.position.z, h0 = this.heading;
     this.distance += d;
     this.steer = THREE.MathUtils.clamp(Math.atan(curvature * this.spec.frontAxle), -0.75, 0.75);
     this.setPose(x, z, heading);
-    if (this.trailer) {
-      const trailerHeading = this.heading + this.trailerYaw;
-      const next = trailerHeading + (d / TRAILER.kingpinToAxles) * Math.sin(this.heading - trailerHeading);
-      this.trailerYaw = THREE.MathUtils.clamp(next - this.heading, -1.4, 1.4);
-    }
+    if (d !== 0) this.hitch(x0, z0, h0);
   }
 
   // The moving parts' state (main.ts: preview snapshots and part-ticks); the meshes follow from it.

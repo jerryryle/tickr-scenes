@@ -136,12 +136,12 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   tvs: { size: [1.3, 0.8, 0.18], build: (b, x, y, z) => { carton(b, x, y, z, 1.3, 0.8, 0.18); b.box(x, y + 0.42, z + 0.091, 1.0, 0.5, 0.01, 0x111111); } },
   lumber: { size: [3.6, 0.55, 1.0], build: (b, x, y, z, i) => {
     b.box(x, y + 0.27, z, 3.6, 0.55, 1.0, vpick([0xd6b47a, 0xc9a46a], i));
-    for (const xx of [-1.2, 0, 1.2]) b.box(x + xx, y + 0.27, z, 0.05, 0.57, 1.02, 0x222222);
+    for (const xx of [-1.2, 0, 1.2]) b.box(x + xx, y + 0.275, z, 0.05, 0.6, 1.05, 0x222222);
   } },
   pipe: { size: [3.6, 0.45, 0.9], build: (b, x, y, z, i) => {
     const c = vpick([0xc8743a, 0xe8e8e2], i);
     for (let r = 0; r < 3; r++) for (let k = 0; k < 6; k++) b.box(x, y + 0.08 + r * 0.14, z - 0.35 + k * 0.14, 3.6, 0.12, 0.12, c);
-    for (const xx of [-1.2, 1.2]) b.box(x + xx, y + 0.23, z, 0.05, 0.46, 0.92, 0xd03030);
+    for (const xx of [-1.2, 1.2]) b.box(x + xx, y + 0.235, z, 0.05, 0.49, 0.95, 0xd03030);
   } },
   serverRacks: { size: [0.65, 2.0, 1.0], build: (b, x, y, z) => {
     b.box(x, y + 1.0, z, 0.65, 2.0, 1.0, 0x1a1c20);

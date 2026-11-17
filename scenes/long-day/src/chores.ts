@@ -241,11 +241,20 @@ export function bedUnits(L: TruckLayout, model: TruckModel, cargo: string, units
   let s = slot;
   if (spu >= 1) {
     const span = Math.ceil(spu);
+    // A unit longer than the rows it takes (lumber and pipe bundles on the flatbed) would overlap
+    // the next one face to face, so those go end to end along the bed and then stack.
+    const rowsSpanned = Math.max(1, Math.ceil(span / 2)), long = ml > rowsSpanned * rowLen + 0.05;
+    const gap = 0.1, perLayer = Math.max(1, Math.floor((x1 - x0 + gap) / (ml + gap)));
     for (let u = 0; u < units; u++) {
       const start = slotAlign(spu, s);
       if (start + span > slots) break;
-      const [x, z] = centre(start, span);
-      out.push([x, L.floor, z]);
+      if (long) {
+        const ord = Math.floor(start / span), col = ord % perLayer, layer = Math.floor(ord / perLayer);
+        out.push([x1 - ml / 2 - col * (ml + gap), L.floor + layer * (mh + 0.02), 0]);
+      } else {
+        const [x, z] = centre(start, span);
+        out.push([x, L.floor, z]);
+      }
       s = start + span;
     }
   } else {
