@@ -24,7 +24,7 @@ import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
-import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, INTERCHANGE_OPEN } from "./interchange.ts";
+import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, interchangeOpen } from "./interchange.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
@@ -120,7 +120,8 @@ export class CityPlan {
       const off = back * BLOCK, at = (a: number) => (d === 0 || d === 3 ? 9 + a + off : 69 - a - off);
       const span = (a0: number, a1: number): [number, number] => [Math.max(0, Math.min(at(a0), at(a1))), Math.min(BLOCK, Math.max(at(a0), at(a1)))];
       const cl = span(INTERCHANGE_CLEAR[0], INTERCHANGE_CLEAR[1]);
-      return { open: span(INTERCHANGE_OPEN[0], INTERCHANGE_OPEN[1]), clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1 };
+      const op = interchangeOpen();
+      return { open: span(op[0], op[1]), clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1 };
     }
     return null;
   }
@@ -218,7 +219,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   buildCorners(ground); buildMouths(ground, cx, cz);
   buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, seed));
   if (elevatedLine(CS, cz)) buildElevated(solid);
-  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) { const ic = plan.interchangeStreet(axis, cx, cz); buildFreewayStreet(solid, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null); }
+  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) { const ic = plan.interchangeStreet(axis, cx, cz); buildFreewayStreet(ground, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null); }   // (the ground batch: the truck's see-through spotlight leaves it be)
   if (CS.cableCar && cableColumn(cx)) buildCableTracks(ground);
   const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
   let stalls: StallPose[] = [];

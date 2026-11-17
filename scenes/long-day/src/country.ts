@@ -69,6 +69,7 @@ const STRAIGHT_IN = 150;                 // straight before the hand-over (and t
 const FW_STRAIGHT_IN = 560, FW_FLAT_IN = 760;
 // The slowing on the freeway for its off-ramp: about 90 m, just so that the arrival ends on a
 // simulation step (the city's route takes over there, exactly at the off-ramp).
+export const ONRAMP_SHOT = 99999;   // featureShot's key for the on-ramp's shot (no piece of the road's)
 // (Worked out on first use: it needs constants from modules loaded after this one.)
 let mergeDecM = 0;
 function mergeDec() {
@@ -578,6 +579,9 @@ export class CountryRoad {
   // A set piece worth a roadside shot while the truck (at s) approaches it: where to put the
   // camera and what to frame with the truck. Stops always get one; other pieces most of the time.
   featureShot(s: number): { key: number; cam: [number, number, number]; look: [number, number, number]; fixed: boolean } | null {
+    // Taking the freeway: from the ground beyond it, the truck coming out from under it on the
+    // on-ramp, towards the camera, and starting up.
+    if (this.inp.toFreewayMerge) { const d = this.gateS - s; if (d < 790 && d > 545) return { key: ONRAMP_SHOT, cam: [this.gateS - 515, 36, 3.4], look: [this.gateS - 650, 16, 1.5], fixed: false }; }
     for (let i = 0; i < this.pieces.length; i++) {
       const p = this.pieces[i];
       const stop = this.stops.find((x) => (p.kind === "rail" && x.kind === "rail") || (p.kind === "truckstop" && x.kind === "truckstop"));

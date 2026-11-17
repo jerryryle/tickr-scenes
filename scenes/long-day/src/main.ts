@@ -608,7 +608,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
-      freewayReach = new FreewayReach(engine.world, mats.solid);
+      freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
       atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
       setSignalTime(base);

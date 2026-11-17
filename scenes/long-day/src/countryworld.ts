@@ -367,7 +367,7 @@ export class CountryWorld {
       for (let d = 0; d < FW_TIP; d += 60) {
         const sc = L - (d + 30);
         if (sc < s0 || sc >= s1) continue;
-        buildFreeway(s, F, d, Math.min(FW_TIP, d + 60), this.ox, this.oz, { main: true, ramp: true });
+        buildFreeway(g, F, d, Math.min(FW_TIP, d + 60), this.ox, this.oz, { main: true, ramp: true });   // (the ground batch: the truck's see-through spotlight leaves it be)
       }
     }
     // Utility poles on the right, every 50 m where the land is clear, with wires only between two

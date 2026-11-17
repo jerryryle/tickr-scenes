@@ -88,9 +88,19 @@ function rampEdges(d: number): [number, number] {
   if (d > RAMP_UP0) return [Math.max(c - RAMP_HALF, ROAD_EDGE), c + RAMP_HALF];
   if (d > RAMP_UP1) return [c - RAMP_HALF, c + RAMP_HALF];
   const right = RAMP_N + RAMP_HALF + (fwEdge - (RAMP_N + RAMP_HALF)) * fwSmooth((RAMP_UP1 - d) / (RAMP_UP1 - RAMP_MERGE1));
-  return [Math.max(c - RAMP_HALF, fwEdge), Math.max(right, fwEdge)];
+  // (Past the gore's nose the ramp's lane is the freeway's: its surface runs on to the freeway's
+  // asphalt, over the strip of deck along its edge.)
+  return [Math.max(c - RAMP_HALF, d < ONRAMP_NOSE ? fwEdge - 0.4 : fwEdge), Math.max(right, fwEdge)];
 }
 const ONRAMP_FROM = 1.85;   // (the highway's lane: country.ts LANE)
+// The gore's nose: where the on-ramp's left edge meets the freeway's right edge (to the metre).
+// The two barriers run together to it and end there; from it to the end of the taper the lanes
+// are one roadway, marked by a dashed line along the freeway's edge.
+const ONRAMP_NOSE = (() => {
+  let d = RAMP_UP1;
+  while (d > RAMP_MERGE1 && onRampN(d, ONRAMP_FROM) - RAMP_HALF > FW_SHIFT + FW_HALF) d -= 0.5;
+  return Math.round(d / 10) * 10;
+})();
 
 export class Frame {
   readonly ox: number; readonly oz: number; readonly rx: number; readonly rz: number;
@@ -201,13 +211,19 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
   const bendy = (a: number) => (a > -1 && a < FW_SHIFT_LEN + 1) || (a > FW_BEND - 1 && a < FW_BEND + FW_BEND_R * Math.PI / 2 + 1) || (a < F.far - FW_BEND_FAR + 1 && a > F.far - FW_BEND_FAR - FW_BEND_R * Math.PI / 2 - 1);
   const stepAt = (a: number) => (bendy(a) ? 2 : STEP);
   const next = (a: number) => Math.min(d1, (Math.floor(a / stepAt(a) + 1e-9) + 1) * stepAt(a));
-  const gore = (a: number, a2: number) => a >= RAMP_MERGE1 - 1e-6 && a2 <= RAMP_UP1 + 12;   // where the on-ramp joins (the parapet is open)
+  const gore = (a: number, a2: number) => a >= RAMP_MERGE1 - 1e-6 && a2 <= ONRAMP_NOSE + 1e-6;   // where the on-ramp joins (the barrier is open)
   for (let a = d0; a < d1 - 1e-6; a = next(a)) {
     const a2 = next(a);
     if (parts.main) {
       const ya = F.y(a), yb = F.y(a2), ma = F.m(a), mb = F.m(a2);
       along(a, a2, ma, mb, ya, yb, -0.55, -0.06, 2 * FW_HALF, FW_CONCRETE);
       along(a, a2, ma, mb, ya, yb, -0.06, 0, 2 * FW_HALF - 0.8, FW_ASPHALT);
+      // Edge lines: solid, but dashed along the on-ramp's merge (where the lanes are one roadway).
+      for (const k of [-1, 1]) {
+        const n = k * (FW_HALF - 0.75);
+        if (k > 0 && gore(a, a2)) { for (let e = Math.ceil(a / 6) * 6; e < a2 - 0.01; e += 6) along(e, Math.min(a2, e + 3), ma + n, ma + n, ya, yb, 0, 0.025, 0.16, FW_WHITE); }
+        else along(a, a2, ma + n, mb + n, ya, yb, 0, 0.025, 0.14, FW_WHITE);
+      }
       for (const k of [-1, 1]) {
         along(a, a2, ma + k * 4, mb + k * 4, ya, yb, -1.45, -0.55, 0.9, FW_GIRDER);
         if (!(k > 0 && gore(a, a2))) along(a, a2, ma + k * (FW_HALF - 0.2), mb + k * (FW_HALF - 0.2), ya, yb, 0, 0.95, 0.4, FW_CONCRETE);
@@ -253,15 +269,17 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
       }
       // Parapets: the right all the way up; the left until it meets the freeway.
       if (Math.min(ya, yb) > 0.6) for (const [na, nb, k] of [[ra, rb, 1], [la, lb, -1]] as const) {
-        if (k < 0 && a < RAMP_UP1 + 12) continue;
+        if (k < 0 && a < ONRAMP_NOSE - 1e-6) continue;
         const ia = na - k * 0.25, ib = nb - k * 0.25;
         quad(P(a, ia, 0), P(a2, ib, 0), P(a2, ib, 0.9), P(a, ia, 0.9), FW_CONCRETE, k > 0 ? left : right);
         quad(P(a, na, 0), P(a2, nb, 0), P(a2, nb, 0.9), P(a, na, 0.9), FW_CONCRETE, k > 0 ? right : left);
         quad(P(a, ia, 0.9), P(a, na, 0.9), P(a2, nb, 0.9), P(a2, ib, 0.9), FW_CONCRETE, [0, 1, 0]);
       }
 
-      // The lane's edge line, dashed down the middle of the taper.
-      if (Math.floor(a / 6) % 2 === 0) { const c = onRampN(a, ONRAMP_FROM), c2 = onRampN(a2, ONRAMP_FROM); quad(P(a, c + RAMP_HALF - 0.4, 0.005), P(a, c + RAMP_HALF - 0.25, 0.005), P(a2, c2 + RAMP_HALF - 0.25, 0.005), P(a2, c2 + RAMP_HALF - 0.4, 0.005), FW_WHITE, [0, 1, 0]); }
+      // Its edge lines: the right one all the way (it becomes the freeway's), the left one to the
+      // gore's nose, where it meets the freeway's (a V between them).
+      quad(P(a, ra - 0.9, 0.006), P(a, ra - 0.75, 0.006), P(a2, rb - 0.75, 0.006), P(a2, rb - 0.9, 0.006), FW_WHITE, [0, 1, 0]);
+      if (a >= ONRAMP_NOSE) quad(P(a, la + 0.75, 0.006), P(a, la + 0.9, 0.006), P(a2, lb + 0.9, 0.006), P(a2, lb + 0.75, 0.006), FW_WHITE, [0, 1, 0]);
     }
     for (let d = Math.ceil((r0 - 15) / FW_BENT_STEP) * FW_BENT_STEP + 15; d < r1; d += FW_BENT_STEP) {
       const l = onRampY(d), c = onRampN(d, ONRAMP_FROM);
@@ -315,6 +333,13 @@ function buildFreewayDeck(b: Batch, F: Frame, open: { a0: number; a1: number; k:
     for (const k of [-1, 1]) {
       along(a, a2, k * 4, -1.45, -0.55, 0.9, FW_GIRDER);
       if (Math.floor(a / 10) % 2 === 0) along(a, a + 4, k * 3.5, 0, 0.025, 0.16, FW_WHITE);
+      // Its edge line: dashed along the deceleration lane (where the lanes are one roadway).
+      const en = k * (FW_HALF - 0.75);
+      if (k === open.k) for (const [s0, s1, dash] of [[a, Math.min(a2, open.a0), false], [Math.max(a, open.a0), Math.min(a2, open.a1), true], [Math.max(a, open.a1), a2, false]] as const) {
+        if (s1 <= s0 + 0.01) continue;
+        if (!dash) along(s0, s1, en, 0, 0.025, 0.14, FW_WHITE);
+        else for (let e = Math.ceil(s0 / 6) * 6; e < s1 - 0.01; e += 6) along(e, Math.min(s1, e + 3), en, 0, 0.025, 0.16, FW_WHITE);
+      } else along(a, a2, en, 0, 0.025, 0.14, FW_WHITE);
       const n = k * (FW_HALF - 0.2);
       if (k !== open.k) { along(a, a2, n, 0, 0.95, 0.4, FW_CONCRETE); continue; }
       for (const [s0, s1] of [[a, Math.min(a2, open.a0)], [Math.max(a, open.a1), a2]]) if (s1 > s0 + 0.01) along(s0, s1, n, 0, 0.95, 0.4, FW_CONCRETE);

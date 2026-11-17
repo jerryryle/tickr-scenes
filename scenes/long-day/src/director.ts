@@ -45,7 +45,8 @@ import { loadFields, saveFields } from "./snap.ts";
 import { Truck, truckExtents, truckLayout } from "./truck.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
 import type { Pose } from "./route.ts";
-import { CountryRoad, CUT_RUN, pieceSigns } from "./country.ts";
+import { CountryRoad, CUT_RUN, ONRAMP_SHOT, pieceSigns } from "./country.ts";
+import { FW_OFF_D } from "./freeway.ts";
 import type { RoadSign } from "./country.ts";
 import { frontPt } from "./city.ts";
 import { hasSign, siteLayout } from "./facilities.ts";
@@ -230,7 +231,7 @@ export class Director {
       // (A piece with a sign is filmed only by its sign's shot, which reads; except a truck stop
       // the truck stops at, whose set piece is the stop.)
       const road = j.country, f0 = road && j.countryU >= 0 ? road.featureShot(j.countryS) : null;
-      const f = f0 && road && (road.pieces[f0.key]?.kind === "truckstop" || !pieceSigns(road.pieces[f0.key]).length) ? f0 : null;
+      const f = f0 && road && (f0.key === ONRAMP_SHOT || road.pieces[f0.key]?.kind === "truckstop" || !pieceSigns(road.pieces[f0.key]).length) ? f0 : null;
       // A set piece is a cut there and a cut back, so it has to be worth it: not within
       // ROADSIDE_GAP of the last one, and not while the road setup has only just started. (A piece
       // passed over stays passed over for its whole stretch.)
@@ -238,7 +239,7 @@ export class Director {
       const id = f ? f.key + 1000 * Math.round(f.cam[0]) : -1;
       // (A set piece the truck stops at, a level crossing or a truck stop, is the event of the
       // drive: always filmed.)
-      const stopsThere = !!f && !!road && road.stops.some((x) => Math.abs(x.s - f.look[0]) < 160);
+      const stopsThere = !!f && !!road && (f.key === ONRAMP_SHOT || road.stops.some((x) => Math.abs(x.s - f.look[0]) < 160));   // (or the way onto a freeway)
       if (f && id !== this.featureKey && id !== this.skipFeature && !stopsThere) {
         if (this.time - this.roadsideEnd < ROADSIDE_GAP || (this.road && this.time - this.roadStart < 8) || this.featureSeconds(j, f.key) < ROADSIDE_MIN) this.skipFeature = id;
       }
@@ -712,6 +713,21 @@ export class Director {
   }
 
   // ---- road coverage --------------------------------------------------------------------------
+  // The truck coming up to a freeway's on-ramp, on it or on the freeway into town, or going down
+  // its off-ramp (the way into a city that has the truck take the freeway).
+  private freewayPhase(j: Journey): "up" | "under" | null {
+    const r = j.country, st = j.st;
+    if (r && r.inp.toFreewayMerge && j.countryU >= 0) {
+      const d = r.gateS - j.countryS;
+      if (d > 520 && d < 760) return "under";   // (the on-ramp's way across under the freeway)
+      return d < 850 && d > -FW_OFF_D - 10 ? "up" : null;
+    }
+    if (st.mode === "drive" && j.path?.route.garageOut?.kind === "helix") {
+      if (j.path.yAt(st.s) > 1.5) return "up";
+      return st.s < (j.path.ramps[0]?.s1 ?? 0) + 40 ? "under" : null;   // (out at the foot of the off-ramp, under the freeway)
+    }
+    return null;
+  }
   // A tunnel close ahead (or the truck in one): from its cutting until the truck is out the far end.
   private tunnelAhead(j: Journey) {
     const r = j.country;
@@ -731,6 +747,11 @@ export class Director {
     } else if (j.country) out.push("lead", "track", "aerial");
     // Into a tunnel: only the rigs that ride low on the road go in with the truck.
     if (this.tunnelAhead(j)) return out.filter((o) => o === "chase" || o === "lead");
+    // On and off a freeway: from above, so the ramps and the merge read; but from behind, low,
+    // while the truck crosses under it.
+    const fw = this.freewayPhase(j);
+    if (fw === "under") return ["chase"];
+    if (fw === "up") return j.country ? ["high", "aerial"] : ["high"];
     return out;
   }
   // Start a road setup (`kind`, or the next in the rotation), gliding there over `blend` seconds
@@ -781,6 +802,8 @@ export class Director {
       let done = e >= this.roadLen;
       if (this.road === "track" && this.turnWithin(j, -4, Math.max(st.v, 3) * 3 + 10)) done = true;
       if (this.road !== "chase" && this.road !== "lead" && this.tunnelAhead(j)) done = true;
+      const fw = this.freewayPhase(j);
+      if ((fw === "up" && this.road !== "high" && this.road !== "aerial") || (fw === "under" && this.road !== "chase")) done = true;
       if (this.road === "lead" && st.mode === "drive" && j.path && st.s + ex.front + 10 > j.path.length - 2) done = true;
       if (done && !(this.blendLen !== 0 && this.time - this.blendStart < Math.abs(this.blendLen))) this.startRoad(inp, null, GLIDE);
     }
