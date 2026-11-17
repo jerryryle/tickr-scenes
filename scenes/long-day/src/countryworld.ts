@@ -24,6 +24,10 @@ import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
   WEIGH_BACK, WEIGH_GREEN, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W } from "./country.ts";
 import type { FerryPlan } from "./country.ts";
+import { COW_GATE, herdDist, TRACTOR_B, TRACTOR_R } from "./country.ts";
+import type { CattlePlan, HerdMember } from "./country.ts";
+import { Cow, Horse, Tractor } from "./farm.ts";
+import type { Coat } from "./farm.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -75,6 +79,11 @@ export class CountryWorld {
   // dithered); its superstructure thinned only where it stands between the camera and the
   // truck, as buildings are.
   private boatMat = (() => { const m = new THREE.MeshLambertMaterial({ vertexColors: true }); applyDriverSpot(m); applyLampGlow(m); applyLampLight(m); return m; })();
+  // The farm animals, the rider, the tractor and its driver: like the boat's hull, never thinned.
+  private animMat = (() => { const m = new THREE.MeshLambertMaterial({ vertexColors: true }); applyDriverSpot(m); applyLampGlow(m); applyLampLight(m); return m; })();
+  private herd: { m: Cow | Horse; h: HerdMember; i: number }[] = [];
+  private tractorObj: Tractor | null = null;
+  private tp = { s: 0, n: 0, yaw: 0, v: 0, d: 0 };
   private boatTopMat = (() => { const m = new THREE.MeshLambertMaterial({ vertexColors: true }); applyCutaway(m); applyDriverSpot(m); applyLampGlow(m); applyLampLight(m); return m; })();
   private eul = new THREE.Euler();
   private m4 = new THREE.Matrix4(); private quat = new THREE.Quaternion(); private one = new THREE.Vector3(1, 1, 1); private v = new THREE.Vector3();
@@ -104,7 +113,7 @@ export class CountryWorld {
     this.base.position.y = -0.3;
     scene.add(this.base);   // under the city's countryside too (main.ts colours it there)
     // Never seen: keeps the crossing lights' material in the setup precompile.
-    for (const m of [this.lightMat, this.boatMat, this.boatTopMat]) { const keep = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), m); keep.position.y = -5; this.group.add(keep); }   // (and the ferry boat's)
+    for (const m of [this.lightMat, this.boatMat, this.boatTopMat, this.animMat]) { const keep = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), m); keep.position.y = -5; this.group.add(keep); }   // (and the ferry boat's)
   }
   private base: THREE.Mesh;
 
@@ -182,6 +191,8 @@ export class CountryWorld {
         this.group.add(outer); this.ramps.push(outer);
       }
     }
+    if (road.cattle) this.buildHerd(road, road.cattle);
+    if (road.tractor) { this.tractorObj = new Tractor(this.animMat, this.lightMat); this.group.add(this.tractorObj.root); }
     const weigh = road.pieces.find((p) => p.kind === "weigh" && p.open);
     if (weigh) {
       const lamp = (s: number, n: number, y: number, w: number, color: number, k: number) => {
@@ -202,6 +213,10 @@ export class CountryWorld {
     for (const g of this.segs.values()) { this.group.remove(g); disposeTree(g); }
     this.segs.clear();
     if (this.train) { this.group.remove(this.train); disposeTree(this.train); this.train = null; }
+    // (The herd's and the tractor's geometry is shared between drives: removed, not disposed.)
+    for (const h of this.herd) this.group.remove(h.m.root);
+    if (this.tractorObj) this.group.remove(this.tractorObj.root);
+    this.herd = []; this.tractorObj = null;
     for (const g of [...this.gates, ...this.lights, ...this.weighLamps, ...this.ramps, ...(this.boat ? [this.boat] : [])]) { this.group.remove(g); disposeTree(g); }
     this.gates = []; this.lights = []; this.weighLamps = []; this.ramps = []; this.boat = null; this.foam = null;
     this.cars.count = 0;
@@ -237,6 +252,7 @@ export class CountryWorld {
     this.updateCrossing(road, u);
     this.updateWeigh(road, u);
     this.updateFerry(road, u, sTruck);
+    this.updateFarm(road, u);
   }
 
   // Headlight patches ahead of the oncoming cars nearest `at` (atmosphere.ts HEAD_LIGHTS).
@@ -394,6 +410,83 @@ export class CountryWorld {
     this.rbox(s, Q + 45, -24, 2.5, 16, 5, 9, 0xe8e2d6); this.rbox(s, Q + 45, -24, 5.2, 16.6, 0.4, 9.6, 0x1d3a6b);
     const uv = this.slot("FERRY", { bg: "#1d3a6b", fg: "#ffffff", logo: false });
     if (uv) { const [x, z, h] = this.L(Q + 45, -19.38); this.quads.push({ x, y: y + 3.6, z, w: 5, h: 1.0, rotY: Math.atan2(Math.sin(h), Math.cos(h)), ...uv }); }
+  }
+
+  // The herd: each cow walks from its spot in the pasture to the gate, across the road and through
+  // the corral's gate to its spot there, reaching the pasture gate at the herd's time + its turn;
+  // the rider brings up the rear and stops just inside the corral gate. Paths in road
+  // coordinates (s, n), with the distance along them.
+  private buildHerd(road: CountryRoad, _c: CattlePlan) {
+    road.herd().forEach((h, i) => {
+      const m = h.rider ? new Horse(this.animMat) : new Cow(this.animMat, h.coat as Coat);
+      this.group.add(m.root);
+      this.herd.push({ m, h, i });
+    });
+  }
+  private herdAt(h: { pts: number[]; cum: number[] }, d: number): [number, number] {
+    const { pts, cum } = h;
+    d = THREE.MathUtils.clamp(d, 0, cum[cum.length - 1]);
+    let k = 1; while (k < cum.length - 1 && cum[k] < d) k++;
+    const f = (d - cum[k - 1]) / Math.max(1e-6, cum[k] - cum[k - 1]);
+    return [pts[2 * k - 2] + (pts[2 * k] - pts[2 * k - 2]) * f, pts[2 * k - 1] + (pts[2 * k + 1] - pts[2 * k - 1]) * f];
+  }
+  private updateFarm(road: CountryRoad, u: number) {
+    if (this.herd.length) {
+      const T0 = road.herdT0;
+      for (const { m, h, i } of this.herd) {
+        const total = h.cum[h.cum.length - 1], tau = T0 === null ? 0 : u - T0 - h.leave, d = herdDist(h, tau);
+        // (Heading: along the path, smoothed through its corners.)
+        const [ps, pn] = this.herdAt(h, d), a = this.herdAt(h, Math.min(d, total - 2) - 1.2), b = this.herdAt(h, Math.min(d, total - 2) + 1.2);
+        road.point(ps, pn, this.p);
+        // How hard it is walking now (its pace, from the distance a moment either side).
+        const sp = (herdDist(h, tau + 0.15) - herdDist(h, tau - 0.15)) / 0.3, walking = THREE.MathUtils.clamp(sp / 1.2, 0, 1);
+        m.root.position.set(this.p.x, road.groundAt(ps, pn), this.p.z);
+        m.root.rotation.y = this.p.h - Math.atan2(b[1] - a[1], b[0] - a[0]);
+        const phase = d / (h.rider ? 1.7 : 1.35);
+        if (m instanceof Cow) {
+          const look = 0.5 + 0.5 * Math.sin(u * 0.37 + i * 1.7);
+          m.pose(phase, walking, (1 - walking) * (look > 0.3 ? 1 : 0.15 + look * 2.8));
+        } else m.pose(phase, walking);
+      }
+    }
+    if (this.tractorObj && road.tractor) {
+      const t = road.tractorPose(u, this.tp);
+      road.point(t.s, t.n, this.p);
+      this.tractorObj.root.position.set(this.p.x, road.groundAt(t.s, t.n), this.p.z);
+      this.tractorObj.root.rotation.y = this.p.h + t.yaw;
+      this.tractorObj.pose(t.d, Math.floor(u * 2.5) % 2 === 0);
+    }
+  }
+  // A post-and-rail fence along the road (n across), from a0 to a1, open over the gaps; and one
+  // across it at a, from n0 to n1. Each post stands on the ground there.
+  private railFence(s: Batch, a0: number, a1: number, n: number, gaps: [number, number][]) {
+    const open = (a: number) => gaps.some(([g0, g1]) => a > g0 && a < g1);
+    const W = 0x8a6a48, step = 3.5, keep = s.dy;
+    let prev: number | null = null;
+    for (let a = Math.ceil(a0 / step) * step; a <= a1; a += step) {
+      if (open(a)) { prev = null; continue; }
+      const gy = this.road!.groundAt(a, n);
+      s.dy = gy; this.rbox(s, a, n, 0.6, 0.13, 1.2, 0.13, W);
+      if (prev !== null && !open(a - step / 2)) for (const y of [0.55, 1.0]) this.rbox(s, a - step / 2, n, y, step, 0.08, 0.05, 0x9a7a56);
+      prev = a;
+    }
+    s.dy = keep;
+  }
+  private crossFence(s: Batch, a: number, n0: number, n1: number) {
+    const W = 0x8a6a48, keep = s.dy, sg = Math.sign(n1 - n0), step = 3.5, len = Math.abs(n1 - n0);
+    for (let k = 0; k <= len / step; k++) {
+      const n = n0 + sg * k * step;
+      s.dy = this.road!.groundAt(a, n); this.rbox(s, a, n, 0.6, 0.13, 1.2, 0.13, W);
+      if (k > 0) for (const y of [0.55, 1.0]) this.rbox(s, a, n - sg * step / 2, y, 0.05, 0.08, step, 0x9a7a56);
+    }
+    s.dy = keep;
+  }
+  // A field gate's posts and its gate swung open into the field (at a, the fence along n).
+  private fieldGate(s: Batch, a: number, n: number, half: number) {
+    const sg = Math.sign(n);
+    for (const k of [-half, half]) this.rbox(s, a + k, n, 0.75, 0.18, 1.5, 0.18, 0x6a4a30);
+    for (const y of [0.35, 0.75, 1.15]) this.rbox(s, a + half + 0.12, n + sg * half, y, 0.05, 0.06, 2 * half - 0.3, 0xa8acb0);   // the gate, open (along the post)
+    this.rbox(s, a + half + 0.12, n + sg * half, 0.75, 0.06, 0.95, 0.06, 0xa8acb0);
   }
 
   private buildTrain(road: CountryRoad, rs: number): THREE.Group {
@@ -608,6 +701,19 @@ export class CountryWorld {
         const y = road.baseAt(q);
         g.dy = s.dy = y;
         if (near) this.ferryNear(g, s, Fy, y); else this.ferryFar(g, s, Fy, y);
+        g.dy = s.dy = 0;
+      }
+    }
+    // The tractor's fields: a fence along the right of its stretch, open at the gate it pulls out
+    // of and the one it turns into, each with a track into its field (built per segment: the
+    // stretch is long).
+    for (const p of road.pieces) if (p.kind === "tractor" && road.tractor && p.s < s1 && p.s + p.len > s0) {
+      const gA = road.tractor.s - TRACTOR_R + 1, gB = road.tractor.s + TRACTOR_B + TRACTOR_R - 1, N = 14.6;
+      this.railFence(s, Math.max(s0, p.s), Math.min(s1, p.s + p.len) - 0.01, N, [[gA - 3.6, gA + 3.6], [gB - 3.6, gB + 3.6]]);
+      for (const ga of [gA, gB]) if (ga >= s0 && ga < s1) {
+        g.dy = s.dy = road.groundAt(ga, N);
+        this.fieldGate(s, ga, N, 3.4);
+        this.rbox(g, ga, N + 14, -0.04, 4.2, 0.1, 26, 0x7a6a4a);
         g.dy = s.dy = 0;
       }
     }
@@ -894,6 +1000,30 @@ export class CountryWorld {
         for (const k of [-3.6, 3.6]) this.rbox(s, S - 149.8, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);   // behind the board
         this.rbox(s, S - 149.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
+        break;
+      }
+      case "cattle": {
+        const c = this.road!.cattle!, X = c.cross, A = c.sideA, B = -A;
+        const uv = this.slot(p.text ?? "CATTLE XING", { bg: "#f2c200", fg: "#111111", logo: false });
+        this.rbox(s, S - 149.85, 9, 1.4, 0.12, 2.8, 0.12, 0x8d9296);   // behind the board
+        this.rbox(s, S - 149.95, 9, 2.9, 0.06, 0.9, 4.6, 0xf2c200);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
+        // The pasture (side A) and the corral (side B), each with its gate open onto the road.
+        for (const n of [A * COW_GATE, B * COW_GATE]) { this.railFence(s, X - 44, X + 44, n, [[X - 3.4, X + 3.4]]); this.fieldGate(s, X, n, 3.2); }
+        for (const a of [X - 44, X + 44]) this.crossFence(s, a, A * COW_GATE, A * 62);
+        this.railFence(s, X - 44, X + 44, A * 62, []);
+        for (const a of [X - 30, X + 30]) this.crossFence(s, a, B * COW_GATE, B * 52);
+        this.railFence(s, X - 30, X + 30, B * 52, []);
+        // Trodden ground through both gates, a trough in the corral, round bales in the pasture.
+        for (const n of [A * (COW_GATE + 6), B * (COW_GATE + 6)]) this.rbox(g, X, n, -0.04, 6, 0.1, 12, 0x7a6a4a);
+        this.rbox(s, X + 12, B * 32, 0.35, 3.2, 0.7, 0.8, 0x9aa0a6); this.rbox(s, X + 12, B * 32, 0.66, 3.0, 0.06, 0.6, 0x3a6a9a);
+        for (const [da, dn] of [[-30, 50], [26, 44], [-18, 57]]) { const [bx, bz] = this.L(X + da, A * dn); s.cyl(bx, 0.75, bz, 0.75, 1.3, 0xc8b060, 10, Math.PI / 2); }
+        // The barn behind the corral: red, white trim, a grey roof, its doors to the road.
+        const [bx, bz, bh] = this.L(X, B * 62);
+        this.rbox(s, X, B * 62, 3.6, 16, 7.2, 10, 0xa8322a);
+        s.prism(bx, 8.4, bz, 16.4, 2.6, 10.6, 0x5b5f66, bh);
+        this.rbox(s, X, B * 56.96, 2.3, 4.6, 4.6, 0.06, 0xf2f2ee); this.rbox(s, X, B * 56.93, 2.25, 4.0, 4.4, 0.06, 0x6a2a22);
+        for (const r of [-1, 1]) this.rbox(s, X, B * 56.9, 2.25, 0.12, 6.0, 0.05, 0xf2f2ee, r * 0.76);
         break;
       }
       case "fruit": {

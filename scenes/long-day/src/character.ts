@@ -99,6 +99,9 @@ export class Character {
   }
 
   set vestOn(v: boolean) { this.vest.visible = v; }
+  // The legs spread apart (radians, each thigh out to its own side) and the shins turned back
+  // under (knee): astride a horse. apply() leaves both.
+  setLegSpread(r: number, knee = 0) { this.hipL.rotation.x = r; this.hipR.rotation.x = -r; this.knL.rotation.x = -knee; this.knR.rotation.x = knee; }
   set headVisible(v: boolean) { for (const m of this.headMeshes) m.visible = v; }
 
   apply(p: BodyPose) {

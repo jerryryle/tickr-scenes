@@ -22,7 +22,7 @@ import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
-  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign" | "ferry";
+  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign" | "ferry" | "cattle" | "tractor";
 export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number; open?: boolean }
 // A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
 // y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
@@ -39,6 +39,7 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     case "attraction": return [{ s: S, n: side * 15, y: 3.2, w: 6.8, h: 0.85 }];
     case "weigh": return [{ s: S - 80, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
     case "ferry": return [{ s: S - 150, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
+    case "cattle": return [{ s: S - 150, n: 9, y: 2.9, w: 4.4, h: 0.62 }];
     case "fruit": return [{ s: S, n: side * 9.5, y: 1.6, w: 4.0, h: 0.5 }];
     case "gas": return [{ s: S + 5, n: side * 11, y: 7.2, w: 4.6, h: 0.6 }];
     // A freeway's signs (freeway.ts draws them): its entrance sign by the highway, and the
@@ -47,7 +48,7 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     default: return [];
   }
 }
-type RoadStopKind = "truckstop" | "rail" | "weigh" | "ferry";
+type RoadStopKind = "truckstop" | "rail" | "weigh" | "ferry" | "cattle";
 interface CountryStop { s: number; dwell: number; kind: RoadStopKind; arrive: number }
 // A weigh station (piece "weigh", from its s): its lane beside the road, the scale on it and the
 // signal at the scale's far end. When it is open (`open`) every truck has to cross the scale: the
@@ -67,6 +68,33 @@ export const WEIGH_DWELL = 7, WEIGH_GREEN = 1.5;
 export const FERRY_BOOTH = 30, FERRY_Q0 = 110, FERRY_W = 640, FERRY_OUT = 80, FERRY_LEN = FERRY_Q0 + FERRY_W + FERRY_OUT;
 export const BOAT_L = 56, BOAT_W = 14, FERRY_BOARD = 44, BOAT_GAP = 0.3, WATER_DROP = 1.6;
 const FERRY_V = 7, FERRY_ACC = 0.35, CREEP_V = 3.5, FERRY_DWELL = [6, 5, 5];   // (at the booth, aboard before it sails, at the far quay)
+// A cattle crossing (piece "cattle", in farm country): a herd walks out of a pasture through its
+// gate (side A), across the road in a column and into a corral through the gate opposite (side
+// B), where a barn stands; a rider brings up the rear. The truck stops CATTLE_STOP short of the
+// crossing line (s + CATTLE_X) and waits for the road to clear. The herd sets off CATTLE_LEAD
+// before the truck stops (herd time 0), so it is already crossing as the truck comes up to it.
+// It moves as a loose group (herd()): each cow reaches the pasture gate at its own time (some
+// close together, side by side), walks at its own pace, surging and easing, and fans out across
+// the road.
+export const CATTLE_X = 40, CATTLE_LEN = 80, CATTLE_STOP = 22, COW_GATE = 14.5, COW_V = 1.5, CATTLE_LEAD = 21;
+export interface CattlePlan { s: number; cross: number; sideA: 1 | -1; n: number }
+// One of the herd (the rider last): its path in road coordinates (s, n pairs), the distance along
+// it at each point, and its pace: it sets off at herd time `leave`, covering herdDist(m, t - leave).
+export interface HerdMember { pts: number[]; cum: number[]; leave: number; vf: number; amp: number; w: number; ph: number; rider: boolean; coat: number }
+export function herdDist(m: HerdMember, tau: number) {
+  if (tau <= 0) return 0;
+  const d = m.vf * COW_V * tau + m.amp * (Math.sin(m.w * tau + m.ph) - Math.sin(m.ph));   // (never backwards: amp * w < vf * COW_V)
+  return Math.min(d, m.cum[m.cum.length - 1]);
+}
+const herdTime = (m: HerdMember, d: number) => { let lo = 0, hi = 400; for (let k = 0; k < 40; k++) { const mid = (lo + hi) / 2; if (herdDist(m, mid) < d) lo = mid; else hi = mid; } return hi; };
+// A farm tractor towing a hay wagon (piece "tractor", in farm country): it pulls out of a field
+// gate on the right at the piece's s (along an arc from TRACTOR_R back up the field track) as
+// the truck comes up, drives on at TRACTOR_V, and turns off into another field at s + TRACTOR_B.
+// The truck catches it up, follows for a while and passes it in the other lane (the oncoming lane
+// is kept clear), back in its own once well past (TractorRun records where, from the motion).
+export const TRACTOR_V = 6.2, TRACTOR_B = 700, TRACTOR_LEN = 1000, TRACTOR_R = 14.15, TRACTOR_PULL = 5;
+export const TRACTOR_FRONT = 3.1, TRACTOR_TAIL = 5.7;   // its nose and its wagon's tail, from its rear axle
+export interface TractorRun { appear: number; follow: number; pass0: number; pass1: number }
 export interface FerryPlan { s: number; booth: number; q0: number; q1: number; board: number; land: number }   // (the light goes green this long before the truck pulls off)
 
 const ROAD_DS = 2;               // geometry sample spacing (m)
@@ -160,6 +188,8 @@ export class CountryRoad {
   private S: Float64Array = new Float64Array(1); private V: Float32Array = new Float32Array(1);   // per motion step, to the hand-over
   private zone: [number, number] | null = null;
   ferry: FerryPlan | null = null;   // this drive's ferry, if it has one
+  cattle: CattlePlan | null = null; tractor: { s: number } | null = null;
+  tractorRun: TractorRun | null = null;   // (from the motion)
   private planStops: { s: number; dwell: number; kind: RoadStopKind }[] = [];
   trainT = -1;                     // drive time the train front reaches the far side of the road, start
   meetings: number[] = [];         // drive times oncoming cars pass the truck
@@ -248,11 +278,41 @@ export class CountryRoad {
     }
     this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 940 : 230), side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city, on the left: the freeway is on the right)
     if (!arrival) {
+      // Farm country: a cattle crossing and a tractor to pass, now and then (where the land at
+      // both ends of them is farmland or prairie).
+      const lo = 900, hi = SB - (inp.toFreeway ? 1150 : 500);
+      const farmAt = (x: number) => { const b = this.blendAt(x) < 0.5 ? this.fromBiome : this.toBiome; return b === "farmland" || b === "prairie"; };
+      const farm: [PieceKind, number][] = [];
+      if (this.D > 150 && h(150) < 0.55) farm.push(["cattle", CATTLE_LEN]);
+      if (this.D > 200 && h(151) < 0.5) farm.push(["tractor", TRACTOR_LEN]);
+      let moved = false, fk = 0;
+      for (const [kind, len] of farm) {
+        for (let tries = 0; tries < 12 && hi - len > lo; tries++) {
+          const fs = lo + h(160 + fk * 9 + tries) * (hi - len - lo);
+          if (this.pieces.some((p) => fs < p.s + p.len + 300 && fs + len + 300 > p.s)) continue;
+          if (!farmAt(fs - 200) || !farmAt(fs + len + 100)) continue;
+          if (kind === "cattle") {
+            const sideA: 1 | -1 = h(170) < 0.5 ? 1 : -1, n = 8 + Math.floor(h(171) * 4);
+            this.cattle = { s: fs, cross: fs + CATTLE_X, sideA, n };
+            this.pieces.push({ kind, s: fs, side: (-sideA) as 1 | -1, len, variant: n, text: "CATTLE XING" });
+            // (The truck waits till the last of them is off the road: |n| < 6, plus a moment.)
+            let clear = 0;
+            for (const m of this.herd()) clear = Math.max(clear, m.leave + herdTime(m, m.cum[1] + COW_GATE + 6));
+            this.planStops.push({ s: fs + CATTLE_X - CATTLE_STOP, dwell: Math.max(4, clear - CATTLE_LEAD + 2), kind: "cattle" });
+            this.planStops.sort((a, b) => a.s - b.s);
+          } else {
+            this.tractor = { s: fs + 260 };
+            this.pieces.push({ kind, s: fs, side: 1, len, variant: 0 });
+          }
+          moved = true;
+          break;
+        }
+        fk++;
+      }
       const extras: [PieceKind, number][] = [["attraction", 120], ["weigh", WEIGH_LEN], ["fruit", 80], ["watertower", 90], ["bridge", 120], ["gas", 110]];
       for (let i = extras.length - 1; i > 0; i--) { const j = Math.floor(h(20 + i) * (i + 1)); [extras[i], extras[j]] = [extras[j], extras[i]]; }
       extras.unshift(["billboards", 320]);   // billboards on every drive long enough for them
       let k = 0;
-      const lo = 900, hi = SB - (inp.toFreeway ? 1150 : 500);
       for (const [kind, len] of extras) {
         for (let tries = 0; tries < 8 && hi - len > lo; tries++) {
           const s = lo + h(40 + k * 9 + tries) * (hi - len - lo);
@@ -291,6 +351,7 @@ export class CountryRoad {
         }
         k++;
       }
+      if (moved) { const m = this.simulate(this.planStops, COUNTRY_VMAX, this.D, 9, 0); this.S = m.S; this.V = m.V; this.stops = m.stops; this.tractorRun = m.tractor; }
     }
     this.pieces.sort((a, b) => a.s - b.s);
     this.shapes = this.pieces.filter((p) => p.kind === "tunnel" || p.kind === "overpass");
@@ -432,7 +493,7 @@ export class CountryRoad {
     // exactly, still at V_JOIN.
     const e = end(best), n = best.S.length - 1;
     for (let i = 0; i <= n; i++) { const w = i / n; best.S[i] += (target - e) * smooth(w); best.V[i] += (target - e) * smoothD(w) / D; }
-    this.S = best.S; this.V = best.V; this.D = D; this.stops = best.stops;
+    this.S = best.S; this.V = best.V; this.D = D; this.stops = best.stops; this.tractorRun = best.tractor;
     this.computeMeetings();
   }
 
@@ -447,6 +508,7 @@ export class CountryRoad {
       const s = this.sAt(t);
       if (s < 700 || s > this.SB - 260) continue;
       if (this.ferry && s > this.ferry.s - 500 && s < this.ferry.s + FERRY_LEN + 500) continue;   // (they would drive into the water)
+      if (this.pieces.some((p) => (p.kind === "cattle" || p.kind === "tractor") && s > p.s - 450 && s < p.s + p.len + 350)) continue;   // (the herd on the road; the lane to pass in)
       if (rail) {
         const cross = t + (s - rail.s) / ONCOMING_SPEED;
         if (cross > rail.arrive - 8 && cross < rail.arrive + rail.dwell + 2) continue;
@@ -462,6 +524,7 @@ export class CountryRoad {
     const S = new Float64Array(n), V = new Float32Array(n);
     let s = s0, v = v0, next = 0, dwell = -1;
     const out: CountryStop[] = [];
+    const T = this.tractor, tr: TractorRun = { appear: -1, follow: -1, pass0: -1, pass1: -1 };
     S[0] = s; V[0] = v;
     for (let i = 1; i < n; i++) {
       const t = i * dt;
@@ -479,6 +542,22 @@ export class CountryRoad {
         const F = this.ferry, aboard = !!F && s >= F.board - 1e-6 && s < F.land - 0.05;
         if (F && ((s > F.booth - 0.2 && s < F.board) || (s > F.land - 0.2 && s < F.q1 + 30))) target = Math.min(target, CREEP_V);
         if (aboard) target = Math.min(FERRY_V, Math.sqrt(2 * FERRY_ACC * Math.max(0, F!.land - s)));
+        // The tractor: up behind it, matching its pace, then out and past it.
+        if (T) {
+          if (tr.appear < 0 && s >= T.s - 260) tr.appear = t;
+          if (tr.appear >= 0 && tr.pass1 < 0) {
+            const sT = this.tractorAxle(t, tr.appear);
+            if (tr.pass0 < 0) {
+              const gap = sT - TRACTOR_TAIL - (s + 7.5);
+              target = Math.min(target, TRACTOR_V + Math.sqrt(2 * COUNTRY_BRAKE * 0.8 * Math.max(0, gap - 16)));
+              if (gap < 22 && tr.follow < 0) tr.follow = t;
+              if (tr.follow >= 0 && t - tr.follow > 6) tr.pass0 = s;
+            } else {
+              target = Math.min(target, 19);
+              if (s > sT + TRACTOR_FRONT + 11) tr.pass1 = s;
+            }
+          }
+        }
         if (next < stops.length) {
           const d = stops[next].s - s;
           target = Math.min(target, Math.max(d > 0.15 ? 0.6 : 0, Math.sqrt(2 * COUNTRY_BRAKE * Math.max(0, d))));
@@ -492,7 +571,7 @@ export class CountryRoad {
       }
       S[i] = s; V[i] = v;
     }
-    return { S, V, stops: out };
+    return { S, V, stops: out, tractor: T ? tr : null };
   }
 
   // ---- queries ------------------------------------------------------------------------------
@@ -694,7 +773,62 @@ export class CountryRoad {
   }
   // The truck's lane offset: the right lane, easing to and from a city street's kerb lane at the
   // gates at both ends.
-  laneAt(s: number) { return this.baseLane(s) + this.weighOffset(s); }
+  laneAt(s: number) { return this.baseLane(s) + this.weighOffset(s) + this.passOffset(s); }
+  // Out in the oncoming lane passing the tractor.
+  private passOffset(s: number) {
+    const r = this.tractorRun;
+    if (!r || r.pass0 < 0 || s <= r.pass0) return 0;
+    const w = -2 * LANE, up = smooth(THREE.MathUtils.clamp((s - r.pass0) / 40, 0, 1));
+    return r.pass1 < 0 ? w * up : w * Math.min(up, 1 - smooth(THREE.MathUtils.clamp((s - r.pass1) / 45, 0, 1)));
+  }
+  // The tractor's rear axle along the road at drive time t (it pulls out at `appear`).
+  private tractorAxle(t: number, appear: number) { return this.tractor!.s + TRACTOR_V * Math.max(0, t - appear - TRACTOR_PULL); }
+  // Its pose at drive time u: in the field at its gate, pulling out round an arc onto the road,
+  // along the road, turning off round an arc into the field further on. (s, n, heading relative to
+  // the road's, speed.)
+  tractorPose(u: number, out: { s: number; n: number; yaw: number; v: number; d: number }) {
+    const T = this.tractor!, r = this.tractorRun, R = TRACTOR_R, arc = Math.PI / 2 * R;
+    const gate = (k: number, back: boolean) => {   // k in [0, 1] round the arc
+      const a = k * Math.PI / 2;
+      if (!back) { out.s = T.s - R * Math.cos(a); out.n = LANE + R - R * Math.sin(a); out.yaw = Math.PI / 2 - a; }
+      else { out.s = T.s + TRACTOR_B + R * Math.sin(a); out.n = LANE + R - R * Math.cos(a); out.yaw = -a; }
+    };
+    if (!r || r.appear < 0 || u < r.appear) { gate(0, false); out.v = 0; out.d = 0; return out; }
+    const tu = u - r.appear;
+    if (tu < TRACTOR_PULL) { const k = smooth(tu / TRACTOR_PULL); gate(k, false); out.v = arc / TRACTOR_PULL; out.d = arc * k; return out; }
+    const d = TRACTOR_V * (tu - TRACTOR_PULL);
+    if (d < TRACTOR_B) { out.s = T.s + d; out.n = LANE; out.yaw = 0; out.v = TRACTOR_V; out.d = arc + d; return out; }
+    const k = (d - TRACTOR_B) / arc;
+    if (k < 1) { gate(k, true); out.v = TRACTOR_V; out.d = arc + d; return out; }
+    gate(1, true); out.v = 0; out.d = 2 * arc + TRACTOR_B; return out;
+  }
+  // The herd's paths and paces (a pure function of the seed and the crossing).
+  private herdM: HerdMember[] | null = null;
+  herd(): HerdMember[] {
+    if (this.herdM) return this.herdM;
+    const c = this.cattle!, A = c.sideA, B = -A, hh = (i: number, k: number) => hash3(i, k, Math.floor(c.cross), this.inp.seed, 0xc0e5);
+    const breed = Math.floor(hh(99, 0) * 3), out: HerdMember[] = [];
+    let gate = 0;
+    for (let i = 0; i <= c.n; i++) {
+      const rider = i === c.n;
+      // Through the gate one or two at a time (6.4 m wide), out over the road (two lanes), and in.
+      const P0 = rider ? [c.cross + 10, A * 54] : [c.cross + (hh(i, 1) - 0.5) * 18, A * (24 + hh(i, 2) * 26)];
+      const P1 = [c.cross + (rider ? 0.5 : (hh(i, 3) - 0.5) * 4.4), A * COW_GATE];
+      const P2 = [c.cross + (rider ? 0 : (hh(i, 4) - 0.5) * 6.5), -A * 0.5 + (hh(i, 9) - 0.5) * 3];
+      const P3 = [c.cross + (rider ? 0.5 : (hh(i, 10) - 0.5) * 4.4), B * COW_GATE];
+      const P4 = rider ? [c.cross + 3.5, B * (COW_GATE + 4)] : [c.cross + (hh(i, 5) - 0.5) * 16, B * (22 + hh(i, 6) * 16)];
+      const pts = [...P0, ...P1, ...P2, ...P3, ...P4], cum = [0];
+      for (let k = 2; k < pts.length; k += 2) cum.push(cum[cum.length - 1] + Math.hypot(pts[k] - pts[k - 2], pts[k + 1] - pts[k - 1]));
+      gate += i === 0 ? 0 : rider ? 3 : 0.35 + hh(i, 11) * 2.3;
+      const m: HerdMember = { pts, cum, leave: 0, vf: rider ? 1 : 0.85 + hh(i, 12) * 0.3, amp: rider ? 0.2 : 0.4 + hh(i, 13) * 0.5, w: 0.5 + hh(i, 14) * 0.6, ph: hh(i, 15) * 6.3,
+        rider, coat: hh(i, 7) < 0.8 ? breed : Math.floor(hh(i, 8) * 3) };
+      m.leave = gate - herdTime(m, cum[1]);
+      out.push(m);
+    }
+    return (this.herdM = out);
+  }
+  // Herd time 0 (as drive time), or null before the motion is known.
+  get herdT0(): number | null { const st = this.stops.find((x) => x.kind === "cattle"); return st ? st.arrive - CATTLE_LEAD : null; }
   private weighP: RoadPiece | null | undefined;
   private weighOffset(s: number) {
     if (this.weighP === undefined) this.weighP = this.pieces.find((p) => p.kind === "weigh" && p.open) ?? null;
@@ -765,7 +899,7 @@ export class CountryRoad {
         leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 22, 3],
-        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0],
+        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0], cattle: [0, 0, 0], tractor: [0, 0, 0],
       };
       if (p.kind === "bridge") continue;   // its trusses hide the truck from any roadside spot; the chase shots show it
       // A tunnel: from the cutting's shoulder short of the portal, looking on at it, the truck
@@ -788,6 +922,20 @@ export class CountryRoad {
         if (s >= mid - 130 && s <= mid + 40) return { key: i, cam: [mid + 10, 48, 4 + dw], look: [mid - 30, 0, 2 + dw], fixed: true };
         if (s >= Fp.land - 70 && s <= Fp.q1 + 30) return { key: i, cam: [Fp.q1 + 22, -8, 3.6], look: [Fp.q1 - 25, 1.5, 1.6 + dw], fixed: true };
         continue;
+      }
+      // The cattle crossing: from the shoulder beyond it, low, the herd crossing between the
+      // camera and the truck waiting for it.
+      if (p.kind === "cattle" && stop && this.cattle) {
+        const c = this.cattle;
+        if (s < c.cross - 170 || s > c.cross + 6) continue;
+        return { key: i, cam: [c.cross + 6, c.sideA * 7.2, 1.6], look: [c.cross - 3, -c.sideA * 4, 1.0], fixed: true };
+      }
+      // The tractor: from the right shoulder ahead, the truck coming up behind it, pulling out
+      // and going past it (and the camera).
+      if (p.kind === "tractor") {
+        const r = this.tractorRun;
+        if (!r || r.pass0 < 0 || s < r.pass0 - 100 || s > r.pass0 + 60) continue;
+        return { key: i, cam: [r.pass0 + 58, 9.5, 2.6], look: [r.pass0 + 4, LANE, 1.5], fixed: true };
       }
       // An open weigh station: from the far shoulder short of the scale, locked off on the truck
       // on it and the signal past it, so the shot sees it pull on, the light go green and it leave.

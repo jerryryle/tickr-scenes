@@ -50,6 +50,18 @@ import { Journey } from "../src/journey.ts";
       for (const p of r.pieces) for (let s = p.s - 30; s <= p.s + p.len + 30; s += 5)
         if (Math.abs(r.baseAt(s) - r.baseAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.baseAt(s) - r.baseAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
       if (steep > 0.0551) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      // A tractor on the road is caught up, followed at a safe distance and passed.
+      if (r.tractor) {
+        const tr = r.tractorRun;
+        if (!tr || tr.appear < 0 || tr.pass0 < 0 || tr.pass1 < 0) err(`tractor not passed (c${j.st.city}): ${JSON.stringify(tr)}`);
+        else {
+          const tp = { s: 0, n: 0, yaw: 0, v: 0, d: 0 };
+          for (let t = tr.appear; t < r.duration && r.sAt(t) < tr.pass0; t += 0.2) {
+            r.tractorPose(t, tp);
+            if (tp.n < 3 && tp.s - 5.7 - (r.sAt(t) + 7.5) < 10) { err(`truck too close behind the tractor at t${t.toFixed(1)} (c${j.st.city})`); break; }
+          }
+        }
+      }
       // The land stays well under any freeway out in it (the city's it leaves, the next city's).
       if (r.nearFreeways) {
         const q = { x: 0, z: 0, h: 0, k: 0 };
