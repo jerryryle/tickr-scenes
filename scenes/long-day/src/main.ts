@@ -27,7 +27,7 @@ import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
 import type { CityMaterials } from "./city.ts";
 import { facilityAt, facilityName } from "./facilities.ts";
-import { marquee, signAtlas } from "./signs.ts";
+import { marquee, plateAtlas, signAtlas } from "./signs.ts";
 import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { smooth } from "./route.ts";
 import type { Pose } from "./route.ts";
@@ -664,7 +664,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         if (backdrop.built !== `${bc.style.id}/${bc.seed}`) backdrop.build(bc.style, bc.seed);
         backdrop.setPresence(bd.p);
       }
-      signAtlas.bake();
+      signAtlas.bake(); plateAtlas.bake();
       marquee.update(target);
       // Time of day from the clock, weather from the city (blended along the country road).
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);

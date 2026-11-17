@@ -18,11 +18,11 @@ import { BLOCK, RING } from "./grid.ts";
 import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
-import { Frame, FW_OFF_D, FW_OFF_V, FW_TOP, onRampN, onRampY } from "./freeway.ts";
+import { Frame, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
-  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass";
+  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign";
 export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number }
 // A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
 // y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
@@ -40,6 +40,9 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     case "weigh": return [{ s: S - 80, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
     case "fruit": return [{ s: S, n: side * 9.5, y: 1.6, w: 4.0, h: 0.5 }];
     case "gas": return [{ s: S + 5, n: side * 11, y: 7.2, w: 4.6, h: 0.6 }];
+    // A freeway's signs (freeway.ts draws them): its entrance sign by the highway, and the
+    // plates over its lanes on the gantries ahead of the exit and where its lane opens.
+    case "fwsign": return [p.variant === 0 ? { s: S, n: p.n ?? 8.8, y: 3.55, w: 5.6, h: 0.7 } : { s: S, n: p.n ?? 0, y: FW_TOP + 6.35, w: 6.4, h: 0.8 }];
     default: return [];
   }
 }
@@ -195,7 +198,14 @@ export class CountryRoad {
       if (SB > 1700) this.pieces.push({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: 0,
         text: `${inp.toName.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` });
     }
-    this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 800 : 230), side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city, on the left: the freeway is on the right)
+    if (inp.toFreeway) {
+      this.pieces.push({ kind: "fwsign", s: L - FW_ENTRANCE_SIGN, side: 1, len: 6, variant: 0, n: 8.8 });
+      if (inp.toFreewayMerge) {
+        this.pieces.push({ kind: "fwsign", s: L - 200, side: 1, len: 6, variant: 1, n: FW_SHIFT + 3.7 });
+        this.pieces.push({ kind: "fwsign", s: L + FW_OFF_D - 4, side: 1, len: 6, variant: 2, n: 3.7 });
+      }
+    }
+    this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 940 : 230), side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city, on the left: the freeway is on the right)
     if (!arrival) {
       const extras: [PieceKind, number][] = [["attraction", 120], ["weigh", 200], ["fruit", 80], ["watertower", 90], ["bridge", 120], ["gas", 110]];
       for (let i = extras.length - 1; i > 0; i--) { const j = Math.floor(h(20 + i) * (i + 1)); [extras[i], extras[j]] = [extras[j], extras[i]]; }
@@ -591,7 +601,7 @@ export class CountryRoad {
         leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 22, 3],
-        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2],
+        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4],
       };
       if (p.kind === "bridge") continue;   // its trusses hide the truck from any roadside spot; the chase shots show it
       // A tunnel: from the cutting's shoulder short of the portal, looking on at it, the truck

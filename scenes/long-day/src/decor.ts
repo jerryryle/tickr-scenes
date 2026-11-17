@@ -3,6 +3,7 @@
 // square's clock tower, the water tower with the town name), plus plaza statues, flags, the
 // Ryder rooftop sign and marquees. Builders run inside the chunk builder and read the chunk's
 // context from DC.
+import type { PlateSet } from "./signs.ts";
 import { Batch } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import { PoolBuilder } from "./atmosphere.ts";
@@ -23,6 +24,7 @@ export const PAVEMENT: { out: number[] | null } = { out: null };
 export function pavementObstacle(x: number, z: number, r: number) { PAVEMENT.out?.push(x, z, r); }
 export const DC = {
   lamps: null as unknown as Batch,     // neon and flags (the lamp material animates them)
+  plates: null as PlateSet | null,     // street name and freeway plates (null in probe builds)
   quads: [] as Quad[],                 // sign atlas quads: name signs and billboards
   ads: false,                          // whether `quads` uses billboard ads
   mquads: [] as Quad[],                // marquee quads

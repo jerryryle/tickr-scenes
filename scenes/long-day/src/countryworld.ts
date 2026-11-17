@@ -19,7 +19,7 @@ import type { Climate } from "./climate.ts";
 import { DC, waterTower } from "./decor.ts";
 import { bareTree, shade } from "./city.ts";
 import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
-import { AD_BATON, AD_BILLBOARD, AD_RYDER, signAtlas, SignAtlas } from "./signs.ts";
+import { AD_BATON, AD_BILLBOARD, AD_RYDER, PlateSet, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop } from "./country.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
@@ -310,7 +310,7 @@ export class CountryWorld {
     const s0 = i * SEG, s1 = s0 + SEG;
     road.center(s0, this.p);
     this.ox = this.p.x; this.oz = this.p.z;
-    this.quads = []; this.slots = []; this.ads = false;
+    this.quads = []; this.slots = []; this.ads = false; this.plates = new PlateSet();
     const g = new Batch(), s = new Batch(), glow = this.glow;
     const rnd = mulberry32(Math.floor(hash3(i, road.inp.city, 7, road.inp.seed, 0x5e9) * 4294967296));
     // Land: a mesh over the ground's heights, in rows across the road, coloured by cell: by
@@ -367,7 +367,7 @@ export class CountryWorld {
       for (let d = 0; d < FW_TIP; d += 60) {
         const sc = L - (d + 30);
         if (sc < s0 || sc >= s1) continue;
-        buildFreeway(g, F, d, Math.min(FW_TIP, d + 60), this.ox, this.oz, { main: true, ramp: true });   // (the ground batch: the truck's see-through spotlight leaves it be)
+        buildFreeway(g, F, d, Math.min(FW_TIP, d + 60), this.ox, this.oz, { main: true, ramp: true }, null, this.plates);   // (the ground batch: the truck's see-through spotlight leaves it be)
       }
     }
     // Utility poles on the right, every 50 m where the land is clear, with wires only between two
@@ -462,13 +462,15 @@ export class CountryWorld {
     }
     for (const f of this.fleetJobs) { const o = this.fleet?.(f.stalls); if (o) { o.position.y += f.y; group.add(o); } }
     this.fleetJobs = [];
+    const pm = this.plates.build(); if (pm) group.add(pm.mesh);
     const hf = OCCLUSION.add(group, this.ox + this.group.position.x, this.oz + this.group.position.z, [this.mats.ground], "road");   // for the camera (occlusion.ts)
-    group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (sm) signAtlas.detach(sm); OCCLUSION.remove(hf); };
+    group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (sm) signAtlas.detach(sm); pm?.dispose(); OCCLUSION.remove(hf); };
     return group;
   }
   private fleetJobs: { stalls: StallPose[]; y: number }[] = [];
   private pieceY = 0;
   private glow = new Batch();   // lamps that are always lit (a tunnel's), in the segment being built
+  private plates = new PlateSet();   // the freeway's signs, in the segment being built
 
   // A cell of land between n0 and n1 across the road, at sm along it (its row starting at a):
   // the biome's ground in hashed bands, or a patchwork of fields (whole columns, 96 m long); sand

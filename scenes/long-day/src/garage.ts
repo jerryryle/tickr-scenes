@@ -7,7 +7,7 @@ import { Batch } from "./geom.ts";
 import { hash2 } from "./rng.ts";
 import { GARAGE_H, Path, trackSweep } from "./route.ts";
 import type { Pose } from "./route.ts";
-import { frontPt } from "./city.ts";
+import { frontPt, FRONT_NODE } from "./city.ts";
 import type { Rand } from "./city.ts";
 
 // The way in starts at the kerb lane GARAGE_IN_A along the frontage; the truck stops on the roof at
@@ -53,7 +53,7 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
   // Its parapets (open where the ramps and the back lane meet it) and the columns under it.
   fbox(solid, side, 22.6, 41.4, 3, 3.3, H - 0.01, H + 1.0, RAIL);
   fbox(solid, side, 22.6, 22.9, 3, 24, H - 0.05, H + 1.0, RAIL);   // (short of where a truck's back cuts across on the turn up)
-  fbox(solid, side, 41.1, 41.4, 3, 31, H - 0.01, H + 1.0, RAIL);
+  fbox(solid, side, 41.1, 41.4, 3, 24, H - 0.05, H + 1.0, RAIL);   // (open where the ramp down leaves it)
   for (let a = 24; a <= 40; a += 8) for (let n = 5; n <= 33; n += 7) { const [x, z] = fp(side, a, n); solid.box(x, (H - 0.45) / 2, z, 0.6, H - 0.45, 0.6, COLUMN); }
   // Parked cars: in the bays under the deck and on it, and the bays' lines.
   for (let row = 0; row < 2; row++) for (let k = 0; k < 7; k++) {
@@ -68,6 +68,13 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
   // gaps): the deck's top, sides and underside, a parapet along each edge once it is up, and
   // under it a solid wall low down, columns higher up.
   const { up, down } = garageTracks(side), p: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  // Whether a block-local point is on (or at the edge of) the roof's parking deck or the lane
+  // across its back.
+  const [nx0, nz0, nd] = FRONT_NODE[side], FW = [[1, 0], [0, -1], [-1, 0], [0, 1]][nd], RT = [[0, 1], [1, 0], [0, -1], [-1, 0]][nd];
+  const onRoof = (x: number, _y: number, z: number) => {
+    const a = (x - nx0) * FW[0] + (z - nz0) * FW[1], n = (x - nx0) * RT[0] + (z - nz0) * RT[1] - 9;
+    return (a > 21.6 && a < 42.4 && n > 2 && n < 34.2) || (a > 28 && a < 39.5 && n > 32.2 && n < 43);
+  };
   type V = [number, number, number];
   // (In the ground batch, like a road: the truck's see-through spotlight leaves it be.)
   const quad = (a: V, b: V, c: V, d: V, color: number, face: V) => { ground.tri(...a, ...b, ...c, color, face); ground.tri(...a, ...c, ...d, color, face); };
@@ -90,7 +97,8 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
         // The deck's edge, down to the ground where it is low (a wall under it).
         const lo = my < 2.2 ? -a.y + 0.01 : -T, lob = my < 2.2 ? -b.y + 0.01 : -T;
         quad(at(i, ea, lo), at(i + 1, eb, lob), at(i + 1, eb, 0), at(i, ea, 0), my < 2.2 ? COLUMN : DECK, side);
-        if (Math.min(a.y, b.y) > 0.6) {
+        // (No wall where it has come up level with the roof beside it: cars drive between them.)
+        if (Math.min(a.y, b.y) > 0.6 && !(Math.min(a.y, b.y) > H - 0.6 && onRoof(...at(i, ea, 0)) && onRoof(...at(i + 1, eb, 0)))) {
           const n0a = ea - k * 0.22, n0b = eb - k * 0.22;
           quad(at(i, n0a, 0), at(i + 1, n0b, 0), at(i + 1, n0b, 0.85), at(i, n0a, 0.85), RAIL, [-side[0], 0, -side[2]]);
           quad(at(i, ea, 0), at(i + 1, eb, 0), at(i + 1, eb, 0.85), at(i, ea, 0.85), RAIL, side);

@@ -9,6 +9,8 @@
 import * as THREE from "three@0.187.0";
 import { hash2 } from "./rng.ts";
 import { canBakeTextures, makeCanvas } from "./canvas.ts";
+import { quadGeometry } from "./geom.ts";
+import type { Quad } from "./geom.ts";
 import { CityPlan } from "./city.ts";
 import { FAC, facilityAt, facilityName, hasSign, isRyderFacility } from "./facilities.ts";
 import type { FacilityDef } from "./facilities.ts";
@@ -267,6 +269,88 @@ export function facilitySign(plan: CityPlan, bx: number, bz: number): { text: st
 }
 
 export const signAtlas = new SignAtlas();
+
+// Plates: street name signs and the freeway's signs (white lettering on a coloured plate). Many
+// of them say the same thing (a street's name at every corner along it), so each text is drawn
+// once and shared, counted in and out by the chunks and road pieces that show it; its own atlas
+// (1024x1024: 128 slots of 256x32), so they never crowd out the facilities' name signs.
+const PLATE_W = 256, PLATE_H = 32, PLATE_COLS = 4, PLATE_ROWS = 32;
+export const PLATE_GREEN: SignStyle = { bg: "#1e6b3a", fg: "#ffffff", logo: false };
+interface PlateJob { key: string; text: string; style: SignStyle; refs: number; baked: boolean }
+export class PlateAtlas {
+  readonly material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  private canvas: { canvas: any; g: CanvasRenderingContext2D } | null = null;
+  private texture: THREE.Texture | null = null;
+  private free: number[] = [];
+  private jobs = new Map<number, PlateJob>();
+  private byKey = new Map<string, number>();
+  private meshes = new Set<{ mesh: THREE.Mesh; slots: number[] }>();
+  constructor() { for (let i = PLATE_COLS * PLATE_ROWS - 1; i >= 0; i--) this.free.push(i); }
+  // A slot showing `text` (shared with whoever already shows it); -1 when the atlas is full.
+  acquire(text: string, style: SignStyle = PLATE_GREEN): number {
+    const key = `${style.bg}|${style.fg}|${text}`, hit = this.byKey.get(key);
+    if (hit !== undefined) { this.jobs.get(hit)!.refs++; return hit; }
+    const slot = this.free.pop();
+    if (slot === undefined) return -1;
+    this.jobs.set(slot, { key, text, style, refs: 1, baked: false }); this.byKey.set(key, slot);
+    return slot;
+  }
+  release(slot: number) {
+    const j = this.jobs.get(slot);
+    if (!j || --j.refs > 0) return;
+    this.jobs.delete(slot); this.byKey.delete(j.key); this.free.push(slot);
+  }
+  uv(slot: number) {
+    const x = (slot % PLATE_COLS) * PLATE_W, y = Math.floor(slot / PLATE_COLS) * PLATE_H, W = PLATE_COLS * PLATE_W, H = PLATE_ROWS * PLATE_H;
+    return { u0: (x + 0.5) / W, u1: (x + PLATE_W - 0.5) / W, v0: 1 - (y + PLATE_H - 0.5) / H, v1: 1 - (y + 0.5) / H };
+  }
+  // A mesh of plates, shown once all its slots are drawn.
+  attach(mesh: THREE.Mesh, slots: number[]) { const m = { mesh, slots }; this.meshes.add(m); this.refresh(m); return m; }
+  detach(m: { mesh: THREE.Mesh; slots: number[] }) { this.meshes.delete(m); }
+  private refresh(m: { mesh: THREE.Mesh; slots: number[] }) { m.mesh.visible = m.slots.every((k) => !!this.jobs.get(k)?.baked); }
+  bake(max = 6) {
+    if (!canBakeTextures()) return;
+    if (!this.canvas) {
+      this.canvas = makeCanvas(PLATE_COLS * PLATE_W, PLATE_ROWS * PLATE_H);
+      const tex = new THREE.Texture(this.canvas.canvas);
+      tex.colorSpace = THREE.SRGBColorSpace; tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
+      this.texture = tex; this.material.map = tex; this.material.needsUpdate = true;
+    }
+    let n = 0;
+    for (const [slot, j] of this.jobs) {
+      if (j.baked) continue;
+      if (n++ >= max) break;
+      const g = this.canvas.g, x = (slot % PLATE_COLS) * PLATE_W, y = Math.floor(slot / PLATE_COLS) * PLATE_H;
+      g.save(); g.beginPath(); g.rect(x, y, PLATE_W, PLATE_H); g.clip();
+      g.fillStyle = j.style.bg; g.fillRect(x, y, PLATE_W, PLATE_H);
+      g.strokeStyle = j.style.fg; g.lineWidth = 2; g.strokeRect(x + 2, y + 2, PLATE_W - 4, PLATE_H - 4);   // the plate's white border
+      g.fillStyle = j.style.fg; fitAtlasText(g, j.text, x + PLATE_W / 2, y + PLATE_H / 2 + 1, PLATE_W - 16, 21);
+      g.restore();
+      j.baked = true;
+    }
+    if (n) { this.texture!.needsUpdate = true; for (const m of this.meshes) this.refresh(m); }
+  }
+}
+export const plateAtlas = new PlateAtlas();
+// A set of plates being built (a chunk's, a road segment's): their quads and slots.
+export class PlateSet {
+  readonly quads: Quad[] = []; readonly slots: number[] = [];
+  // A plate reading `text`, w x h, centred at (x, y, z), facing rotY (Quad's convention).
+  put(text: string, x: number, y: number, z: number, w: number, h: number, rotY: number, style: SignStyle = PLATE_GREEN) {
+    const k = plateAtlas.acquire(text, style);
+    if (k < 0) return;
+    this.slots.push(k);
+    this.quads.push({ x, y, z, w, h, rotY, ...plateAtlas.uv(k) });
+  }
+  // Its mesh (or null), and how to let it go.
+  build(): { mesh: THREE.Mesh; dispose: () => void } | null {
+    if (!this.quads.length) return null;
+    const mesh = new THREE.Mesh(quadGeometry(this.quads), plateAtlas.material), m = plateAtlas.attach(mesh, this.slots), slots = this.slots.slice();
+    return { mesh, dispose: () => { for (const k of slots) plateAtlas.release(k); plateAtlas.detach(m); } };
+  }
+  // (Nothing built after all: give the slots back.)
+  discard() { for (const k of this.slots) plateAtlas.release(k); }
+}
 
 // ---- marquee ----------------------------------------------------------------------------------
 // One strip of LED-style text that scrolls across every marquee in the city.

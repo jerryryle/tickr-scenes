@@ -24,6 +24,8 @@ import { CITY_HI, CITY_LO, entryGateOf, gateEnd } from "./city.ts";
 import type { CityPlan, Gate } from "./city.ts";
 import type { CityStyle } from "./styles.ts";
 import type { CountryRoad } from "./country.ts";
+import { citySeedOf } from "./country.ts";
+import { PlateSet } from "./signs.ts";
 import { headLamp, tailLamp } from "./traffic.ts";
 
 export const FW_TOP = 9.6;             // the deck's top (clear of the streetlights' arms under it)
@@ -92,6 +94,8 @@ function rampEdges(d: number): [number, number] {
   // asphalt, over the strip of deck along its edge.)
   return [Math.max(c - RAMP_HALF, d < ONRAMP_NOSE ? fwEdge - 0.4 : fwEdge), Math.max(right, fwEdge)];
 }
+export const FW_ENTRANCE_SIGN = 800;   // the entrance sign, on the highway before the on-ramp leaves it
+const ONRAMP_SIGN = FW_ENTRANCE_SIGN;
 const ONRAMP_FROM = 1.85;   // (the highway's lane: country.ts LANE)
 // The gore's nose: where the on-ramp's left edge meets the freeway's right edge (to the metre).
 // The two barriers run together to it and end there; from it to the end of the taper the lanes
@@ -105,6 +109,18 @@ const ONRAMP_NOSE = (() => {
 export class Frame {
   readonly ox: number; readonly oz: number; readonly rx: number; readonly rz: number;
   merge = false;   // the truck takes the freeway here (freewayMerge)
+  // What its signs say: its route number, the city's exit number and name (and whether it has an
+  // exit: its off-ramp, interchange.ts), and the compass ways in (towards the city) and out.
+  route = 0; exitNo = 0; name = ""; hasExit = false; wayIn = ""; wayOut = "";
+  label(citySeed: number, name: string) {
+    this.route = 10 + Math.floor(hash2(citySeed, 0x1e7, 0, 0x7a5) * 80);
+    this.exitNo = 2 + Math.floor(hash2(citySeed, 0xe17, 0, 0x7a6) * 38);
+    this.name = name.toUpperCase(); this.hasExit = freewayMerge(citySeed);
+    const ix = -this.ox, iz = -this.oz;   // the way in
+    this.wayIn = Math.abs(ix) > Math.abs(iz) ? (ix > 0 ? "EAST" : "WEST") : (iz < 0 ? "NORTH" : "SOUTH");
+    this.wayOut = { EAST: "WEST", WEST: "EAST", NORTH: "SOUTH", SOUTH: "NORTH" }[this.wayIn]!;
+    return this;
+  }
   farSide = 1;     // which way the far side's end bends (+1: towards +n)
   // (x, z): the gate end; h: the heading of a truck coming in there. near/far: where the city's
   // own streets begin and end along the line (d).
@@ -119,13 +135,14 @@ export class Frame {
     const out = new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), Math.min(d(lo), d(hi)));
     out.merge = plan.freewayMerge;
     out.farSide = hash2(plan.seed, 0xfa5, 0, 0x7a4) < 0.5 ? 1 : -1;
-    return out;
+    return out.label(plan.seed, plan.name);
   }
   static ofRoad(road: CountryRoad, dx = 0, dz = 0): Frame {
     const q = road.center(road.gateS, { x: 0, z: 0, h: 0, k: 0 });
     const out = new Frame(q.x + dx, q.z + dz, q.h);
     out.merge = !!road.inp.toFreewayMerge;
-    return out;
+    const i = road.inp;
+    return out.label(citySeedOf(i.seed, i.kind === "exit" ? i.city + 1 : i.city), i.toName);
   }
   // The deck's centre line (n) and its top at d.
   m(d: number) { return fwM(d); }
@@ -199,7 +216,22 @@ type FwColumnOk = (x: number, z: number) => boolean;
 // the on-ramp (`ramp`) and the highway's surface out to the gate (`surface`, when nothing else
 // draws it). On the entry side the columns keep off the highway and the on-ramp.
 export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: number, az: number,
-  parts: { main?: boolean; ramp?: boolean; surface?: boolean; bents?: boolean }, columnOk: FwColumnOk | null = null) {
+  parts: { main?: boolean; ramp?: boolean; surface?: boolean; bents?: boolean }, columnOk: FwColumnOk | null = null, plates: PlateSet | null = null) {
+  // Its signs: gantries over it on the way in (the route; the exit ahead, where the city has one)
+  // and on the far side, and the entrance sign on the highway before the on-ramp.
+  if (plates && parts.main) {
+    const R = `I-${F.route}`, ex = `EXIT ${F.exitNo}`;
+    const G: [number, string, string][] = [[620, `${R} ${F.wayIn} · ${F.name}`, `${R} ${F.wayOut}`]];
+    if (F.hasExit) G.push([200, `${ex} · ${F.name} CENTER · 1/4 MI`, `${R} ${F.wayOut}`]);
+    G.push([F.far - 260, `${R} ${F.wayIn}`, `${R} ${F.wayOut} · ${F.name}`]);
+    for (const [d, pos, neg] of G) if (d >= d0 && d < d1) freewayGantry(b, plates, F, d, ax, az, [{ k: 1, face: 1, text: pos }, { k: -1, face: -1, text: neg }]);
+  }
+  if (plates && parts.ramp && ONRAMP_SIGN >= d0 && ONRAMP_SIGN < d1) {
+    const n = 8.8, xa = F.px(ONRAMP_SIGN, n) - ax, za = F.pz(ONRAMP_SIGN, n) - az, yaw = Math.atan2(-F.rz, F.rx);
+    for (const k of [-2.4, 2.4]) b.cyl(F.px(ONRAMP_SIGN + 0.15, n + k) - ax, 2.2, F.pz(ONRAMP_SIGN + 0.15, n + k) - az, 0.09, 4.4, 0x8d9296, 6);
+    b.box(xa, 3.55, za, 5.8, 1.5, 0.1, 0x1e6b3a, yaw);
+    plates.put(`I-${F.route} ${F.wayIn} · ENTRANCE`, xa - F.ox * -0.06, 3.55, za - F.oz * -0.06, 5.6, 0.7, Math.atan2(F.ox, F.oz));
+  }
   const STEP = 10;
   // A box along the line from d=a to d=a2 at offset n, following heights ya..yb, `lo`..`hi` above them.
   const along = (a: number, a2: number, na: number, nb: number, ya: number, yb: number, lo: number, hi: number, wid: number, color: number) => {
@@ -309,14 +341,35 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
   b.dy = keep;
 }
 
+// An overhead sign gantry across the deck at d: posts on its barriers, a truss across, and a
+// green plate over each side's lanes, facing the traffic coming up to it (face: +1 the traffic
+// heading in, along -d; -1 the traffic heading out).
+export function freewayGantry(b: Batch, plates: PlateSet, F: Frame, d: number, ax: number, az: number, panels: { k: number; face: number; text: string }[]) {
+  const y = F.y(d), m = F.m(d), keep = b.dy; b.dy = 0;
+  const across = (n0: number, n1: number, dd: number, yy: number, hgt: number, thick: number, color: number) => {
+    const xa = F.px(d + dd, n0), za = F.pz(d + dd, n0), xb = F.px(d + dd, n1), zb = F.pz(d + dd, n1);
+    b.box((xa + xb) / 2 - ax, yy, (za + zb) / 2 - az, Math.hypot(xb - xa, zb - za), hgt, thick, color, Math.atan2(-(zb - za), xb - xa));
+  };
+  for (const k of [-1, 1]) b.box(F.px(d, m + k * (FW_HALF - 0.2)) - ax, y + 4.3, F.pz(d, m + k * (FW_HALF - 0.2)) - az, 0.35, 6.7, 0.35, 0x8d9296);
+  for (const yy of [y + 6.95, y + 7.55]) across(m - FW_HALF, m + FW_HALF, 0, yy, 0.22, 0.3, 0x8d9296);
+  for (const p of panels) {
+    const nc = m + p.k * 3.7, fo = p.face * 0.32;
+    across(nc - 3.3, nc + 3.3, fo, y + 6.35, 1.2, 0.1, 0x1e6b3a);
+    plates.put(p.text, F.px(d + p.face * 0.38, nc) - ax, y + 6.35, F.pz(d + p.face * 0.38, nc) - az, 6.4, 0.8, Math.atan2(p.face * F.ox, p.face * F.oz));
+  }
+  b.dy = keep;
+}
+
 // The freeway in town along one street (city.ts, block-local: the street along x for axis 0, z
 // for axis 1, from 0 to BLOCK): the deck, level. Its bents stand on the sidewalks (city.ts).
 // `open`: where the right-hand parapet (+n, k = 1) or the left one (k = -1) is left out, from a0 to
 // a1 along (an off-ramp leaves there: interchange.ts).
-export function buildFreewayStreet(b: Batch, axis: number, open: { a0: number; a1: number; k: number } | null = null) {
+export function buildFreewayStreet(b: Batch, axis: number, open: { a0: number; a1: number; k: number } | null = null,
+  gantry: { at: number; face: number; k: number; text: string; other: string; plates: PlateSet } | null = null) {
   const F = axis === 0 ? new Frame(0, STREET / 2, Math.PI) : new Frame(STREET / 2, 0, Math.PI / 2);
   // (A frame with the line along +x (or along +z), level all the way: d from 0 to BLOCK.)
   const level = Object.assign(Object.create(Frame.prototype), F, { y: () => FW_TOP, m: () => 0 }) as Frame;
+  if (gantry) freewayGantry(b, gantry.plates, level, gantry.at, 0, 0, [{ k: gantry.k, face: gantry.face, text: gantry.text }, { k: -gantry.k, face: -gantry.face, text: gantry.other }]);
   if (!open) { buildFreeway(b, level, 0, BLOCK, 0, 0, { main: true, bents: false }); return; }
   // The deck without that parapet, then the parapet where it stands.
   buildFreewayDeck(b, level, open);
@@ -365,6 +418,7 @@ export class FreewayReach {
   frame: Frame | null = null;
   private key = "";
   private entry: { d0: number; d1: number; mesh: THREE.Object3D }[] = [];
+  private disposers: (() => void)[] = [];
   constructor(scene: THREE.Object3D, private material: THREE.Material) { scene.add(this.group); }
 
   update(plan: CityPlan, roads: { road: CountryRoad; dx: number; dz: number }[]) {
@@ -380,12 +434,14 @@ export class FreewayReach {
     for (const { road, dx, dz } of roads) for (let s = 0; s <= road.gateS; s += 4) { road.center(s, q); const x = q.x + dx, z = q.z + dz; if (F.dAt(x, z) < F.far + 40) pts.push(x, z); }
     const clear = (x: number, z: number, r: number) => { for (let i = 0; i < pts.length; i += 2) if (Math.hypot(pts[i] - x, pts[i + 1] - z) < r) return false; return true; };
     const piece = (d0: number, d1: number, entry: boolean) => {
-      const b = new Batch(), ax = F.px(d0, 0), az = F.pz(d0, 0);
-      buildFreeway(b, F, d0, d1, ax, az, { main: true, ramp: entry, surface: entry }, entry ? null : (x, z) => clear(x, z, 7.9));
+      const b = new Batch(), ax = F.px(d0, 0), az = F.pz(d0, 0), plates = new PlateSet();
+      buildFreeway(b, F, d0, d1, ax, az, { main: true, ramp: entry, surface: entry }, entry ? null : (x, z) => clear(x, z, 7.9), plates);
       const mesh = b.build(this.material);
-      if (!mesh) return;
-      mesh.position.set(ax, 0, az); this.group.add(mesh);
-      if (entry) this.entry.push({ d0, d1, mesh });
+      if (!mesh) { plates.discard(); return; }
+      const g = new THREE.Group(); g.add(mesh);
+      const pm = plates.build(); if (pm) { g.add(pm.mesh); this.disposers.push(pm.dispose); }
+      g.position.set(ax, 0, az); this.group.add(g);
+      if (entry) this.entry.push({ d0, d1, mesh: g });
     };
     piece(F.near, 0, true);
     for (let d = 0; d < FW_TIP; d += 60) piece(d, Math.min(FW_TIP, d + 60), true);
@@ -395,7 +451,8 @@ export class FreewayReach {
   cover(d: number) { for (const p of this.entry) p.mesh.visible = !(p.d0 >= 0 && p.d1 <= d + 0.01); }
   clear() {
     for (const m of [...this.group.children]) { this.group.remove(m); disposeTree(m); }
-    this.entry = [];
+    for (const f of this.disposers) f();
+    this.entry = []; this.disposers = [];
   }
 }
 const FW_GATE_KEY = (g: Gate) => `${g.ix},${g.iz},${g.dir}`;

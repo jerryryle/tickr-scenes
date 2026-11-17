@@ -23,12 +23,13 @@ import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
+import { PlateSet } from "./signs.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
 import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, interchangeOpen } from "./interchange.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
-import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, wideDoor } from "./facilities.ts";
+import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
@@ -107,7 +108,7 @@ export class CityPlan {
   // On the freeway's street beside the interchange (the chunk's street along `axis`): where along
   // it (street-local) the deck's parapet opens for the off-ramp (and on which side, as
   // buildFreewayStreet's k), and where the way down crosses the sidewalk (no bents there).
-  interchangeStreet(axis: number, cx: number, cz: number): { open: [number, number]; clear: [number, number]; k: number } | null {
+  interchangeStreet(axis: number, cx: number, cz: number): { open: [number, number]; clear: [number, number]; k: number; gantry: number | null; face: number } | null {
     const c = this.interchange;
     if (!c) return null;
     // The street from the node before the interchange's (the deceleration lane starts there) and
@@ -120,8 +121,10 @@ export class CityPlan {
       const off = back * BLOCK, at = (a: number) => (d === 0 || d === 3 ? 9 + a + off : 69 - a - off);
       const span = (a0: number, a1: number): [number, number] => [Math.max(0, Math.min(at(a0), at(a1))), Math.min(BLOCK, Math.max(at(a0), at(a1)))];
       const cl = span(INTERCHANGE_CLEAR[0], INTERCHANGE_CLEAR[1]);
-      const op = interchangeOpen();
-      return { open: span(op[0], op[1]), clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1 };
+      const op = interchangeOpen(), g = at(op[0] + 4);
+      // (The exit's gantry where its lane opens, facing the traffic coming along it.)
+      return { open: span(op[0], op[1]), clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1,
+        gantry: g > 1 && g < BLOCK - 1 ? g : null, face: d === 0 || d === 3 ? -1 : 1 };
     }
     return null;
   }
@@ -202,13 +205,14 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   const ground = new Batch(), solid = new Batch(), lamps = new Batch();
   const rnd = mulberry32(Math.floor(hash2(cx, cz, seed, 99) * 4294967296));
   const district = plan.district(cx, cz);
+  const plates = takeSlot ? new PlateSet() : null;
   if (!insideCity(cx, cz)) {
-    Object.assign(DC, { lamps, quads: [], ads: false, mquads: [], roofs: [], fac: "residence", plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
+    Object.assign(DC, { plates, lamps, quads: [], ads: false, mquads: [], roofs: [], fac: "residence", plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
     buildOutskirts(ground, solid, lamps, plan, cx, cz, rnd);
     return { ground, solid, lamps, stalls: [] as StallPose[], district, site: { kind: "kerb" } as SiteLayout };
   }
   const site = siteLayout(plan, cx, cz);
-  Object.assign(DC, { lamps, quads: [], ads: false, mquads: [], roofs: [], fac: facilityAt(plan, cx, cz), plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
+  Object.assign(DC, { plates, lamps, quads: [], ads: false, mquads: [], roofs: [], fac: facilityAt(plan, cx, cz), plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
   const sign = takeSlot ? facilitySign(plan, cx, cz) : null;
   const uv = sign && takeSlot ? takeSlot(sign.text, sign.style) : null;
   // Base asphalt under everything; streets are what's left uncovered.
@@ -217,9 +221,13 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   buildStreet(ground, solid, 0, district, rnd, streetFrontage(plan, cx, cz - 1, 1), streetFrontage(plan, cx, cz, 0));
   buildStreet(ground, solid, 1, district, rnd, streetFrontage(plan, cx - 1, cz, 3), streetFrontage(plan, cx, cz, 2));
   buildCorners(ground); buildMouths(ground, cx, cz);
-  buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, seed));
+  buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, seed), plates && { ew: streetNameEW(cz), ns: streetNameNS(cx), plates });
   if (elevatedLine(CS, cz)) buildElevated(solid);
-  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) { const ic = plan.interchangeStreet(axis, cx, cz); buildFreewayStreet(ground, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null); }   // (the ground batch: the truck's see-through spotlight leaves it be)
+  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) {
+    const ic = plan.interchangeStreet(axis, cx, cz), F = plan.freewayFrame!;
+    const gantry = ic?.gantry != null && plates ? { at: ic.gantry, face: ic.face, k: ic.k, text: `EXIT ${F.exitNo} · ${F.name} CENTER`, other: `I-${F.route} ${F.wayOut}`, plates } : null;
+    buildFreewayStreet(ground, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null, gantry);
+  }   // (the ground batch: the truck's see-through spotlight leaves it be)
   if (CS.cableCar && cableColumn(cx)) buildCableTracks(ground);
   const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
   let stalls: StallPose[] = [];
@@ -269,9 +277,11 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
       group.add(mesh); signMesh = signAtlas.attach(mesh, slots, DC.ads);
     }
     if (DC.mquads.length) group.add(new THREE.Mesh(quadGeometry(DC.mquads), marquee.material));
+    const plateMesh = DC.plates?.build() ?? null;
+    if (plateMesh) group.add(plateMesh.mesh);
     const pools = DC.pools.build(); if (pools) group.add(pools);
     if (DC.lampSites.length) LAMP_SITES.set(group, DC.lampSites.slice());   // their light: applyLampLight
-    group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (signMesh) signAtlas.detach(signMesh); LAMP_SITES.delete(group); };
+    group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (signMesh) signAtlas.detach(signMesh); plateMesh?.dispose(); LAMP_SITES.delete(group); };
     if (stalls.length && fleet) { const f = fleet(stalls); if (f) group.add(f); }
     group.userData.district = district;
     return group;
@@ -694,7 +704,7 @@ const PLAIN_FRONT = (side: number): Frontage => ({ side, drive: null, sign: null
 function buildOutskirts(ground: Batch, solid: Batch, lamps: Batch, plan: CityPlan, cx: number, cz: number, rnd: Rand) {
   const ew = ARM_ALL(cx, cz, 0), ns = ARM_ALL(cx, cz, 3), node = nodeInCity(cx, cz);
   const front = (bx: number, bz: number, side: number) => insideCity(bx, bz) ? streetFrontage(plan, bx, bz, side) : PLAIN_FRONT(side);
-  if (node) { ground.box(STREET / 2, -0.05, STREET / 2, STREET, 0.1, STREET, C.asphalt); buildCorners(ground); buildMouths(ground, cx, cz); buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, plan.seed)); }
+  if (node) { ground.box(STREET / 2, -0.05, STREET / 2, STREET, 0.1, STREET, C.asphalt); buildCorners(ground); buildMouths(ground, cx, cz); buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, plan.seed), DC.plates && { ew: streetNameEW(cz), ns: streetNameNS(cx), plates: DC.plates }); }
   if (ew) { ground.box((STREET + BLOCK) / 2, -0.05, STREET / 2, BLOCK - STREET, 0.1, STREET, C.asphalt); buildStreet(ground, solid, 0, "residential", rnd, front(cx, cz - 1, 1), front(cx, cz, 0)); }
   if (ns) { ground.box(STREET / 2, -0.05, (STREET + BLOCK) / 2, STREET, 0.1, BLOCK - STREET, C.asphalt); buildStreet(ground, solid, 1, "residential", rnd, front(cx - 1, cz, 3), front(cx, cz, 2)); }
   if (cityDistance(cx, cz) > RING) return;

@@ -162,8 +162,8 @@ const POSSESSIVE = new Set<FacilityId>(["tireDist", "autoShop", "diner", "deli",
 
 const ordinal = (n: number) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
 const wrapIndex = (n: number, len: number) => ((n % len) + len) % len;
-const streetNameEW = (iz: number) => `${ordinal(wrapIndex(iz, 48) + 1)} St`;
-const streetNameNS = (ix: number) => `${AVENUES[wrapIndex(ix, AVENUES.length)]} Ave`;
+export const streetNameEW = (iz: number) => `${ordinal(wrapIndex(iz, 48) + 1)} St`;
+export const streetNameNS = (ix: number) => `${AVENUES[wrapIndex(ix, AVENUES.length)]} Ave`;
 
 export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: number): string {
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);

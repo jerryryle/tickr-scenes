@@ -9,6 +9,7 @@
 //   t in [13, 23)     north-south green
 //   t in [23, 25.5)   north-south yellow
 //   t in [25.5, 26)   all red
+import type { PlateSet } from "./signs.ts";
 import * as THREE from "three@0.187.0";
 import { hash2 } from "./rng.ts";
 import { Batch } from "./geom.ts";
@@ -134,7 +135,9 @@ const POLE = 0x2b2f33, HOUSING = 0x15181a;
 // with lanes from `kerb` to `w - kerb`. Each approach gets a pole on its far-right corner and an
 // arm reaching over its two lanes with a head per lane. Poles and heads go in `solid`; lamps
 // (boxes that protrude, so their tops read from the overhead camera) go in `lamps`.
-export function buildSignals(solid: Batch, lamps: Batch, w: number, kerb: number, offset: number) {
+// `names`: the streets crossing here (its east-west one and its north-south one), for the name
+// plates on the mast arms, each naming the cross street to the traffic coming up to it.
+export function buildSignals(solid: Batch, lamps: Batch, w: number, kerb: number, offset: number, names: { ew: string; ns: string; plates: PlateSet } | null = null) {
   const c = w / 2;
   // Approaches: heading (unit dx, dz), the pole corner, the arm's direction, and the axis.
   // Facing the approaching traffic means the head's lamps point along -heading.
@@ -153,6 +156,13 @@ export function buildSignals(solid: Batch, lamps: Batch, w: number, kerb: number
     const ex = a.px + a.ax * reach, ez = a.pz + a.az * reach;
     solid.span(Math.min(a.px, ex) - 0.08, armY - 0.1, Math.min(a.pz, ez) - 0.08,
                Math.max(a.px, ex) + 0.08, armY + 0.08, Math.max(a.pz, ez) + 0.08, POLE);
+    if (names) {
+      // The cross street's name on a plate over the arm, near the pole, facing the traffic.
+      const sx = a.px + a.ax * 2.3, sz = a.pz + a.az * 2.3, y = armY + 0.42;
+      solid.box(sx, y, sz, ew ? 0.05 : 2.5, 0.42, ew ? 2.5 : 0.05, 0x1e6b3a);
+      solid.box(sx, armY + 0.12, sz, 0.06, 0.12, 0.06, POLE);
+      names.plates.put((ew ? names.ns : names.ew).toUpperCase(), sx - a.hx * 0.035, y, sz - a.hz * 0.035, 2.4, 0.3, Math.atan2(-a.hx, -a.hz));
+    }
     // One head over each lane centre (1.5 m and 4.5 m from the centre line), lamps facing
     // the approaching traffic: red on top, then yellow, then green.
     for (const lane of [1.5, 4.5]) {
