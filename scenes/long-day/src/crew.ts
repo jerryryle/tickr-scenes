@@ -80,11 +80,11 @@ export class Crew {
     {
       const YEL = 0xe8a317, DARK = 0x2a2b2e, b = new Batch();
       b.box(-1.25, 0.55, 0, 1.7, 0.7, 1.1, YEL);
-      b.box(-2.0, 0.8, 0, 0.45, 1.05, 1.1, DARK);
-      b.box(-1.2, 1.0, 0, 0.5, 0.12, 0.55, BLACK); b.box(-1.42, 1.3, 0, 0.1, 0.55, 0.55, BLACK);   // seat
+      b.box(-2.0, 0.8, 0, 0.45, 1.05, 1.16, DARK);   // (counterweight a little wider than the body: no shared faces)
+      b.box(-1.2, 1.0, 0, 0.5, 0.12, 0.55, BLACK); b.box(-1.42, 1.3, 0, 0.1, 0.55, 0.49, BLACK);   // seat
       b.cyl(-0.85, 1.25, -0.1, 0.03, 0.5, BLACK, 6, 0, -0.5);
       for (const x of [-0.55, -1.75]) for (const z of [-0.48, 0.48]) b.box(x, 1.55, z, 0.06, 1.3, 0.06, BLACK);
-      b.box(-1.15, 2.2, 0, 1.3, 0.06, 1.02, BLACK);
+      b.box(-1.15, 2.2, 0, 1.3, 0.06, 1.08, BLACK);   // (overhangs the posts)
       for (const z of [-0.33, 0.33]) b.box(-0.25, 1.15, z, 0.09, 2.1, 0.09, 0x3a3c40);
       for (const [x, r] of [[-0.6, 0.32], [-1.85, 0.25]] as const) for (const z of [-0.5, 0.5]) b.cyl(x, r, z, r, 0.22, BLACK, 10, Math.PI / 2);
       this.forklift = new THREE.Group(); this.forklift.add(b.build(material)!);
