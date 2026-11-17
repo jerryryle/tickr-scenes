@@ -586,11 +586,13 @@ export class Journey {
     if (!stop?.site || (stop.kind !== "pickup" && stop.kind !== "drop") || model === "tractor" || model === "flatbed") return false;
     return siteLayout(this.plan, stop.site.bx, stop.site.bz).kind === "garage";
   }
-  // The truck's height (and grade) where it is drawn: up a garage's ramps or on its roof.
-  truckLift(): { y: number; grade: number } {
+  // The truck's height (and grade) where it is drawn: up a garage's ramps or on its roof. The grade
+  // is from the rear axle to the front one `wb` metres on (both wheels on the ramp, through a turn
+  // where it levels off too).
+  truckLift(wb = 5): { y: number; grade: number } {
     const st = this.st;
     if (st.mode === "country" || st.mode === "inbound") return { y: 0, grade: 0 };
-    if (this.path && this.path.ramps.length) { const s = st.s - (1 - this.alpha) * this.lastStep; return { y: this.path.yAt(s), grade: this.path.gradeAt(s) }; }
+    if (this.path && this.path.ramps.length) { const s = st.s - (1 - this.alpha) * this.lastStep, y = this.path.yAt(s); return { y, grade: (this.path.yAt(s + wb) - y) / wb }; }
     if (st.garageExit) return { y: st.garageExit.kind === "helix" ? HELIX_TOP : GARAGE_H, grade: 0 };
     return { y: 0, grade: 0 };
   }

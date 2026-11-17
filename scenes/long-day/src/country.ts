@@ -436,7 +436,7 @@ export class CountryRoad {
   gradeAt(s: number) { return (this.heightAt(s + 3) - this.heightAt(s - 3)) / 6; }
   // The truck's height and grade at s: the road's, or up the on-ramp and on the freeway.
   truckY(s: number) { return this.baseAt(s) + (this.inp.toFreewayMerge ? (s > this.gateS ? FW_TOP : onRampY(this.gateS - s)) : 0); }
-  truckGrade(s: number) { return (this.truckY(s + 3) - this.truckY(s - 3)) / 6; }
+  truckGrade(s: number, wb = 5) { return (this.truckY(s + wb) - this.truckY(s)) / wb; }   // (rear axle to front)
   // The freeway's frame, on a road into a freeway city (freeway.ts).
   private fwFrame: Frame | null = null;
   get freewayFrame(): Frame | null { if (!this.inp.toFreeway) return null; if (!this.fwFrame) this.fwFrame = Frame.ofRoad(this); return this.fwFrame; }

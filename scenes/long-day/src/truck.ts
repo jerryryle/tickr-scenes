@@ -482,7 +482,8 @@ export class Truck {
       const c = this.ivTmp.set((x0 + x1) / 2, (y0 + y1) / 2, 0).applyMatrix4(parent.matrixWorld);
       const f = this.ivTmp2.set(1, 0, 0).transformDirection(parent.matrixWorld);
       out[i].set(c.x, c.y, c.z, Math.atan2(-f.z, f.x));
-      out[i + 1].set((x1 - x0) / 2, (y1 - y0) / 2, hw, on ? 1 : 0);
+      // (w: off 0, on 2 + the body's pitch, so the box tilts with it up a ramp: atmosphere.ts.)
+      out[i + 1].set((x1 - x0) / 2, (y1 - y0) / 2, hw, on ? 2 + Math.atan2(f.y, Math.hypot(f.x, f.z)) : 0);
     };
     const c = this.boxSpec;
     if (c && this.boxParent) box(0, this.boxParent, c.x0 + 0.12, c.x1 - 0.07,   // starts behind the closed rear door (x0 + 0.09), which is one double-sided sheet

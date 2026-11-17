@@ -68,7 +68,8 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
   // under it a solid wall low down, columns higher up.
   const { up, down } = garageTracks(side), p: Pose = { x: 0, z: 0, h: 0, k: 0 };
   type V = [number, number, number];
-  const quad = (a: V, b: V, c: V, d: V, color: number, face: V) => { solid.tri(...a, ...b, ...c, color, face); solid.tri(...a, ...c, ...d, color, face); };
+  // (In the ground batch, like a road: the truck's see-through spotlight leaves it be.)
+  const quad = (a: V, b: V, c: V, d: V, color: number, face: V) => { ground.tri(...a, ...b, ...c, color, face); ground.tri(...a, ...c, ...d, color, face); };
   for (const t of [up, down]) {
     const STEP = 0.75, pts: { x: number; z: number; y: number; rx: number; rz: number }[] = [];
     for (let s = 0; s <= t.length + 1e-6; s += STEP) { const ss = Math.min(s, t.length); t.eval(ss, p); pts.push({ x: p.x, z: p.z, y: t.yAt(ss), rx: Math.sin(p.h), rz: Math.cos(p.h) }); }

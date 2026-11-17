@@ -102,8 +102,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // Out of town, the road's hills (and up an on-ramp onto a freeway); in town, up a garage's
     // ramps and on its roof, or down a freeway's off-ramp.
     const m = journey.st.mode, pr = m === "country" || m === "inbound" ? pickRoad0() : null;
-    if (pr && pr.s > 0) truck.setGrade(pr.road.truckY(pr.s), pr.road.truckGrade(pr.s));
-    else { const lift = journey.truckLift(); truck.setGrade(lift.y, lift.grade); }
+    if (pr && pr.s > 0) truck.setGrade(pr.road.truckY(pr.s), pr.road.truckGrade(pr.s, truck.wheelbase));
+    else { const lift = journey.truckLift(truck.wheelbase); truck.setGrade(lift.y, lift.grade); }
     truck.speed = journey.st.v; truck.accel = journey.accel;
     // Reversing into a bay, the trailer leads along the bay path; ease into it from however the
     // hitch left it on the way in.

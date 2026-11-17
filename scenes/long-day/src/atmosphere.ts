@@ -113,13 +113,18 @@ export function applyLampLight(mat: THREE.Material) {
       vec3 q = vLampWP - C.xyz;
       float cy = cos(C.w), sy = sin(C.w);
       vec3 l = vec3(q.x * cy - q.z * sy, q.y, q.x * sy + q.z * cy);
-      if (H.w > 0.5 && all(lessThan(abs(l), H.xyz))) dome = 1.0 - 0.35 * (H.y - l.y) / (2.0 * H.y);   // brightest up by the lamp
+      if (H.w > 0.5) {
+        // (Tilted with the body: H.w is 2 + its pitch.)
+        float p = H.w - 2.0, cp = cos(p), sp = sin(p);
+        vec3 m = vec3(l.x * cp + l.y * sp, -l.x * sp + l.y * cp, l.z);
+        if (all(lessThan(abs(m), H.xyz))) dome = 1.0 - 0.35 * (H.y - m.y) / (2.0 * H.y);   // brightest up by the lamp
+      }
     }
     // Light scales with the surface's own colour (plus a little, so dark asphalt still shows it).
     totalEmissiveRadiance += (diffuseColor.rgb * 1.2 + 0.045) * uLampLightOn * (vec3(1.0, 0.78, 0.5) * min(lit, 1.3) + vec3(1.0, 0.93, 0.8) * head + vec3(1.0, 0.95, 0.85) * dome);
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v5";
+  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v6";
   mat.needsUpdate = true;
 }
 
