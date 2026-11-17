@@ -54,8 +54,9 @@ export interface Route { ix: number; iz: number; dir: number; before: number; mo
 export const GARAGE_H = 4.8;
 // `helix`: a freeway's off-ramp instead (interchange.ts), from its right-hand lane at the deck's
 // height: out across a deceleration lane that peels off the deck to the right (where it starts
-// down), round three-quarters of a loop down into the block beside, and a right turn out into the
-// street's kerb lane beneath the freeway.
+// down), round three-quarters of a loop down into the block beside, a right turn at its foot onto
+// a lane along the block just behind the sidewalk, and a taper from it across the kerb cut into
+// the street's kerb lane beneath the freeway (a slip-lane merge).
 export const HELIX_TOP = 9.6;   // (freeway.ts FW_TOP)
 export interface GarageGeom { x: number; z: number; h: number; kind?: "helix" }
 type TailStep = { turn: number; sgn: 1 | -1; v: number } | { line: number; v: number; shift?: number };
@@ -63,10 +64,10 @@ const GARAGE_IN: TailStep[] = [{ turn: 7, sgn: -1, v: 2.8 }, { line: 26.5, v: 3.
 const GARAGE_OUT: TailStep[] = [{ line: 9, v: 3 }, { turn: 7, sgn: 1, v: 2.6 }, { line: 33.5, v: 3.4 }, { turn: 9, sgn: 1, v: 3 }];
 export const OFFRAMP_SHIFT = 7.6, OFFRAMP_LEN = 80, OFFRAMP_R = 17.5;
 const HELIX_Q: TailStep = { turn: OFFRAMP_R, sgn: -1, v: 6 };
-const HELIX_OUT: TailStep[] = [{ line: OFFRAMP_LEN, v: 11, shift: OFFRAMP_SHIFT }, HELIX_Q, HELIX_Q, HELIX_Q, { line: 17, v: 6 }, { turn: 9, sgn: -1, v: 4 }];
+const HELIX_OUT: TailStep[] = [{ line: OFFRAMP_LEN, v: 11, shift: OFFRAMP_SHIFT }, HELIX_Q, HELIX_Q, HELIX_Q, { line: 8.5, v: 5 }, { turn: 8, sgn: -1, v: 4 }, { line: 24, v: 5, shift: -9.5 }];
 // (Down from 70% of the way out across the deceleration lane, once it is clear of the deck, to
 // the foot of the loop's way out.)
-const HELIX_RAMP = [0, 4, 0.7];
+const HELIX_RAMP = [0, 5, 0.7];
 // Where on the way in the ramp rises (from the start of step 1 to the end of step 2), and where on
 // the way out it comes down.
 const GARAGE_IN_RAMP = [1, 2], GARAGE_OUT_RAMP = [1, 2];

@@ -17,10 +17,11 @@ import { STREET } from "./grid.ts";
 // (The barrier is open from where the deceleration lane starts to the gore's nose, where the
 // ramp's left edge leaves the deck: see offrampNose.)
 export function interchangeOpen(): [number, number] { return [FW_OFF_A, FW_OFF_A + offrampNose()]; }
-export const INTERCHANGE_CLEAR: [number, number] = [8, 26];
-export const INTERCHANGE_DRIVE: [number, number] = [8, 26];
+export const INTERCHANGE_CLEAR: [number, number] = [22, 48];
+export const INTERCHANGE_DRIVE: [number, number] = [26, 47];
 const DECK_EDGE = -1.6;   // the freeway deck's right edge (frontage n)
 const ASPH_EDGE = -2.0;   // and its asphalt's (the deceleration lane's surface runs on from it)
+const KERB_LINE = -3.0;   // the street's kerb line (frontage n): the sidewalk's front edge
 const PAVE_Y = 0.036;     // the ramp's pavement at street level: just over the kerb cut's apron
 const IC_W = 3.1;
 const icSmooth = (u: number) => { const x = Math.min(Math.max(u, 0), 1); return x * x * x * (10 + x * (6 * x - 15)); };
@@ -54,9 +55,11 @@ export function buildInterchange(ground: Batch, solid: Batch, side: number, seed
   const pts: { x: number; z: number; y: number; rx: number; rz: number; l: number; r: number; c: number; free: boolean }[] = [];
   for (let s = 0; s <= t.length + 1e-6; s += 0.75) {
     const ss = Math.min(s, t.length); t.eval(ss, p);
-    const c = across(p.x, p.z), on = ss < OFFRAMP_LEN;
-    pts.push({ x: p.x, z: p.z, y: t.yAt(ss), rx: Math.sin(p.h), rz: Math.cos(p.h), c, free: ss >= nose,
-      l: on && ss < nose ? Math.max(-W, ASPH_EDGE - c) : -W, r: on ? Math.min(W, offRight(ss)) : W });
+    const c = across(p.x, p.z), on = ss < OFFRAMP_LEN, y = t.yAt(ss);
+    // (At the foot, where it tapers into the street, its pavement stops at the kerb line: the
+    // street's own asphalt is the rest.)
+    const l = on && ss < nose ? Math.max(-W, ASPH_EDGE - c) : y < 0.04 && !on ? Math.max(-W, KERB_LINE - c) : -W;
+    pts.push({ x: p.x, z: p.z, y, rx: Math.sin(p.h), rz: Math.cos(p.h), c, free: ss >= nose, l, r: on ? Math.min(W, offRight(ss)) : W });
   }
   // All of it in the ground batch, like the freeway: the truck's see-through spotlight leaves it be.
   type V = [number, number, number];
@@ -70,12 +73,12 @@ export function buildInterchange(ground: Batch, solid: Batch, side: number, seed
     const a = pts[i], b = pts[i + 1];
     if (a.r - a.l < 0.05 && b.r - b.l < 0.05) continue;
     const ground0 = Math.max(a.y, b.y) < 0.04;
-    if (ground0 && Math.min(a.c, b.c) < -3) continue;             // out in the street: the street's own
+    if (ground0 && a.r - a.l < 0.05 && b.r - b.l < 0.05) continue;   // out in the street: the street's own
     const rx = (a.rx + b.rx) / 2, rz = (a.rz + b.rz) / 2, my = (a.y + b.y) / 2;
     quad(at(i, a.l, 0), at(i, a.r, 0), at(i + 1, b.r, 0), at(i + 1, b.l, 0), IC_TOP, [0, 1, 0]);
     // Edge lines: the right one all the way; the left one from the gore's nose (the freeway's
     // own line, dashed along the deceleration lane, meets it there).
-    for (const k of [-1, 1]) if (k > 0 || (a.free && b.free)) {
+    for (const k of [-1, 1]) if ((k > 0 || (a.free && b.free)) && !(k < 0 && (a.l > -W + 0.01 || b.l > -W + 0.01) && ground0)) {
       const ea = k > 0 ? a.r : a.l, eb = k > 0 ? b.r : b.l;
       quad(at(i, ea - k * 0.6, 0.006), at(i, ea - k * 0.45, 0.006), at(i + 1, eb - k * 0.45, 0.006), at(i + 1, eb - k * 0.6, 0.006), 0xe8e8e0, [0, 1, 0]);
     }
