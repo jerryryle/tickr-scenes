@@ -29,7 +29,7 @@ import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
 import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, interchangeOpen } from "./interchange.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
-import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
+import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
@@ -342,7 +342,7 @@ class LevelProbe {
 // lights, furniture, sign posts, yard trees), as world circles, for the driver's walks
 // (chores.ts): found by building the chunks that hold the block and its four streets with the
 // recorder on. Cached per block, like the doors: a pure function of the city.
-export interface PavementObstacle { x: number; z: number; r: number }
+export interface PavementObstacle { x: number; z: number; r: number; kind?: number }   // kind: decor.ts PK
 // A vehicle parked in a dock's yard, axis-aligned: its middle and half its size along x and z.
 export interface ParkedObstacle { x: number; z: number; hx: number; hz: number }
 const PAVEMENT_CACHE = new Map<string, PavementObstacle[]>();
@@ -359,7 +359,7 @@ export function pavementObstacles(plan: CityPlan, bx: number, bz: number): Pavem
     const rec: number[] = [], boxes: number[] = [];
     PAVEMENT.out = rec; PAVEMENT.boxes = cx === bx && cz === bz ? boxes : null; BATCH.dry = true;   // placement only: no geometry
     try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = PAVEMENT.boxes = null; BATCH.dry = false; }
-    for (let i = 0; i < rec.length; i += 3) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2] });
+    for (let i = 0; i < rec.length; i += 4) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2], kind: rec[i + 3] });
     for (let i = 0; i < boxes.length; i += 4)
       parked.push({ x: cx * BLOCK + (boxes[i] + boxes[i + 2]) / 2, z: cz * BLOCK + (boxes[i + 1] + boxes[i + 3]) / 2, hx: Math.abs(boxes[i + 2] - boxes[i]) / 2, hz: Math.abs(boxes[i + 3] - boxes[i + 1]) / 2 });
   }
@@ -618,7 +618,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (inDrive(d, at, 2) || inDrive(c, at, 0)) continue;
     const dir = side < cl ? 1 : -1; // arm reaches over the road
     const [px, pz] = axis === 0 ? [at, side] : [side, at];
-    s.cyl(px, 3.75, pz, 0.1, 7.5, C.pole, 6); pavementObstacle(px, pz, 0.15);
+    s.cyl(px, 3.75, pz, 0.1, 7.5, C.pole, 6); pavementObstacle(px, pz, 0.15, PK.lamp);
     const [hx, hz] = axis === 0 ? [px, side + dir * 1.6] : [side + dir * 1.6, pz];
     s.span(Math.min(px, hx) - 0.06, 7.35, Math.min(pz, hz) - 0.06, Math.max(px, hx) + 0.06, 7.47, Math.max(pz, hz) + 0.06, C.pole);
     s.aux.set(0, 0, -2); s.box(hx, 7.3, hz, axis === 0 ? 0.35 : 0.7, 0.16, axis === 0 ? 0.7 : 0.35, C.lampHead); s.aux.set(0, 0, -1);

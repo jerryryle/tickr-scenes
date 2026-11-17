@@ -7,7 +7,11 @@
 // in a block side's frontage frame (city.ts frontPt) and converted to world each frame.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
-import { Batch } from "./geom.ts";
+import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, walkSwing } from "./figure.ts";
+import type { Body } from "./figure.ts";
+import { CLOCK, Vignettes } from "./vignettes.ts";
+import type { Adopt, KerbParked } from "./vignettes.ts";
+import { weatherMix } from "./climate.ts";
 import { signalState } from "./signals.ts";
 import type { SignalAxis, SignalPreempt } from "./signals.ts";
 import { CityPlan, FRONT_NODE, frontPt, insideCity, pick } from "./city.ts";
@@ -24,52 +28,69 @@ interface Ped {
   x: number; z: number; h: number; px: number; pz: number; ph: number; pphase: number;   // and one step ago
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
   balloon: { x: number; y: number; z: number; free: boolean; t: number; py: number } | null;
+  s?: number; hat?: number; umbrella?: number; cup?: boolean;   // a child's scale; a cap; an umbrella's colour; a coffee
 }
+// What else street life needs from the journey this step (vignettes.ts).
+export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string> }
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
 const BELLE = 0xf4ead8;
-const SHIRTS = [0xc0392b, 0x2e86c1, 0x27ae60, 0xf1c40f, 0x8e44ad, 0xecf0f1, 0x2c3e50, 0xe67e22, 0x16a085, 0xd35400, 0x34495e, 0xff8fb0];
-const PANTS = [0x2c3e50, 0x1f2a44, 0x4a4a4a, 0x7a5a3a, 0x222222, 0x5a6a7a, 0xc8b89a];
-const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0x6b4423];
-const HAIRS = [0x2a1a10, 0x5a3a1a, 0x111111, 0xc8a050, 0x8a3a1a, 0xaaaaaa];
 // Side order round a block, walking clockwise (+1): north (0) -> east (3) -> south (1) -> west (2).
 const NEXT_SIDE = [3, 2, 0, 1], PREV_SIDE_CW = [2, 3, 1, 0];
 
 export class Crowd {
-  private mesh: THREE.InstancedMesh;
+  private F: Figures;
   private peds: Ped[] = [];
   private flocks: Flock[] = [];
-  private n = 0;
-  private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private e = new THREE.Euler();
-  private p3 = new THREE.Vector3(); private s3 = new THREE.Vector3(); private col = new THREE.Color();
   private rng = new Rng(0xc40d);
   private rnd = this.rng.next;
   private time = 0;   // render time (tails, wings)
   readonly obstacles: Obstacle[] = [];
   private vendorCount = 0;
+  private time0 = 0;   // journey time this step
 
+  readonly vig: Vignettes;
   constructor(scene: THREE.Scene, material: THREE.Material, cap = 520) {
-    const b = new Batch(); b.box(0, 0, 0, 1, 1, 1, 0xffffff);
-    this.mesh = new THREE.InstancedMesh(b.build(material)!.geometry, material, cap);
-    this.mesh.count = 0; this.mesh.frustumCulled = false;
-    for (let i = 0; i < cap; i++) this.mesh.setColorAt(i, this.col.set(0xffffff));
-    scene.add(this.mesh);
+    this.F = new Figures(scene, material, cap);
+    this.vig = new Vignettes(new Figures(scene, material, 2400, 48));
+    this.vig.adopt = (a) => this.adopt(a);
   }
 
-  clear() { this.peds.length = 0; this.flocks.length = 0; this.vendorCount = 0; this.obstacles.length = 0; }
+  clear() { this.peds.length = 0; this.flocks.length = 0; this.vendorCount = 0; this.obstacles.length = 0; this.vig.clear(); }
   // A new city: nobody about, and the random stream from the city's seed.
-  reset(seed: number) { this.clear(); this.rng.s = seed >>> 0; }
-  save() { return { rng: this.rng.s, peds: this.peds, flocks: this.flocks, vendors: this.vendorCount }; }
+  reset(seed: number) { this.clear(); this.rng.s = seed >>> 0; this.vig.reset((seed ^ 0x5bd1e995) >>> 0); }
+  save() { return { rng: this.rng.s, peds: this.peds, flocks: this.flocks, vendors: this.vendorCount, vig: this.vig.save() }; }
   load(o: ReturnType<Crowd["save"]>) {
     this.rng.s = o.rng; this.peds = o.peds; this.flocks = o.flocks; this.vendorCount = o.vendors;
+    this.vig.load(o.vig);
     this.obstacles.length = 0;
     for (const p of this.peds) this.obstacles.push({ x: p.x, z: p.z, r: 0.4 });
+    this.obstacles.push(...this.vig.obstacles);
+  }
+
+  // Someone a vignette is done with, walking on as one of the crowd.
+  adopt(a: Adopt) {
+    const p: Ped = {
+      kind: a.dog !== undefined ? "dog" : "walk", bx: a.bx, bz: a.bz, side: a.side, a: a.a, dir: a.dir, n: a.n,
+      speed: a.speed ?? 1.2, phase: this.rnd() * 10, state: "walk", crossA: 0, crossLen: 16, waitT: 0,
+      shirt: a.shirt, pants: a.pants, skin: a.skin, hair: a.hair, x: 0, z: 0, h: 0, px: 0, pz: 0, ph: 0, pphase: 0,
+      dog: a.dog !== undefined ? { x: 0, z: 0, h: 0, phase: 0, color: a.dog } : null, balloon: null,
+      s: a.s, hat: a.hat, umbrella: a.umbrella, cup: a.cup,
+    };
+    // (Round the corner first if handed over past the end of the side.)
+    if (p.dir > 0 && p.a > 51 - p.n) this.turnCorner(p);
+    else if (p.dir < 0 && p.a < 9 + p.n) this.turnCorner(p);
+    this.place(p);
+    p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
+    if (p.dog) { const fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h); p.dog.x = p.x - fx * 1.2 - rx * 0.45; p.dog.z = p.z - fz * 1.2 - rz * 0.45; p.dog.h = p.h; }
+    this.peds.push(p);
   }
 
   // One fixed step (the journey's), around `focus`; `prs` are the signals the truck has held.
-  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[]) {
+  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], more: CrowdMore = { cars: [], parked: null, busy: new Set() }) {
     const dt = SIM_DT;
+    this.time0 = simTime;
     for (const p of this.peds) { p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase; if (p.balloon) p.balloon.py = p.balloon.y; }
     for (const f of this.flocks) f.pa = f.a;
     for (let i = this.peds.length - 1; i >= 0; i--) {
@@ -84,6 +105,8 @@ export class Crowd {
     for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus);
     this.obstacles.length = 0;
     for (const p of this.peds) { this.walk(p, dt, plan, simTime, prs, truck); this.obstacles.push({ x: p.x, z: p.z, r: 0.4 }); }
+    this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
+    this.obstacles.push(...this.vig.obstacles);
     this.updateFlocks(dt, plan, focus);
   }
 
@@ -111,6 +134,9 @@ export class Crowd {
     if (kind === "dog") p.dog = { x: 0, z: 0, h: 0, phase: 0, color: r() < 0.45 ? BELLE : pick(r, [0x8a5a3a, 0x222222, 0xc8a060, 0xeeeeee]) };
     if (kind === "chase") p.balloon = { x: 0, y: 2.2, z: 0, free: false, t: 0, py: 2.2 };
     if (kind === "vendor") { p.shirt = 0xffffff; p.pants = 0x2c3e50; }
+    // In the rain, umbrellas; first thing in the morning, coffee.
+    if ((kind === "walk" || kind === "dog") && weatherMix(plan.climate?.weather ?? "clear").rain > 0.3 && r() < 0.65) p.umbrella = pick(r, UMBRELLAS);
+    else if (kind === "walk" && district !== "park" && district !== "residential") { const hr = CLOCK.hourAt(this.time0); if (hr >= 6.5 && hr < 10 && r() < 0.35) p.cup = true; }
     this.place(p);
     p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
     if (Math.hypot(p.x - focus.x, p.z - focus.z) < PED_SPAWN[0] - 5) return;
@@ -133,8 +159,17 @@ export class Crowd {
       // Wait for the truck if it's across the sidewalk just ahead.
       const fx = Math.cos(p.h), fz = -Math.sin(p.h);
       const blocked = truck.some((o) => { const rx = o.x - p.x, rz = o.z - p.z, al = rx * fx + rz * fz; return al > 0 && al < o.r + 1.2 && Math.abs(rx * -fz + rz * fx) < o.r + 0.4; });
-      if (!blocked) { p.a += p.dir * p.speed * dt; p.phase += p.speed * dt; }
-      p.n += ((p.dir > 0 ? -0.65 : -1.1) - p.n) * Math.min(1, dt * 2);
+      // Round a vignette on the pavement (to whichever side of it there is room), or wait.
+      let nT = p.dir > 0 ? -0.65 : -1.1, held = false;
+      const fp = this.vig.blocker(p.bx, p.bz, p.side, p.a, p.dir);
+      if (fp && fp[3] > nT - 0.35 && fp[2] < nT + 0.35) {
+        const inner = fp[3] + 0.4, outer = fp[2] - 0.4;
+        if (inner <= -0.2 && (outer < -2.9 || Math.abs(inner - nT) < Math.abs(outer - nT))) nT = inner;
+        else if (outer >= -2.9) nT = outer;
+        else held = (p.dir > 0 ? fp[0] - p.a : p.a - fp[1]) < 1.2;
+      }
+      if (!blocked && !held) { p.a += p.dir * p.speed * dt; p.phase += p.speed * dt; }
+      p.n += (nT - p.n) * Math.min(1, dt * 2);
       if ((p.dir > 0 && p.a >= corner) || (p.dir < 0 && p.a <= corner)) {
         p.a = corner;
         if (this.rnd() < 0.35 && p.kind !== "chase") { p.state = "wait"; p.waitT = 0; }
@@ -197,26 +232,15 @@ export class Crowd {
   }
 
   // ---- drawing ------------------------------------------------------------------------------
-  private box(x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw: number, pitch: number, color: number) {
-    if (this.n >= this.mesh.instanceMatrix.count) return;
-    this.q.setFromEuler(this.e.set(0, yaw, pitch, "YXZ"));
-    this.mesh.setMatrixAt(this.n, this.m4.compose(this.p3.set(x, y, z), this.q, this.s3.set(sx, sy, sz)));
-    this.mesh.setColorAt(this.n++, this.col.set(color));
-  }
-  // A limb hanging from (x, y, z), swung by `swing` about the body's side axis.
-  private limb(x: number, y: number, z: number, yaw: number, swing: number, len: number, w: number, color: number) {
-    const fx = Math.cos(yaw), fz = -Math.sin(yaw), half = len / 2;
-    this.box(x + fx * Math.sin(swing) * half, y - Math.cos(swing) * half, z + fz * Math.sin(swing) * half, w, len, w, yaw, swing, color);
-  }
+  private box(x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw: number, pitch: number, color: number) { this.F.box(x, y, z, sx, sy, sz, yaw, pitch, color); }
 
   // Draw everyone `alpha` of the way from the last step to this one; `time` drives tails and wings.
   draw(alpha: number, time: number) {
     this.time = time;
-    this.n = 0;
-    const cap = this.mesh.instanceMatrix.count;
-    this.mesh.count = cap;
+    const F = this.F;
+    F.begin();
     for (const p of this.peds) {
-      if (this.n + 14 > cap) break;
+      if (!F.room(16)) break;
       // Drawn at the in-between pose: swap it in for the drawing, then put the step's pose back.
       const sx = p.x, sz = p.z, sh = p.h, sph = p.phase, d0 = p.dog, b0 = p.balloon;
       const dsx = d0?.x ?? 0, dsz = d0?.z ?? 0, dsh = d0?.h ?? 0, dsp = d0?.phase ?? 0, bsx = b0?.x ?? 0, bsy = b0?.y ?? 0, bsz = b0?.z ?? 0;
@@ -231,73 +255,54 @@ export class Crowd {
       if (b0) { b0.x = bsx; b0.y = bsy; b0.z = bsz; }
     }
     this.drawFlocks(alpha);
-    this.mesh.count = this.n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    F.end_();
+    this.vig.draw(alpha, time);
   }
 
   private drawPed(p: Ped) {
-    {
-      const moving = p.state !== "wait" && p.kind !== "vendor" && p.kind !== "musician";
-      const run = p.kind === "jog" || p.kind === "chase";
-      const sw = moving ? Math.sin(p.phase * (run ? 3.2 : 4.6)) * (run ? 0.75 : 0.5) : 0;
-      const bob = moving ? Math.abs(Math.sin(p.phase * (run ? 3.2 : 4.6))) * (run ? 0.08 : 0.04) : 0;
-      const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
-      const hip = 0.88 + bob, lean = run ? 0.15 : 0;
-      for (const k of [-1, 1]) this.limb(p.x + rx * k * 0.1, hip, p.z + rz * k * 0.1, h, sw * k, 0.86, 0.13, p.pants);
-      this.box(p.x + fx * lean * 0.3, hip + 0.3, p.z + fz * lean * 0.3, 0.24, 0.62, 0.36, h, -lean, p.shirt);
-      const headX = p.x + fx * lean * 0.6, headZ = p.z + fz * lean * 0.6, headY = hip + 0.73;
-      this.box(headX, headY, headZ, 0.21, 0.24, 0.2, h, 0, p.skin);
-      this.box(headX - fx * 0.02, headY + 0.11, headZ - fz * 0.02, 0.23, 0.07, 0.22, h, 0, p.hair);
-      let armSwing = -sw * 0.8;
-      if (p.kind === "musician") armSwing = 0.9 + 0.25 * Math.sin(p.phase * 7);
-      if (p.kind === "vendor") armSwing = 0.3 + 0.2 * Math.sin(p.phase * 1.3);
-      if (p.kind === "chase") armSwing = 2.4;   // reaching for the string
-      for (const k of [-1, 1]) this.limb(p.x + rx * k * 0.25 + fx * lean * 0.4, hip + 0.58, p.z + rz * k * 0.25 + fz * lean * 0.4, h, k > 0 && p.kind === "chase" ? armSwing : armSwing * (p.kind === "chase" ? 0.4 : k), 0.6, 0.1, p.shirt);
-      if (p.kind === "musician") this.box(p.x + fx * 0.25, hip + 0.25, p.z + fz * 0.25, 0.12, 0.3, 0.8, h + 0.7, 0, 0x8a5a2a);   // guitar
-      if (p.kind === "vendor") {   // cart with an umbrella, between the vendor and the kerb
-        const cx = p.x + fx * 1.0, cz = p.z + fz * 1.0;
-        this.box(cx, 0.6 + CURB_H, cz, 0.9, 0.8, 1.6, h, 0, 0xd8dadc);
-        this.box(cx, 1.05 + CURB_H, cz, 0.92, 0.1, 1.62, h, 0, 0xc0392b);
-        this.box(cx, 1.6 + CURB_H, cz, 0.05, 1.1, 0.05, h, 0, 0x555555);
-        this.box(cx, 2.15 + CURB_H, cz, 1.8, 0.1, 1.8, h, 0, 0xf2c200);
-      }
-      if (p.dog) {
-        const d = p.dog, dh = d.h, dfx = Math.cos(dh), dfz = -Math.sin(dh), drx = Math.sin(dh), drz = Math.cos(dh), ds = Math.sin(d.phase * 5) * 0.6;
-        const y0 = CURB_H;
-        this.box(d.x, y0 + 0.32, d.z, 0.5, 0.2, 0.2, dh, 0, d.color);
-        const belle = d.color === BELLE, hs = belle ? 1.25 : 1;   // Belle's head is a fluffy ball
-        this.box(d.x + dfx * 0.3, y0 + 0.45, d.z + dfz * 0.3, 0.2 * hs, 0.19 * hs, 0.18 * hs, dh, 0, d.color);
-        this.box(d.x + dfx * 0.28, y0 + 0.43, d.z + dfz * 0.28, 0.09, 0.17, 0.3 * hs, dh, 0, belle ? 0xd9b48c : d.color);   // floppy ears
-        this.box(d.x + dfx * (0.3 + 0.11 * hs), y0 + 0.43, d.z + dfz * (0.3 + 0.11 * hs), 0.04, 0.05, 0.05, dh, 0, 0x2a1a12);   // nose
-        if (belle) this.box(d.x + dfx * 0.19, y0 + 0.37, d.z + dfz * 0.19, 0.05, 0.13, 0.19, dh, 0, 0x5a3a26);               // collar
-        for (const [ax, sz] of [[0.18, -1], [0.18, 1], [-0.18, -1], [-0.18, 1]] as const)
-          this.limb(d.x + dfx * ax + drx * sz * 0.07, y0 + 0.24, d.z + dfz * ax + drz * sz * 0.07, dh, ds * sz * (ax > 0 ? 1 : -1), 0.22, 0.06, d.color);
-        this.box(d.x - dfx * 0.3, y0 + 0.42, d.z - dfz * 0.3, 0.2, 0.05, 0.05, dh, 0.7 + 0.3 * Math.sin(this.time * 12), d.color);   // wagging
-      }
-      if (p.balloon) {
-        const b = p.balloon;
-        this.box(b.x, b.y, b.z, 0.42, 0.5, 0.42, 0, 0, 0xe8202a);
-        if (!b.free) { const mx = (b.x + p.x) / 2, mz = (b.z + p.z) / 2; this.box(mx, (b.y + 1.5) / 2, mz, 0.02, b.y - 1.5, 0.02, 0, 0, 0xeeeeee); }
-      }
+    const F = this.F, moving = p.state !== "wait" && p.kind !== "vendor" && p.kind !== "musician";
+    const run = p.kind === "jog" || p.kind === "chase", w = walkSwing(p.phase, run), s = p.s ?? 1;
+    const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), ct = (p.a - p.crossA) * p.dir;
+    const inRoad = p.state === "cross" && ct > 1.2 && ct < p.crossLen - 1.2;
+    const b: Body = {
+      x: p.x, z: p.z, yaw: h, s, y: (inRoad ? 0.02 : CURB_H) + (moving ? w.bob : 0),
+      legs: moving ? w.legs : [0, 0], arms: moving ? w.arms : [0, 0], lean: run ? 0.15 : 0,
+      shirt: p.shirt, pants: p.pants, skin: p.skin, hair: p.hair, hat: p.hat,
+    };
+    if (p.kind === "musician") { const m = 0.9 + 0.25 * Math.sin(p.phase * 7); b.arms = [-m, m]; }
+    if (p.kind === "vendor") { const m = 0.3 + 0.2 * Math.sin(p.phase * 1.3); b.arms = [-m, m]; }
+    if (p.kind === "chase") b.arms = [0.96, 2.4];   // reaching for the string
+    if (p.umbrella !== undefined) { b.arms = [b.arms![0], 0.55]; b.fore = [b.arms![0], 2.2]; }
+    else if (p.cup) { b.arms = [b.arms![0], 0.35]; b.fore = [b.arms![0], 1.55]; }
+    F.person(b);
+    if (p.umbrella !== undefined) { const hd = F.handR; F.umbrella(hd[0] - fx * 0.05, F.head[1] + 0.42 * s, hd[2] - fz * 0.05, hd, p.umbrella, 0, h + Math.PI / 4); }
+    else if (p.cup) { const hd = F.handR; F.box(hd[0], hd[1] + 0.06, hd[2], 0.07, 0.12, 0.07, 0, 0, 0xf4f0e8); F.box(hd[0], hd[1] + 0.13, hd[2], 0.075, 0.02, 0.075, 0, 0, 0x3a2a1e); }
+    if (p.kind === "musician") this.box(p.x + fx * 0.25, b.y! + 0.86 + 0.25, p.z + fz * 0.25, 0.12, 0.3, 0.8, h + 0.7, 0, 0x8a5a2a);   // guitar
+    if (p.kind === "vendor") {   // cart with an umbrella, between the vendor and the kerb
+      const cx = p.x + fx * 1.0, cz = p.z + fz * 1.0;
+      this.box(cx, 0.6 + CURB_H, cz, 0.9, 0.8, 1.6, h, 0, 0xd8dadc);
+      this.box(cx, 1.05 + CURB_H, cz, 0.92, 0.1, 1.62, h, 0, 0xc0392b);
+      this.box(cx, 1.6 + CURB_H, cz, 0.05, 1.1, 0.05, h, 0, 0x555555);
+      this.box(cx, 2.15 + CURB_H, cz, 1.8, 0.1, 1.8, h, 0, 0xf2c200);
+    }
+    if (p.dog) this.F.dog({ x: p.dog.x, z: p.dog.z, yaw: p.dog.h, phase: p.dog.phase, color: p.dog.color, belle: p.dog.color === BELLE, tail: this.time * 12 });
+    if (p.balloon) {
+      const bl = p.balloon;
+      this.box(bl.x, bl.y, bl.z, 0.42, 0.5, 0.42, 0, 0, 0xe8202a);
+      if (!bl.free) { const mx = (bl.x + p.x) / 2, mz = (bl.z + p.z) / 2; this.box(mx, (bl.y + 1.5) / 2, mz, 0.02, bl.y - 1.5, 0.02, 0, 0, 0xeeeeee); }
     }
   }
 
   private drawFlocks(alpha: number) {
-    const cap = this.mesh.instanceMatrix.count;
     for (const f of this.flocks) for (let i = 0; i < f.n; i++) {
-      if (this.n + 3 > cap) break;
+      if (!this.F.room(3)) break;
       const a = f.pa + (f.a - f.pa) * alpha + i * (Math.PI * 2 / f.n) * 0.35, rr = f.r + (i % 3) * 0.9;
       const x = f.cx + Math.cos(a) * rr, z = f.cz + Math.sin(a) * rr, y = f.y + Math.sin(a * 2 + i) * 0.8;
       const yaw = f.w > 0 ? Math.atan2(-Math.cos(a), -Math.sin(a)) : Math.atan2(Math.cos(a), Math.sin(a)), flap = Math.sin(this.time * 9 + i * 1.7) * 0.6;
       const body = f.gull ? 0xf2f2f0 : 0x7a7f88, wing = f.gull ? 0xe0e0e0 : 0x5a5f68;
       const rx = Math.sin(yaw), rz = Math.cos(yaw);
       this.box(x, y, z, 0.32, 0.12, 0.12, yaw, 0, body);
-      for (const k of [-1, 1]) {
-        this.q.setFromEuler(this.e.set(k * flap, yaw, 0, "YXZ"));
-        this.mesh.setMatrixAt(this.n, this.m4.compose(this.p3.set(x + rx * k * 0.2, y + Math.sin(k * flap) * 0.1 * k, z + rz * k * 0.2), this.q, this.s3.set(0.16, 0.03, 0.38)));
-        this.mesh.setColorAt(this.n++, this.col.set(wing));
-      }
+      for (const k of [-1, 1]) this.F.box(x + rx * k * 0.2, y + Math.sin(k * flap) * 0.1 * k, z + rz * k * 0.2, 0.16, 0.03, 0.38, yaw, 0, wing, k * flap);
     }
   }
 }

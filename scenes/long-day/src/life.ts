@@ -10,11 +10,13 @@ import type { LifeHook } from "./journey.ts";
 import { Traffic, truckObstacles } from "./traffic.ts";
 import type { Obstacle } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
+import type { KerbParked } from "./vignettes.ts";
 import { Ambient } from "./ambient.ts";
 
 export class StreetLife implements LifeHook {
   private obs: Obstacle[] = [];
   private spare: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  private busy = new Set<string>();
 
   constructor(private traffic: Traffic, private crowd: Crowd, private ambient: Ambient) {}
 
@@ -33,6 +35,7 @@ export class StreetLife implements LifeHook {
     const p = j.pose, obs = this.obs;
     obs.length = 0;
     truckObstacles(st.truck, p.x, p.z, p.h, j.trailerYaw() ?? 0, obs);
+    const truckN = obs.length;
     // Parked at a stop (or just pulled up at one, or waiting for its next job), traffic changes
     // lanes early to pass (not at a red light).
     const parked = st.mode === "drive" && Math.abs(st.v) < 0.3 && (!j.path || st.stopS - st.s < 25);
@@ -53,7 +56,17 @@ export class StreetLife implements LifeHook {
       for (let k = n0; k < obs.length; k++) obs[k].still = true;
     }
     const prs = st.preempt ?? [];
-    this.crowd.step(j.plan, st.simTime, prs, p, obs);
+    // For the vignettes: the truck parked at a kerb stop (its cab), and the blocks it is to stop at.
+    let parkedAt: KerbParked | null = null;
+    const stop0 = st.stops[0];
+    if (st.mode === "dwell" && stop0 && stop0.kind !== "swap" && stop0.site && !j.isDockStop(stop0)) {
+      const fx = Math.cos(p.h), fz = -Math.sin(p.h);
+      let best = -Infinity;
+      for (let k = 0; k < truckN; k++) { const o = obs[k], al = (o.x - p.x) * fx + (o.z - p.z) * fz; if (al > best) { best = al; parkedAt = { x: p.x, z: p.z, h: p.h, cabX: o.x, cabZ: o.z }; } }
+    }
+    this.busy.clear();
+    for (const s of st.stops) if (s.site) this.busy.add(`${s.site.bx},${s.site.bz}`);
+    this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy });
     this.traffic.step(j.plan, st.simTime, prs, p, obs, p.h, this.crowd.obstacles);
     this.ambient.stepBlimp(p, st.simTime);
   }

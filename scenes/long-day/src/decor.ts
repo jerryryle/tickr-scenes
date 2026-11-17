@@ -21,7 +21,9 @@ interface RoofSpot { r: Rect; top: number }
 // What stands on the pavement, as circles (x, z, radius, chunk-local), recorded while a probe
 // build (city.ts pavementObstacles) runs, so the driver can walk round it; null otherwise.
 export const PAVEMENT: { out: number[] | null; boxes: number[] | null } = { out: null, boxes: null };
-export function pavementObstacle(x: number, z: number, r: number) { PAVEMENT.out?.push(x, z, r); }
+export function pavementObstacle(x: number, z: number, r: number, kind = 0) { PAVEMENT.out?.push(x, z, r, kind); }
+// What a pavement obstacle is, for the street life that uses it (vignettes.ts): 0 anything else.
+export const PK = { hydrant: 1, trash: 2, bench: 3, mailbox: 4, news: 5, meter: 6, shelter: 7, rack: 8, lamp: 9 } as const;
 // A vehicle parked off the street (in a dock's yard), axis-aligned from (x0, z0) to (x1, z1).
 export function parkedObstacle(x0: number, z0: number, x1: number, z1: number) { PAVEMENT.boxes?.push(x0, z0, x1, z1); }
 export const DC = {
@@ -192,43 +194,43 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
     axis === 0 ? s.box(al, y, ac, lal, h, lac, color) : s.box(ac, y, al, lac, h, lal, color);
   const cyl = (al: number, y: number, ac: number, r: number, h: number, color: number, seg = 8) =>
     axis === 0 ? s.cyl(al, y, ac, r, h, color, seg) : s.cyl(ac, y, al, r, h, color, seg);
-  const rec = (p: number, across: number, r: number) => axis === 0 ? pavementObstacle(p, across, r) : pavementObstacle(across, p, r);
+  const rec = (p: number, across: number, r: number, kind = 0) => axis === 0 ? pavementObstacle(p, across, r, kind) : pavementObstacle(across, p, r, kind);
   const free = (p: number, half: number) => p - half > STREET + 2.5 && p + half < BLOCK - 2.5 && busy.every(([a, b]) => p + half < a || p - half > b);
-  const place = (half: number, f: (p: number) => void) => {
+  const place = (half: number, f: (p: number) => void, kind = 0) => {
     for (let t = 0; t < 12; t++) {
       const p = range(rnd, STREET + 3, BLOCK - 3);
-      if (free(p, half)) { f(p); busy.push([p - half - 0.4, p + half + 0.4]); rec(p, ac, half + 0.15); return true; }
+      if (free(p, half)) { f(p); busy.push([p - half - 0.4, p + half + 0.4]); rec(p, ac, half + 0.15, kind); return true; }
     }
     return false;
   };
   const ac = kerbAcross + inward * 0.7, y0 = CURB_H;   // 0.7 m in from the kerb face
   // Every sidewalk gets a hydrant.
-  place(0.3, (p) => { cyl(p, y0 + 0.35, ac, 0.13, 0.7, 0xc0392b); cyl(p, y0 + 0.74, ac, 0.16, 0.1, 0xc0392b); box(p, y0 + 0.45, ac, 0.42, 0.1, 0.1, 0xd04a3a); });
+  place(0.3, (p) => { cyl(p, y0 + 0.35, ac, 0.13, 0.7, 0xc0392b); cyl(p, y0 + 0.74, ac, 0.16, 0.1, 0xc0392b); box(p, y0 + 0.45, ac, 0.42, 0.1, 0.1, 0xd04a3a); }, PK.hydrant);
   if (district === "industrial") return;
   // Trash can and a bench.
-  place(0.3, (p) => { cyl(p, y0 + 0.45, ac, 0.28, 0.9, 0x2e4a3a); cyl(p, y0 + 0.92, ac, 0.3, 0.06, 0x223a2e); });
+  place(0.3, (p) => { cyl(p, y0 + 0.45, ac, 0.28, 0.9, 0x2e4a3a); cyl(p, y0 + 0.92, ac, 0.3, 0.06, 0x223a2e); }, PK.trash);
   if (district !== "residential" || rnd() < 0.3)
     place(0.95, (p) => { box(p, y0 + 0.45, ac + inward * 0.1, 1.8, 0.08, 0.45, 0x7a5232); box(p, y0 + 0.75, ac + inward * 0.33, 1.8, 0.4, 0.06, 0x7a5232);
-      for (const k of [-0.8, 0.8]) box(p + k, y0 + 0.22, ac + inward * 0.1, 0.07, 0.44, 0.4, 0x2a2b2e); });
-  if (rnd() < 0.5) place(0.3, (p) => { box(p, y0 + 0.55, ac, 0.5, 1.1, 0.45, 0x1f4f9f); box(p, y0 + 1.1, ac, 0.52, 0.1, 0.47, 0x1a3f80); });   // mailbox (the lid overhangs: shared planes flicker)
+      for (const k of [-0.8, 0.8]) box(p + k, y0 + 0.22, ac + inward * 0.1, 0.07, 0.44, 0.4, 0x2a2b2e); }, PK.bench);
+  if (rnd() < 0.5) place(0.3, (p) => { box(p, y0 + 0.55, ac, 0.5, 1.1, 0.45, 0x1f4f9f); box(p, y0 + 1.1, ac, 0.52, 0.1, 0.47, 0x1a3f80); }, PK.mailbox);   // mailbox (the lid overhangs: shared planes flicker)
   if (district === "commercial" || district === "downtown") {
-    place(0.75, (p) => { for (const [k, c] of [[-0.4, 0xc0392b], [0.3, 0xf2c200]] as const) box(p + k, y0 + 0.5, ac, 0.45, 1.0, 0.4, c); });   // newspaper boxes
+    place(0.75, (p) => { for (const [k, c] of [[-0.4, 0xc0392b], [0.3, 0xf2c200]] as const) box(p + k, y0 + 0.5, ac, 0.45, 1.0, 0.4, c); }, PK.news);   // newspaper boxes
     // A row of parking meters along the kerb.
     const start = range(rnd, STREET + 6, STREET + 14);
     for (let i = 0; i < 4; i++) {
       const p = start + i * 6;
       if (!free(p, 0.15)) continue;
       cyl(p, y0 + 0.6, kerbAcross + inward * 0.45, 0.04, 1.2, 0x55585c, 5); box(p, y0 + 1.28, kerbAcross + inward * 0.45, 0.2, 0.28, 0.16, 0x9aa0a6);
-      busy.push([p - 0.3, p + 0.3]); rec(p, kerbAcross + inward * 0.45, 0.15);
+      busy.push([p - 0.3, p + 0.3]); rec(p, kerbAcross + inward * 0.45, 0.15, PK.meter);
     }
     if (rnd() < 0.3) place(1.9, (p) => {     // bus shelter
       const back = kerbAcross + inward * 1.75, front = kerbAcross + inward * 0.35;   // open to the kerb, clear of the walkway
       box(p, y0 + 1.25, back, 3.6, 2.5, 0.06, 0x8fb8c8); box(p, y0 + 2.55, (back + front) / 2, 3.8, 0.1, 1.6, 0x3a3d40);
       for (const k of [-1.75, 1.75]) box(p + k, y0 + 1.25, (back + front) / 2, 0.08, 2.5, 1.4, 0x3a3d40);
       box(p, y0 + 0.45, back - inward * 0.3, 2.8, 0.08, 0.4, 0x55585c);
-    });
+    }, PK.shelter);
   }
-  if (district === "downtown" && rnd() < 0.5) place(0.9, (p) => { for (const k of [-0.6, 0, 0.6]) box(p + k, y0 + 0.4, ac, 0.05, 0.8, 0.6, 0x9aa0a6); });   // bike rack
+  if (district === "downtown" && rnd() < 0.5) place(0.9, (p) => { for (const k of [-0.6, 0, 0.6]) box(p + k, y0 + 0.4, ac, 0.05, 0.8, 0.6, 0x9aa0a6); }, PK.rack);   // bike rack
   // A manhole cover in the road.
   const mh = range(rnd, STREET + 8, BLOCK - 8);
   if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);

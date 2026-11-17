@@ -21,6 +21,16 @@ static geometry (`parkedCar`). Draw new cars with these rather than building the
 `tools/showroom.ts` is a test scene that lines them up (and a parking garage) for a close look:
 `make tool SCENE=long-day TOOL=showroom SECS=17` renders it to `build/long-day-showroom/showroom.png`.
 
+`src/vignettes.ts` holds the street vignettes (a dog at a "no dogs" sign, a dog walker towed by a
+pack, a wet-paint bench, window washers, a crossing guard, a food truck's queue, snow and night
+scenes and the rest), each chosen for its district, hour, weather and season and placed on real
+pavement furniture or doors. `src/figure.ts` draws their people, dogs and props (and the crowd's).
+To watch one in a test render:
+
+```bash
+make debug SCENE=long-day DEFINE="DEBUG_VIEW=vignette DEBUG_VIGNETTE=hydrant DEBUG_HOUR=14 DEBUG_CLIMATE=summer/clear DEBUG_SKIP_MINUTES=1"
+```
+
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,
 `DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_CAMLOG`).
 Shipping builds use its defaults; a debug build overrides them, since the board only passes env

@@ -44,6 +44,7 @@ import { Frame, FreewayReach, FreewayTraffic, FW_TIP } from "./freeway.ts";
 import { Backdrop } from "./backdrop.ts";
 import { Traffic } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
+import { CLOCK, VIG_LOG } from "./vignettes.ts";
 import { Ambient } from "./ambient.ts";
 import { StreetLife } from "./life.ts";
 
@@ -268,6 +269,15 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const p = truck.root.position;
       engine.camera.position.set(p.x, 160, p.z + 0.01); engine.camera.lookAt(p.x, 0, p.z);
       focus.copy(p); engine.setViewDistance(400, 160); return;
+    }
+    if (DEBUG_VIEW === "vignette") {   // test renders: watching the debug vignette from the street
+      const w = crowd?.vig.view();
+      if (w) {
+        engine.camera.position.set(w.x + w.ox * w.back - w.fx * w.back * 0.45, w.y, w.z + w.oz * w.back - w.fz * w.back * 0.45);
+        engine.camera.lookAt(w.x, w.look, w.z); focus.copy(truck.root.position); updateDriverSpot(engine.camera, null);
+        streamer.update(new THREE.Vector3(w.x, 0, w.z));
+        updateCutaway(engine.camera, focus, false); engine.setViewDistance(streamer.clearDistance(engine.camera.position.x, engine.camera.position.z), 30); return;
+      }
     }
     if (DEBUG_VIEW === "rear" || DEBUG_VIEW === "door") {   // test renders: close on the back of the truck (street side), or towards the building
       const L = truckLayout(truck.model), h = truck.heading, p = truck.root.position;
@@ -630,6 +640,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
       freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
+      CLOCK.hourAt = (t) => atmosphere.hourAt(t);   // (the vignettes keep the hours)
+      VIG_LOG.out = (line) => sys.log(line);
       atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
       setSignalTime(base);
       streamer.fill(truck.root.position);
@@ -676,7 +688,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         if (outside) streamer.setRadius(5);
         else if (streamer.radius > STREAM_RADIUS && fogClear >= 0 && fogClear <= (STREAM_RADIUS + 0.6) * BLOCK) streamer.setRadius(STREAM_RADIUS);
         aheadDir.x = Math.cos(truck.heading); aheadDir.z = -Math.sin(truck.heading);
-        streamer.update(truck.root.position, aheadDir);
+        if (!((DEBUG_VIEW as string) === "vignette" && crowd.vig.view())) streamer.update(truck.root.position, aheadDir);   // (test renders: streamed round the vignette instead)
       }
       {
         const bd = backdropState(pr);
