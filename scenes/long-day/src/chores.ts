@@ -116,6 +116,57 @@ function walkRoute(a: [number, number, number], b: [number, number, number], obs
   return [b];   // boxed in: straight through
 }
 
+// A vehicle parked in a dock's yard (or the truck itself) that the driver walks round: a box in
+// the truck's frame, centred on (x, z), hx / hz half its length along (ax, az) and its width
+// across that.
+export interface WalkBox { x: number; z: number; hx: number; hz: number; ax: number; az: number }
+// The legs of a walk from a to b (on the ground) round boxes: the shortest way through the
+// corners of each box (stood off from it), by what can be seen from where. Boxes either end is in
+// or beside (standing at a trailer's door) are ignored; if there is no way round, straight through.
+function boxRoute(a: [number, number, number], b: [number, number, number], all: WalkBox[]): [number, number, number][] {
+  const CLEAR = BODY_R - 0.04, STAND = BODY_R + 0.3;   // how close a path may pass, and where its corners are
+  const local = (o: WalkBox, x: number, z: number) => { const dx = x - o.x, dz = z - o.z; return [dx * o.ax + dz * o.az, -dx * o.az + dz * o.ax]; };
+  const inside = (o: WalkBox, x: number, z: number, m: number) => { const [u, v] = local(o, x, z); return Math.abs(u) < o.hx + m && Math.abs(v) < o.hz + m; };
+  const boxes = all.filter((o) => !inside(o, a[0], a[2], CLEAR + 0.01) && !inside(o, b[0], b[2], CLEAR + 0.01));
+  // Whether the segment p-q passes through a box (grown by CLEAR): slabs in the box's own frame.
+  const blocked = (px: number, pz: number, qx: number, qz: number) => boxes.some((o) => {
+    const [u0, v0] = local(o, px, pz), [u1, v1] = local(o, qx, qz);
+    let t0 = 0, t1 = 1;
+    for (const [p0, d, h] of [[u0, u1 - u0, o.hx + CLEAR], [v0, v1 - v0, o.hz + CLEAR]]) {
+      if (Math.abs(d) < 1e-9) { if (Math.abs(p0) >= h) return false; continue; }
+      let ta = (-h - p0) / d, tb = (h - p0) / d;
+      if (ta > tb) [ta, tb] = [tb, ta];
+      t0 = Math.max(t0, ta); t1 = Math.min(t1, tb);
+      if (t0 >= t1) return false;
+    }
+    return t1 - t0 > 1e-6;
+  });
+  if (!blocked(a[0], a[2], b[0], b[2])) return [b];
+  const pts: [number, number][] = [[a[0], a[2]], [b[0], b[2]]];
+  for (const o of boxes) for (const [su, sv] of [[1, 1], [1, -1], [-1, -1], [-1, 1]]) {
+    const u = su * (o.hx + STAND), v = sv * (o.hz + STAND), x = o.x + u * o.ax - v * o.az, z = o.z + u * o.az + v * o.ax;
+    if (!boxes.some((q) => inside(q, x, z, CLEAR))) pts.push([x, z]);
+  }
+  // Dijkstra from a (0) to b (1).
+  const n = pts.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), done = new Array(n).fill(false);
+  dist[0] = 0;
+  for (;;) {
+    let i = -1;
+    for (let k = 0; k < n; k++) if (!done[k] && dist[k] < Infinity && (i < 0 || dist[k] < dist[i])) i = k;
+    if (i < 0 || i === 1) break;
+    done[i] = true;
+    for (let k = 0; k < n; k++) {
+      if (done[k]) continue;
+      const d = dist[i] + Math.hypot(pts[k][0] - pts[i][0], pts[k][1] - pts[i][1]);
+      if (d < dist[k] && !blocked(pts[i][0], pts[i][1], pts[k][0], pts[k][1])) { dist[k] = d; prev[k] = i; }
+    }
+  }
+  if (prev[1] < 0) return [b];
+  const legs: [number, number, number][] = [];
+  for (let k = prev[1]; k > 0; k = prev[k]) legs.unshift([pts[k][0], 0, pts[k][1]]);
+  return [...legs, b];
+}
+
 // Units moved per trip by hand, matching what the driver is seen carrying (loads.ts
 // buildCarried): a hand truck's stack, a pallet jack's pallet, one or two in the arms, one
 // rolled, one on the dolly, one lifted between two. Every trip carries
@@ -249,16 +300,19 @@ function stowSpots(L: TruckLayout, model: TruckModel, stop: Stop, slot0: number,
 // `kerbDoor`: at the kerb, the building's front door (truck frame: where to stand in front of it,
 // and the yaw that faces it), or null for a spot on the pavement behind the truck.
 export function planChores(model: TruckModel, stop: Stop, dockStair: number | null = null, slot0 = 0, rearBefore: number | null = null, rearAfter: number | null = null,
-                    kerbDoor: { x: number; z: number; yaw: number } | null = null, obstacles: WalkObstacle[] = []): Chore[] {
+                    kerbDoor: { x: number; z: number; yaw: number } | null = null, obstacles: WalkObstacle[] = [], boxes: WalkBox[] = []): Chore[] {
   const L = truckLayout(model);
   const cargo = CARGO_BY_ID.get(stop.cargo)!;
   const st = STYLE[cargo.handling];
   const pickup = stop.kind === "pickup";
   const out: Chore[] = [];
   const add = (c: Chore) => { out.push(c); return c; };
-  // A walk on the ground goes round what stands in the way (trees, lights, furniture), in legs.
+  // A walk on the ground goes round what stands in the way (trees, lights, furniture, vehicles
+  // parked in a dock's yard), in legs.
   const walk = (group: ChoreGroup, a: [number, number, number], b: [number, number, number], speed: number, extra: Partial<Chore> = {}) => {
-    const legs = obstacles.length && !extra.linear && a[1] === 0 && b[1] === 0 ? walkRoute(a, b, obstacles) : [b];
+    const ground = !extra.linear && a[1] === 0 && b[1] === 0;
+    const legs = !ground ? [b] : boxes.length ? boxRoute(a, b, [...boxes, ...obstacles.map((o) => ({ x: o.x, z: o.z, hx: o.r, hz: o.r, ax: 1, az: 0 }))])
+      : obstacles.length ? walkRoute(a, b, obstacles) : [b];
     let c: Chore | null = null, from = a;
     for (const to of legs) { c = add({ kind: "walk", group, len: Math.max(0.4, dist3(from, to) / speed), a: from, b: to, ...extra }); from = to; }
     return c!;

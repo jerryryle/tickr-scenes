@@ -20,8 +20,10 @@ import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, 
 interface RoofSpot { r: Rect; top: number }
 // What stands on the pavement, as circles (x, z, radius, chunk-local), recorded while a probe
 // build (city.ts pavementObstacles) runs, so the driver can walk round it; null otherwise.
-export const PAVEMENT: { out: number[] | null } = { out: null };
+export const PAVEMENT: { out: number[] | null; boxes: number[] | null } = { out: null, boxes: null };
 export function pavementObstacle(x: number, z: number, r: number) { PAVEMENT.out?.push(x, z, r); }
+// A vehicle parked off the street (in a dock's yard), axis-aligned from (x0, z0) to (x1, z1).
+export function parkedObstacle(x0: number, z0: number, x1: number, z1: number) { PAVEMENT.boxes?.push(x0, z0, x1, z1); }
 export const DC = {
   lamps: null as unknown as Batch,     // neon and flags (the lamp material animates them)
   plates: null as PlateSet | null,     // street name and freeway plates (null in probe builds)

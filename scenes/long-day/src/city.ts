@@ -29,7 +29,7 @@ import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
 import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, interchangeOpen } from "./interchange.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
-import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
+import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
@@ -343,24 +343,34 @@ class LevelProbe {
 // (chores.ts): found by building the chunks that hold the block and its four streets with the
 // recorder on. Cached per block, like the doors: a pure function of the city.
 export interface PavementObstacle { x: number; z: number; r: number }
+// A vehicle parked in a dock's yard, axis-aligned: its middle and half its size along x and z.
+export interface ParkedObstacle { x: number; z: number; hx: number; hz: number }
 const PAVEMENT_CACHE = new Map<string, PavementObstacle[]>();
 let pavementSeed = NaN;
 export function pavementObstacles(plan: CityPlan, bx: number, bz: number): PavementObstacle[] {
-  if (plan.seed !== pavementSeed) { PAVEMENT_CACHE.clear(); pavementSeed = plan.seed; }
+  if (plan.seed !== pavementSeed) { PAVEMENT_CACHE.clear(); PARKED_CACHE.clear(); pavementSeed = plan.seed; }
   const key = `${plan.seed}|${plan.style.id}|${bx},${bz}`;
   const hit = PAVEMENT_CACHE.get(key);
   if (hit) return hit;
-  const out: PavementObstacle[] = [];
+  const out: PavementObstacle[] = [], parked: ParkedObstacle[] = [];
   // The block's own chunk holds its north and west streets; the next chunks east and south
   // hold the other two.
   for (const [cx, cz] of [[bx, bz], [bx + 1, bz], [bx, bz + 1]]) {
-    const rec: number[] = [];
-    PAVEMENT.out = rec; BATCH.dry = true;   // placement only: no geometry
-    try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = null; BATCH.dry = false; }
+    const rec: number[] = [], boxes: number[] = [];
+    PAVEMENT.out = rec; PAVEMENT.boxes = cx === bx && cz === bz ? boxes : null; BATCH.dry = true;   // placement only: no geometry
+    try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = PAVEMENT.boxes = null; BATCH.dry = false; }
     for (let i = 0; i < rec.length; i += 3) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2] });
+    for (let i = 0; i < boxes.length; i += 4)
+      parked.push({ x: cx * BLOCK + (boxes[i] + boxes[i + 2]) / 2, z: cz * BLOCK + (boxes[i + 1] + boxes[i + 3]) / 2, hx: Math.abs(boxes[i + 2] - boxes[i]) / 2, hz: Math.abs(boxes[i + 3] - boxes[i + 1]) / 2 });
   }
-  PAVEMENT_CACHE.set(key, out);
+  PAVEMENT_CACHE.set(key, out); PARKED_CACHE.set(key, parked);
   return out;
+}
+// The vehicles parked in a block's dock yard (world space), from the same probe build.
+const PARKED_CACHE = new Map<string, ParkedObstacle[]>();
+export function parkedObstacles(plan: CityPlan, bx: number, bz: number): ParkedObstacle[] {
+  pavementObstacles(plan, bx, bz);
+  return PARKED_CACHE.get(`${plan.seed}|${plan.style.id}|${bx},${bz}`) ?? [];
 }
 
 export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | null)[] {
@@ -1550,6 +1560,8 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // deep yard, another firm's box truck at some shallow docks.
   {
     const d = FRONT_NODE[side][2], alongX = FWD[d][0] !== 0;
+    // (Recorded for the driver's walks, who goes round them: parkedObstacles.)
+    const parked = (a0: number, a1: number, n0: number, n1: number) => { const r = frontRect(side, a0, a1, n0, n1); parkedObstacle(r.x0, r.z0, r.x1, r.z1); };
     const wheel = (b: number, n: number) => { const [wx, wz] = frontPt(side, b, n); s.cyl(wx, 0.5, wz, 0.5, 2.3, 0x1b1b1b, 10, alongX ? 0 : Math.PI / 2, alongX ? Math.PI / 2 : 0); };
     L.bays.forEach((b, i) => {
       if (used.some((u) => i >= u - 1 && i <= u + 2)) return;
@@ -1557,6 +1569,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
         if (rnd() > 0.45) return;
         const col = pick(rnd, [0xeeeeea, 0xeeeeea, 0xb03a2e, 0x2d5f9a, 0x8a8f94]);
         const rear = L.edge - 0.25, front = rear - 14.6;
+        parked(b - 1.3, b + 1.3, front - 0.3, rear);   // (and its landing gear)
         fspan(s, side, b - 1.3, b + 1.3, 1.15, 4.1, front, rear, col);
         fspan(s, side, b - 1.25, b + 1.25, 0.95, 1.15, front, rear, C.dark);
         for (const n of [rear - 1.9, rear - 3.1]) wheel(b, n);
@@ -1564,6 +1577,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
       } else if (lr(500 + i) < 0.3) {
         const col = pick(rnd, [0xf2f2ee, 0xf2f2ee, 0x2d5f9a, 0xc8a020, 0x3d6b3a]), cab = pick(rnd, [0xf2f2ee, 0x2a2b2e, col]);
         const rear = L.edge - 0.15, boxF = rear - 6.2;
+        parked(b - 1.2, b + 1.2, boxF - 2.4, rear);
         fspan(s, side, b - 1.2, b + 1.2, 1.0, 3.6, boxF, rear, col);                       // box
         fspan(s, side, b - 1.15, b + 1.15, 0.7, 1.0, boxF - 2.4, rear, C.dark);            // chassis
         fspan(s, side, b - 1.15, b + 1.15, 0.8, 2.9, boxF - 2.3, boxF - 0.05, cab);       // cab

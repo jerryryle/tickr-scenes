@@ -57,7 +57,7 @@ export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null
 const GARAGE_OUT_BEFORE = 36;
 import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from "./country.ts";
 import { bedRearX, handTrips, maxHandUnits, planChores, swapChores } from "./chores.ts";
-import type { Chore, ChoreGroup } from "./chores.ts";
+import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
 export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string): void }
 type StopKind = "pickup" | "drop" | "swap" | "depart";
@@ -132,6 +132,10 @@ export function setDoorProbe(probe: ((plan: CityPlan, bx: number, bz: number) =>
 // go round; set by the scene, absent in tests (where the walks go straight).
 let PAVEMENT_PROBE: ((plan: CityPlan, bx: number, bz: number) => { x: number; z: number; r: number }[]) | null = null;
 export function setPavementProbe(probe: typeof PAVEMENT_PROBE) { PAVEMENT_PROBE = probe; }
+// The vehicles parked in a dock's yard (city.ts parkedObstacles: axis-aligned boxes), for the
+// driver's walks there to go round; set by the scene, absent in tests.
+let PARKED_PROBE: ((plan: CityPlan, bx: number, bz: number) => { x: number; z: number; hx: number; hz: number }[]) | null = null;
+export function setParkedProbe(probe: typeof PARKED_PROBE) { PARKED_PROBE = probe; }
 
 export class Journey {
   st!: JourneyState;
@@ -742,7 +746,18 @@ export class Journey {
           if (Math.abs(x - L.bedRear) < 30 && Math.abs(z) < 25) obstacles.push({ x, z, r: o.r });
         }
       }
-      this.chores = planChores(st.truck, stop, dp ? dp.stair : null, stop.slot, before, after, door, obstacles);
+      // At a dock, the vehicles parked in the yard and the truck itself (walks round its nose
+      // to steps on the far side), as boxes in its frame.
+      const boxes: WalkBox[] = [];
+      if (dp && PARKED_PROBE && stop.site) {
+        const h = this.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+        for (const o of PARKED_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
+          const px = o.x - this.pose.x, pz = o.z - this.pose.z, x = px * fx + pz * fz, z = px * rx + pz * rz;
+          if (Math.hypot(x, z) < 80) boxes.push({ x, z, hx: o.hx, hz: o.hz, ax: fx, az: rx });   // (world x in the truck's frame)
+        }
+        if (boxes.length) boxes.push({ x: (L.front + L.rear) / 2, z: 0, hx: (L.front - L.rear) / 2, hz: L.hw, ax: 1, az: 0 });
+      }
+      this.chores = planChores(st.truck, stop, dp ? dp.stair : null, stop.slot, before, after, door, obstacles, boxes);
     }
     this.choreStart = [];
     let t = 0;
