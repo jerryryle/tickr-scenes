@@ -81,15 +81,16 @@ export function applyLampLight(mat: THREE.Material) {
     shader.uniforms.uHeadLights = HEAD_LIGHTS; shader.uniforms.uHeadY = HEAD_Y;
     shader.uniforms.uInterior = INTERIOR_LIGHT;
     shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vLampWP;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vLampWP;\nvarying vec3 vLampWN;")
       .replace("#include <project_vertex>", `#include <project_vertex>
   { vec4 lw = vec4(transformed, 1.0);
+    vec3 ln = objectNormal;
   #ifdef USE_INSTANCING
-    lw = instanceMatrix * lw;
+    lw = instanceMatrix * lw; ln = mat3(instanceMatrix) * ln;
   #endif
-    vLampWP = (modelMatrix * lw).xyz; }`);
+    vLampWP = (modelMatrix * lw).xyz; vLampWN = normalize(mat3(modelMatrix) * ln); }`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\nvarying vec3 vLampWP;\nuniform float uLampLightOn;\nuniform vec4 uLampPos[${LAMP_N}];\nuniform vec4 uHeadLights[${HEAD_N}];\nuniform float uHeadY[${HEAD_N}];\nuniform vec4 uInterior[4];`)
+      .replace("#include <common>", `#include <common>\nvarying vec3 vLampWP;\nvarying vec3 vLampWN;\nuniform float uLampLightOn;\nuniform vec4 uLampPos[${LAMP_N}];\nuniform vec4 uHeadLights[${HEAD_N}];\nuniform float uHeadY[${HEAD_N}];\nuniform vec4 uInterior[4];`)
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   if (uLampLightOn > 0.0) {
     float lit = 0.0;
@@ -108,9 +109,12 @@ export function applyLampLight(mat: THREE.Material) {
       float hc = cos(V.z), hs = sin(V.z), sz = 0.55 + 0.45 * V.w;
       vec2 hl = vec2(hd.x * hc - hd.y * hs, hd.x * hs + hd.y * hc) / (vec2(8.5, 3.6) * sz);
       float dy = vLampWP.y - uHeadY[i];
-      head += V.w * (1.0 - smoothstep(0.15, 1.0, dot(hl, hl))) * (1.0 - smoothstep(1.0, 2.6, dy)) * smoothstep(-2.5, -1.5, dy);
+      head += V.w * (1.0 - smoothstep(0.15, 1.0, dot(hl, hl))) * (1.0 - smoothstep(1.0, 2.6, dy)) * smoothstep(-2.5, -1.5, dy)
+        * max(step(0.5, vLampWN.y), smoothstep(-0.6, -0.3, dy));
     }
-    head = min(head, 1.3);
+    // (Never on what faces down, nor on the sides of what hangs below the road: a freeway deck's
+    // underside and girders, seen from the street below. The road itself faces up.)
+    head = min(head, 1.3) * smoothstep(-0.35, 0.05, vLampWN.y);
     // Dome lights: anything inside the cargo box or the cab.
     float dome = 0.0;
     for (int b = 0; b < 4; b += 2) {
@@ -129,7 +133,7 @@ export function applyLampLight(mat: THREE.Material) {
     totalEmissiveRadiance += (diffuseColor.rgb * 1.2 + 0.045) * uLampLightOn * (vec3(1.0, 0.78, 0.5) * min(lit, 1.3) + vec3(1.0, 0.93, 0.8) * head + vec3(1.0, 0.95, 0.85) * dome);
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v7";
+  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v8";
   mat.needsUpdate = true;
 }
 
