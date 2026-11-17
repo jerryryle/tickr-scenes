@@ -1156,7 +1156,9 @@ export class Journey {
   // Drive time along it.
   get countryU() { const st = this.st; return st.mode === "country" ? st.cityTime - st.departAt : st.mode === "inbound" ? st.cityTime : -1; }
   get countryS() { const r = this.country; return r ? r.sAt(Math.max(0, this.countryU)) : 0; }
-  get countryStopped() { const r = this.country, x = r ? r.stoppedAt(this.countryU) : null; return !!x && x.kind !== "weigh"; }   // (not on a weigh station's scale)
+  get countryStopped() { const r = this.country, x = r ? r.stoppedAt(this.countryU) : null; return !!x && x.kind !== "weigh" && x.kind !== "ferry"; }   // (not on a weigh station's scale or at a ferry)
+  // On a ferry: the boat carries the truck, its wheels still.
+  get countryAboard() { const r = this.country; return !!r && this.st.mode === "country" && r.aboardAt(this.countryU); }
 
   private countryPose() {
     const r = this.country!, u = this.countryU;

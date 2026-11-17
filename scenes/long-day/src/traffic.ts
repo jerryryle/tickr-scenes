@@ -368,7 +368,7 @@ export class Traffic {
 
   // Headlight patches on the road ahead of the vehicles nearest `at` (atmosphere.ts HEAD_LIGHTS),
   // into out[from..]; the rest are switched off.
-  headlights(out: THREE.Vector4[], from: number, at: { x: number; z: number }) {
+  headlights(out: THREE.Vector4[], from: number, at: { x: number; z: number }, ys: number[]) {
     const d = this.drawn, order: number[] = [];
     for (let i = 0; i < d.length; i += 4) if (Math.hypot(d[i] - at.x, d[i + 1] - at.z) < 120) order.push(i);
     order.sort((a, b) => Math.hypot(d[a] - at.x, d[a + 1] - at.z) - Math.hypot(d[b] - at.x, d[b + 1] - at.z));
@@ -376,7 +376,7 @@ export class Traffic {
       const i = order[k - from];
       if (i === undefined) { out[k].w = 0; continue; }
       const h = d[i + 2], ahead = d[i + 3] + 5;
-      out[k].set(d[i] + Math.cos(h) * ahead, d[i + 1] - Math.sin(h) * ahead, h, 0.7);
+      out[k].set(d[i] + Math.cos(h) * ahead, d[i + 1] - Math.sin(h) * ahead, h, 0.7); ys[k] = 0;   // (town traffic keeps to the streets)
     }
   }
 

@@ -48,6 +48,9 @@ const LAMP_LIGHTS = { value: Array.from({ length: LAMP_N }, () => new THREE.Vect
 // The truck's headlights on the road ahead: (x, z) of the lit patch's centre, heading, strength.
 const HEAD_N = 12;
 export const HEAD_LIGHTS = { value: Array.from({ length: HEAD_N }, () => new THREE.Vector4(0, 0, 0, 0)) };   // [0]: the truck, then the nearest traffic (w: strength, also scales the patch)
+// The height of the surface each vehicle's lights fall on (the road it is on: up on a freeway,
+// a garage's roof, a hill), set with HEAD_LIGHTS.
+export const HEAD_Y = { value: Array.from({ length: HEAD_N }, () => 0) };
 // The truck's dome lights, cargo box and cab (Truck.interiorLight).
 export const INTERIOR_LIGHT = { value: Array.from({ length: 4 }, () => new THREE.Vector4()) };
 const lampTmp = new THREE.Vector3();
@@ -75,7 +78,7 @@ export function applyLampLight(mat: THREE.Material) {
     prev(shader, renderer);
     shader.uniforms.uLampLightOn = LAMPS_ON;
     shader.uniforms.uLampPos = LAMP_LIGHTS;
-    shader.uniforms.uHeadLights = HEAD_LIGHTS;
+    shader.uniforms.uHeadLights = HEAD_LIGHTS; shader.uniforms.uHeadY = HEAD_Y;
     shader.uniforms.uInterior = INTERIOR_LIGHT;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vLampWP;")
@@ -86,7 +89,7 @@ export function applyLampLight(mat: THREE.Material) {
   #endif
     vLampWP = (modelMatrix * lw).xyz; }`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\nvarying vec3 vLampWP;\nuniform float uLampLightOn;\nuniform vec4 uLampPos[${LAMP_N}];\nuniform vec4 uHeadLights[${HEAD_N}];\nuniform vec4 uInterior[4];`)
+      .replace("#include <common>", `#include <common>\nvarying vec3 vLampWP;\nuniform float uLampLightOn;\nuniform vec4 uLampPos[${LAMP_N}];\nuniform vec4 uHeadLights[${HEAD_N}];\nuniform float uHeadY[${HEAD_N}];\nuniform vec4 uInterior[4];`)
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   if (uLampLightOn > 0.0) {
     float lit = 0.0;
@@ -95,7 +98,8 @@ export function applyLampLight(mat: THREE.Material) {
       float d = length(vLampWP.xz - L.xz);
       lit += L.w * (1.0 - smoothstep(0.5, 8.0, d)) * step(vLampWP.y, L.y);   // the pool's reach, below the lamp
     }
-    // Headlights: an oval ahead of each vehicle, low down.
+    // Headlights: an oval ahead of each vehicle, low down over the road it is on (not on what
+    // is under it: the street under a freeway).
     float head = 0.0;
     for (int i = 0; i < ${HEAD_N}; i++) {
       vec4 V = uHeadLights[i];
@@ -103,9 +107,10 @@ export function applyLampLight(mat: THREE.Material) {
       vec2 hd = vLampWP.xz - V.xy;
       float hc = cos(V.z), hs = sin(V.z), sz = 0.55 + 0.45 * V.w;
       vec2 hl = vec2(hd.x * hc - hd.y * hs, hd.x * hs + hd.y * hc) / (vec2(8.5, 3.6) * sz);
-      head += V.w * (1.0 - smoothstep(0.15, 1.0, dot(hl, hl)));
+      float dy = vLampWP.y - uHeadY[i];
+      head += V.w * (1.0 - smoothstep(0.15, 1.0, dot(hl, hl))) * (1.0 - smoothstep(1.0, 2.6, dy)) * smoothstep(-2.5, -1.5, dy);
     }
-    head = min(head, 1.3) * (1.0 - smoothstep(1.0, 2.6, vLampWP.y));
+    head = min(head, 1.3);
     // Dome lights: anything inside the cargo box or the cab.
     float dome = 0.0;
     for (int b = 0; b < 4; b += 2) {
@@ -124,7 +129,7 @@ export function applyLampLight(mat: THREE.Material) {
     totalEmissiveRadiance += (diffuseColor.rgb * 1.2 + 0.045) * uLampLightOn * (vec3(1.0, 0.78, 0.5) * min(lit, 1.3) + vec3(1.0, 0.93, 0.8) * head + vec3(1.0, 0.95, 0.85) * dome);
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v6";
+  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v7";
   mat.needsUpdate = true;
 }
 

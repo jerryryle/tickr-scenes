@@ -127,15 +127,17 @@ export class Frame {
   constructor(readonly x: number, readonly z: number, h: number, readonly near = -60, readonly far = -1e9) {
     this.ox = -Math.cos(h); this.oz = Math.sin(h); this.rx = Math.sin(h); this.rz = Math.cos(h);
   }
-  static ofCity(plan: CityPlan, g: Gate): Frame {
+  static ofCity(plan: CityPlan, g: Gate): Frame { return Frame.ofCitySeed(plan.seed, plan.name, plan.freewayMerge, g); }
+  // (The same from the city's seed and name alone: a country road out of the city needs it.)
+  static ofCitySeed(seed: number, name: string, merge: boolean, g: Gate): Frame {
     const e = gateEnd(g), f = new Frame(e.x, e.z, e.h + Math.PI);
     // The city's streets along the line, as distances out of the gate end.
     const lo = CITY_LO * BLOCK, hi = (CITY_HI + 1) * BLOCK, along = g.dir === 0 || g.dir === 2;
     const d = (u: number) => along ? (u - e.x) * f.ox : (u - e.z) * f.oz;
     const out = new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), Math.min(d(lo), d(hi)));
-    out.merge = plan.freewayMerge;
-    out.farSide = hash2(plan.seed, 0xfa5, 0, 0x7a4) < 0.5 ? 1 : -1;
-    return out.label(plan.seed, plan.name);
+    out.merge = merge;
+    out.farSide = hash2(seed, 0xfa5, 0, 0x7a4) < 0.5 ? 1 : -1;
+    return out.label(seed, name);
   }
   static ofRoad(road: CountryRoad, dx = 0, dz = 0): Frame {
     const q = road.center(road.gateS, { x: 0, z: 0, h: 0, k: 0 });
@@ -143,6 +145,14 @@ export class Frame {
     out.merge = !!road.inp.toFreewayMerge;
     const i = road.inp;
     return out.label(citySeedOf(i.seed, i.kind === "exit" ? i.city + 1 : i.city), i.toName);
+  }
+  // The deck's centre line out of town, as x, z pairs every `step` metres: the entry side, and for
+  // a city's frame the far side too (a road's frame knows only its own side).
+  centreLine(step = 8): number[] {
+    const out: number[] = [];
+    for (let d = 0; d <= FW_TIP; d += step) out.push(this.px(d, this.m(d)), this.pz(d, this.m(d)));
+    if (this.far > -1e8) for (let d = this.far; d >= this.far - FW_TIP_FAR; d -= step) out.push(this.px(d, 0), this.pz(d, 0));
+    return out;
   }
   // The deck's centre line (n) and its top at d.
   m(d: number) { return fwM(d); }

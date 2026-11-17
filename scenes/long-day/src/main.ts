@@ -14,7 +14,7 @@ import { Persistence, STATE_VERSION } from "./persist.ts";
 import type { SavedState } from "./persist.ts";
 import { applyCutaway, applyDriverSpot, cutUniforms, updateCutaway, updateDriverSpot } from "./cutaway.ts";
 import { Engine } from "./engine.ts";
-import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
+import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, HEAD_Y, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
 import { Hud } from "./hud.ts";
 import { PuffSystem } from "./puffs.ts";
 import { LIVERY_ASSETS, Truck, truckExtents, TruckKit, truckLayout } from "./truck.ts";
@@ -104,7 +104,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const m = journey.st.mode, pr = m === "country" || m === "inbound" ? pickRoad0() : null;
     if (pr && pr.s > 0) truck.setGrade(pr.road.truckY(pr.s), pr.road.truckGrade(pr.s, truck.wheelbase));
     else { const lift = journey.truckLift(truck.wheelbase); truck.setGrade(lift.y, lift.grade); }
-    truck.speed = journey.st.v; truck.accel = journey.accel;
+    const aboard = journey.countryAboard;
+    truck.speed = aboard ? 0 : journey.st.v; truck.accel = aboard ? 0 : journey.accel;
     // Reversing into a bay, the trailer leads along the bay path; ease into it from however the
     // hitch left it on the way in.
     const ty = journey.trailerYaw();
@@ -677,9 +678,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       {
         const h = truck.heading, ahead = truck.frontX + 7.5, on = truck.headlights && atmosphere.night > 0.15;
         HEAD_LIGHTS.value[0].set(truck.root.position.x + Math.cos(h) * ahead, truck.root.position.z - Math.sin(h) * ahead, h, on ? 1 : 0);
+        HEAD_Y.value[0] = truck.root.position.y;   // (up on a freeway, a garage roof, a hill)
         if (!on) for (let k = 1; k < HEAD_LIGHTS.value.length; k++) HEAD_LIGHTS.value[k].w = 0;   // the other vehicles' too
-        else if (roadShown && journey.st.mode === "country" && journey.countryS > 400) countryWorld.headlights(HEAD_LIGHTS.value, 1, truck.root.position);
-        else traffic.headlights(HEAD_LIGHTS.value, 1, truck.root.position);
+        else if (roadShown && journey.st.mode === "country" && journey.countryS > 400) countryWorld.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
+        else traffic.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
       }
       // Dome lights after dark: the cargo box always, the cab while the truck is stopped for a job.
       truck.interiorLight(INTERIOR_LIGHT.value, LAMPS_ON.value > 0, LAMPS_ON.value > 0 && journey.st.mode === "dwell");

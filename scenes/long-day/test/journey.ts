@@ -45,11 +45,19 @@ import { Journey } from "../src/journey.ts";
         if (!Number.isFinite(y)) { err(`road height not finite at ${s} (c${j.st.city})`); break; }
         if ((s < 300 || s > r.SB - 150) && Math.abs(r.baseAt(s)) > 1e-6) { err(`land not level near a city at s${s}: ${r.baseAt(s).toFixed(3)} (c${j.st.city})`); break; }
         if (s > r.length - 100 && Math.abs(y) > 1e-6) { err(`road not down at the gate at s${s} (c${j.st.city})`); break; }
-        if (Math.abs(r.floorAt(s, 3) - (r.tunnelAt(s) ? y : r.baseAt(s))) > 1e-9) { err(`ground under the road is not the road at s${s} (c${j.st.city})`); break; }
+        if (!r.inChannel(s) && Math.abs(r.floorAt(s, 3) - (r.tunnelAt(s) ? y : r.baseAt(s))) > 1e-9) { err(`ground under the road is not the road at s${s} (c${j.st.city})`); break; }
       }
       for (const p of r.pieces) for (let s = p.s - 30; s <= p.s + p.len + 30; s += 5)
         if (Math.abs(r.baseAt(s) - r.baseAt(p.s)) > 0.01) { err(`${p.kind} not level: ${(r.baseAt(s) - r.baseAt(p.s)).toFixed(2)} m at s${s.toFixed(0)} (c${j.st.city})`); break; }
       if (steep > 0.0551) err(`road too steep: ${(steep * 100).toFixed(1)}% (c${j.st.city})`);
+      // The land stays well under any freeway out in it (the city's it leaves, the next city's).
+      if (r.nearFreeways) {
+        const q = { x: 0, z: 0, h: 0, k: 0 };
+        out: for (let s = r.landFrom; s <= r.landTo; s += 12) for (let n = -160; n <= 160; n += 8) {
+          r.point(s, n, q);
+          if (r.fwDist(q.x, q.z) < 9 && r.groundAt(s, n) > 3) { err(`land up under a freeway at s${s.toFixed(0)} n${n}: ${r.groundAt(s, n).toFixed(1)} m (c${j.st.city})`); break out; }
+        }
+      }
       // By the freeway: the truck's way up the on-ramp, and along the freeway to its off-ramp.
       if (r.inp.toFreewayMerge) {
         let ts = 0;

@@ -18,11 +18,11 @@ import { BLOCK, RING } from "./grid.ts";
 import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
-import { Frame, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
+import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
-  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign";
+  | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign" | "ferry";
 export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number; open?: boolean }
 // A piece's lettered signs, in road coordinates: the centre of the lettering at (s, n) and height
 // y, its width and height, all facing the oncoming truck. countryworld.ts builds them from this,
@@ -38,6 +38,7 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     case "construction": return [{ s: S, n: 9, y: 2.6, w: 5.2, h: 0.7 }];
     case "attraction": return [{ s: S, n: side * 15, y: 3.2, w: 6.8, h: 0.85 }];
     case "weigh": return [{ s: S - 80, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
+    case "ferry": return [{ s: S - 150, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
     case "fruit": return [{ s: S, n: side * 9.5, y: 1.6, w: 4.0, h: 0.5 }];
     case "gas": return [{ s: S + 5, n: side * 11, y: 7.2, w: 4.6, h: 0.6 }];
     // A freeway's signs (freeway.ts draws them): its entrance sign by the highway, and the
@@ -46,7 +47,7 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     default: return [];
   }
 }
-type RoadStopKind = "truckstop" | "rail" | "weigh";
+type RoadStopKind = "truckstop" | "rail" | "weigh" | "ferry";
 interface CountryStop { s: number; dwell: number; kind: RoadStopKind; arrive: number }
 // A weigh station (piece "weigh", from its s): its lane beside the road, the scale on it and the
 // signal at the scale's far end. When it is open (`open`) every truck has to cross the scale: the
@@ -55,7 +56,18 @@ interface CountryStop { s: number; dwell: number; kind: RoadStopKind; arrive: nu
 export const WEIGH_N = 12.5, WEIGH_LEN = 200;
 export const WEIGH_OUT: [number, number] = [-30, 70], WEIGH_BACK: [number, number] = [125, 200];
 export const WEIGH_SCALE: [number, number] = [84, 110], WEIGH_STOP = 96, WEIGH_LIGHT = 113;
-export const WEIGH_DWELL = 7, WEIGH_GREEN = 1.5;   // (the light goes green this long before the truck pulls off)
+export const WEIGH_DWELL = 7, WEIGH_GREEN = 1.5;
+// A car ferry (piece "ferry", on some drives into a port city): from its s, the ticket booth
+// (the truck stops with its rear axle at FERRY_BOOTH), the near quay's edge at FERRY_Q0, open water
+// FERRY_W long, the far quay and FERRY_OUT of road on past it. The boat (BOAT_L long, its car
+// deck level with the quays) waits at the near quay; the truck creeps aboard and stops
+// FERRY_BOARD past the boat's rear, rides across with it, and drives off at the far quay. The
+// boat's rear is always the truck's distance less FERRY_BOARD, held between the two quays (so
+// it is a pure function of where the truck is). The water is WATER_DROP under the quays.
+export const FERRY_BOOTH = 30, FERRY_Q0 = 110, FERRY_W = 640, FERRY_OUT = 80, FERRY_LEN = FERRY_Q0 + FERRY_W + FERRY_OUT;
+export const BOAT_L = 56, BOAT_W = 14, FERRY_BOARD = 44, BOAT_GAP = 0.3, WATER_DROP = 1.6;
+const FERRY_V = 7, FERRY_ACC = 0.35, CREEP_V = 3.5, FERRY_DWELL = [6, 5, 5];   // (at the booth, aboard before it sails, at the far quay)
+export interface FerryPlan { s: number; booth: number; q0: number; q1: number; board: number; land: number }   // (the light goes green this long before the truck pulls off)
 
 const ROAD_DS = 2;               // geometry sample spacing (m)
 export const LANE = 1.85;               // right lane centre from the centre line
@@ -147,6 +159,7 @@ export class CountryRoad {
   private PM: Float64Array;         // 0 at the set pieces (the land level round them), 1 clear of them
   private S: Float64Array = new Float64Array(1); private V: Float32Array = new Float32Array(1);   // per motion step, to the hand-over
   private zone: [number, number] | null = null;
+  ferry: FerryPlan | null = null;   // this drive's ferry, if it has one
   private planStops: { s: number; dwell: number; kind: RoadStopKind }[] = [];
   trainT = -1;                     // drive time the train front reaches the far side of the road, start
   meetings: number[] = [];         // drive times oncoming cars pass the truck
@@ -174,13 +187,31 @@ export class CountryRoad {
       const at = (k: number) => m.S[Math.min(m.S.length - 1, Math.floor(k * (m.S.length - 1)))];
       const truckstopS = dur > 70 ? Math.max(900, at(0.3 + 0.2 * h(3))) : -1;
       if (truckstopS > 0 && truckstopS < L1 - 600 && h(4) < 0.6) this.pieces.push({ kind: "truckstop", s: truckstopS, side: 1, len: 260, variant: 0 });
+      // A ferry on about half the long drives into a port city (into one with a freeway, well
+      // short of the freeway's stretch). It takes the place of a truck stop in its way.
+      if (inp.toStyle.id === "port" && dur > 260 && h(140) < 0.5) {
+        for (const k of [0.5, 0.4, 0.62]) {
+          const fs = Math.max(1200, at(k));
+          if (fs + FERRY_LEN > L1 - (inp.toFreeway ? 2300 : 1100)) continue;
+          const ts = this.pieces.findIndex((p) => p.kind === "truckstop");
+          if (ts >= 0 && fs < truckstopS + 260 + 300 && fs + FERRY_LEN > truckstopS - 300) this.pieces.splice(ts, 1);
+          this.setFerry(fs);
+          break;
+        }
+      }
       const railS = dur > 170 && h(5) < 0.7 ? at(0.68) : -1;
-      if (railS > 900 && railS < L1 - 700 && (truckstopS < 0 || Math.abs(railS - truckstopS) > 400)) {
+      const nearFerry = (x: number) => !!this.ferry && x > this.ferry.s - 500 && x < this.ferry.s + FERRY_LEN + 500;
+      if (railS > 900 && railS < L1 - 700 && !nearFerry(railS) && (truckstopS < 0 || Math.abs(railS - truckstopS) > 400)) {
         this.planStops.push({ s: railS - 16, dwell: RAIL_DWELL, kind: "rail" });   // the nose short of the gate
         this.pieces.push({ kind: "rail", s: railS, side: 1, len: 80, variant: 0 });
       }
       if (this.zone) this.pieces.push({ kind: "construction", s: this.zone[0] - 60, side: 1, len: this.zone[1] - this.zone[0] + 140, variant: 0 });
       m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
+      if (this.ferry && this.ferry.s + FERRY_LEN > m.S[m.S.length - 1] - 700) {
+        this.pieces.splice(this.pieces.findIndex((p) => p.kind === "ferry"), 1);
+        this.planStops = this.planStops.filter((x) => x.kind !== "ferry"); this.ferry = null;
+        m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
+      }
       SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
       // Into a freeway city, nothing that stops the truck or sprawls by the road out where the
       // freeway and the flyover are (the drive is replanned without it: it only gets longer).
@@ -190,6 +221,7 @@ export class CountryRoad {
           this.pieces.splice(this.pieces.indexOf(p), 1);
           if (p.kind === "construction") this.zone = null;
           if (p.kind === "rail") this.planStops = this.planStops.filter((x) => x.kind !== "rail");
+          if (p.kind === "ferry") { this.planStops = this.planStops.filter((x) => x.kind !== "ferry"); this.ferry = null; }
         }
         m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
         SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
@@ -306,6 +338,7 @@ export class CountryRoad {
         const d = Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0);
         m = Math.min(m, smooth(Math.min(1, d / HILL_EASE)));
       }
+      if (this.nearFreeways) { this.center(s, this.tmpF); m = Math.min(m, smooth(Math.min(1, Math.max(0, this.fwDist(this.tmpF.x, this.tmpF.z) - 40) / HILL_EASE))); }
       let pm = 1;
       for (const p of this.pieces) pm = Math.min(pm, smooth(Math.min(1, Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0) / HILL_EASE)));
       U[i] = u; this.SM[i] = m; this.PM[i] = pm; u += m * ROAD_DS;
@@ -322,6 +355,28 @@ export class CountryRoad {
         if (i > 0) steep = Math.max(steep, Math.abs(this.Y[i] - this.Y[i - 1]) / ROAD_DS);
       }
       if (steep > MAX_GRADE) for (let i = 0; i < n; i++) this.Y[i] *= MAX_GRADE / steep;
+      // Down to the cities' level wherever the road meets a freeway out in the country (it
+      // passes under or beside it), coming down to it no steeper than the grade limit.
+      if (this.nearFreeways) {
+        const along = new Float64Array(n).fill(Infinity);
+        for (let i = 0; i < n; i++) { this.center(i * ROAD_DS, this.tmpF); if (this.fwDist(this.tmpF.x, this.tmpF.z) < 45) along[i] = 0; }
+        const spread = () => {
+          for (let i = 1; i < n; i++) along[i] = Math.min(along[i], along[i - 1] + ROAD_DS);
+          for (let i = n - 2; i >= 0; i--) along[i] = Math.min(along[i], along[i + 1] + ROAD_DS);
+        };
+        spread();
+        // (A set piece on the way down holds level: down at the bottom with the freeway.)
+        for (let more = true; more;) {
+          more = false;
+          for (const p of this.pieces) {
+            const i0 = Math.max(0, Math.floor((p.s - HILL_FLAT) / ROAD_DS)), i1 = Math.min(n - 1, Math.ceil((p.s + p.len + HILL_FLAT) / ROAD_DS));
+            let lo = Infinity, hi = 0; for (let i = i0; i <= i1; i++) { lo = Math.min(lo, along[i]); hi = Math.max(hi, along[i]); }
+            if (lo < 800 && hi > 0) { for (let i = i0; i <= i1; i++) along[i] = 0; more = true; }
+          }
+          if (more) spread();
+        }
+        for (let i = 0; i < n; i++) this.Y[i] = Math.min(this.Y[i], Math.max(0, along[i] - 10) * MAX_GRADE * 0.9);
+      }
     }
     for (let i = 0; i < n; i++) {
       const s = i * ROAD_DS, b = this.blendAt(s);
@@ -330,6 +385,30 @@ export class CountryRoad {
     this.coastFrom = this.fromBiome === "coastal" ? 1 : 0; this.coastTo = this.toBiome === "coastal" ? 1 : 0;
     if (arrival) this.D = 0;
     else this.computeMeetings();
+  }
+
+  private setFerry(fs: number) {
+    const F: FerryPlan = { s: fs, booth: fs + FERRY_BOOTH, q0: fs + FERRY_Q0, q1: fs + FERRY_Q0 + FERRY_W, board: 0, land: 0 };
+    F.board = F.q0 + FERRY_BOARD; F.land = F.q1 - BOAT_L + FERRY_BOARD;
+    this.ferry = F;
+    this.pieces.push({ kind: "ferry", s: fs, side: 1, len: FERRY_LEN, variant: 0, text: `FERRY TO ${this.inp.toName.toUpperCase()}` });
+    this.planStops.push({ s: F.booth, dwell: FERRY_DWELL[0], kind: "ferry" }, { s: F.board, dwell: FERRY_DWELL[1], kind: "ferry" }, { s: F.land, dwell: FERRY_DWELL[2], kind: "ferry" });
+    this.planStops.sort((a, b) => a.s - b.s);
+  }
+  // Across the ferry's water (strictly between the quays).
+  inChannel(s: number) { const F = this.ferry; return !!F && s > F.q0 && s < F.q1; }
+  // The water's level there.
+  get waterY() { return this.ferry ? this.baseAt(this.ferry.q0) - WATER_DROP : 0; }
+  // The ferry boat's rear, with the truck at s.
+  boatRear(s: number) { const F = this.ferry!; return THREE.MathUtils.clamp(s - FERRY_BOARD, F.q0 + BOAT_GAP, F.q1 - BOAT_L - BOAT_GAP); }
+  // The truck is on the boat at drive time t.
+  aboardAt(t: number) { const F = this.ferry; if (!F) return false; const s = this.sAt(t); return s > F.board - 0.3 && s < F.land + 0.3; }
+  // Where the land steps sheer down (the land mesh puts a row either side): tunnels' portals and the ferry's quays.
+  get cliffs(): number[] {
+    const out: number[] = [];
+    for (const p of this.pieces) if (p.kind === "tunnel") out.push(p.s, p.s + p.len);
+    if (this.ferry) out.push(this.ferry.q0, this.ferry.q1);
+    return out;
   }
 
   // The drive as it actually goes: `D` seconds from the gate to the hand-over, starting `s0` metres
@@ -367,6 +446,7 @@ export class CountryRoad {
     for (let t = 8 + 10 * h(90), i = 0; t < this.D - 6; t += 7 + 18 * hash2(i++, 3, seed + city, 0xcab)) {
       const s = this.sAt(t);
       if (s < 700 || s > this.SB - 260) continue;
+      if (this.ferry && s > this.ferry.s - 500 && s < this.ferry.s + FERRY_LEN + 500) continue;   // (they would drive into the water)
       if (rail) {
         const cross = t + (s - rail.s) / ONCOMING_SPEED;
         if (cross > rail.arrive - 8 && cross < rail.arrive + rail.dwell + 2) continue;
@@ -394,13 +474,19 @@ export class CountryRoad {
         if (t > D - 14) target = V_JOIN;
         if (this.geo) { const k = Math.max(this.kAt(s + 10), this.kAt(s + 35), this.kAt(s + 60)); if (k > 1e-5) target = Math.min(target, Math.max(V_JOIN, Math.sqrt(LAT_MAX / k))); }
         if (this.zone && s < this.zone[1]) target = Math.min(target, Math.sqrt(ZONE_V * ZONE_V + 2 * COUNTRY_BRAKE * Math.max(0, this.zone[0] - s)));
+        // The ferry: creeping on past the booth and aboard, and off at the far quay; across the
+        // water at the boat's pace, easing up to speed and down to the far quay.
+        const F = this.ferry, aboard = !!F && s >= F.board - 1e-6 && s < F.land - 0.05;
+        if (F && ((s > F.booth - 0.2 && s < F.board) || (s > F.land - 0.2 && s < F.q1 + 30))) target = Math.min(target, CREEP_V);
+        if (aboard) target = Math.min(FERRY_V, Math.sqrt(2 * FERRY_ACC * Math.max(0, F!.land - s)));
         if (next < stops.length) {
           const d = stops[next].s - s;
           target = Math.min(target, Math.max(d > 0.15 ? 0.6 : 0, Math.sqrt(2 * COUNTRY_BRAKE * Math.max(0, d))));
           if (d < 0.15 && v < 0.7) { s = stops[next].s; v = 0; dwell = 0; out.push({ ...stops[next], arrive: t }); }
         }
         if (dwell < 0) {
-          v += THREE.MathUtils.clamp(target - v, -2.6 * dt, acc * dt);
+          const F = this.ferry, aboard = !!F && s >= F.board - 1e-6 && s < F.land - 0.05;
+          v += aboard ? THREE.MathUtils.clamp(target - v, -FERRY_ACC * dt, FERRY_ACC * dt) : THREE.MathUtils.clamp(target - v, -2.6 * dt, acc * dt);
           s += v * dt;
         }
       }
@@ -468,6 +554,45 @@ export class CountryRoad {
   // The freeway's frame, on a road into a freeway city (freeway.ts).
   private fwFrame: Frame | null = null;
   get freewayFrame(): Frame | null { if (!this.inp.toFreeway) return null; if (!this.fwFrame) this.fwFrame = Frame.ofRoad(this); return this.fwFrame; }
+  // The freeway of the city a road leaves, if it has one (it runs out of town both ways).
+  private fwFrom: Frame | null | undefined;
+  get fromFreewayFrame(): Frame | null {
+    if (this.fwFrom === undefined) {
+      const i = this.inp, cs = citySeedOf(i.seed, i.city), g = i.kind === "exit" ? freewayGate(cs, i.fromStyle) : null;
+      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g) : null;
+    }
+    return this.fwFrom;
+  }
+  // How far (x, z) is from the centre line of a freeway out in this road's land (either city's),
+  // up to about FW_CELL (Infinity beyond): the land stays down under the freeways and the road
+  // level near them (they stand on bents over level ground).
+  private fwGrid: Map<number, number[]> | null = null;
+  private fwIndex() {
+    if (this.fwGrid) return this.fwGrid;
+    const grid = this.fwGrid = new Map<number, number[]>();
+    for (const F of [this.fromFreewayFrame, this.freewayFrame]) if (F) {
+      const p = F.centreLine(8);
+      for (let i = 0; i < p.length; i += 2) {
+        const k = fwCell(Math.floor(p[i] / FW_CELL), Math.floor(p[i + 1] / FW_CELL));
+        let a = grid.get(k); if (!a) grid.set(k, a = []);
+        a.push(p[i], p[i + 1]);
+      }
+    }
+    return grid;
+  }
+  get nearFreeways() { return this.fwIndex().size > 0; }
+  fwDist(x: number, z: number) {
+    const g = this.fwIndex();
+    if (!g.size) return Infinity;
+    const cx = Math.floor(x / FW_CELL), cz = Math.floor(z / FW_CELL);
+    let best = Infinity;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const a = g.get(fwCell(cx + i, cz + j));
+      if (a) for (let k = 0; k < a.length; k += 2) { const d = (a[k] - x) ** 2 + (a[k + 1] - z) ** 2; if (d < best) best = d; }
+    }
+    return best < FW_CELL * FW_CELL ? Math.sqrt(best) : Infinity;
+  }
+  private tmpF: Pose = { x: 0, z: 0, h: 0, k: 0 };
   private at(A: Float64Array, s: number) {
     const f = THREE.MathUtils.clamp(s / ROAD_DS, 0, A.length - 1.001), i = Math.floor(f);
     return A[i] + (A[i + 1] - A[i]) * (f - i);
@@ -478,6 +603,7 @@ export class CountryRoad {
     let lo = 0;
     const i0 = Math.max(0, Math.floor(s0 / ROAD_DS)), i1 = Math.min(this.Y.length - 1, Math.ceil(s1 / ROAD_DS));
     for (let i = i0; i <= i1; i += 4) lo = Math.min(lo, this.Y[i] - SIDE_HILL * 0.9 * this.SM[i]);
+    if (this.ferry && s1 > this.ferry.q0 && s0 < this.ferry.q1) lo = Math.min(lo, this.waterY - 1);
     return lo - 1;
   }
   // How much of the land at s is coast (the sea on the left), easing from one land to the next.
@@ -488,6 +614,7 @@ export class CountryRoad {
   // road runs in cuttings and on embankments. On a coast the land falls away to the beach on the
   // left, under the sea beyond it.
   groundAt(s: number, n: number) {
+    if (this.inChannel(s)) return this.baseAt(s) - WATER_DROP - 2.4;   // the bed under the ferry's water
     const y = this.baseAt(s), sm = this.smAt(s), an = Math.abs(n);
     let g = y;
     if (sm > 0 && an > 11) {
@@ -496,6 +623,12 @@ export class CountryRoad {
       g += sm * smooth(Math.min(1, (an - 11) / 40)) * SIDE_HILL * (noise * 0.75 + 0.2);
     }
     if (this.shapes.length) g = this.shaped(s, n, y, g);
+    // Low under a freeway (its deck's over the cities' level), rising gently away from it.
+    if (an > 11 && this.nearFreeways) {
+      this.point(s, n, this.tmpF);
+      const d = this.fwDist(this.tmpF.x, this.tmpF.z);
+      if (d < FW_CELL) g = Math.min(g, 0.6 + Math.max(0, d - 14) * 0.35);
+    }
     const c = n < -11 ? this.coastAt(s) : 0;
     if (c > 0) {
       // (By a set piece the land holds level until just short of the beach.)
@@ -528,6 +661,7 @@ export class CountryRoad {
   }
   // Where a camera may stand: the ground, except in a tunnel's bore, where it is the road.
   floorAt(s: number, n: number) {
+    if (this.inChannel(s)) return this.waterY + 2.6;   // (over the water, clear of a boat's rails)
     return this.tunnelAt(s) && Math.abs(n) < BORE_HALF ? this.heightAt(s) : this.groundAt(s, n);
   }
   // The land the pieces shape, at (s, n) over the road's level y (raising g, the land there).
@@ -631,7 +765,7 @@ export class CountryRoad {
         leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 22, 3],
-        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4],
+        tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0],
       };
       if (p.kind === "bridge") continue;   // its trusses hide the truck from any roadside spot; the chase shots show it
       // A tunnel: from the cutting's shoulder short of the portal, looking on at it, the truck
@@ -643,6 +777,17 @@ export class CountryRoad {
         if (s < start || s > end) continue;
         return tun ? { key: i, cam: [cs, -5.6, 3.4], look: [p.s, 0, 3.6], fixed: true }
           : { key: i, cam: [cs, -2.2, OVER_DECK + 2.6], look: [p.s - 60, LANE, 1.4], fixed: true };
+      }
+      // The ferry: from out along the near quay, the truck creeping onto the boat (from just
+      // short of the quay, so the truck is in the shot at once); across the water, from out on it to the side, the boat crossing the frame; at
+      // the far quay, from beyond it, the boat coming in and the truck driving off towards the
+      // camera. (Heights over the ground there, which is the bed under the water.)
+      if (p.kind === "ferry" && this.ferry) {
+        const Fp = this.ferry, mid = (Fp.q0 + Fp.q1) / 2, dw = WATER_DROP + 2.4;
+        if (s >= Fp.q0 - 32 && s <= Fp.board + 8) return { key: i, cam: [Fp.q0 - 2, 24, 4.5], look: [Fp.q0 + 6, 1.5, 1.5 + dw], fixed: true };
+        if (s >= mid - 130 && s <= mid + 40) return { key: i, cam: [mid + 10, 48, 4 + dw], look: [mid - 30, 0, 2 + dw], fixed: true };
+        if (s >= Fp.land - 70 && s <= Fp.q1 + 30) return { key: i, cam: [Fp.q1 + 22, -8, 3.6], look: [Fp.q1 - 25, 1.5, 1.6 + dw], fixed: true };
+        continue;
       }
       // An open weigh station: from the far shoulder short of the scale, locked off on the truck
       // on it and the signal past it, so the shot sees it pull on, the light go green and it leave.
@@ -677,7 +822,9 @@ export class CountryRoad {
   // Is (s, n) clear of the road furniture and set pieces (for scenery)?
   clearAt(s: number, n: number) {
     if (Math.abs(n) < 11) return false;
+    if (this.ferry && s > this.ferry.q0 - 4 && s < this.ferry.q1 + 4) return false;
     if (this.inp.toFreeway) { this.point(s, n, this.tmpQ); if (this.freewayFrame!.corridor(this.tmpQ.x, this.tmpQ.z)) return false; }   // under the freeway and its on-ramp
+    if (this.fromFreewayFrame) { this.point(s, n, this.tmpQ); if (this.fwDist(this.tmpQ.x, this.tmpQ.z) < 11.5) return false; }   // (and the city's it leaves)
     for (const p of this.pieces) {
       if (s < p.s - 40 || s > p.s + p.len + 40) continue;
       if (p.kind === "rail" || p.kind === "bridge") return false;
@@ -688,6 +835,9 @@ export class CountryRoad {
     return true;
   }
 }
+
+const FW_CELL = 140;
+const fwCell = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
 
 // Smooth value noise in [-1, 1] on a unit grid (smoothstep between hashed corners).
 function valueNoise(x: number, y: number, seed: number, salt: number) {

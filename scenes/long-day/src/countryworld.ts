@@ -10,7 +10,7 @@ import { Batch, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import { disposeTree } from "./chunks.ts";
 import { OCCLUSION } from "./occlusion.ts";
-import { applyDriverSpot } from "./cutaway.ts";
+import { applyCutaway, applyDriverSpot } from "./cutaway.ts";
 import { applyLampGlow, applyLampLight, LAMPS_ON } from "./atmosphere.ts";
 import type { TruckModel } from "./truck.ts";
 import type { TreeKind } from "./styles.ts";
@@ -22,7 +22,8 @@ import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, PlateSet, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
-  WEIGH_BACK, WEIGH_GREEN, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE } from "./country.ts";
+  WEIGH_BACK, WEIGH_GREEN, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W } from "./country.ts";
+import type { FerryPlan } from "./country.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { GLASS, headLamp, tailLamp } from "./traffic.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -61,12 +62,20 @@ export class CountryWorld {
   private q = { x: 0, z: 0, h: 0, k: 0 };
   // Things that move with time.
   private cars: THREE.InstancedMesh;
-  private carPoses: number[] = [];   // oncoming cars: x, z, heading
+  private carPoses: number[] = [];   // oncoming cars: x, z, heading, height
   private carMat: THREE.MeshLambertMaterial;
   private train: THREE.Group | null = null;
   private gates: THREE.Group[] = [];
   private lights: THREE.Mesh[] = [];
   private weighLamps: THREE.Mesh[] = [];   // an open weigh station's flashers (k 0, 1) and its scale's signal (k 2 red, 3 green)
+  private boat: THREE.Group | null = null; private foam: THREE.Mesh | null = null;
+  private ramps: THREE.Group[] = [];   // the near quay's, the far quay's (each tips up about its hinge)
+  // The boat's own materials, its windows lit after dark and the headlights falling on its deck:
+  // its hull, deck and rails never thinned by the cutaway (shots on deck would see them
+  // dithered); its superstructure thinned only where it stands between the camera and the
+  // truck, as buildings are.
+  private boatMat = (() => { const m = new THREE.MeshLambertMaterial({ vertexColors: true }); applyDriverSpot(m); applyLampGlow(m); applyLampLight(m); return m; })();
+  private boatTopMat = (() => { const m = new THREE.MeshLambertMaterial({ vertexColors: true }); applyCutaway(m); applyDriverSpot(m); applyLampGlow(m); applyLampLight(m); return m; })();
   private eul = new THREE.Euler();
   private m4 = new THREE.Matrix4(); private quat = new THREE.Quaternion(); private one = new THREE.Vector3(1, 1, 1); private v = new THREE.Vector3();
   // Per segment build state.
@@ -95,7 +104,7 @@ export class CountryWorld {
     this.base.position.y = -0.3;
     scene.add(this.base);   // under the city's countryside too (main.ts colours it there)
     // Never seen: keeps the crossing lights' material in the setup precompile.
-    const keep = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), this.lightMat); keep.position.y = -5; this.group.add(keep);
+    for (const m of [this.lightMat, this.boatMat, this.boatTopMat]) { const keep = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), m); keep.position.y = -5; this.group.add(keep); }   // (and the ferry boat's)
   }
   private base: THREE.Mesh;
 
@@ -160,6 +169,19 @@ export class CountryWorld {
         }
       }
     }
+    if (road.ferry) {
+      const F = road.ferry, y = road.baseAt(F.q0);
+      this.boat = this.buildBoat(); this.group.add(this.boat);
+      for (const [q, dir] of [[F.q0, 1], [F.q1, -1]] as const) {
+        const b = new Batch();
+        b.box(dir * 2.1, 0.09, 0, 4.2, 0.12, 7, 0x6a6e72);
+        for (const k of [-3.4, 3.4]) b.box(dir * 2.1, 0.2, k, 4.2, 0.12, 0.2, CW.yellow);
+        const pivot = new THREE.Group(); pivot.add(b.build(this.mats.solid)!); pivot.userData.dir = dir;
+        const outer = new THREE.Group(); outer.add(pivot);
+        road.center(q, this.p); outer.position.set(this.p.x, y, this.p.z); outer.rotation.y = this.p.h;
+        this.group.add(outer); this.ramps.push(outer);
+      }
+    }
     const weigh = road.pieces.find((p) => p.kind === "weigh" && p.open);
     if (weigh) {
       const lamp = (s: number, n: number, y: number, w: number, color: number, k: number) => {
@@ -180,8 +202,8 @@ export class CountryWorld {
     for (const g of this.segs.values()) { this.group.remove(g); disposeTree(g); }
     this.segs.clear();
     if (this.train) { this.group.remove(this.train); disposeTree(this.train); this.train = null; }
-    for (const g of [...this.gates, ...this.lights, ...this.weighLamps]) { this.group.remove(g); disposeTree(g); }
-    this.gates = []; this.lights = []; this.weighLamps = [];
+    for (const g of [...this.gates, ...this.lights, ...this.weighLamps, ...this.ramps, ...(this.boat ? [this.boat] : [])]) { this.group.remove(g); disposeTree(g); }
+    this.gates = []; this.lights = []; this.weighLamps = []; this.ramps = []; this.boat = null; this.foam = null;
     this.cars.count = 0;
   }
 
@@ -214,19 +236,20 @@ export class CountryWorld {
     this.updateCars(road, u, sTruck);
     this.updateCrossing(road, u);
     this.updateWeigh(road, u);
+    this.updateFerry(road, u, sTruck);
   }
 
   // Headlight patches ahead of the oncoming cars nearest `at` (atmosphere.ts HEAD_LIGHTS).
-  headlights(out: THREE.Vector4[], from: number, at: { x: number; z: number }) {
+  headlights(out: THREE.Vector4[], from: number, at: { x: number; z: number }, ys: number[]) {
     const d = this.carPoses, order: number[] = [];
     const ax = at.x - this.group.position.x, az = at.z - this.group.position.z;
-    for (let i = 0; i < d.length; i += 3) if (Math.hypot(d[i] - ax, d[i + 1] - az) < 120) order.push(i);
+    for (let i = 0; i < d.length; i += 4) if (Math.hypot(d[i] - ax, d[i + 1] - az) < 120) order.push(i);
     order.sort((a, b) => Math.hypot(d[a] - ax, d[a + 1] - az) - Math.hypot(d[b] - ax, d[b + 1] - az));
     for (let k = from; k < out.length; k++) {
       const i = order[k - from];
       if (i === undefined) { out[k].w = 0; continue; }
       const h = d[i + 2];
-      out[k].set(d[i] + Math.cos(h) * 7.5 + this.group.position.x, d[i + 1] - Math.sin(h) * 7.5 + this.group.position.z, h, 0.7);
+      out[k].set(d[i] + Math.cos(h) * 7.5 + this.group.position.x, d[i + 1] - Math.sin(h) * 7.5 + this.group.position.z, h, 0.7); ys[k] = d[i + 3];
     }
   }
 
@@ -244,7 +267,7 @@ export class CountryWorld {
       this.quat.setFromEuler(this.eul.set(0, this.p.h + Math.PI, -Math.atan(road.gradeAt(s))));   // (it drives down the road: its nose dips where the road climbs)
       this.m4.compose(this.v.set(this.p.x, road.heightAt(s), this.p.z), this.quat, this.one);
       this.cars.setMatrixAt(n, this.m4);
-      this.carPoses.push(this.p.x, this.p.z, this.p.h + Math.PI);
+      this.carPoses.push(this.p.x, this.p.z, this.p.h + Math.PI, road.heightAt(s));
       this.cars.setColorAt(n, new THREE.Color([0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020][i % 7]));
       n++;
     }
@@ -280,6 +303,97 @@ export class CountryWorld {
     const stop = road.stops.find((x) => x.kind === "weigh"), go = stop ? stop.arrive + stop.dwell - WEIGH_GREEN : 1e9;
     const green = u >= go && u < go + 14, flash = Math.floor(u * 1.6) % 2;
     for (const l of this.weighLamps) { const k = l.userData.k; l.visible = k < 2 ? k === flash : k === 3 ? green : !green; }
+  }
+
+  // The ferry boat: where the truck is says where it is (country.ts boatRear); the ramps tip up
+  // as it leaves a quay and down as it comes in; a wake while it is under way.
+  private updateFerry(road: CountryRoad, u: number, sTruck: number) {
+    if (!this.boat || !road.ferry) return;
+    const F = road.ferry, rear = road.boatRear(sTruck);
+    road.center(rear + BOAT_L / 2, this.p);
+    this.boat.position.set(this.p.x, road.baseAt(F.q0), this.p.z); this.boat.rotation.y = this.p.h;
+    const off = [rear - F.q0, F.q1 - BOAT_L - rear];
+    this.ramps.forEach((r, k) => { const pv = r.children[0]; pv.rotation.z = pv.userData.dir * 0.45 * smooth01(off[k] / 3); });
+    const v = road.aboardAt(u) ? road.vAt(u) : 0;
+    if (this.foam) { this.foam.visible = v > 0.4; this.foam.scale.x = Math.max(0.05, v / 7); }
+  }
+  // A double-ended car ferry, its car deck at the origin's height, facing +x (along the road),
+  // +z to the road's right: a navy and white hull, an open deck with two lanes (cars waiting in
+  // the left one), a tower up the left side carrying the wheelhouse across the deck, a funnel.
+  private buildBoat(): THREE.Group {
+    const L = BOAT_L, W = BOAT_W, NAVY = 0x1d3a6b, WHITE = 0xf2f2ee, b = new Batch(), glow = new Batch();
+    const u = new Batch();   // the superstructure (it may thin out between the camera and the truck)
+    b.box(0, -1.925, 0, L, 3.35, W, NAVY);   // (its top under the white band's: shared planes flicker)
+    b.box(0, -0.6, 0, L + 0.1, 0.8, W + 0.1, WHITE);
+    b.box(0, -0.1, 0, L - 0.2, 0.2, W - 0.8, 0x5d6166);
+    b.box(0, 0.006, -0.2, L - 6, 0.012, 0.14, 0xe8e8e0);
+    for (const k of [-1, 1]) { b.box(0, 0.55, k * (W / 2 - 0.2), L, 1.1, 0.4, WHITE); b.box(0, 0.95, k * (W / 2 - 0.2), L + 0.02, 0.18, 0.42, 0xc0392b); }
+    // The tower and the wheelhouse over the deck, on two pillars on the right.
+    u.box(0, 3.25, -(W / 2 - 1.3), 26, 6.5, 2.2, WHITE);
+    u.aux.set(0, 0, -3);   // (windows: lit after dark)
+    u.box(0, 4.6, -(W / 2 - 2.42), 22, 0.7, 0.04, 0x1e2a38);
+    u.aux.set(0, 0, -1);
+    for (const x of [-3, 3]) u.box(x, 3.25, W / 2 - 0.7, 0.5, 6.5, 0.5, WHITE);
+    u.box(0, 7.8, 0, 8, 2.6, W + 0.4, WHITE);
+    u.aux.set(0, 0, -3); u.box(0, 8.1, 0, 8.1, 0.9, W + 0.5, 0x1e2a38); u.aux.set(0, 0, -1);
+    b.aux.set(0, 0, -3);
+    for (const x of [-24, -18, 18, 24]) b.box(x, 0.85, -(W / 2 - 0.42), 1.2, 0.3, 0.04, 0xd8d4c8);   // deck lamps along the left bulwark
+    b.aux.set(0, 0, -1);
+    u.box(0, 9.2, 0, 8.6, 0.2, W + 0.8, 0xdedbd0);
+    u.box(-9, 8.1, -(W / 2 - 1.3), 2.4, 3.2, 2.0, 0xc0392b); u.box(-9, 9.9, -(W / 2 - 1.3), 2.5, 0.4, 2.1, 0x1e1e1e);
+    u.box(0, 10.4, 0, 0.18, 2.2, 0.18, 0x8d9296);
+    for (const x of [7, 10]) u.cyl(x, 7.0, -(W / 2 - 1.3), 0.5, 1.6, 0xf2f2ee, 8, Math.PI / 2);
+    // Cars in the left lane.
+    const cols = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6];
+    [-22, -16, -10, 12, 18].forEach((x, k) => { b.box(x, 0.7, -2.6, 4.3, 0.75, 1.8, cols[k]); b.box(x - 0.3, 1.35, -2.6, 2.2, 0.6, 1.62, 0x2a3440); });
+    // Navigation lights (port red, starboard green) and the masthead light.
+    glow.box(0, 8.6, -(W / 2 + 0.3), 0.3, 0.3, 0.1, 0xff3020); glow.box(0, 8.6, W / 2 + 0.3, 0.3, 0.3, 0.1, 0x30ff70);
+    glow.box(0, 11.6, 0, 0.25, 0.25, 0.25, 0xfff6e0);
+    const g = new THREE.Group();
+    g.add(b.build(this.boatMat)!); g.add(u.build(this.boatTopMat)!); g.add(glow.build(this.lightMat)!);
+    // The wake astern, just over the water.
+    const fb = new Batch(); fb.box(-4, 0, 0, 8, 0.04, W - 2, 0xeef4f8); fb.box(-9.25, 0.02, 0, 2.5, 0.04, W - 5, 0xd8e6ee);
+    const foam = fb.build(this.mats.ground)!; foam.position.set(-L / 2, -1.57, 0); foam.visible = false;
+    g.add(foam); this.foam = foam;
+    return g;
+  }
+  // The ferry's near terminal (in the segment with its quay): the booth under a canopy, waiting
+  // lanes and the terminal building on the right, the quay with the ramp's gantry and fenders.
+  private ferryNear(g: Batch, s: Batch, F: FerryPlan, y: number) {
+    const Q = F.q0, S = F.s, CON = CW.concrete, WALL = 0x8a867c;
+    this.rbox(g, Q - 15, 0, -0.1, 30, 0.1, 80, CON);   // (5 cm under the road)
+    this.rbox(s, Q - 0.59, 0, -1.9, 1.22, 3.6, 80, WALL);   // (its top under the apron's, its face 2 cm proud of the apron's edge)
+    for (const n of [-7.6, 7.6]) this.rbox(s, Q + 0.15, n, -0.9, 0.3, 1.4, 1.0, 0x222222);
+    for (const n of [-30, -18, 18, 30]) { const [x, z] = this.L(Q - 1.2, n); s.cyl(x, 0.3, z, 0.25, 0.6, 0x2a2b2e, 8); }
+    for (const n of [-5.2, 5.2]) this.rbox(s, Q - 1.2, n, 3.2, 0.5, 6.4, 0.5, CW.yellow);
+    this.rbox(s, Q - 1.2, 0, 6.6, 0.7, 0.7, 11, CW.yellow);
+    const B = F.booth + 6;
+    this.rbox(s, B, -0.9, 1.3, 3, 2.6, 1.4, 0xe8e2d6); this.rbox(s, B, -0.9, 1.7, 3.1, 0.8, 1.5, 0x2a3440); this.rbox(s, B, -0.9, 2.75, 3.4, 0.3, 1.8, 0x1d3a6b);
+    for (const a of [B - 3.6, B + 3.6]) for (const n of [-6.6, 6.6]) this.rbox(s, a, n, 2.7, 0.3, 5.4, 0.3, 0xdedbd0);
+    this.rbox(s, B, 0, 5.6, 8.4, 0.5, 14, 0xf2f2ee); this.rbox(s, B, 0, 5.25, 8.5, 0.25, 14.1, 0x1d3a6b);
+    const a0 = B + 6, a1 = Q - 31;
+    this.rbox(g, (a0 + a1) / 2, 10, -0.045, a1 - a0, 0.1, 11.8, CW.asphalt);
+    for (const n of [7, 10, 13]) this.rbox(g, (a0 + a1) / 2, n, 0.005, a1 - a0 - 1, 0.02, 0.14, CW.white);
+    const cols = [0x8a9aa6, 0xc0392b, 0x2e8b57, 0xe8e8e0];
+    [[a0 + 4, 8.5], [a0 + 11, 8.5], [a0 + 6, 11.5], [a0 + 20, 14.5]].forEach(([a, n], k) => {
+      this.rbox(s, a, n, 0.7, 4.3, 0.75, 1.8, cols[k]); this.rbox(s, a + 0.3, n, 1.35, 2.2, 0.6, 1.62, 0x2a3440);
+    });
+    this.rbox(s, S + 57, 26, 3.5, 34, 7, 12, 0xe8e2d6); this.rbox(s, S + 57, 26, 3.0, 34.1, 2.2, 12.1, 0x2a3440); this.rbox(s, S + 57, 26, 7.2, 34.6, 0.4, 12.6, 0x1d3a6b);
+    const uv = this.slot("FERRY TERMINAL", { bg: "#1d3a6b", fg: "#ffffff", logo: false });
+    if (uv) { const [x, z, h] = this.L(S + 57, 19.88); this.quads.push({ x, y: y + 5.6, z, w: 9.6, h: 1.2, rotY: Math.atan2(-Math.sin(h), -Math.cos(h)), ...uv }); }
+  }
+  // The far terminal: the quay and its ramp's gantry, a small building on the left.
+  private ferryFar(g: Batch, s: Batch, F: FerryPlan, y: number) {
+    const Q = F.q1, CON = CW.concrete, WALL = 0x8a867c;
+    this.rbox(g, Q + 15, 0, -0.1, 30, 0.1, 80, CON);
+    this.rbox(s, Q + 0.59, 0, -1.9, 1.22, 3.6, 80, WALL);
+    for (const n of [-7.6, 7.6]) this.rbox(s, Q - 0.15, n, -0.9, 0.3, 1.4, 1.0, 0x222222);
+    for (const n of [-30, -18, 18, 30]) { const [x, z] = this.L(Q + 1.2, n); s.cyl(x, 0.3, z, 0.25, 0.6, 0x2a2b2e, 8); }
+    for (const n of [-5.2, 5.2]) this.rbox(s, Q + 1.2, n, 3.2, 0.5, 6.4, 0.5, CW.yellow);
+    this.rbox(s, Q + 1.2, 0, 6.6, 0.7, 0.7, 11, CW.yellow);
+    this.rbox(s, Q + 45, -24, 2.5, 16, 5, 9, 0xe8e2d6); this.rbox(s, Q + 45, -24, 5.2, 16.6, 0.4, 9.6, 0x1d3a6b);
+    const uv = this.slot("FERRY", { bg: "#1d3a6b", fg: "#ffffff", logo: false });
+    if (uv) { const [x, z, h] = this.L(Q + 45, -19.38); this.quads.push({ x, y: y + 3.6, z, w: 5, h: 1.0, rotY: Math.atan2(Math.sin(h), Math.cos(h)), ...uv }); }
   }
 
   private buildTrain(road: CountryRoad, rs: number): THREE.Group {
@@ -349,9 +463,10 @@ export class CountryWorld {
       rows.push(r1);
       // (A tunnel's portals are rows of their own, the land stepping up there from the road to
       // the hill over it: the land just short of the portal ends one quad, just past it starts the next.)
-      for (const p of road.pieces) if (p.kind === "tunnel") for (const e of [p.s, p.s + p.len]) if (e > r0 + 0.01 && e < r1 - 0.01 && !rows.includes(e)) rows.push(e);
+      const cliffs = road.cliffs;
+      for (const e of cliffs) if (e > r0 + 0.01 && e < r1 - 0.01 && !rows.includes(e)) rows.push(e);
       rows.sort((x, y) => x - y);
-      const portal = (a: number) => road.pieces.some((p) => p.kind === "tunnel" && (Math.abs(a - p.s) < 1e-6 || Math.abs(a - p.s - p.len) < 1e-6));
+      const portal = (a: number) => cliffs.some((e) => Math.abs(a - e) < 1e-6);
       const cols = [...LAND_N.slice(1).reverse().map((n) => -n), ...LAND_N];
       const rowAt = (a: number) => { const row: number[] = []; for (const n of cols) { const [x, z, , y] = this.L(a, n); row.push(x, y - 0.12, z); } return row; };
       let prev: number[] | null = null;
@@ -378,12 +493,18 @@ export class CountryWorld {
     // The road: asphalt, gravel shoulders, edge lines and the double yellow (dashed while passing
     // is allowed on the straights is overkill at this size: solid).
     // Near a gate it widens to a city street's carriageway, to meet the gate street.
+    // (None across a ferry's water: each 6 m piece is cut back to the quays.)
+    const Fy = road.ferry;
     for (let a = s0; a < s1 && a < road.gateS; a += 6) {
-      const sm = a + 3, w = road.widthAt(sm), half = 4.1 + 1.9 * w, gr = road.gradeAt(sm);
-      g.dy = road.heightAt(sm);
-      this.rbox(g, sm, 0, -0.064, 6.2, 0.12, half * 2, CW.asphalt, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
-      for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, 6.2, 0.1, 1.8, CW.shoulder, 0, gr); this.rbox(g, sm, k * (half - 0.25), 0.005, 6.2, 0.02, 0.14, CW.white, 0, gr); }
-      if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, 6.0, 0.02, 0.24, CW.yellow, 0, gr);
+      const spans: [number, number][] = !Fy || a + 6.1 <= Fy.q0 || a - 0.1 >= Fy.q1 ? [[a - 0.1, a + 6.1]]
+        : [[a - 0.1, Math.min(a + 6.1, Fy.q0)], [Math.max(a - 0.1, Fy.q1), a + 6.1]].filter(([b0, b1]) => b1 - b0 > 0.05) as [number, number][];
+      for (const [b0, b1] of spans) {
+        const sm = (b0 + b1) / 2, ln = b1 - b0, w = road.widthAt(sm), half = 4.1 + 1.9 * w, gr = road.gradeAt(sm);
+        g.dy = road.heightAt(sm);
+        this.rbox(g, sm, 0, -0.064, ln, 0.12, half * 2, CW.asphalt, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
+        for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, ln, 0.1, 1.8, CW.shoulder, 0, gr); this.rbox(g, sm, k * (half - 0.25), 0.005, ln, 0.02, 0.14, CW.white, 0, gr); }
+        if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, Math.max(0.05, ln - 0.2), 0.02, 0.24, CW.yellow, 0, gr);
+      }
     }
     g.dy = 0;
     // Into a freeway city: the freeway, and the flyover the road comes up on (freeway.ts), in
@@ -465,6 +586,29 @@ export class CountryWorld {
       if (bio.cows && rnd() < 0.05) {
         const n = side * (25 + rnd() * 60);
         if (road.clearAt(a, n)) { const [x, z, , gy] = this.L(a, n); s.dy = gy - 0.1; for (let c = 0; c < 3; c++) this.cow(s, x + (rnd() - 0.5) * 12, z + (rnd() - 0.5) * 12, rnd() * 6.3); }
+      }
+    }
+    // A ferry's water (in the stretch of it in this segment) and its terminals (each with the
+    // segment its quay is in, so neither goes before the truck is well past it).
+    if (Fy) {
+      const w0 = Math.max(s0, Fy.q0), w1 = Math.min(s1, Fy.q1), wy = road.waterY;
+      if (w1 > w0) {
+        this.rbox(g, (w0 + w1) / 2, 0, wy - 0.05, w1 - w0, 0.1, 2000, CW.water);
+        // Wave streaks, lighter and darker, scattered over it (each at a height of its own a
+        // few cm up, so no two share a plane where they cross).
+        const wr = mulberry32(Math.floor(hash3(i, road.inp.city, 11, road.inp.seed, 0x3a7e) * 4294967296));
+        const n = Math.round((w1 - w0) * 1.4);
+        for (let k = 0; k < n; k++) {
+          const a = w0 + 3 + wr() * Math.max(0.1, w1 - w0 - 6), nn = (wr() - 0.5) * 520, ln = 2 + wr() * 6;
+          if (Math.abs(nn) < 9 && wr() < 0.8) continue;   // (fewer in the boat's path)
+          this.rbox(g, a, nn, wy + 0.02 + (k % 6) * 0.012, ln, 0.012, 0.25 + wr() * 0.35, wr() < 0.6 ? 0x5a9ad2 : 0x245f98, (wr() - 0.5) * 0.3);
+        }
+      }
+      for (const [q, near] of [[Fy.q0, true], [Fy.q1, false]] as const) if (q >= s0 && q < s1) {
+        const y = road.baseAt(q);
+        g.dy = s.dy = y;
+        if (near) this.ferryNear(g, s, Fy, y); else this.ferryFar(g, s, Fy, y);
+        g.dy = s.dy = 0;
       }
     }
     // Set pieces that start in this segment.
@@ -745,6 +889,13 @@ export class CountryWorld {
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
       }
+      case "ferry": {
+        const uv = this.slot(p.text ?? "FERRY", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
+        for (const k of [-3.6, 3.6]) this.rbox(s, S - 149.8, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);   // behind the board
+        this.rbox(s, S - 149.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
+        if (uv) this.signAt(pieceSigns(p)[0], uv);
+        break;
+      }
       case "fruit": {
         const n = side * 13, [x, z, h] = this.L(S + 40, n);
         s.box(x, 1.4, z, 6, 2.8, 3.4, 0xc8a46a, h); s.box(x, 3.0, z, 7, 0.3, 4.4, 0xe8e2d6, h);
@@ -972,3 +1123,5 @@ export function landTree(s: Batch, x: number, z: number, kind: string, green: nu
     case "shrub": s.ico(x, 0.4 * k, z, 0.8 * k, shade(green, 0.9 + rnd() * 0.3), 0.7, rnd() * 6); break;
   }
 }
+
+function smooth01(x: number) { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); }
