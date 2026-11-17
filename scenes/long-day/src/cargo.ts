@@ -126,13 +126,18 @@ export function truckCarries(truck: TruckModel, need: TruckModel) {
 const TIER_WEIGHT: Record<Tier, number> = { common: 0.70, uncommon: 0.20, rare: 0.08, humorous: 0.02 };
 
 // Pick a cargo type: a tier by weight (humorous scaled by humorFrequency, default 0.02), then a
-// type within it. `r1`, `r2` are uniform randoms; seasonal types are skipped out of season.
-export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null): CargoType {
+// type within it. `r1`, `r2` are uniform randoms; seasonal types are skipped out of season, and
+// types `allow` (when given) refuses are skipped too, as are tiers left with none. Null when
+// nothing is left.
+export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean): CargoType | null {
+  const ok = (c: CargoType) => (!c.season || c.season === season) && (!allow || allow(c));
+  const tiers = (["common", "uncommon", "rare", "humorous"] as Tier[]).filter((t) => CARGO.some((c) => c.tier === t && ok(c)));
   const w = { ...TIER_WEIGHT, humorous: humor };
-  const total = w.common + w.uncommon + w.rare + w.humorous;
+  const total = tiers.reduce((a, t) => a + w[t], 0);
   let x = r1 * total;
-  let tier: Tier = "common";
-  for (const t of ["common", "uncommon", "rare", "humorous"] as Tier[]) { if (x < w[t]) { tier = t; break; } x -= w[t]; }
-  const list = CARGO.filter((c) => c.tier === tier && (!c.season || c.season === season));
+  let tier: Tier = tiers[0];
+  for (const t of tiers) { if (x < w[t]) { tier = t; break; } x -= w[t]; }
+  if (!tier) return null;
+  const list = CARGO.filter((c) => c.tier === tier && ok(c));
   return list[Math.floor(r2 * list.length)];
 }

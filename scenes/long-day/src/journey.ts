@@ -109,7 +109,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; lastSwap: number; jobsSinceSwap: number; intercity: boolean; committed: string; redWait: number; preempt: SignalPreempt[];
+  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; redWait: number; preempt: SignalPreempt[];
   stopsDone: number; events: string[];
 }
 
@@ -121,6 +121,7 @@ const GATE_SPEED = 6.5;           // rough average speed across town, for timing
 const VMAX = 11, ACCEL = 1.6, BRAKE = 2.2, FIRM_BRAKE = 4.5, MAX_DECEL = 5, STOP_GAP = 0.6;
 const SEARCH = 12;           // blocks searched around a point for facilities
 const LOT_SEARCH = 40;
+const SWAP_SEARCH = 14;      // blocks searched for a source of another truck's cargo when a swap is due
 export const siteKey = (s: Site) => `${s.bx},${s.bz}`;
 
 // The city's front doors (city.ts kerbDoors), set by the scene before the first journey; tests
@@ -196,7 +197,10 @@ export class Journey {
       dwellTotal: 0, dwellDone: false, route: null, s: 0, v: V_JOIN, at: { ix: gate.ix, iz: gate.iz, dir: inward, before: BLOCK - STREET / 2 },
       stopS: 0, backS: 0, dockExit: null, spare: null, parked: null,
       stops: [], aboard: [], loaded: 0, unloaded: 0, jobCounter: 0,
-      lastSwap: start - 60 * 15 * hash2(N, 1, this.cfg.seed, 0x5a9), jobsSinceSwap: 0, intercity: false,
+      // The first swap falls due 2 to 12 minutes in (each city plays from its own start, so the
+      // timer can't carry over from the last one). A swap job may not fit in the time left, and
+      // some cities have no source of another truck's cargo, so not every city gets one.
+      swapAt: start + 60 * (2 + 10 * hash2(N, 1, this.cfg.seed, 0x5a9)), jobsSinceSwap: 0, noSwap: false, intercity: false,
       committed: "", redWait: 0, preempt: [], stopsDone: N * 1000, events: [],
     };
     // By the freeway: the arrival ends at its off-ramp, where the city's route starts: down the
@@ -394,6 +398,9 @@ export class Journey {
     for (let tries = 0; tries < 6; tries++) {
       first = this.makeJob(bx, bz, false);
       if (!first || st.cityTime + this.estimate(first, bx, bz) + reserve <= C) break;
+      // A swap job too long for the time left: no more swaps in this city, so the tries that
+      // follow look for an ordinary job.
+      if (first.some((x) => x.kind === "swap")) { st.noSwap = true; first = null; st.jobCounter++; continue; }
       first = null; st.jobCounter++; tooLong = true;
       if (C - st.cityTime - reserve < 150) break;
     }
@@ -436,30 +443,43 @@ export class Journey {
   private makeJob(bx: number, bz: number, intercity: boolean, secondary = false, usedSlots = 0, reach = 0): Stop[] | null {
     const st = this.st;
     const season = this.season();
-    // A swap is due every 15 to 30 minutes, or after a job or two in a specialist truck (the
-    // tractor, reefer and flatbed carry few cargo types, so they shouldn't linger).
+    // A swap is due at `swapAt` (15 to 30 minutes after the last one), or after a job or two in a
+    // specialist truck (the tractor, reefer and flatbed carry few cargo types, so they shouldn't
+    // linger).
     const specialist = st.truck !== "box26" && st.truck !== "box16";
-    const swapDue = !secondary && !intercity &&
-      (st.simTime - st.lastSwap > 60 * (15 + 15 * this.rand(3)) || (specialist && st.jobsSinceSwap >= 1 + Math.floor(this.rand(8) * 2)));
+    const swapDue = !secondary && !intercity && !st.noSwap &&
+      (st.simTime >= st.swapAt || (specialist && st.jobsSinceSwap >= 1 + Math.floor(this.rand(8) * 2)));
     const freight = intercity ? this.freightFor(st.city + 1) : null;
+    // When a swap is due: the cargo another truck is for (a box16 load too, though the box26 could
+    // carry it) that has a source within reach. Most of it comes from few kinds of facility,
+    // which many cities lack, so drawing it blind mostly misses.
+    const here = new Set([`${bx},${bz}`]);
+    const pool = swapDue && !freight && !DEBUG_CARGO
+      ? new Set(CARGO.filter((c) => c.truck !== st.truck && this.findNear(c.from, bx, bz, SWAP_SEARCH, here, 2).length).map((c) => c.id))
+      : null;
     for (let attempt = 0; attempt < 24; attempt++) {
       st.jobCounter++;
-      const c = freight ? CARGO_BY_ID.get(freight.cargo)! : (DEBUG_CARGO && CARGO_BY_ID.get(DEBUG_CARGO)) || pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season);
+      // When a swap is due, the first attempts draw from that pool, so the truck really changes.
+      const change = !!pool?.size && attempt < 16;
+      const c = freight ? CARGO_BY_ID.get(freight.cargo)! : (DEBUG_CARGO && CARGO_BY_ID.get(DEBUG_CARGO)) ||
+        (change && pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season, (k) => pool!.has(k.id))) ||
+        pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season)!;
       // The final pickup goes in any truck that can carry all of the next city's freight (it
       // changes to the next city's truck at the country truck stop); otherwise swap first.
       // The final pickup goes in the next city's own truck (swapping first if need be): the
       // drive between cities is continuous, so the truck can't change on the way.
-      const fits = freight ? st.truck === freight.truck : truckCarries(st.truck, c.truck);
-      // Prefer the current truck; when a swap is due, prefer a different one (so all five appear).
+      const fits = freight ? st.truck === freight.truck : !change && truckCarries(st.truck, c.truck);
+      // Prefer the current truck, unless a swap is due (so all five appear).
       if (secondary) { if (!fits) continue; }
-      else if (!freight && (swapDue ? fits && attempt < 16 : !fits && attempt < 20)) continue;
+      else if (!freight && !swapDue && !fits && attempt < 20) continue;
       const truck = freight ? freight.truck : fits ? st.truck : c.truck;
       const avoid = new Set<string>([`${bx},${bz}`]);
       // Keep stops close (a stop cycle should be 60-90 s): near sources and drops first,
       // widening the search only after a few attempts.
-      // Rare and humorous cargo comes from rare facilities, so it may look further afield.
+      // Rare and humorous cargo comes from rare facilities, so it may look further afield. A
+      // swap's cargo looks as far as its pool did.
       const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous";
-      const sources = this.findNear(c.from, bx, bz, reach || (freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2);
+      const sources = this.findNear(c.from, bx, bz, reach || (change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2);
       if (!sources.length) continue;
       const src = sources[Math.min(sources.length - 1, Math.floor(this.rand(4) * Math.min(3, sources.length)))];
       avoid.add(siteKey(src));
@@ -474,11 +494,12 @@ export class Journey {
         const lots = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1);
         return lots.length ? [{ kind: "swap", site: lots[0], job: st.jobCounter, cargo: "", units: 0, truck }, pickup] : null;
       }
-      const nDrops = Math.min(units, 1 + Math.floor(this.rand(6) * (c.tier === "common" ? 3 : 1.5)));
+      // (A swap's job makes one drop: the swap itself takes time.)
+      const nDrops = change ? 1 : Math.min(units, 1 + Math.floor(this.rand(6) * (c.tier === "common" ? 3 : 1.5)));
       const drops: Stop[] = [];
       let cur = src, left = units;
       for (let i = 0; i < nDrops; i++) {
-        const cands = this.findNear(c.to, cur.bx, cur.bz, Math.max(reach / 2, wide ? (near ? 6 : 10) : near ? 4 : 6), avoid, 1);
+        const cands = this.findNear(c.to, cur.bx, cur.bz, Math.max(reach / 2, change ? 10 : wide ? (near ? 6 : 10) : near ? 4 : 6), avoid, 1);
         if (!cands.length) break;
         const dst = cands[Math.floor(this.rand(10 + i) * Math.min(3, cands.length))];
         avoid.add(siteKey(dst));
@@ -958,7 +979,7 @@ export class Journey {
       // stays parked where it stopped.
       this.log(`swap ${st.truck} -> ${stop.truck} at ${stop.site!.name}`);
       st.parked = { model: st.truck, x: this.pose.x, z: this.pose.z, h: this.pose.h };
-      st.truck = stop.truck!; st.spare = null; slotCompact(st.aboard); st.lastSwap = st.simTime; st.jobsSinceSwap = 0;
+      st.truck = stop.truck!; st.spare = null; slotCompact(st.aboard); st.swapAt = st.simTime + 60 * (15 + 15 * this.rand(3)); st.jobsSinceSwap = 0;
       ({ front: this.frontX, center: this.centerX } = truckExtents(st.truck));
       st.s = this.path!.length; this.path!.eval(st.s, this.pose);
       return;
