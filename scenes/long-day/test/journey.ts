@@ -143,7 +143,10 @@ import { Journey } from "../src/journey.ts";
       if ((globalThis as any).process.env.JTGATE && st.mode === "drive" && st.modeTime < 8 && st.stopsDone % 1000 === 0 && st.cityTime < 60) console.log(`GATE c${st.city} mt${st.modeTime.toFixed(1)} sp${sp.toFixed(2)} v${st.v.toFixed(2)} path ${j.path ? "y" : "n"} stops ${st.stops.length} light ${(j as any).lightAhead}`);
       g.__prevSp = handover ? undefined : sp;
     }
-    if (!handover && jump > Math.abs(j.lastStep) * 1.2 + 0.05) err(`pose jump ${jump.toFixed(2)} (step ${j.lastStep.toFixed(2)}) ${pmode}->${st.mode}`);
+    // (Reversing a tractor-trailer, the step is its trailer axles' along the bay path: the tractor
+    // swings round ahead of them, further.)
+    const stretch = st.truck === "tractor" && (st.mode === "reverse" || pmode === "reverse") ? 2.5 : 1.2;
+    if (!handover && jump > Math.abs(j.lastStep) * stretch + 0.05) err(`pose jump ${jump.toFixed(2)} (step ${j.lastStep.toFixed(2)}) ${pmode}->${st.mode}`);
     if (!handover && dh > 0.12) {
       const pc: any = j.path ? (j.path as any).find(st.s) : null;
       err(`heading jump ${dh.toFixed(2)} ${pmode}->${st.mode} v${st.v.toFixed(1)} piece ${pc ? pc.kind + " len" + pc.len.toFixed(1) + " t0 " + (pc.t0 ?? 0).toFixed(1) + " t1 " + (pc.t1 ?? 0).toFixed(1) + " u" + (st.s - pc.s0).toFixed(1) : "-"} next ${stop?.kind} dockExit ${(j.path?.route as any)?.dock ? "y" : "n"}`);

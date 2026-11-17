@@ -59,7 +59,7 @@ const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
-const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door";   // test renders with a tour camera
+const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock";   // test renders with a tour camera
 
 const rnd01 = mulberry32(0x5eed);
 
@@ -169,6 +169,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     streamer.setPrefetch(cells);
   }
 
+  let revFrom: number | null = null;   // the trailer's articulation as reversing began
   function placeTruck(dt: number, jumped: boolean) {
     const p = journey.renderPose(pose);
     const moved = jumped || Number.isNaN(lastX) ? 0 : Math.hypot(p.x - lastX, p.z - lastZ) * (journey.st.mode === "reverse" ? -1 : 1);
@@ -181,11 +182,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     else { const lift = journey.truckLift(truck.wheelbase); truck.setGrade(lift.y, lift.grade); }
     const aboard = journey.countryAboard;
     truck.speed = aboard ? 0 : journey.st.v; truck.accel = aboard ? 0 : journey.accel;
-    // Reversing into a bay, the trailer leads along the bay path; ease into it from however the
-    // hitch left it on the way in.
+    // Reversing into a bay, the trailer's axles follow the bay path (journey.ts reversePose);
+    // blended over the first metres back from however the hitch left it on the way in.
     const ty = journey.trailerYaw();
-    if (ty !== null) truck.trailerYaw = jumped ? ty : truck.trailerYaw + (ty - truck.trailerYaw) * Math.min(1, dt * 4);
-    else if (jumped) truck.trailerYaw = 0;
+    if (ty !== null) {
+      if (jumped || revFrom === null) revFrom = jumped ? ty : truck.trailerYaw;
+      truck.trailerYaw = revFrom + (ty - revFrom) * THREE.MathUtils.smoothstep(journey.reversed, 0, 4);
+    } else { revFrom = null; if (jumped) truck.trailerYaw = 0; }
   }
 
   function newTruck(model: TruckModel) {
@@ -335,11 +338,18 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         updateCutaway(engine.camera, focus, false); engine.setViewDistance(streamer.clearDistance(engine.camera.position.x, engine.camera.position.z), 30); return;
       }
     }
-    if (DEBUG_VIEW === "rear" || DEBUG_VIEW === "door") {   // test renders: close on the back of the truck (street side), or towards the building
+    const dk = DEBUG_VIEW === "dock" ? journey.dock : null;
+    if (dk) {   // test renders: high over the street, looking down on the bay the truck backs into
+      const ox = Math.cos(dk.H), oz = -Math.sin(dk.H);
+      engine.camera.position.set(dk.edge.x + ox * 24, 30, dk.edge.z + oz * 24); engine.camera.lookAt(dk.edge.x + ox * 13, 0, dk.edge.z + oz * 13); engine.camera.fov = 62; engine.camera.updateProjectionMatrix();
+      focus.copy(truck.root.position); updateDriverSpot(engine.camera, null); return;
+    }
+    if (DEBUG_VIEW === "rear" || DEBUG_VIEW === "door" || DEBUG_VIEW === "yard") {   // test renders: close on the back of the truck (street side), towards the building, or down on the yard beside it
       const L = truckLayout(truck.model), h = truck.heading, p = truck.root.position;
       const at = (x: number, y: number, z: number) => new THREE.Vector3(p.x + Math.cos(h) * x + Math.sin(h) * z, y, p.z - Math.sin(h) * x + Math.cos(h) * z);
       const kd = journey.kerbDoor;
-      if (DEBUG_VIEW === "door" && kd) {   // facing the front door from across the pavement, a little to one side
+      if (DEBUG_VIEW === "yard") { engine.camera.position.copy(at(L.bedRear - 6, 13, -9)); engine.camera.lookAt(at(L.bedRear + 3, 0.5, 5)); }
+      else if (DEBUG_VIEW === "door" && kd) {   // facing the front door from across the pavement, a little to one side
         engine.camera.position.set(kd.x + kd.nx * 3.2 - kd.nz * 7, 2.4, kd.z + kd.nz * 3.2 + kd.nx * 7); engine.camera.lookAt(kd.x + kd.nx * 1.2, 1.3, kd.z + kd.nz * 1.2);
       } else if (DEBUG_VIEW === "door") { engine.camera.position.copy(at(L.bedRear - 12, 3.2, 0)); engine.camera.lookAt(at(L.bedRear - 2, 1.4, 6)); }
       else { engine.camera.position.copy(at(L.bedRear - 4.5, 2.6, -5.5)); engine.camera.lookAt(at(L.bedRear + 0.3, 1.5, 0)); }

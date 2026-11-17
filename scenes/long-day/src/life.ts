@@ -46,6 +46,12 @@ export class StreetLife implements LifeHook {
         const fx = Math.cos(p.h), fz = -Math.sin(p.h);
         for (let a = L.bedRear - 0.6; a > L.bedRear - L.rampRun - 0.2; a -= 1.0) obs.push({ x: p.x + fx * a, z: p.z + fz * a, r: 0.75 });
       }
+      // A forklift unloading from the road side (crew.ts roadLegs) works in the inner lane beside
+      // and behind the truck: traffic waits behind it.
+      if (st.mode === "dwell" && j.stackMode === "road") {
+        const fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h);
+        for (let a = L.rear - 8.5; a <= L.bedFront + 1; a += 2.2) obs.push({ x: p.x + fx * a - rx * 3, z: p.z + fz * a - rz * 3, r: 1.5 });
+      }
       for (const o of obs) o.still = true;
     }
     const other = st.spare ?? st.parked?.model ?? null;

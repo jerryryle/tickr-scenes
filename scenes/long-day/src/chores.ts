@@ -17,7 +17,7 @@ import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID, slotAlign, slotEnd, TRUCK_SLOTS } from "./cargo.ts";
 import type { Handling } from "./cargo.ts";
 import { DWELL } from "./journey.ts";
-import type { Stop } from "./journey.ts";
+import type { StackMode, Stop } from "./journey.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 
 type ChoreKind =
@@ -79,7 +79,7 @@ export const STYLE: Record<Handling, TripStyle> = {
   push: { perTrip: 2, cap: 2, item: "crate", tool: null, speed: HEAVY },
   walkOn: { perTrip: 99, cap: 1, item: "animal", tool: null, speed: 1.0 },
   teamLift: { perTrip: 3, cap: 1, item: "long", tool: null, speed: HEAVY, helper: true },
-  flatbed: { perTrip: 2, cap: 2, item: "bundle", tool: null, speed: WALK },
+  flatbed: { perTrip: 1, cap: 4, item: "bundle", tool: null, speed: WALK },   // the forklift takes one at a time
   tow: { perTrip: 1, cap: 1, item: "bundle", tool: null, speed: WALK },
 };
 
@@ -250,7 +250,7 @@ export function bedUnits(L: TruckLayout, model: TruckModel, cargo: string, units
       if (start + span > slots) break;
       if (long) {
         const ord = Math.floor(start / span), col = ord % perLayer, layer = Math.floor(ord / perLayer);
-        out.push([x1 - ml / 2 - col * (ml + gap), L.floor + layer * (mh + 0.02), 0]);
+        out.push([x1 - ml / 2 - col * (ml + gap), L.floor + layer * (mh + 0.005), 0]);
       } else {
         const [x, z] = centre(start, span);
         out.push([x, L.floor, z]);
@@ -301,6 +301,10 @@ function stowSpots(L: TruckLayout, model: TruckModel, stop: Stop, slot0: number,
   return out;
 }
 
+// A forklift trip between a flatbed and a stack (crew.ts yardLegs, roadLegs), seconds: in the
+// yard; from the road side, plus the drive out from where it's parked (first trip) and back (last).
+export const YARD_TRIP = 11.5, ROAD_TRIP = 13, ROAD_PARK = 2.4;
+
 // Chores for a pickup or drop. (Swaps use swapChores; the driver's walk there is in world space.)
 // `rearBefore` / `rearAfter`: the back of the loads before and after this stop (bedRearX), where
 // the tool is taken from and put back.
@@ -309,7 +313,7 @@ function stowSpots(L: TruckLayout, model: TruckModel, stop: Stop, slot0: number,
 // `kerbDoor`: at the kerb, the building's front door (truck frame: where to stand in front of it,
 // and the yaw that faces it), or null for a spot on the pavement behind the truck.
 export function planChores(model: TruckModel, stop: Stop, dockStair: number | null = null, slot0 = 0, rearBefore: number | null = null, rearAfter: number | null = null,
-                    kerbDoor: { x: number; z: number; yaw: number } | null = null, obstacles: WalkObstacle[] = [], boxes: WalkBox[] = []): Chore[] {
+                    kerbDoor: { x: number; z: number; yaw: number } | null = null, obstacles: WalkObstacle[] = [], boxes: WalkBox[] = [], stack: StackMode = null): Chore[] {
   const L = truckLayout(model);
   const cargo = CARGO_BY_ID.get(stop.cargo)!;
   const st = STYLE[cargo.handling];
@@ -448,10 +452,13 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     walk("close", atRear, door, WALK);
   } else if (L.flatbed) {
     // Flatbed: the dock worker forklifts the load on from the facility side, then it's strapped.
-    const deck: [number, number, number] = [(rear + L.bedFront) / 2, 0, -L.hw - 0.7];
+    // (Working from the road side, the forklift comes round the back of the truck: the driver
+    // waits by the cab, out of its way.)
+    const deck: [number, number, number] = stack === "road" ? [L.bedFront + 1.3, 0, -L.hw - 0.7] : [(rear + L.bedFront) / 2, 0, -L.hw - 0.7];
     walk("load", side, deck, WALK);
     // (Out of the facility's door and back in, when it has one: a longer drive.)
-    for (let i = 0; i < trips; i++) add({ kind: "wait", group: "load", len: kerbDoor ? 9.5 : 7, face: -Math.PI / 2, gesture: i % 2 ? "wave" : "clipboard", forklift: true });
+    const len = (i: number) => stack === "road" ? ROAD_TRIP + (i === 0 ? ROAD_PARK : 0) + (i === trips - 1 ? ROAD_PARK : 0) : stack ? YARD_TRIP : kerbDoor ? 9.5 : 7;
+    for (let i = 0; i < trips; i++) add({ kind: "wait", group: "load", len: len(i), face: -Math.PI / 2, gesture: i % 2 ? "wave" : "clipboard", forklift: true });
     add({ kind: "wait", group: "close", len: 3, face: Math.PI / 2, gesture: "stretch" });
     walk("close", deck, door, WALK);
   } else {

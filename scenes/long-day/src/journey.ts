@@ -30,6 +30,7 @@ import { hash2, hash3 } from "./rng.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
 import { truckExtents, truckLayout } from "./truck.ts";
+import { CARGO_MODELS } from "./cargomodels.ts";
 import type { TruckModel } from "./truck.ts";
 import { PREEMPT_CHANCE, PREEMPT_MAX, SIGNAL_CYCLE, signalGreenLeft, signalState, signalWait } from "./signals.ts";
 import type { SignalAxis, SignalColor, SignalPreempt } from "./signals.ts";
@@ -63,6 +64,7 @@ export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; sav
 type StopKind = "pickup" | "drop" | "swap" | "depart";
 interface Site { bx: number; bz: number; fac: FacilityId; name: string }
 export interface Stop { kind: StopKind; site: Site | null; job: number; cargo: string; units: number; truck?: TruckModel; slot?: number }   // slot: where its loads go in the bed (set when the stop begins)
+export type StackMode = "yard" | "road" | null;
 export interface Aboard { job: number; cargo: string; units: number; slotsPerUnit: number; dest: string; slot: number } // dest = site key or "next"; slot: its first pallet slot
 // "inbound": the arrival straight into town at the start of a city's slot; "country": the drive
 // out of town to the next city (country.ts).
@@ -82,7 +84,9 @@ export interface DockPlan {
   sign: { x: number; z: number; y: number; w: number; h: number; nx: number; nz: number } | null;
 }
 const DOCK_R: Record<TruckModel, number> = { box16: 6.5, box26: 8, reefer: 8, tractor: 10, flatbed: 0 };
+const YARD_PULL = 2.5;               // how much further a flatbed stops at a yard stand (crew.ts yardFrame)
 const TRAILER_TRAIL = 12.75;          // tractor rear axle to the trailer's axles
+const FIFTH_WHEEL = 0.25, KINGPIN_AXLES = TRAILER_TRAIL + FIFTH_WHEEL;   // (truck.ts SPECS.tractor, TRAILER)
 const TRAILER_AXLE_TO_REAR = 2.25;
 
 // Dwell timeline: park, then the driver's chores (chores.ts: exit, load, close, enter for a
@@ -549,7 +553,8 @@ export class Journey {
         // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
         // on, to where the way in turns off (straight through the node before, to be in the kerb
         // lane), and on up onto its roof.
-        const all = blockGoals(bx, bz, 30 - this.centerX), L = siteLayout(this.plan, bx, bz);
+        // (At a yard stand, a little further on, so the bed clears the container: crew.ts yardFrame.)
+        const all = blockGoals(bx, bz, 30 - this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0)), L = siteLayout(this.plan, bx, bz);
         goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [blockGoals(bx, bz, GARAGE_IN_A, true)[(L as GarageLayout).side]] : all;
       }
       st.route = planRoute(st.at.ix, st.at.iz, st.at.dir, st.at.before, goals, 6000, cityStreet);
@@ -683,26 +688,52 @@ export class Journey {
   // The city's front doors (city.ts kerbDoors; set by the scene, absent in tests) and the one
   // the current kerb stop uses: on the truck's right, the nearest to its back.
   kerbDoor: KerbDoor | null = null;
-  private findKerbDoor(stop: Stop): KerbDoor | null {
+  // Where the current kerb stop's forklift stacks bundles (lumber, pipe: too wide to carry through
+  // a door, crew.ts stackTrip): "yard", in the yard beside an industrial facility's end-on
+  // container; "road", on the pavement behind the truck, unloading it from the road side (there's
+  // no room on the pavement side); null for neither.
+  stackMode: StackMode = null;
+  private findKerbDoor(stop: Stop, pose: Pose = this.pose): KerbDoor | null {
     if (!DOOR_PROBE || !stop.site || stop.kind === "swap") return null;
     const L = truckLayout(this.st.truck);
     if (L.trailer) return null;   // (a flatbed's forklift uses the door: crew.ts)
     if (siteLayout(this.plan, stop.site.bx, stop.site.bz).kind === "garage" && !this.garageStop(stop)) return null;   // (its door is up on the roof)
-    const h = this.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+    const h = pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
     let best: KerbDoor | null = null, bestD = 45;   // anywhere along the block side: a longer walk beats no door
     for (const d of DOOR_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
       if (!d) continue;
-      const px = d.x - this.pose.x, pz = d.z - this.pose.z, ax = px * fx + pz * fz, az = px * rx + pz * rz;
+      const px = d.x - pose.x, pz = d.z - pose.z, ax = px * fx + pz * fz, az = px * rx + pz * rz;
       if (az < L.hw + 1.5 || d.nx * rx + d.nz * rz > -0.7) continue;   // on the truck's right, facing it
       const dd = Math.hypot(ax - L.bedRear, az);
       if (dd < bestD) { bestD = dd; best = d; }
     }
     return best;
   }
+  // How a stop's bundles are stacked, given it has a front door (stackMode), before the door is known.
+  private stackKind(stop: Stop): StackMode {
+    if (!stop.site || stop.kind === "swap" || !truckLayout(this.st.truck).flatbed || !CARGO_MODELS[stop.cargo]?.dunnage) return null;
+    const s = siteLayout(this.plan, stop.site.bx, stop.site.bz);
+    return s.kind === "stand" && s.stand === "container" && s.forklift ? "yard" : "road";
+  }
+  private isYardStand(stop: Stop) { return this.stackKind(stop) === "yard"; }
+  // Ahead of a stacking stop, where the truck will park and the door from there (the stack and
+  // the forklift are there before the truck arrives), or null.
+  stackAhead(): { pose: Pose; door: KerbDoor; mode: "yard" | "road" } | null {
+    const st = this.st, stop = st.stops[0];
+    if (!stop || st.mode !== "drive" || !this.path || this.path.length - st.s > 150) return null;
+    const mode = this.stackKind(stop);
+    if (!mode) return null;
+    // (eval moves the path's search cursor and sets lastOffset, which traffic reads: both put back)
+    const p = this.path as any, cursor = p.cursor, lastOffset = this.path.lastOffset;
+    const pose = this.path.eval(this.path.length, this.tmpPose);
+    p.cursor = cursor; this.path.lastOffset = lastOffset;
+    const door = this.findKerbDoor(stop, pose);
+    return door ? { pose: { ...pose }, door, mode } : null;
+  }
 
   private planDwell() {
     const st = this.st, stop = st.stops[0];
-    this.kerbDoor = null;
+    this.kerbDoor = null; this.stackMode = null;
     if (stop.kind === "swap") {
       // The walk: from the old cab door forward to the new one, plus a moment to look it over.
       const spare = truckExtents(stop.truck!), cur = truckExtents(st.truck);
@@ -730,6 +761,7 @@ export class Journey {
       const dp = this.dockPlan(stop);
       this.kerbDoor = dp ? null : this.findKerbDoor(stop);
       const kd = this.kerbDoor;
+      this.stackMode = kd ? this.stackKind(stop) : null;
       let door: { x: number; z: number; yaw: number } | null = null;
       if (kd) {
         // In the truck's frame: stand half a metre out from the door, facing it.
@@ -757,7 +789,7 @@ export class Journey {
         }
         if (boxes.length) boxes.push({ x: (L.front + L.rear) / 2, z: 0, hx: (L.front - L.rear) / 2, hz: L.hw, ax: 1, az: 0 });
       }
-      this.chores = planChores(st.truck, stop, dp ? dp.stair : null, stop.slot, before, after, door, obstacles, boxes);
+      this.chores = planChores(st.truck, stop, dp ? dp.stair : null, stop.slot, before, after, door, obstacles, boxes, this.stackMode);
     }
     this.choreStart = [];
     let t = 0;
@@ -767,7 +799,7 @@ export class Journey {
 
   private placePose() {
     if (this.st.mode === "country" || this.st.mode === "inbound") { this.countryPose(); return; }
-    if (this.path) { this.path.eval(this.st.s, this.pose); return; }
+    if (this.path) { if (this.st.mode === "reverse") this.reversePose(this.st.s, this.pose); else this.path.eval(this.st.s, this.pose); return; }
     const gx = this.st.garageExit;
     if (gx) { this.pose.x = gx.x; this.pose.z = gx.z; this.pose.h = gx.h; this.pose.k = 0; return; }   // up on a garage's roof
     const ex = this.st.dockExit;
@@ -927,32 +959,56 @@ export class Journey {
     this.path = new Path(st.route);
     st.s = st.stopS = this.path.length; st.backS = dock.trail;
     st.mode = "reverse"; st.modeTime = 0;
-    this.path.eval(st.s, this.pose);
+    this.reversePose(st.s, this.pose);
   }
 
   // Backing into the bay, gently.
   private reverse(dt: number) {
     const st = this.st, p = this.path!;
     const dist = st.s - st.backS;
-    const limit = Math.min(2.2, Math.sqrt(2 * 0.8 * Math.max(0, dist)));
+    // (A tractor swinging round ahead of its trailer goes faster than the trailer: slower then.)
+    const limit = Math.min(2.2, Math.sqrt(2 * 0.8 * Math.max(0, dist))) * Math.cos(this.reversePose(st.s, this.revB, true));
     const speed = -st.v;
     const next = speed < limit ? Math.min(limit, speed + 0.9 * dt) : Math.max(limit, speed - 3 * dt);
     let ds = next * dt;
     if (ds > dist) ds = Math.max(0, dist);
     this.accel = dt > 0 ? (-next - st.v) / dt : 0;
     st.v = -next; st.s -= ds; this.lastStep = -ds;
-    p.eval(st.s, this.pose);
+    this.reversePose(st.s, this.pose);
     if (dist - ds < 0.02 && next < 0.05) { st.v = 0; this.startDwell(); }
   }
 
-  // The trailer's articulation while reversing into a bay (it leads along the bay path), or
-  // null to let the truck's own hitch model run.
+  // Where the truck is at `s` along a bay path while reversing into it. A tractor-trailer's bay
+  // path is its trailer axles' (the reference axle's): they follow it without sliding sideways,
+  // the trailer along the path's heading there, and the kingpin rides KINGPIN_AXLES ahead of
+  // them. The tractor, its rear axle just behind the kingpin, heads the way the kingpin moves:
+  // off the trailer's heading by atan(KINGPIN_AXLES x curvature). (The curvature is smoothed over
+  // a few metres, as a driver would steer it, and eased in over the first metres back from where
+  // the drive in left the truck straight; docked, it's straight again.) Others: on the path.
+  private revA: Pose = { x: 0, z: 0, h: 0, k: 0 }; private revB: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  private reversePose(s: number, out: Pose, yawOnly = false): number {
+    const p = this.path!;
+    if (this.st.truck !== "tractor") { if (!yawOnly) p.eval(s, out); return 0; }
+    const sa = s - TRAILER_TRAIL, s0 = Math.max(0, sa - 3), s1 = Math.min(p.length, sa + 3);
+    const h0 = p.eval(s0, this.revA).h, h1 = p.eval(s1, this.revB).h;
+    const kap = s1 > s0 ? Math.atan2(Math.sin(h1 - h0), Math.cos(h1 - h0)) / (s1 - s0) : 0;
+    const k = kap * THREE.MathUtils.smoothstep(p.length - s, 0, 3);
+    const yaw = -Math.atan(KINGPIN_AXLES * k);   // the trailer's heading less the tractor's
+    if (yawOnly) return yaw;
+    const a = p.eval(sa, this.revA), h = a.h - yaw;
+    const kx = a.x + Math.cos(a.h) * KINGPIN_AXLES, kz = a.z - Math.sin(a.h) * KINGPIN_AXLES;
+    out.x = kx - Math.cos(h) * FIFTH_WHEEL; out.z = kz + Math.sin(h) * FIFTH_WHEEL; out.h = h; out.k = k;
+    return yaw;
+  }
+  // The trailer's articulation while reversing into a bay (reversePose), where the truck is
+  // drawn (between steps), or null to let the truck's own hitch model run.
   trailerYaw(): number | null {
     const st = this.st;
     if (st.truck !== "tractor" || st.mode !== "reverse" || !this.path) return null;
-    const ht = this.path.eval(st.s - TRAILER_TRAIL, this.tmpPose).h;
-    return Math.atan2(Math.sin(ht - this.pose.h), Math.cos(ht - this.pose.h));
+    return this.reversePose(st.s - (1 - this.alpha) * this.lastStep, this.revB, true);
   }
+  // How far the truck has reversed along its bay path (where it's drawn), or -1 when it isn't.
+  get reversed(): number { return this.st.mode === "reverse" && this.path ? this.path.length - (this.st.s - (1 - this.alpha) * this.lastStep) : -1; }
 
   private startDwell() {
     const st = this.st;

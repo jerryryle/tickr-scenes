@@ -13,6 +13,7 @@ interface CargoModel {
   legs?: { lx: number; lz: number; h: number; t: number; color: (variant: number) => number };
   round?: boolean;                     // rolls (radius = height / 2)
   palletized?: boolean;                // already sits on its own pallet
+  dunnage?: number;                    // rides on blocks this high, with room between them for forks
 }
 
 const CK = {
@@ -29,6 +30,11 @@ function pallet(b: Batch, x: number, y: number, z: number, l = 1.2, w = 1.0) {
   b.box(x, y + 0.025, z, l, 0.05, w, CK.wood);
   for (const zz of [-w * 0.4, 0, w * 0.4]) b.box(x, y + 0.08, z + zz, l, 0.06, 0.12, CK.darkWood);
   b.box(x, y + 0.13, z, l, 0.03, w, CK.wood);
+}
+// Blocks under a long bundle near its ends, so a forklift's forks slide in between them.
+const DUNNAGE = 0.1;
+function dunnage(b: Batch, x: number, y: number, z: number, w: number) {
+  for (const xx of [-1.35, 1.35]) b.box(x + xx, y + DUNNAGE / 2, z, 0.1, DUNNAGE, w, CK.darkWood);
 }
 // Legs for animals: 4 posts swinging handled by the crew (static here).
 function legs4(b: Batch, x: number, y: number, z: number, lx: number, lz: number, h: number, t: number, color: number) {
@@ -134,14 +140,17 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     for (const xx of [-0.6, 0, 0.6]) b.box(x + xx, y + 0.42, z, 0.04, 0.86, 0.91, 0x2c4470);
   } },
   tvs: { size: [1.3, 0.8, 0.18], build: (b, x, y, z) => { carton(b, x, y, z, 1.3, 0.8, 0.18); b.box(x, y + 0.42, z + 0.091, 1.0, 0.5, 0.01, 0x111111); } },
-  lumber: { size: [3.6, 0.55, 1.0], build: (b, x, y, z, i) => {
-    b.box(x, y + 0.27, z, 3.6, 0.55, 1.0, vpick([0xd6b47a, 0xc9a46a], i));
-    for (const xx of [-1.2, 0, 1.2]) b.box(x + xx, y + 0.275, z, 0.05, 0.6, 1.05, 0x222222);
+  lumber: { size: [3.6, 0.65, 1.0], dunnage: DUNNAGE, build: (b, x, y, z, i) => {
+    dunnage(b, x, y, z, 1.0);
+    const y0 = y + DUNNAGE;
+    b.box(x, y0 + 0.27, z, 3.6, 0.55, 1.0, vpick([0xd6b47a, 0xc9a46a], i));
+    for (const xx of [-1.2, 0, 1.2]) b.box(x + xx, y0 + 0.275, z, 0.05, 0.6, 1.05, 0x222222);
   } },
-  pipe: { size: [3.6, 0.45, 0.9], build: (b, x, y, z, i) => {
-    const c = vpick([0xc8743a, 0xe8e8e2], i);
-    for (let r = 0; r < 3; r++) for (let k = 0; k < 6; k++) b.box(x, y + 0.08 + r * 0.14, z - 0.35 + k * 0.14, 3.6, 0.12, 0.12, c);
-    for (const xx of [-1.2, 1.2]) b.box(x + xx, y + 0.235, z, 0.05, 0.49, 0.95, 0xd03030);
+  pipe: { size: [3.6, 0.55, 0.9], dunnage: DUNNAGE, build: (b, x, y, z, i) => {
+    dunnage(b, x, y, z, 0.9);
+    const c = vpick([0xc8743a, 0xe8e8e2], i), y0 = y + DUNNAGE;
+    for (let r = 0; r < 3; r++) for (let k = 0; k < 6; k++) b.box(x, y0 + 0.08 + r * 0.14, z - 0.35 + k * 0.14, 3.6, 0.12, 0.12, c);
+    for (const xx of [-1.2, 1.2]) b.box(x + xx, y0 + 0.235, z, 0.05, 0.49, 0.95, 0xd03030);
   } },
   serverRacks: { size: [0.65, 2.0, 1.0], build: (b, x, y, z) => {
     b.box(x, y + 1.0, z, 0.65, 2.0, 1.0, 0x1a1c20);

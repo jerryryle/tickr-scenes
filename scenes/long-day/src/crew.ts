@@ -7,13 +7,15 @@
 // trailer doors) so they open and close exactly when the driver works them.
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
-import { CURB_H } from "./grid.ts";
+import { CURB_H, KERB } from "./grid.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { ease, Truck, truckLayout } from "./truck.ts";
-import type { DoorGeom, TruckLayout } from "./truck.ts";
+import type { DoorGeom, TruckLayout, TruckModel } from "./truck.ts";
+import type { KerbDoor } from "./city.ts";
+import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, STRAP_PULL, strapPulls, STYLE, toolStore, tripUnits } from "./chores.ts";
+import { ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, STRAP_PULL, strapPulls, STYLE, toolStore, tripUnits } from "./chores.ts";
 import type { Chore, ItemKind, ToolRest } from "./chores.ts";
 import { Journey, siteKey } from "./journey.ts";
 import type { Aboard, DwellNow, Stop } from "./journey.ts";
@@ -114,7 +116,7 @@ export class Crew {
   inSeat = true;   // the driver is sitting in the cab (seat() this frame); main turns the driver spotlight on otherwise
   // The springs and per-stop state that carry over between frames (main.ts: preview snapshots and
   // part-ticks); everything else follows from the journey each frame.
-  private static SAVED = ["yaw", "yawV", "walkPhase", "time", "feetY", "helperFeetY", "drv", "mate", "doorNow", "toolHeld", "inSeat", "pose", "tmpPose"] as const;
+  private static SAVED = ["yaw", "yawV", "walkPhase", "time", "feetY", "helperFeetY", "drv", "mate", "doorNow", "toolHeld", "inSeat", "pose", "tmpPose", "yard"] as const;
   saveState() { return { f: saveFields(this, Crew.SAVED), gag: this.gagPoint ? this.gagV.clone() : null }; }
   loadState(s: ReturnType<Crew["saveState"]>) { loadFields(this, s.f); this.gagPoint = s.gag ? this.gagV.copy(s.gag) : null; }
   update(dt: number, j: Journey, truck: Truck, other: Truck | null, cam: THREE.Camera) {
@@ -135,6 +137,7 @@ export class Crew {
     this.bed.update(truck, st.mode === "dwell" && stop && stop.kind !== "swap" ? this.bedView(j, stop) : st.aboard);
     this.prepareCargo(st.mode === "dwell" && stop && stop.kind !== "swap" ? stop : null, j);
     this.worker(j, truck, stop);
+    this.yardProps(j, truck);
 
     this.toolHeld = null;
     // The country truck stop: out of the old truck, along to the spare, up into it.
@@ -228,8 +231,10 @@ export class Crew {
     const ph = j.dwellPhase(), ch = j.chores;
     let trips = 0, before = 0;
     const idx = ph.chore ? ch.indexOf(ph.chore) : ph.phase === "startup" ? ch.length : -1;
-    for (let k = 0; k < ch.length; k++) if (ch[k].kind === "stow") { trips++; if (k < idx) before++; }
-    const i = ph.chore?.kind === "stow" || stop.kind === "pickup" ? before : before - 1;
+    // A trip is a stow (by hand) or a forklift wait.
+    const isTrip = (c: Chore | null | undefined) => !!c && (c.kind === "stow" || (c.kind === "wait" && !!c.forklift));
+    for (let k = 0; k < ch.length; k++) if (isTrip(ch[k])) { trips++; if (k < idx) before++; }
+    const i = isTrip(ph.chore) || stop.kind === "pickup" ? before : before - 1;
     return { i: THREE.MathUtils.clamp(i, 0, Math.max(0, trips - 1)), trips };
   }
 
@@ -570,7 +575,8 @@ export class Crew {
     }
     if (st.mode !== "dwell") return;
     const ph = j.dwellPhase();
-    const fork = this.forkTrip(L, dock !== null, stop);
+    const fork = this.forkTrip(L, dock !== null, stop, truck.model, this.tripNow(j, stop));
+    if (fork && !dock && j.stackMode && j.kerbDoor) { this.stackTrip(j, truck, stop, L, j.kerbDoor, ph, j.stackMode); return; }
     if (!fork) {
       if (!dock) return;
       // Box truck at a dock: by the door with a clipboard (team lifts move them in props()).
@@ -583,7 +589,8 @@ export class Crew {
     const c = ph.chore, u = c?.forklift ? THREE.MathUtils.clamp(ph.ct / c.len, 0, 1) : 0;
     const pickup = stop.kind === "pickup";
     const k = c?.forklift ? (u < 0.4 ? ease(u / 0.4) : u < 0.5 ? 1 : u < 0.9 ? 1 - ease((u - 0.5) / 0.4) : 0) : 0;
-    const [A, B, yaw, lift, travel] = [fork.A, fork.B, fork.yaw, fork.lift, fork.travel];
+    const [A, B, yaw, lift, travel, reach] = [fork.A, fork.B, fork.yaw, fork.lift, fork.travel, fork.reach];
+    this.forks.scale.x = reach > 0.6 ? (reach + 0.4) / 1.13 : 1;   // long tines to reach across a flatbed's deck
     // At a flatbed with a front door, the forklift lives inside: out through the door (forks
     // first, load and all) and round to the deck's side, and back in; hidden while parked inside.
     const kd = !dock && L.flatbed ? j.kerbDoor : null;
@@ -597,7 +604,8 @@ export class Crew {
     if (kd) {
       // A cubic from inside the doorway (deep enough to hide the load: it rides ahead of the
       // forks), straight out of the door, to the deck's side, arriving square to the truck.
-      const [p0, p1, p2, p3] = this.fp, out = 0.6 + (this.load?.size[0] ?? 1.2) / 2 + 0.3;
+      const along = this.load ? (fork.across ? this.load.size[2] : this.load.size[0]) : 1.2;
+      const [p0, p1, p2, p3] = this.fp, out = reach + along / 2 + 0.3;
       p3.set(B[0], 0, B[2]).applyMatrix4(truck.root.matrixWorld);
       p2.set(p3.x + Math.sin(truck.heading) * 2.5, 0, p3.z + Math.cos(truck.heading) * 2.5);
       p0.set(kd.x - kd.nx * out, 0, kd.z - kd.nz * out);
@@ -634,26 +642,157 @@ export class Crew {
     if (carrying && load) {
       fl.updateMatrixWorld();
       load.group.visible = true;
-      load.group.position.set(0.6, fy + 0.06, 0).applyMatrix4(fl.matrixWorld);
-      load.group.rotation.set(0, fl.rotation.y, 0);
+      // On blocks, the bundle's underside rests on the tines (5 cm thick) between them.
+      const dn = CARGO_MODELS[stop.cargo]?.dunnage, ly = dn ? fy + 0.05 - dn : fy + 0.06;
+      load.group.position.set(reach, ly, 0).applyMatrix4(fl.matrixWorld);
+      load.group.rotation.set(0, fl.rotation.y - (fork.across ? Math.PI / 2 : 0), 0);
       load.animate?.(this.time);
       if (CARGO_BY_ID.get(stop.cargo)!.tier === "humorous") this.gagPoint = this.gagV.copy(load.group.position).setY(load.group.position.y + load.size[1] * 0.6);
     }
   }
 
+  // ---- the bundle stack ---------------------------------------------------------------------
+  // Bundles (lumber, pipe) ride across the forks, too wide for a door, so at the kerb they go to
+  // and from a stack (journey.ts stackMode): in the yard beside an industrial facility's end-on
+  // container, one column, the forklift backing off the deck, turning round and driving up to it
+  // (yardLegs); or on the pavement just behind the truck, the forklift unloading it from the road
+  // side and coming round its back (roadLegs: traffic waits, life.ts). One bundle a trip. The stack and the parked forklift stay when the truck leaves (`yard`: world space,
+  // saved), and are there before it arrives.
+  private yard: { city: number; x: number; y: number; z: number; h: number; sz: number; cols: number[][]; cargo: string;
+    fx: number; fy: number; fz: number; fyaw: number; fork: number } | null = null;
+  private stack: THREE.Mesh | null = null; private stackKey = "";
+
+  // A stop's stack in the truck's frame (parked at x, z, h), from the door: the building's front,
+  // the kerb, the stack's depth, and per trip the bed unit it moves and the stack column (x) and
+  // layer it goes to or comes from. Drops take the bed's last unit first; pickups fill it in order.
+  private stackPlan(L: TruckLayout, model: TruckModel, stop: Stop, door: KerbDoor, x: number, z: number, h: number, mode: "yard" | "road") {
+    const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+    const px = door.x - x, pz = door.z - z, dx = px * fx + pz * fz, front = px * rx + pz * rz;
+    // The yard's column: opposite the bed's middle (the truck stops clear of the container:
+    // journey.ts YARD_PULL), but never beside the container.
+    const mid = (L.bedRear + L.bedFront) / 2, s = Math.sign(mid - dx) || 1, clear = dx + s * (END_ON_HALF + 0.4 + CARGO_MODELS[stop.cargo].size[0] / 2);
+    const sx = mode === "road" ? L.rear - 2.4 : s > 0 ? Math.max(mid, clear) : Math.min(mid, clear);
+    const units = bedUnits(L, model, stop.cargo, stop.units, stop.slot ?? 0), pickup = stop.kind === "pickup", n = units.length;
+    const colX = (u: number) => { void u; return sx; };
+    const initial = new Map<number, number>(), used = new Map<number, number>();
+    if (pickup) for (let u = 0; u < n; u++) initial.set(colX(u), (initial.get(colX(u)) ?? 0) + 1);
+    const trips: { u: number; cx: number; layer: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      const u = pickup ? i : n - 1 - i, cx = colX(u), k = used.get(cx) ?? 0;
+      trips.push({ u, cx, layer: pickup ? initial.get(cx)! - 1 - k : k });
+      used.set(cx, k + 1);
+    }
+    const cols = [...new Set(units.map((_, u) => colX(u)))];
+    return { mode, s, front, kerb: front - KERB, sx, sz: mode === "yard" ? front + 4.5 : front - 0.55, units, trips, initial, cols };
+  }
+  private stackLegs(L: TruckLayout, P: ReturnType<Crew["stackPlan"]>, i: number, mh: number, pickup: boolean) {
+    const T = P.trips[i], unit = P.units[T.u], sy = CURB_H + T.layer * (mh + 0.005);
+    return P.mode === "yard" ? yardLegs(L, P, unit[0], unit[1], sy, pickup)
+      : roadLegs(L, P, unit[0], unit[1], sy, pickup, i === 0, i === P.trips.length - 1);
+  }
+
+  private stackTrip(j: Journey, truck: Truck, stop: Stop, L: TruckLayout, door: KerbDoor, ph: DwellNow, mode: "yard" | "road") {
+    const pickup = stop.kind === "pickup", m = CARGO_MODELS[stop.cargo], mh = m.size[1], tp = truck.root.position;
+    const P = this.stackPlan(L, truck.model, stop, door, tp.x, tp.z, truck.heading, mode), n = P.trips.length;
+    if (!n) return;
+    // Which trip, and how far into it (between trips: where the last one ended).
+    const waits = j.chores.filter((q) => q.kind === "wait" && !!q.forklift), c = ph.chore;
+    const idx = c ? j.chores.indexOf(c) : ph.phase === "close" || ph.phase === "enter" || ph.phase === "startup" ? j.chores.length : -1;
+    const i = waits.filter((q) => j.chores.indexOf(q) < idx).length, inTrip = !!c?.forklift;
+    const ti = Math.min(n - 1, inTrip ? i : Math.max(0, i - 1)), t = inTrip ? THREE.MathUtils.clamp(ph.ct, 0, c!.len) : i === 0 ? 0 : Infinity;
+    const p = legsAt(this.stackLegs(L, P, ti, mh, pickup), t);
+    // The stack now: whole trips done, and this one's bundle once it's taken (pickup) or given (drop).
+    const done = (k: number) => k < i || (k === ti && inTrip && (pickup ? p.took : p.gave));
+    const cols = P.cols.map((cx) => [cx, pickup ? (P.initial.get(cx) ?? 0) - P.trips.filter((q, k) => q.cx === cx && done(k)).length
+      : P.trips.filter((q, k) => q.cx === cx && done(k)).length]);
+    // The forklift, in the truck's frame (up the kerb when on it), into the world.
+    truck.root.updateMatrixWorld();
+    const fl = this.forklift, ry = CURB_H * THREE.MathUtils.smoothstep(p.cz, P.kerb - 0.5, P.kerb + 0.5);
+    this.v.set(p.x, ry, p.z).applyMatrix4(truck.root.matrixWorld);
+    fl.visible = true; fl.position.copy(this.v); fl.rotation.set(0, truck.heading + p.yaw, 0);
+    this.forks.position.y = p.fy; this.forks.scale.x = LONG_TINES;
+    this.yard = { city: j.st.city, x: tp.x, y: tp.y, z: tp.z, h: truck.heading, sz: P.sz, cols, cargo: stop.cargo,
+      fx: fl.position.x, fy: fl.position.y, fz: fl.position.z, fyaw: fl.rotation.y, fork: p.fy };
+    // The worker in the seat, and the bundle on the forks.
+    const hp = this.helper;
+    fl.updateMatrixWorld();
+    this.v.set(-1.2, 1.06 - CHARACTER_HIP_Y, 0).applyMatrix4(fl.matrixWorld);
+    hp.root.visible = true; hp.root.position.copy(this.v); hp.root.rotation.set(0, fl.rotation.y, 0);
+    hp.apply(seatedPose(this.tmpPose, 0));
+    const load = this.load;
+    if (inTrip && p.took && !p.gave && load) {
+      load.group.visible = true;
+      load.group.position.set(L.hw + 0.15, p.fy + 0.05 - (m.dunnage ?? 0), 0).applyMatrix4(fl.matrixWorld);
+      load.group.rotation.set(0, fl.rotation.y - Math.PI / 2, 0);
+    }
+  }
+
+  // The stack and the parked forklift, wherever the last stacking stop left them (or, ahead of
+  // one, where they will be), while the truck is in the same city and near.
+  private yardProps(j: Journey, truck: Truck) {
+    const st = j.st;
+    if (st.mode !== "dwell" || !j.stackMode) {
+      const ahead = j.stackAhead();
+      if (ahead) {
+        const stop = st.stops[0], L = truckLayout(st.truck), pickup = stop.kind === "pickup", ap = ahead.pose;
+        const P = this.stackPlan(L, st.truck, stop, ahead.door, ap.x, ap.z, ap.h, ahead.mode);
+        if (P.trips.length) {
+          const p = legsAt(this.stackLegs(L, P, 0, CARGO_MODELS[stop.cargo].size[1], pickup), 0), h = ap.h;
+          const ry = CURB_H * THREE.MathUtils.smoothstep(p.cz, P.kerb - 0.5, P.kerb + 0.5);
+          this.yard = { city: st.city, x: ap.x, y: 0, z: ap.z, h, sz: P.sz, cols: P.cols.map((cx) => [cx, pickup ? P.initial.get(cx) ?? 0 : 0]), cargo: stop.cargo,
+            fx: ap.x + Math.cos(h) * p.x + Math.sin(h) * p.z, fy: ry, fz: ap.z - Math.sin(h) * p.x + Math.cos(h) * p.z, fyaw: h + p.yaw, fork: p.fy };
+        }
+      }
+    }
+    const Y = this.yard;
+    if (Y && (Y.city !== st.city || Math.hypot(truck.root.position.x - Y.x, truck.root.position.z - Y.z) > 250)) this.yard = null;
+    const key = this.yard ? `${Y!.cargo}|${Y!.cols.map((q) => q.join(":")).join(",")}|${Y!.x}|${Y!.z}|${Y!.h}|${Y!.sz}` : "";
+    if (key !== this.stackKey) {
+      this.stackKey = key;
+      if (this.stack) { this.stack.removeFromParent(); this.stack.geometry.dispose(); this.stack = null; }
+      if (Y && Y.cols.some((q) => q[1] > 0)) {
+        const m = CARGO_MODELS[Y.cargo], b = new Batch();
+        for (const [cx, n] of Y.cols) for (let k = 0; k < n; k++) m.build(b, cx, CURB_H + k * (m.size[1] + 0.005), Y.sz, k + Math.round(cx));
+        const mesh = b.build(this.material);
+        if (mesh) { mesh.position.set(Y.x, Y.y, Y.z); mesh.rotation.set(0, Y.h, 0); this.scene.add(mesh); this.stack = mesh; }
+      }
+    }
+    if (this.yard && !this.forklift.visible) {
+      const fl = this.forklift;
+      fl.visible = true; fl.position.set(Y!.fx, Y!.fy, Y!.fz); fl.rotation.set(0, Y!.fyaw, 0);
+      this.forks.position.y = Y!.fork; this.forks.scale.x = LONG_TINES;
+    }
+  }
+  // When in a stacking trip the bundle leaves or reaches the truck's deck (bedView).
+  private stackTruckAt(mode: "yard" | "road", pickup: boolean) {
+    const L = truckLayout("flatbed"), P = { s: 1, kerb: 4.5, front: 7.5, sx: 0, sz: 10 };
+    const legs = mode === "yard" ? yardLegs(L, P, 0, L.floor, CURB_H, pickup) : roadLegs(L, { ...P, sx: -5 }, 0, L.floor, CURB_H, pickup, true, false);
+    let t = 0;
+    for (const g of legs) { t += g.d; if (g.truck) return t; }
+    return t;
+  }
+
   // Where the forklift works for this stop (truck frame), or null when it isn't needed.
-  private forkTrip(L: TruckLayout, docked: boolean, stop: Stop) {
+  // `reach`: from the fork heels to the load's middle along the forks; `across`: the load lies
+  // across the forks (a flatbed's bundles, along the truck), not along them.
+  private forkTrip(L: TruckLayout, docked: boolean, stop: Stop, model: TruckModel, trip: { i: number; trips: number }) {
     const P = DOCK_PLATFORM;
     if (docked && L.trailer)   // into the trailer across the platform from inside the building
-      return { A: [L.rear - 8.5, P, 0] as const, B: [L.rear + 2.6, P, 0] as const, yaw: 0, lift: 0.1, travel: 0.12 };
+      return { A: [L.rear - 8.5, P, 0] as const, B: [L.rear + 2.6, P, 0] as const, yaw: 0, lift: 0.1, travel: 0.12, reach: 0.6, across: false };
     if (docked) return null;
-    if (L.flatbed) {           // across the sidewalk to the deck's side
-      const mid = (L.bedRear + L.bedFront) / 2;
-      return { A: [mid, 0, L.hw + 5.2] as const, B: [mid, 0, L.hw + 0.35] as const, yaw: Math.PI / 2, lift: L.floor + 0.05, travel: 0.15 };
+    if (L.flatbed) {
+      // Square to the deck's side, at this trip's unit (chores.ts bedUnits), forks under it and
+      // reaching across to its middle; on blocks, the forks go in between them.
+      const [u0, u1] = tripUnits(stop, Math.max(1, trip.trips), trip.i);
+      const ps = bedUnits(L, model, stop.cargo, stop.units, stop.slot ?? 0).slice(u0, Math.max(u0 + 1, u1));
+      const x = ps.length ? ps.reduce((a, p) => a + p[0], 0) / ps.length : (L.bedRear + L.bedFront) / 2;
+      const y = ps.length ? Math.min(...ps.map((p) => p[1])) : L.floor, z = ps.length ? ps[0][2] : 0;
+      const heel = L.hw + 0.15, dn = CARGO_MODELS[stop.cargo]?.dunnage;
+      return { A: [x, 0, L.hw + 5.2] as const, B: [x, 0, heel] as const, yaw: Math.PI / 2, lift: dn ? y + 0.05 : L.floor + 0.05, travel: 0.15,
+        reach: heel - z, across: true };
     }
     if (L.trailer)             // from behind, up to the trailer's floor at its open doors
-      return { A: [L.rear - 7, 0, 0] as const, B: [L.rear - 0.25, 0, 0] as const, yaw: 0, lift: L.floor + 0.05, travel: 0.15 };
-    void stop;
+      return { A: [L.rear - 7, 0, 0] as const, B: [L.rear - 0.25, 0, 0] as const, yaw: 0, lift: L.floor + 0.05, travel: 0.15, reach: 0.6, across: false };
     return null;
   }
 
@@ -677,7 +816,7 @@ export class Crew {
       // A load lands in the bed when it is set down (pickup) and leaves it as it is lifted (drop):
       // late in a stow, early in a drop's; halfway through a forklift trip, as it lets go or lifts (worker).
       const pickup = stop.kind === "pickup";
-      const at = (c: Chore) => c.kind === "wait" ? c.len * 0.5 : pickup ? c.len * 0.97 : c.len * 0.03;
+      const at = (c: Chore) => c.kind === "wait" ? (j.stackMode ? this.stackTruckAt(j.stackMode, pickup) : c.len * 0.5) : pickup ? c.len * 0.97 : c.len * 0.03;
       for (const c of steps) { const k = j.chores.indexOf(c); if (k < idx || (k === idx && ph.ct > at(c))) done++; }
     }
     // Trip by trip, exactly what each trip carries (chores.ts tripUnits).
@@ -1085,4 +1224,122 @@ const TEAM_FRONT_ARM: [number, number] = [-0.25, 0.1], TEAM_BACK_ARM: [number, n
 function teamHand(arm: [number, number]): [number, number] {
   const sy = HIP_Y + SHOULDER_UP, a1 = arm[0], a2 = arm[0] + arm[1];
   return [ARM_UPPER * Math.sin(a1) + ARM_FORE * Math.sin(a2), sy - ARM_UPPER * Math.cos(a1) - ARM_FORE * Math.cos(a2)];
+}
+
+// ---- a stacking trip's legs ----------------------------------------------------------------------
+// In the truck's frame: the forklift's heel (the forks' root, on the ground) and the forks' yaw
+// (forks along (cos yaw, -sin yaw): towards the truck at PI/2). Its middle is 1.15 m behind the heel.
+interface YPose { x: number; z: number; yaw: number }
+interface YLeg { d: number; kind: "line" | "s" | "curve" | "spin" | "turn" | "hold"; a: YPose; b: YPose; f0: number; f1: number; ev?: "take" | "give"; rev?: boolean; truck?: boolean }
+const FL_MID = 1.15;
+const END_ON_HALF = 1.22;   // half the end-on container's width (city.ts standBox)
+const LONG_TINES = (1.27 + 0.55) / 1.13;   // tines long enough to reach a flatbed's middle from its side
+const fvec = (yaw: number): [number, number] => [Math.cos(yaw), -Math.sin(yaw)];
+function spinTo(a: YPose, d: number): YPose {
+  const [fx, fz] = fvec(a.yaw), cx = a.x - fx * FL_MID, cz = a.z - fz * FL_MID, yaw = a.yaw + d, [gx, gz] = fvec(yaw);
+  return { x: cx + gx * FL_MID, z: cz + gz * FL_MID, yaw };
+}
+const leg = (d: number, kind: YLeg["kind"], a: YPose, b: YPose, f0: number, f1: number, o: Partial<YLeg> = {}): YLeg => ({ d, kind, a, b, f0, f1, ...o });
+// The yard: off the deck, round on the pavement (the load swinging away from the container), and
+// up the yard to the stack; a pickup the other way. Starting and ending parked by the stack. Fork
+// heights are the forks' own (over the ground under the forklift).
+function yardLegs(L: TruckLayout, F: { s: number; sx: number; sz: number }, ux: number, uy: number, sy: number, pickup: boolean): YLeg[] {
+  const reach = L.hw + 0.15, travel = 0.15, up = 0.06;
+  const B: YPose = { x: ux, z: reach, yaw: Math.PI / 2 }, R: YPose = { x: ux, z: L.hw + 2.55, yaw: Math.PI / 2 };
+  const turn = F.s > 0 ? -Math.PI : Math.PI, Rp = spinTo(R, turn);
+  const P2: YPose = { x: F.sx, z: F.sz - reach, yaw: Rp.yaw }, Pk: YPose = { ...P2, z: P2.z - 0.8 };
+  const tl = uy + 0.05, sl = sy - CURB_H + 0.05;
+  return pickup ? [
+    leg(0.8, "line", Pk, P2, travel, sl),
+    leg(0.4, "hold", P2, P2, sl, sl, { ev: "take" }),
+    leg(0.4, "hold", P2, P2, sl, sl + up),
+    leg(2.0, "s", P2, Rp, sl + up, travel, { rev: true }),
+    leg(1.4, "spin", Rp, R, travel, tl + up),
+    leg(1.0, "line", R, B, tl + up, tl + up),
+    leg(0.5, "hold", B, B, tl + up, tl, { ev: "give", truck: true }),
+    leg(1.0, "line", B, R, tl, tl),
+    leg(1.4, "spin", R, Rp, tl, travel),
+    leg(2.0, "s", Rp, Pk, travel, travel),
+  ] : [
+    leg(2.0, "s", Pk, Rp, travel, travel, { rev: true }),
+    leg(1.4, "spin", Rp, R, travel, tl),
+    leg(1.0, "line", R, B, tl, tl),
+    leg(0.4, "hold", B, B, tl, tl, { ev: "take", truck: true }),
+    leg(0.4, "hold", B, B, tl, tl + up),
+    leg(1.0, "line", B, R, tl + up, tl + up),
+    leg(1.4, "spin", R, Rp, tl + up, travel),
+    leg(2.0, "s", Rp, P2, travel, sl + up),
+    leg(0.5, "hold", P2, P2, sl + up, sl, { ev: "give" }),
+    leg(0.8, "line", P2, Pk, sl, travel),
+  ];
+}
+// The road side: the forklift parks on the pavement beyond the stack (H), and works through the
+// inner lane: out to C (facing along the truck, behind it), round into the truck's side (B) or up
+// onto the pavement to the stack (P2), and back to C in reverse. Its first trip starts by turning
+// out of where it's parked; its last ends turning back in. Loads ride high alongside the truck.
+function roadLegs(L: TruckLayout, F: { front: number; sx: number; sz: number }, ux: number, uy: number, sy: number, pickup: boolean, first: boolean, last: boolean): YLeg[] {
+  const reach = L.hw + 0.15, travel = 0.15, up = 0.06, high = 1.6, tl = uy + 0.05, sl = sy - CURB_H + 0.05;
+  const B: YPose = { x: ux, z: -reach, yaw: -Math.PI / 2 }, C: YPose = { x: F.sx - 2, z: -3, yaw: 0 };
+  const P2: YPose = { x: F.sx, z: F.sz - reach, yaw: -Math.PI / 2 }, H: YPose = { x: F.sx - 4.2, z: F.front - 1.6, yaw: Math.PI };
+  const out = first ? [leg(ROAD_PARK, "turn", H, C, travel, travel)] : [];
+  out.push(...(pickup ? [
+    leg(2.4, "curve", C, P2, travel, sl),
+    leg(0.4, "hold", P2, P2, sl, sl, { ev: "take" }),
+    leg(0.4, "hold", P2, P2, sl, sl + up),
+    leg(2.4, "curve", P2, C, sl + up, high, { rev: true }),
+    leg(3.0, "curve", C, B, high, tl + up),
+    leg(0.5, "hold", B, B, tl + up, tl, { ev: "give", truck: true }),
+    leg(3.0, "curve", B, C, tl, travel, { rev: true }),
+  ] : [
+    leg(3.0, "curve", C, B, travel, tl),
+    leg(0.4, "hold", B, B, tl, tl, { ev: "take", truck: true }),
+    leg(0.4, "hold", B, B, tl, tl + up),
+    leg(3.0, "curve", B, C, tl + up, high, { rev: true }),
+    leg(2.4, "curve", C, P2, high, sl + up),
+    leg(0.6, "hold", P2, P2, sl + up, sl, { ev: "give" }),
+    leg(2.4, "curve", P2, C, sl, travel, { rev: true }),
+  ]));
+  if (last) out.push(leg(ROAD_PARK, "turn", C, H, travel, travel));
+  return out;
+}
+// The forklift at time t into a trip: heel, yaw, fork height, its middle's z, and whether the
+// bundle has been taken and given yet.
+function legsAt(legs: YLeg[], t: number) {
+  let t0 = 0, took = false, gave = false;
+  for (const g of legs) {
+    if (t >= t0 + g.d) { t0 += g.d; if (g.ev === "take") took = true; if (g.ev === "give") gave = true; continue; }
+    const u = THREE.MathUtils.clamp((t - t0) / g.d, 0, 1), e = ease(u), fy = g.f0 + (g.f1 - g.f0) * THREE.MathUtils.smoothstep(u, 0, 1);
+    let x = g.a.x, z = g.a.z, yaw = g.a.yaw;
+    if (g.kind === "line") { x = g.a.x + (g.b.x - g.a.x) * e; z = g.a.z + (g.b.z - g.a.z) * e; }
+    else if (g.kind === "spin" || g.kind === "turn") {
+      // Round its middle (a turn also moves its middle along, from a's to b's).
+      const [ax, az] = fvec(g.a.yaw), [bx, bz] = fvec(g.b.yaw);
+      const c0x = g.a.x - ax * FL_MID, c0z = g.a.z - az * FL_MID, c1x = g.b.x - bx * FL_MID, c1z = g.b.z - bz * FL_MID;
+      const cx = g.kind === "turn" ? c0x + (c1x - c0x) * e : c0x, cz = g.kind === "turn" ? c0z + (c1z - c0z) * e : c0z;
+      yaw = g.a.yaw + (g.b.yaw - g.a.yaw) * e; const [gx, gz] = fvec(yaw); x = cx + gx * FL_MID; z = cz + gz * FL_MID;
+    } else if (g.kind === "curve") {
+      // A cubic from a to b leaving and arriving along each one's heading (the way it moves:
+      // backwards, reversing), forks along its tangent or against it.
+      const sg = g.rev ? -1 : 1, [ax, az] = fvec(g.a.yaw), [bx, bz] = fvec(g.b.yaw);
+      const k = THREE.MathUtils.clamp(0.45 * Math.hypot(g.b.x - g.a.x, g.b.z - g.a.z), 0.5, 2.2), w = 1 - e;
+      const p1x = g.a.x + sg * ax * k, p1z = g.a.z + sg * az * k, p2x = g.b.x - sg * bx * k, p2z = g.b.z - sg * bz * k;
+      x = w * w * w * g.a.x + 3 * w * w * e * p1x + 3 * w * e * e * p2x + e * e * e * g.b.x;
+      z = w * w * w * g.a.z + 3 * w * w * e * p1z + 3 * w * e * e * p2z + e * e * e * g.b.z;
+      const dx = 3 * w * w * (p1x - g.a.x) + 6 * w * e * (p2x - p1x) + 3 * e * e * (g.b.x - p2x);
+      const dz = 3 * w * w * (p1z - g.a.z) + 6 * w * e * (p2z - p1z) + 3 * e * e * (g.b.z - p2z);
+      yaw = Math.hypot(dx, dz) < 1e-6 ? g.a.yaw : g.rev ? Math.atan2(dz, -dx) : Math.atan2(-dz, dx);
+    } else if (g.kind === "s") {
+      // A cubic from a to b leaving and arriving along z, forks along its tangent (or against it, reversing).
+      const k = Math.abs(g.b.z - g.a.z) * 0.5, m = Math.sign(g.b.z - g.a.z) || 1;
+      const p1x = g.a.x, p1z = g.a.z + m * k, p2x = g.b.x, p2z = g.b.z - m * k, w = 1 - e;
+      x = w * w * w * g.a.x + 3 * w * w * e * p1x + 3 * w * e * e * p2x + e * e * e * g.b.x;
+      z = w * w * w * g.a.z + 3 * w * w * e * p1z + 3 * w * e * e * p2z + e * e * e * g.b.z;
+      const dx = 3 * w * w * (p1x - g.a.x) + 6 * w * e * (p2x - p1x) + 3 * e * e * (g.b.x - p2x);
+      const dz = 3 * w * w * (p1z - g.a.z) + 6 * w * e * (p2z - p1z) + 3 * e * e * (g.b.z - p2z);
+      yaw = Math.hypot(dx, dz) < 1e-6 ? g.a.yaw : g.rev ? Math.atan2(dz, -dx) : Math.atan2(-dz, dx);
+    }
+    return { x, z, yaw, fy, cz: z - fvec(yaw)[1] * FL_MID, took, gave };
+  }
+  const g = legs[legs.length - 1], last = g.b;
+  return { x: last.x, z: last.z, yaw: last.yaw, fy: g.f1, cz: last.z - fvec(last.yaw)[1] * FL_MID, took, gave };
 }
