@@ -9,7 +9,7 @@ import { CITY_HI, CITY_LO, CityPlan } from "./city.ts";
 import { BLOCK } from "./grid.ts";
 import { signAtlas } from "./signs.ts";
 import { SIM_DT } from "./journey.ts";
-import { GLASS } from "./traffic.ts";
+import { GLASS } from "./cars.ts";
 
 const TRAINS = 4, EL_CARS = 4, EL_CAR_PITCH = 14.4;
 export class Ambient {

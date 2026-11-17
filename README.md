@@ -30,12 +30,13 @@ make test                 # just run the tests; make test-long-day for one scene
 make render-long-day      # build, then render with tickr-scene
 make debug SCENE=long-day DEFINE="DEBUG_STYLE=metro DEBUG_HOUR=18"  # -> build/long-day-debug/
 make run SCENE=long-day TEST=journey ARGS=30           # one test, with arguments and its output
+make tool SCENE=long-day TOOL=showroom SECS=17         # render a test scene from scenes/<scene>/tools/
 make clean                # remove build/
 make distclean            # also remove node_modules/
 ```
 
 `DEFINE` overrides the value of a top-level `const NAME = ...;` in the build, for debugging; it
-works with `debug` and `run`. `ARGS` is split by the shell, so quote JSON for it:
+works with `debug`, `run` and `tool`. `ARGS` is split by the shell, so quote JSON for it:
 `ARGS="70 '{\"seed\":2}'"`.
 
 ## Build output

@@ -29,9 +29,11 @@ import type { CattlePlan, HerdMember } from "./country.ts";
 import { Cow, Horse, Tractor } from "./farm.ts";
 import type { Coat } from "./farm.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
-import { GLASS, headLamp, tailLamp } from "./traffic.ts";
+import { CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
+import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
 
+const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
 const SIDE_W = 170;              // scenery either side of the road
@@ -65,7 +67,7 @@ export class CountryWorld {
   private p = { x: 0, z: 0, h: 0, k: 0 };
   private q = { x: 0, z: 0, h: 0, k: 0 };
   // Things that move with time.
-  private cars: THREE.InstancedMesh;
+  private cars: CarFleet;
   private carPoses: number[] = [];   // oncoming cars: x, z, heading, height
   private carMat: THREE.MeshLambertMaterial;
   private train: THREE.Group | null = null;
@@ -93,20 +95,12 @@ export class CountryWorld {
   constructor(scene: THREE.Scene, private mats: CityMaterials, private fleet: FleetBuilder | null) {
     scene.add(this.group);
     this.group.visible = false;
-    const b = new Batch();
-    b.box(0, 0.7, 0, 4.3, 0.75, 1.8, 0xffffff); b.box(-0.3, 1.35, 0, 2.2, 0.6, 1.62, 0x2a3440);
-    for (const x of [-1.35, 1.35]) for (const z of [-0.73, 0.73]) b.cyl(x, 0.34, z, 0.34, 0.24, 0x1a1a1a, 8, Math.PI / 2);   // inside the body's sides
-    for (const z of [-0.6, 0.6]) { headLamp(b, 2.16, 0.75, z, 0.04, 0.16, 0.3); tailLamp(b, -2.16, 0.8, z, 0.04, 0.14, 0.3); }
     const carMat = this.carMat = new THREE.MeshLambertMaterial({ vertexColors: true }); applyDriverSpot(carMat); applyLampGlow(carMat); applyLampLight(carMat);
     // The after-dark glow takes each car's own colour (a plain grey glow washed them all out).
     { const prev = carMat.onBeforeCompile.bind(carMat), prevKey = carMat.customProgramCacheKey.bind(carMat);
       carMat.onBeforeCompile = (shader, r) => { prev(shader, r); shader.fragmentShader = shader.fragmentShader.replace("#include <emissivemap_fragment>", "#ifdef USE_COLOR\n  totalEmissiveRadiance *= vColor.rgb;\n#endif\n#include <emissivemap_fragment>"); };
       carMat.customProgramCacheKey = () => prevKey() + "|cartint-v1"; }
-    const carMesh = b.build(carMat)!;
-    this.cars = new THREE.InstancedMesh(carMesh.geometry, carMesh.material, 10);
-    this.cars.count = 0; this.cars.frustumCulled = false;
-    for (let i = 0; i < 10; i++) this.cars.setColorAt(i, new THREE.Color([0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020][i % 7]));
-    this.group.add(this.cars);
+    this.cars = new CarFleet(this.group, carMat, 10);
     // A wide plane under everything, following the truck, for the far land under the fog.
     // (Subdivided: fog is computed per vertex.)
     this.base = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000, 40, 40).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x6e9e44 }));
@@ -219,7 +213,7 @@ export class CountryWorld {
     this.herd = []; this.tractorObj = null;
     for (const g of [...this.gates, ...this.lights, ...this.weighLamps, ...this.ramps, ...(this.boat ? [this.boat] : [])]) { this.group.remove(g); disposeTree(g); }
     this.gates = []; this.lights = []; this.weighLamps = []; this.ramps = []; this.boat = null; this.foam = null;
-    this.cars.count = 0;
+    this.cars.begin(); this.cars.end();
   }
 
   // Stream segments around the truck (all at once after a jump) and move what moves.
@@ -275,6 +269,7 @@ export class CountryWorld {
     this.carMat.emissive.setScalar(0.22 * LAMPS_ON.value);
     let n = 0;
     this.carPoses.length = 0;
+    this.cars.begin();
     for (let i = 0; i < road.meetings.length && n < 10; i++) {
       const tm = road.meetings[i];
       const s = road.sAt(tm) - ONCOMING_SPEED * (u - tm);
@@ -282,14 +277,11 @@ export class CountryWorld {
       road.point(s, -LANE, this.p);
       this.quat.setFromEuler(this.eul.set(0, this.p.h + Math.PI, -Math.atan(road.gradeAt(s))));   // (it drives down the road: its nose dips where the road climbs)
       this.m4.compose(this.v.set(this.p.x, road.heightAt(s), this.p.z), this.quat, this.one);
-      this.cars.setMatrixAt(n, this.m4);
+      this.cars.add(carKindAt(hash2(i, 0x0c, 0xa7, 0x51)), this.m4, ONCOMING_PAINTS[i % ONCOMING_PAINTS.length]);
       this.carPoses.push(this.p.x, this.p.z, this.p.h + Math.PI, road.heightAt(s));
-      this.cars.setColorAt(n, new THREE.Color([0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020][i % 7]));
       n++;
     }
-    this.cars.count = n;
-    this.cars.instanceMatrix.needsUpdate = true;
-    if (this.cars.instanceColor) this.cars.instanceColor.needsUpdate = true;
+    this.cars.end();
   }
 
   private updateCrossing(road: CountryRoad, u: number) {
@@ -360,8 +352,8 @@ export class CountryWorld {
     u.box(0, 10.4, 0, 0.18, 2.2, 0.18, 0x8d9296);
     for (const x of [7, 10]) u.cyl(x, 7.0, -(W / 2 - 1.3), 0.5, 1.6, 0xf2f2ee, 8, Math.PI / 2);
     // Cars in the left lane.
-    const cols = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6];
-    [-22, -16, -10, 12, 18].forEach((x, k) => { b.box(x, 0.7, -2.6, 4.3, 0.75, 1.8, cols[k]); b.box(x - 0.3, 1.35, -2.6, 2.2, 0.6, 1.62, 0x2a3440); });
+    const deck: [number, CarKind, number][] = [[-22.5, "sedan", 0xb22222], [-16.5, "suv", 0xc8ccd0], [-10.2, "van", 0xe8e8e8], [11.8, "hatch", 0xd4a017], [17.6, "wagon", 0x2e7d4f], [23.2, "pickup", 0x222428]];
+    for (const [x, kind, paint] of deck) parkedCar(b, kind, x, 0, -2.6, 0, paint);
     // Navigation lights (port red, starboard green) and the masthead light.
     glow.box(0, 8.6, -(W / 2 + 0.3), 0.3, 0.3, 0.1, 0xff3020); glow.box(0, 8.6, W / 2 + 0.3, 0.3, 0.3, 0.1, 0x30ff70);
     glow.box(0, 11.6, 0, 0.25, 0.25, 0.25, 0xfff6e0);
@@ -390,9 +382,9 @@ export class CountryWorld {
     const a0 = B + 6, a1 = Q - 31;
     this.rbox(g, (a0 + a1) / 2, 10, -0.045, a1 - a0, 0.1, 11.8, CW.asphalt);
     for (const n of [7, 10, 13]) this.rbox(g, (a0 + a1) / 2, n, 0.005, a1 - a0 - 1, 0.02, 0.14, CW.white);
-    const cols = [0x8a9aa6, 0xc0392b, 0x2e8b57, 0xe8e8e0];
-    [[a0 + 4, 8.5], [a0 + 11, 8.5], [a0 + 6, 11.5], [a0 + 20, 14.5]].forEach(([a, n], k) => {
-      this.rbox(s, a, n, 0.7, 4.3, 0.75, 1.8, cols[k]); this.rbox(s, a + 0.3, n, 1.35, 2.2, 0.6, 1.62, 0x2a3440);
+    ([[a0 + 4, 8.5], [a0 + 11, 8.5], [a0 + 6, 11.5], [a0 + 20, 14.5]] as const).forEach(([a, n], k) => {
+      const [x, z, h] = this.L(a, n), r = hash2(k, Math.round(F.s), 0xfe7, 0x31);
+      parkedCar(s, carKindAt(r), x, 0.005, z, h, carPaintAt(hash2(k, Math.round(F.s), 0xfe8, 0x32)));
     });
     this.rbox(s, S + 57, 26, 3.5, 34, 7, 12, 0xe8e2d6); this.rbox(s, S + 57, 26, 3.0, 34.1, 2.2, 12.1, 0x2a3440); this.rbox(s, S + 57, 26, 7.2, 34.6, 0.4, 12.6, 0x1d3a6b);
     const uv = this.slot("FERRY TERMINAL", { bg: "#1d3a6b", fg: "#ffffff", logo: false });

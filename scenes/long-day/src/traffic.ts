@@ -8,6 +8,8 @@
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
 import { Batch } from "./geom.ts";
+import { CAR_SPECS, carModel, GLASS, headLamp, tailLamp, TYRE } from "./cars.ts";
+import type { CarKind } from "./cars.ts";
 import { SPECS } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { signalState } from "./signals.ts";
@@ -70,14 +72,16 @@ export class Traffic {
       }
       this.kinds.push({ id, len, width, vmax, weight, colors, mesh, cap });
     };
-    kind("sedan", 4.6, 1.8, 11, 5, CAR_COLORS, 20, (b) => carBody(b, 4.6, 1.8, 1.45, SEDAN));
-    kind("hatch", 4.0, 1.75, 11, 3, CAR_COLORS, 10, (b) => carBody(b, 4.0, 1.75, 1.5, HATCH));
-    kind("suv", 4.8, 1.95, 11, 3, CAR_COLORS, 10, (b) => carBody(b, 4.8, 1.95, 1.8, SUV));
-    kind("pickup", 5.4, 2.0, 10, 2, [0xb22222, 0x222428, 0xe8e8e8, 0x1f4fa0, 0x7a7f86], 6, pickupBody);
-    kind("taxi", 4.6, 1.8, 11, 2, null, 6, (b) => { carBody(b, 4.6, 1.8, 1.45, SEDAN, 0xf2c200); b.box(-0.2, 1.56, 0, 0.6, 0.2, 0.28, 0xffffff); b.box(-0.2, 1.56, 0, 0.62, 0.08, 0.3, 0x222222); });
-    kind("van", 5.6, 2.0, 10, 2, [0xe8e8e8, 0xe8e8e8, 0x8a8f94, 0x1f4fa0], 6, vanBody);
+    const car = (k: CarKind) => [CAR_SPECS[k].len, CAR_SPECS[k].width] as const;
+    kind("sedan", ...car("sedan"), 11, 4, CAR_COLORS, 16, (b) => carModel(b, "sedan"));
+    kind("hatch", ...car("hatch"), 11, 3, CAR_COLORS, 10, (b) => carModel(b, "hatch"));
+    kind("wagon", ...car("wagon"), 11, 1.5, CAR_COLORS, 6, (b) => carModel(b, "wagon"));
+    kind("suv", ...car("suv"), 11, 3, CAR_COLORS, 10, (b) => carModel(b, "suv"));
+    kind("pickup", ...car("pickup"), 10, 2, [0xb22222, 0x222428, 0xe8e8e8, 0x1f4fa0, 0x7a7f86], 6, (b) => carModel(b, "pickup"));
+    kind("taxi", ...car("sedan"), 11, 2, null, 6, (b) => { carModel(b, "sedan", 0xf2c200); b.box(-0.35, 1.53, 0, 0.6, 0.2, 0.28, 0xffffff); b.box(-0.35, 1.53, 0, 0.62, 0.08, 0.3, 0x222222); });
+    kind("van", ...car("van"), 10, 2, [0xe8e8e8, 0xe8e8e8, 0x8a8f94, 0x1f4fa0], 6, (b) => carModel(b, "van"));
     kind("bus", 11.5, 2.5, 9, 0.8, null, 3, busBody);
-    kind("police", 4.8, 1.85, 11, 0.5, null, 2, (b) => { carBody(b, 4.8, 1.85, 1.45, SEDAN, 0xf4f4f0); for (const z of [-1, 1]) b.box(-0.05, 0.62, z * 0.931, 1.7, 0.42, 0.01, 0x15181c); b.box(-0.1, 1.5, 0, 0.3, 0.1, 1.2, 0x222222); });
+    kind("police", ...car("sedan"), 11, 0.5, null, 2, (b) => { carModel(b, "sedan", 0xf4f4f0); for (const z of [-1, 1]) b.box(-0.05, 0.68, z * 0.906, 1.9, 0.3, 0.01, 0x15181c); b.box(-0.35, 1.49, 0, 0.3, 0.1, 1.2, 0x222222); });
     kind("icecream", 5.8, 2.1, 8, 0.5, null, 2, iceCreamBody);
     kind("ryder", 11.3, 2.5, 10, 0.8, null, 2, null);
     kind("cablecar", 8.6, 2.5, 6, 0, null, 3, cableCarBody);
@@ -407,7 +411,7 @@ export class Traffic {
       if (c.kind.id === "police" && beacon < 4) {
         for (const side of [-0.32, 0.32]) {
           const on = Math.floor(this.time * 6 + (side > 0 ? 1 : 0)) % 2 === 0;
-          const off = this.v3.set(-0.1, 1.6, side).applyQuaternion(this.q);
+          const off = this.v3.set(-0.35, 1.6, side).applyQuaternion(this.q);
           this.beacons.setMatrixAt(beacon, this.m4.compose(off.add(new THREE.Vector3(x, 0, z)), this.q, this.one));
           this.beacons.setColorAt(beacon++, this.col.set(on ? (side < 0 ? 0xff2020 : 0x2a6bff) : 0x202024));
         }
@@ -425,7 +429,6 @@ export class Traffic {
 
 // ---- vehicle models (x forward, origin on the ground at the middle) ---------------------------------------
 // Bodies are painted white so instanceColor tints them; glass, tyres and trim stay dark.
-export const GLASS = 0x26313d, TYRE = 0x161616;
 function wheels(b: Batch, L: number, W: number, r = 0.33, front = 0.32, rear = 0.32) {
   // Set 5 cm inside the body's sides: flush, the tyre's face and the body fought over the same
   // pixels where they overlap and shimmered.
@@ -435,90 +438,7 @@ function wheels(b: Batch, L: number, W: number, r = 0.33, front = 0.32, rear = 0
 function lamps(b: Batch, L: number, W: number, y: number) {
   for (const z of [-W / 2 + 0.25, W / 2 - 0.25]) { headLamp(b, L / 2 + 0.01, y, z, 0.04, 0.14, 0.3); tailLamp(b, -L / 2 - 0.01, y, z, 0.04, 0.14, 0.3); }
 }
-// Lamps tagged for the night glow (applyLampGlow): aux.z -3 headlamps, -4 tail lamps.
-export function headLamp(b: Batch, x: number, y: number, z: number, w: number, h: number, d: number) {
-  b.aux.set(0, 0, -3); b.box(x, y, z, w, h, d, 0xfff4d0); b.aux.set(0, 0, -1);
-}
-export function tailLamp(b: Batch, x: number, y: number, z: number, w: number, h: number, d: number) {
-  b.aux.set(0, 0, -4); b.box(x, y, z, w, h, d, 0xc01818); b.aux.set(0, 0, -1);
-}
-// A car in three layers: a lower body cut away over the wheels (open arches, the tyres showing in
-// them), a full-length shoulder, and a greenhouse with raked windscreen and rear glass, set in
-// from the sides. `shape` sets where the glass starts and ends (from the nose and the tail) and
-// how far the roof is drawn in from them.
-interface CarShape { hood: number; tail: number; rakeF: number; rakeR: number }
-const TRIM = 0x23262b, CHROME = 0xb8bcc0;
-// The lower car: body cut away over open arches with the tyres in them, the shoulder up to the belt
-// line `yb`, bumpers, grille and lamps. Shared by the cars, the pickup and the van.
-function carBase(b: Batch, L: number, W: number, yb: number, paint: number, r = 0.33, wheelIn = 0.95) {
-  const F = L / 2, R = -L / 2, wf = F - wheelIn, wr = R + wheelIn, arch = r + 0.07;
-  const yr = 0.27, ym = 2 * r + 0.02;
-  b.box((F + wf + arch) / 2, (yr + ym) / 2, 0, F - wf - arch, ym - yr, W, paint);
-  b.box(((wf - arch) + (wr + arch)) / 2, (yr + ym) / 2, 0, (wf - arch) - (wr + arch), ym - yr, W, paint);
-  b.box((R + wr - arch) / 2, (yr + ym) / 2, 0, (wr - arch) - R, ym - yr, W, paint);
-  for (const x of [wf, wr]) for (const z of [-1, 1]) {
-    b.box(x, ym - 0.12, z * (W / 2 - 0.25), arch * 2, 0.26, 0.4, 0x0e0f11);              // the well, in shadow
-    b.cyl(x, r, z * (W / 2 - 0.15), r, 0.2, TYRE, 12, Math.PI / 2);
-    b.cyl(x, r, z * (W / 2 - 0.045), r * 0.55, 0.02, CHROME, 10, Math.PI / 2);          // hub
-  }
-  b.box(0, (ym + yb) / 2, 0, L, yb - ym, W, paint);
-  b.box(0, yb + 0.02, 0, L - 0.1, 0.04, W - 0.06, paint);
-  b.box(F - 0.04, 0.4, 0, 0.12, 0.2, W - 0.06, TRIM);
-  b.box(F + 0.005, ym - 0.1, 0, 0.02, 0.14, W * 0.42, TRIM);
-  b.box(R + 0.04, 0.4, 0, 0.12, 0.2, W - 0.06, TRIM);
-  for (const z of [-1, 1]) {
-    headLamp(b, F + 0.01, ym - 0.08, z * (W / 2 - 0.2), 0.03, 0.1, 0.32);
-    tailLamp(b, R - 0.01, yb - 0.1, z * (W / 2 - 0.18), 0.03, 0.16, 0.3);
-  }
-}
-// Glass between belt `yb` and roof `H`, from g0 (rear) to g1 (front) at the belt, raked in by
-// rakeR / rakeF at the roof, with pillars, roof, a B pillar and mirrors.
-function greenhouse(b: Batch, W: number, yb: number, H: number, g0: number, g1: number, rakeR: number, rakeF: number, paint: number, bPillar = true) {
-  const r1 = g1 - rakeF, r0 = g0 + rakeR, gh = H - yb - 0.06;
-  for (let k = 0; k < 3; k++) {
-    const f = (k + 1) / 3, x1 = g1 + (r1 - g1) * f, x0 = g0 + (r0 - g0) * f;   // each slice's top: always behind the raked glass
-    b.box((x0 + x1) / 2, yb + 0.04 + gh * (k + 0.5) / 3, 0, x1 - x0, gh / 3 + 0.01, W * 0.84, GLASS);
-  }
-  const slope = (xa: number, xb: number) => { const len = Math.hypot(xa - xb, gh), th = Math.atan2(xa - xb, gh);
-    b.boxR((xa + xb) / 2, yb + 0.04 + gh / 2, 0, 0.05, len, W * 0.82, GLASS, 0, 0, th);
-    for (const z of [-1, 1]) b.boxR((xa + xb) / 2, yb + 0.04 + gh / 2, z * W * 0.41, 0.07, len, 0.06, paint, 0, 0, th); };
-  slope(g1, r1); slope(g0, r0);
-  b.box((r0 + r1) / 2, H - 0.03, 0, r1 - r0 + 0.06, 0.07, W * 0.86, paint);
-  const bx = (r0 + r1) / 2 + (r1 - r0) * 0.08;
-  if (bPillar) b.box(bx, yb + 0.04 + gh / 2, 0, 0.09, gh, W * 0.85, paint);
-  for (const z of [-1, 1]) {
-    b.box(g1 - 0.15, yb + 0.12, z * (W / 2 + 0.05), 0.14, 0.1, 0.1, paint);                   // mirror
-    if (bPillar) b.box(bx, (0.27 + yb) / 2, z * (W / 2 + 0.004), 0.02, yb - 0.33, 0.01, TRIM);  // door shut line
-  }
-}
-export function carBody(b: Batch, L: number, W: number, H: number, shape: CarShape, paint = 0xffffff) {
-  const yb = 0.84 + (H - 1.4) * 0.5;   // the belt line, above the arch tops (0.68)
-  carBase(b, L, W, yb, paint);
-  greenhouse(b, W, yb, H, -L / 2 + shape.tail, L / 2 - shape.hood, shape.rakeR, shape.rakeF, paint);
-}
-export const SEDAN: CarShape = { hood: 1.25, tail: 0.95, rakeF: 0.62, rakeR: 0.5 };
-export const HATCH: CarShape = { hood: 1.0, tail: 0.22, rakeF: 0.55, rakeR: 0.22 };
-export const SUV: CarShape = { hood: 1.15, tail: 0.2, rakeF: 0.5, rakeR: 0.14 };
-export function pickupBody(b: Batch) {
-  const L = 5.4, W = 2.0, yb = 1.02, P = 0xffffff;
-  carBase(b, L, W, yb, P, 0.38, 1.05);
-  greenhouse(b, W, yb, 1.85, -0.35, 1.25, 0.12, 0.55, P);
-  // The bed: walls, tailgate and a dark floor.
-  for (const z of [-1, 1]) b.box(-1.62, yb + 0.22, z * (W / 2 - 0.04), 2.0, 0.44, 0.08, P);
-  b.box(-L / 2 + 0.06, yb + 0.22, 0, 0.1, 0.44, W - 0.04, P);
-  b.box(-0.62, yb + 0.22, 0, 0.08, 0.44, W - 0.04, P);
-  b.box(-1.62, yb + 0.05, 0, 2.0, 0.02, W - 0.16, 0x2a2a2a);   // (above the body's top: shared planes flicker)
-}
-export function vanBody(b: Batch) {
-  const L = 5.6, W = 2.0, yb = 1.05, P = 0xffffff;
-  carBase(b, L, W, yb, P, 0.36, 1.0);
-  // A tall box behind a short sloped nose.
-  b.box(-0.55, yb + 0.68, 0, L - 1.1, 1.36, W, P);
-  greenhouse(b, W, yb, 2.0, 1.2, 2.45, 0, 0.6, P, false);
-  b.box(-0.55, yb + 1.38, 0, L - 1.2, 0.05, W - 0.08, P);
-  for (const z of [-1, 1]) { b.box(1.75, yb + 0.5, z * (W / 2 + 0.004), 0.02, 1.0, 0.01, TRIM); b.box(0.4, yb + 0.6, z * (W / 2 + 0.004), 0.02, 1.2, 0.01, TRIM); }
-  b.box(-L / 2 + 0.005, yb + 0.7, 0, 0.01, 1.2, 0.02, TRIM);   // the rear doors' split
-}
+// (Cars, pickups and vans are cars.ts's models.)
 // City bus, 11.5 m low-floor: a two-tone body, a band of side windows split by pillars, the
 // doors on the kerb side (+z), a big windscreen under a lit destination sign, roof pods.
 function busBody(b: Batch) {

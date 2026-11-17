@@ -23,6 +23,9 @@ function batchTemplate(key: string, make: () => THREE.BufferGeometry): BatchTemp
   return t;
 }
 
+// Vertices taken out of a Batch (Batch.take), to stamp copies of into others (Batch.stamp).
+export interface BatchModel { pos: Float32Array; nrm: Float32Array; col: Float32Array; aux: Float32Array | null; count: number }
+
 // Dry run: every Batch drops what it is given. For probe builds that only want to know where
 // things go (city.ts pavementObstacles), not their geometry.
 export const BATCH = { dry: false };
@@ -146,6 +149,35 @@ export class Batch {
     const size = Math.max(need, this.pos.length * 2);
     const grow = (a: Float32Array) => { const b = new Float32Array(size); b.set(a.subarray(0, this.n * 3)); return b; };
     this.pos = grow(this.pos); this.nrm = grow(this.nrm); this.col = grow(this.col); this.auxArr = grow(this.auxArr);
+  }
+
+  // What has been emitted so far, as a model to stamp elsewhere (see stamp), and start afresh.
+  take(): BatchModel {
+    const k = this.n * 3;
+    const m: BatchModel = { pos: this.pos.slice(0, k), nrm: this.nrm.slice(0, k), col: this.col.slice(0, k), aux: this.auxUsed ? this.auxArr.slice(0, k) : null, count: this.n };
+    this.n = 0; this.auxUsed = false;
+    return m;
+  }
+  // A model (from take) turned by `rotY` and set down at (x, y + dy, z). Pure white in it (paint
+  // left for instanceColor) becomes `paint`; its aux tags are kept only with `aux`.
+  stamp(m: BatchModel, x: number, y: number, z: number, rotY: number, paint = 0xffffff, aux = true) {
+    if (BATCH.dry) return;
+    this.reserve(m.count);
+    const c = Math.cos(rotY), s = Math.sin(rotY), yy = y + this.dy;
+    this.c.set(paint);
+    const { pos, nrm, col, auxArr } = this, keepAux = aux && !!m.aux;
+    if (keepAux) this.auxUsed = true;
+    let o = this.n * 3;
+    for (let i = 0; i < m.count * 3; i += 3, o += 3) {
+      const px = m.pos[i], pz = m.pos[i + 2], nx = m.nrm[i], nz = m.nrm[i + 2];
+      pos[o] = x + c * px + s * pz; pos[o + 1] = yy + m.pos[i + 1]; pos[o + 2] = z - s * px + c * pz;
+      nrm[o] = c * nx + s * nz; nrm[o + 1] = m.nrm[i + 1]; nrm[o + 2] = -s * nx + c * nz;
+      const white = m.col[i] === 1 && m.col[i + 1] === 1 && m.col[i + 2] === 1;
+      col[o] = white ? this.c.r : m.col[i]; col[o + 1] = white ? this.c.g : m.col[i + 1]; col[o + 2] = white ? this.c.b : m.col[i + 2];
+      if (keepAux) { auxArr[o] = m.aux![i]; auxArr[o + 1] = m.aux![i + 1]; auxArr[o + 2] = m.aux![i + 2]; }
+      else { auxArr[o] = 0; auxArr[o + 1] = 0; auxArr[o + 2] = -1; }
+    }
+    this.n += m.count;
   }
 
   get empty() { return this.n === 0; }

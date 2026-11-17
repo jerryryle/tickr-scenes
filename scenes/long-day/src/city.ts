@@ -24,6 +24,7 @@ import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
 import { PlateSet } from "./signs.ts";
+import { carKindAt, carPaintAt, parkedCar } from "./cars.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
 import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, interchangeOpen } from "./interchange.ts";
 import { GARAGE_H } from "./route.ts";
@@ -947,13 +948,12 @@ function awning(s: Batch, b: Rect, side: number, color: number) {
 function parkingLot(g: Batch, s: Batch, r: Rect, rnd: Rand) {
   g.span(r.x0, CURB_H, r.z0, r.x1, CURB_H + 0.01, r.z1, C.asphalt);
   for (let x = r.x0 + 1; x < r.x1 - 1; x += 2.6) g.box(x, CURB_H + 0.02, (r.z0 + r.z1) / 2, 0.1, 0.01, (r.z1 - r.z0) * 0.7, C.white);
-  for (let i = 0; i < 4; i++) // a few parked cars, as simple blocks until phase 9 brings real ones
+  for (let i = 0; i < 4; i++) // a few parked cars, nose in or backed in
     if (rnd() < 0.6) {
       const x = r.x0 + 2.3 + i * 2.6 * 1.5, z = (r.z0 + r.z1) / 2 + (rnd() < 0.5 ? -2 : 2);
       if (x > r.x1 - 1.5) break;
-      const col = pick(rnd, [0xb22222, 0x1f4fa0, 0xe8e8e8, 0x222428, 0x7a7f86, 0xd4a017]);
-      s.box(x, CURB_H + 0.55, z, 1.8, 0.8, 4.2, col);
-      s.box(x, CURB_H + 1.2, z + 0.2, 1.6, 0.55, 2.2, 0x2a3440);
+      const h = rnd();   // (one draw, as the colour alone took: the rest of the block is laid out as before)
+      parkedCar(s, carKindAt(h * 7 % 1, false), x, CURB_H + 0.01, z, (h * 13 % 1 < 0.5 ? 1 : -1) * Math.PI / 2, carPaintAt(h));
     }
 }
 

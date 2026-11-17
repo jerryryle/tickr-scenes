@@ -15,6 +15,12 @@ make check-long-day     # type-check, load-test and run the tests
 they import nothing (most of the city, journey and rendering modules import each other in a
 cycle, which is fine for code inside functions but not for top-level initializers).
 
+`src/cars.ts` holds the car models (sedan, hatchback, wagon, SUV, pickup, van) that every car
+in the scene uses: traffic, oncoming and freeway cars (`CarFleet`), and parked cars baked into
+static geometry (`parkedCar`). Draw new cars with these rather than building them in place.
+`tools/showroom.ts` is a test scene that lines them up (and a parking garage) for a close look:
+`make tool SCENE=long-day TOOL=showroom SECS=17` renders it to `build/long-day-showroom/showroom.png`.
+
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,
 `DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_CAMLOG`).
 Shipping builds use its defaults; a debug build overrides them, since the board only passes env

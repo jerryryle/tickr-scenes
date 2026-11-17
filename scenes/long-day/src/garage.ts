@@ -5,6 +5,7 @@
 // street from the node, `n` into the block from its edge).
 import { Batch } from "./geom.ts";
 import { hash2 } from "./rng.ts";
+import { carKindAt, carPaintAt, parkedCar } from "./cars.ts";
 import { GARAGE_H, Path, trackSweep } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { frontPt, FRONT_NODE } from "./city.ts";
@@ -17,7 +18,6 @@ export const GARAGE_STOP: [number, number] = [29, 36];
 export const GARAGE_DOOR: [number, number] = [32.5, 40.2];
 export const GARAGE_DRIVE: [number, number] = [13, 50];   // the kerb cut along the frontage (no furniture)
 const DECK = 0x9a978e, DECK_TOP = 0x6f6e6a, RAIL = 0xb5b2a8, COLUMN = 0x8d8a82, STRIPE = 0xe8e2c0;
-const CARS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
 
 // The heading of travel along a side (as FRONT_NODE's directions).
 const SIDE_DIR = [0, 2, 1, 3];
@@ -36,10 +36,6 @@ function fbox(b: Batch, side: number, a0: number, a1: number, n0: number, n1: nu
   b.span(Math.min(x0, x1), y0, Math.min(z0, z1), Math.max(x0, x1), y1, Math.max(z0, z1), color);
 }
 
-function car(b: Batch, x: number, y: number, z: number, yaw: number, color: number) {
-  b.box(x, y + 0.65, z, 4.2, 0.7, 1.8, color, yaw);
-  b.box(x - Math.cos(yaw) * 0.3, y + 1.22, z + Math.sin(yaw) * 0.3, 2.0, 0.5, 1.5, 0x4a5868, yaw);
-}
 
 const my2 = (a: number, b: number) => (a + b) / 2;
 export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand, seed: number) {
@@ -69,7 +65,11 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
       const here = (a: number, n: number) => (y < 1 ? R.at(a, n) !== 2 : R.at(a, n) === 1);
       const [lx, lz] = fp(side, a - 1.3, n);
       if (here(a - 1.3, n - 2.4) && here(a - 1.3, n + 2.4)) (y < 1 ? ground : solid).box(lx, y + 0.01, lz, 0.1, 0.02, 4.8, STRIPE, h);
-      if (hash2(k + row * 7, salt, seed, 0x9a7) < 0.62 && [-1, 1].every((u) => here(a + u, n - 2.4) && here(a + u, n + 2.4))) { const [x, z] = fp(side, a, n); car(solid, x, y, z, h + Math.PI / 2, CARS[Math.floor(hash2(k, row + salt * 3, seed, 0xca7) * CARS.length)]); }
+      if (hash2(k + row * 7, salt, seed, 0x9a7) < 0.62 && [-1, 1].every((u) => here(a + u, n - 2.4) && here(a + u, n + 2.4))) {
+        // Nose in (towards the bay's back: the deck's edge or the back wall), cars in car-sized bays.
+        const [x, z] = fp(side, a, n), r = hash2(k, row + salt * 3, seed, 0xca7);
+        parkedCar(solid, carKindAt(r * 7 % 1, false), x, y, z, h + (row ? -1 : 1) * Math.PI / 2, carPaintAt(r));
+      }
     }
   }
   // The ramps: the deck under each track, eased to the ground at its ends; low walls up the sides.

@@ -26,7 +26,7 @@ import type { CityStyle } from "./styles.ts";
 import type { CountryRoad } from "./country.ts";
 import { citySeedOf } from "./country.ts";
 import { PlateSet } from "./signs.ts";
-import { headLamp, tailLamp } from "./traffic.ts";
+import { CarFleet, carKindAt } from "./cars.ts";
 
 export const FW_TOP = 9.6;             // the deck's top (clear of the streetlights' arms under it)
 export const FW_HALF = 7.4;            // half the deck's width
@@ -473,23 +473,16 @@ const FW_CAR_COLORS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b5
 const FW_LANES = [{ n: 2.0, v: 27, dir: -1 }, { n: 5.4, v: 24, dir: -1 }, { n: -2.0, v: 29, dir: 1 }, { n: -5.4, v: 25, dir: 1 }];
 const FW_PER_LANE = 16, FW_MAX_CARS = 40;
 export class FreewayTraffic {
-  private mesh: THREE.InstancedMesh;
+  private cars: CarFleet;
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private e = new THREE.Euler(); private v = new THREE.Vector3(); private one = new THREE.Vector3(1, 1, 1);
   constructor(scene: THREE.Object3D, material: THREE.Material) {
-    const b = new Batch();
-    b.box(0, 0.7, 0, 4.3, 0.75, 1.8, 0xffffff); b.box(-0.3, 1.35, 0, 2.2, 0.6, 1.62, 0x2a3440);
-    for (const x of [-1.35, 1.35]) for (const z of [-0.73, 0.73]) b.cyl(x, 0.34, z, 0.34, 0.24, 0x1a1a1a, 8, Math.PI / 2);
-    for (const z of [-0.6, 0.6]) { headLamp(b, 2.16, 0.75, z, 0.04, 0.16, 0.3); tailLamp(b, -2.16, 0.8, z, 0.04, 0.14, 0.3); }
-    const m = b.build(material)!;
-    this.mesh = new THREE.InstancedMesh(m.geometry, material, FW_MAX_CARS);
-    this.mesh.count = 0; this.mesh.frustumCulled = false;
-    for (let i = 0; i < FW_MAX_CARS; i++) this.mesh.setColorAt(i, new THREE.Color(FW_CAR_COLORS[i % FW_CAR_COLORS.length]));
-    scene.add(this.mesh);
+    this.cars = new CarFleet(scene, material, 14);
   }
   // F: the freeway's frame now (null: none here); t: journey time; near: the camera; entryOnly:
   // only the stretch out on the entry side (the city beyond isn't there yet).
   update(F: Frame | null, t: number, near: { x: number; z: number }, entryOnly: boolean) {
     let n = 0;
+    this.cars.begin();
     if (F) {
       const lo = (entryOnly ? -40 : F.far - FW_TIP_FAR + 10), hi = FW_TIP - 10, span = hi - lo;
       for (let li = 0; li < FW_LANES.length; li++) {
@@ -505,14 +498,11 @@ export class FreewayTraffic {
           const heading = Math.atan2(-hz, hx) + (L.dir > 0 ? 0 : Math.PI);
           this.e.set(0, heading, 0); this.q.setFromEuler(this.e);
           this.m4.compose(this.v.set(x, F.y(d), z), this.q, this.one);
-          this.mesh.setMatrixAt(n, this.m4);
-          this.mesh.setColorAt(n, new THREE.Color(FW_CAR_COLORS[(k * 3 + li) % FW_CAR_COLORS.length]));
+          this.cars.add(carKindAt(hash2(k, li, 0x5cb, 0xf01)), this.m4, FW_CAR_COLORS[(k * 3 + li) % FW_CAR_COLORS.length]);
           n++;
         }
       }
     }
-    this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.cars.end();
   }
 }

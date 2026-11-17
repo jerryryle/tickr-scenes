@@ -11,6 +11,9 @@
 #                              a build with constants overridden, in build/<scene>-debug/
 #   make run SCENE=long-day TEST=journey ARGS=30 [DEFINE=...]
 #                              run one test with arguments, showing its output
+#   make tool SCENE=long-day TOOL=showroom [SECS=17 DEFINE=...]
+#                              render a test scene from scenes/<scene>/tools/<tool>.ts (one frame a
+#                              second) to build/<scene>-<tool>/, every frame tiled into <tool>.png
 #   make clean / distclean
 #
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
@@ -38,7 +41,7 @@ node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-le
 copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] && n=$$(basename "$$f") && cp "$$f" "$(2)/$${n%.*}"; done; true
 
-.PHONY: all check clean distclean debug run test list FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES))
 .SECONDEXPANSION:
 .DELETE_ON_ERROR:
@@ -116,6 +119,21 @@ run: | $(DEPS)
 	@$(FLATTEN) scenes/$(SCENE)/test/$(TEST).ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-$(TEST)/scene.ts
 	@$(call node-bundle,build/$(SCENE)-$(TEST)/scene.ts,build/$(SCENE)-$(TEST)/$(TEST).mjs)
 	@node build/$(SCENE)-$(TEST)/$(TEST).mjs $(ARGS)
+
+# One test scene from a scene's tools/, rendered a frame a second for SECS seconds, its frames
+# tiled 2 across at 2x into one PNG (needs ffmpeg).
+SECS     ?= 12
+TOOL_OUT  = build/$(SCENE)-$(TOOL)
+tool: | $(DEPS)
+	@test -f "scenes/$(SCENE)/tools/$(TOOL).ts" || { echo "usage: make tool SCENE=<scene> TOOL=<tool> [SECS=... DEFINE=...]" >&2; exit 2; }
+	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
+	@mkdir -p $(TOOL_OUT)
+	@$(FLATTEN) scenes/$(SCENE)/tools/$(TOOL).ts --root scenes/$(SCENE)/src $(DEFINES) > $(TOOL_OUT)/scene.ts
+	@cp scenes/$(SCENE)/scene.json $(TOOL_OUT)/
+	@$(TICKR) render $(TOOL_OUT) --seconds $(SECS) --every 1000 | tail -1
+	@ffmpeg -loglevel error -y -i $(TOOL_OUT)/dist/frames/frame-%03d.png -frames:v 1 \
+	  -vf "scale=iw*2:ih*2:flags=neighbor,tile=2x$$(( ($(SECS) + 1) / 2 ))" $(TOOL_OUT)/$(TOOL).png
+	@echo "$(SCENE) $(TOOL) -> $(TOOL_OUT)/$(TOOL).png"
 
 # Install dev dependencies when package-lock.json changes.
 $(DEPS): package-lock.json
