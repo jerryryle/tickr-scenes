@@ -201,7 +201,7 @@ export class Journey {
     };
     // By the freeway: the arrival ends at its off-ramp, where the city's route starts: down the
     // off-ramp (a "helix" tail) and out into the kerb lane under the freeway, towards the next node.
-    const ic = this.plan.interchange;
+    const ic = this.takesFreeway(N) ? this.plan.interchange : null;
     if (ic) {
       const ox = ic.bx * BLOCK, oz = ic.bz * BLOCK, track = interchangeTrack(ic.side), q = { x: 0, z: 0, h: 0, k: 0 };
       track.eval(0, q);
@@ -581,6 +581,12 @@ export class Journey {
       geom: { x: ref.x, z: ref.z, H, Lb, R, door }, edge: at(p, L.edge), H, sign };
   }
   get dock(): DockPlan | null { return this.dockPlan(this.st.stops[0]); }
+  // Whether the truck comes into city N by its freeway (freeway.ts freewayMerge): never a
+  // tractor-trailer, whose trailer would cut across the off-ramp's loop. (From the seed alone: the
+  // truck it comes in is the one its freight needs.)
+  private takesFreeway(N: number) {
+    return freewayMerge(citySeedOf(this.cfg.seed, N)) && (this.freightFor(N)?.truck ?? "box26") !== "tractor";
+  }
   // Whether a stop is up on a garage's roof (a garage site, and a truck that goes up its ramps).
   garageStop(stop: Stop | undefined | null, model: TruckModel = this.st.truck) {
     if (!stop?.site || (stop.kind !== "pickup" && stop.kind !== "drop") || model === "tractor" || model === "flatbed") return false;
@@ -1081,7 +1087,7 @@ export class Journey {
     const e = gateEnd(GATES[gate]), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
     const toStyle = seasonalStyle(journeyStyle(this.cfg.seed, N1), toClimate), fromStyle = seasonalStyle(journeyStyle(this.cfg.seed, N), fromClimate);
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
-    const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && freewayMerge(citySeedOf(this.cfg.seed, N1));
+    const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && this.takesFreeway(N1);
     return new CountryRoad({ toFreeway, toFreewayMerge,
       seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
@@ -1112,7 +1118,7 @@ export class Journey {
       const g = this.plan.entryGate, e = gateEnd(g), h = e.h + Math.PI;
       const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival", toFreeway: !!this.plan.freeway, toFreewayMerge: this.plan.freewayMerge,
+        seed: this.cfg.seed, city: st.city, kind: "arrival", toFreeway: !!this.plan.freeway, toFreewayMerge: !!this.plan.freeway && this.takesFreeway(st.city),
         frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
         fromTruck: st.truck, toTruck: st.truck,
         fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,
@@ -1150,7 +1156,7 @@ export class Journey {
     this.countryPose();
     this.lastStep = Math.hypot(this.pose.x - px, this.pose.z - pz);
     if (st.cityTime >= this.arrivalRoad.arriveDur - 1e-6) {
-      st.mode = "drive"; st.modeTime = 0; st.v = this.plan.interchange ? FW_OFF_V : V_GATE;
+      st.mode = "drive"; st.modeTime = 0; st.v = this.arrivalRoad.inp.toFreewayMerge ? FW_OFF_V : V_GATE;
       this.path = null; st.route = null;
     }
   }

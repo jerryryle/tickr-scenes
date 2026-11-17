@@ -6,7 +6,7 @@
 // local, in the frontage frame of the freeway's side (city.ts frontPt).
 import { Batch } from "./geom.ts";
 import { hash2 } from "./rng.ts";
-import { OFFRAMP_LEN, OFFRAMP_SHIFT, Path } from "./route.ts";
+import { OFFRAMP_LEN, OFFRAMP_SHIFT, Path, trackSweep } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { frontPt, FRONT_NODE } from "./city.ts";
 import { FW_LANE_N, FW_OFF_A } from "./freeway.ts";
@@ -51,7 +51,7 @@ export function buildInterchange(ground: Batch, solid: Batch, side: number, seed
   // Samples along it: where it is, its height, the way across it and its edges' offsets: along
   // the deceleration lane its left edge reaches only to the freeway's asphalt (it is the same
   // roadway until the gore's nose) and its right opens out from the deck's edge.
-  const W = IC_W, T = 0.42, nose = offrampNose();
+  const W = IC_W, T = 0.42, nose = offrampNose(), sw = trackSweep("helix", IC_W, 0.75);
   const pts: { x: number; z: number; y: number; rx: number; rz: number; l: number; r: number; c: number; free: boolean }[] = [];
   for (let s = 0; s <= t.length + 1e-6; s += 0.75) {
     const ss = Math.min(s, t.length); t.eval(ss, p);
@@ -59,7 +59,9 @@ export function buildInterchange(ground: Batch, solid: Batch, side: number, seed
     // (At the foot, where it tapers into the street, its pavement stops at the kerb line: the
     // street's own asphalt is the rest.)
     const l = on && ss < nose ? Math.max(-W, ASPH_EDGE - c) : y < 0.04 && !on ? Math.max(-W, KERB_LINE - c) : -W;
-    pts.push({ x: p.x, z: p.z, y, rx: Math.sin(p.h), rz: Math.cos(p.h), c, free: ss >= nose, l, r: on ? Math.min(W, offRight(ss)) : W });
+    // (Past the deceleration lane, its deck widened through the turns to the truck's swept path.)
+    const k = Math.min(pts.length, sw.l.length - 1);
+    pts.push({ x: p.x, z: p.z, y, rx: Math.sin(p.h), rz: Math.cos(p.h), c, free: ss >= nose, l: on ? l : Math.max(sw.l[k], l > -W ? l : -Infinity), r: on ? Math.min(W, offRight(ss)) : sw.r[k] });
   }
   // All of it in the ground batch, like the freeway: the truck's see-through spotlight leaves it be.
   type V = [number, number, number];

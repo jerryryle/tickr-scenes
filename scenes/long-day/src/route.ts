@@ -354,3 +354,39 @@ export function blockGoals(bx: number, bz: number, after: number, straight = fal
     { ix: bx + 1, iz: bz, dir: 3, after, straight },      // east side, heading south
   ];
 }
+
+// How wide a ramp's deck must be, either side of its track, for the biggest truck that uses it
+// (a 26 ft box truck) to stay on it: its rear axle follows the track, so through a turn its front
+// swings out wide and its back cuts in. Per sample of `step` metres along the track: the left
+// edge's offset (negative) and the right's, at least `half` and with a margin, widened smoothly
+// into and out of the turns (as real ramps are). In the track's own frame, so one per kind.
+const SWEEPS = new Map<string, { l: number[]; r: number[] }>();
+export function trackSweep(kind: "up" | "down" | "helix", half: number, step = 0.75): { l: number[]; r: number[] } {
+  const key = `${kind}/${half}/${step}`, hit = SWEEPS.get(key);
+  if (hit) return hit;
+  const p = kind === "up" ? Path.garageTrack(false, 0, 0, 0) : Path.garageTrack(true, 0, 0, 0, kind === "helix" ? "helix" : undefined);
+  const FRONT = 8.65, REAR = -2.7, HW = 1.32, MARGIN = 0.45, q = { x: 0, z: 0, h: 0, k: 0 };
+  const S: { x: number; z: number; rx: number; rz: number }[] = [];
+  for (let s = 0; s <= p.length + 1e-6; s += step) { p.eval(Math.min(s, p.length), q); S.push({ x: q.x, z: q.z, rx: Math.sin(q.h), rz: Math.cos(q.h) }); }
+  const n = S.length, L = new Array<number>(n).fill(0), R = new Array<number>(n).fill(0);
+  for (let s = 0; s <= p.length; s += step / 2) {
+    p.eval(s, q);
+    const fx = Math.cos(q.h), fz = -Math.sin(q.h), rx = Math.sin(q.h), rz = Math.cos(q.h), i0 = Math.round(s / step);
+    for (let u = REAR; u <= FRONT + 1e-6; u += 0.5) for (const k of [-HW, HW]) {
+      const x = q.x + fx * u + rx * k, z = q.z + fz * u + rz * k;
+      let bi = i0, bd = Infinity;
+      for (let i = Math.max(0, i0 - Math.ceil(6 / step)); i <= Math.min(n - 1, i0 + Math.ceil(14 / step)); i++) { const d = (S[i].x - x) ** 2 + (S[i].z - z) ** 2; if (d < bd) { bd = d; bi = i; } }
+      const off = (x - S[bi].x) * S[bi].rx + (z - S[bi].z) * S[bi].rz;
+      if (off < L[bi]) L[bi] = off; if (off > R[bi]) R[bi] = off;
+    }
+  }
+  // Widest within a few metres either way, then eased along.
+  const spread = (a: number[], pick: (x: number, y: number) => number, w: number) => a.map((_, i) => { let v = a[i]; for (let j = Math.max(0, i - w); j <= Math.min(n - 1, i + w); j++) v = pick(v, a[j]); return v; });
+  const ease = (a: number[], w: number) => a.map((_, i) => { let t = 0, c = 0; for (let j = Math.max(0, i - w); j <= Math.min(n - 1, i + w); j++) { t += a[j]; c++; } return t / c; });
+  const w = Math.ceil(4 / step), e = Math.ceil(5 / step);
+  const l = ease(spread(L.map((v) => Math.min(-half, v - MARGIN)), Math.min, w), e).map((v) => Math.min(-half, v));
+  const r = ease(spread(R.map((v) => Math.max(half, v + MARGIN)), Math.max, w), e).map((v) => Math.max(half, v));
+  const out = { l, r };
+  SWEEPS.set(key, out);
+  return out;
+}
