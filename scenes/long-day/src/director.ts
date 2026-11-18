@@ -137,6 +137,7 @@ export function swapWalkPoint(journey: Journey, oldTruck: Truck, newTruck: Truck
   return out.copy(a).lerp(b, u * u * (3 - 2 * u));
 }
 
+type DirectorSave = { f: Record<string, unknown>; p: THREE.Vector3; q: THREE.Quaternion; fov: number };
 export class Director {
   readonly cam: THREE.PerspectiveCamera;
   beat: Beat = "drive";
@@ -186,8 +187,14 @@ export class Director {
     for (const v of [this.pos, this.anchorPos, this.anchorLook, this.signPos, this.signLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.curbCam, this.curbAim, this.curbOpen, this.backLook, this.backDocked]) { v.x += dx; v.z += dz; }
   }
   // The director's whole state and the camera's (main.ts: preview snapshots and part-ticks).
-  save() { const c = this.cam; return { f: saveFields(this, null, ["cam", "avoidBuildings", "seed"]), p: c.position.clone(), q: c.quaternion.clone(), fov: c.fov }; }
-  load(s: ReturnType<Director["save"]>) {
+  // (`into`: an earlier save, filled again in place.)
+  save(into?: DirectorSave): DirectorSave {
+    const c = this.cam, s = into ?? { f: {}, p: new THREE.Vector3(), q: new THREE.Quaternion(), fov: 0 };
+    s.f = saveFields(this, null, ["cam", "avoidBuildings", "confine", "seed"], s.f);
+    s.p.copy(c.position); s.q.copy(c.quaternion); s.fov = c.fov;
+    return s;
+  }
+  load(s: DirectorSave) {
     loadFields(this, s.f);
     this.cam.position.copy(s.p); this.cam.quaternion.copy(s.q);
     if (this.cam.fov !== s.fov) { this.cam.fov = s.fov; this.cam.updateProjectionMatrix(); }

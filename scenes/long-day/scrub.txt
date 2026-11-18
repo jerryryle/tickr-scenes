@@ -1,0 +1,14 @@
+# Scrub-test cases (make scrub-long-day, part of make check): one a line, the constants to build
+# with (flatten --define), and `swap` when the trucks must change during the test. DEBUG_SCRUBTEST
+# is the seconds played before scrubbing back half way.
+
+# The start of the first city: the way in from the country. (A seed of its own: the preview's random
+# journey is the day's, so without one this would test a different journey every day.)
+DEBUG_SCRUBTEST=20 DEBUG_SEED=659803215
+
+# A truck swap at a Ryder lot: seed 1 hands box26 over for a flatbed about 606 s into the journey,
+# 21 s into this run and after its scrub point (15 s). If the journey changes and this stops
+# covering a swap, the check says so: find the hand-over again in a longer DEBUG_SCRUBTEST render's
+# TICK lines (their last field is the trucks; the bare journey test runs without the scene's street
+# probes, so its times differ) and move the skip.
+DEBUG_SCRUBTEST=30 DEBUG_SEED=1 DEBUG_SKIP_MINUTES=9.75 swap

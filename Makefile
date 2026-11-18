@@ -7,6 +7,9 @@
 #   make test                  run every scene's tests (scenes/<scene>/test/*.ts)
 #   make test-long-day         the same, one scene
 #   make render-long-day       build, then render with tickr-scene
+#   make scrub-long-day [SCRUB=20]
+#                              render a scrub test (needs the toolkit): play, scrub back half way,
+#                              play on, and check every replayed tick matches playing forward
 #   make debug SCENE=long-day DEFINE="DEBUG_STYLE=metro DEBUG_HOUR=18"
 #                              a build with constants overridden, in build/<scene>-debug/
 #   make run SCENE=long-day TEST=journey ARGS=30 [DEFINE=...]
@@ -19,6 +22,8 @@
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
 # into one TypeScript scene.ts. A scene with scenes/<scene>/scene.ts instead is copied as is.
 # A test is a Node program in scenes/<scene>/test/ that exits non-zero when it fails.
+# check-<scene> also runs scrub-<scene> when the toolkit is installed and the scene has a
+# DEBUG_SCRUBTEST constant (src/debug.ts).
 
 # The tickr-scene toolkit, installed in the project (git-ignored); it runs on the Node it ships.
 TICKR_HOME ?= $(CURDIR)/.tickr-scene
@@ -43,7 +48,8 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
 .PHONY: all check clean distclean debug run test list tool FORCE $(SCENES) \
-        $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES))
+        $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
+        $(addprefix scrub-,$(SCENES))
 .SECONDEXPANSION:
 .DELETE_ON_ERROR:
 
@@ -90,6 +96,8 @@ $(addprefix check-,$(SCENES)): check-%: %
 	@$(MAKE) --no-print-directory -s test-$*
 	@if [ -x "$(TICKR_BIN)" ]; then $(TICKR) check build/$* && echo "ok   $*: tickr-scene check"; \
 	 else echo "skip $*: tickr-scene check (no toolkit in $(TICKR_HOME); see README)"; fi
+	@if [ -x "$(TICKR_BIN)" ] && grep -qs '^export const DEBUG_SCRUBTEST\b' scenes/$*/src/debug.ts; then $(MAKE) --no-print-directory -s scrub-$*; \
+	 else echo "skip $*: scrub check (needs the toolkit and DEBUG_SCRUBTEST)"; fi
 
 test: $(addprefix test-,$(SCENES))
 
@@ -102,6 +110,28 @@ $(addprefix test-,$(SCENES)): test-%: | $(DEPS)
 	  $(call node-bundle,$$out/scene.ts,$$out/$$n.mjs); \
 	  if node $$out/$$n.mjs > $$out/output.txt 2>&1; then echo "ok   $*: test/$$n.ts"; \
 	  else cat $$out/output.txt; echo "FAIL $*: test/$$n.ts"; exit 1; fi; \
+	done
+
+# Scrub tests: a build with DEBUG_SCRUBTEST=<s> plays s seconds, scrubs back to half way and plays
+# on at 2.1x (main.ts scrubTestTime), logging every presentation tick; every tick played again
+# after the scrub must log what it did the first time (scripts/scrubcheck.awk). The cases are the
+# lines of scenes/<scene>/scrub.txt (the constants to build with, and `swap` when the trucks must
+# change on the way), into build/<scene>-scrub<n>/; without that file, DEBUG_SCRUBTEST=$(SCRUB).
+SCRUB ?= 20
+$(addprefix scrub-,$(SCENES)): scrub-%: | $(DEPS)
+	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
+	@$(call copy-assets,scenes/$*/assets,build/$*-scrub-assets)
+	@cn=0; { if [ -f scenes/$*/scrub.txt ]; then grep -Ev '^[[:space:]]*(#|$$)' scenes/$*/scrub.txt; else echo "DEBUG_SCRUBTEST=$(SCRUB)"; fi; } | \
+	while read -r line; do \
+	  cn=$$((cn + 1)); out=build/$*-scrub$$cn; swap=0; defs=""; \
+	  for w in $$line; do if [ "$$w" = swap ]; then swap=1; else defs="$$defs --define $$w"; fi; done; \
+	  secs=$$(echo "$$line" | sed -nE 's/.*DEBUG_SCRUBTEST=([0-9]+).*/\1/p'); \
+	  [ -n "$$secs" ] || { echo "scenes/$*/scrub.txt: no DEBUG_SCRUBTEST in: $$line" >&2; exit 1; }; \
+	  mkdir -p $$out && $(FLATTEN) scenes/$*/src/main.ts --root scenes/$*/src $$defs > $$out/scene.ts || exit 1; \
+	  cp scenes/$*/scene.json $$out/ && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/ || exit 1; \
+	  $(TICKR) render $$out --seconds $$(( secs * 5 / 4 + 1 )) --every 1000 > $$out/log.txt 2>&1 || { tail -5 $$out/log.txt; exit 1; }; \
+	  r=$$(awk -v swap=$$swap -f scripts/scrubcheck.awk $$out/log.txt) && echo "ok   $*: scrub check $$cn ($$r)" || \
+	    { echo "$$r"; echo "FAIL $*: scrub check $$cn, $$line (log: $$out/log.txt)"; exit 1; }; \
 	done
 
 $(addprefix render-,$(SCENES)): render-%: %

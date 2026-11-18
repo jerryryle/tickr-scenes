@@ -11,6 +11,7 @@ export interface SavedState {
   random?: boolean;   // the seed was drawn at random (env seed 0), so any saved seed resumes
   season?: Season;    // the first city's season when the journey began
   simTime: number;    // seconds of journey simulated so far
+  period?: number;    // seconds per city (cityMinutes, countrySeconds): a change starts a fresh journey
   journey: unknown;   // unused since version 4: the journey is a function of its time
 }
 export const STATE_VERSION = 4; // 4: deterministic journey, only the time is saved
@@ -24,7 +25,8 @@ export class Persistence {
   private pending: Promise<void> | null = null;
   constructor(private sys: SceneSys, private interval = 1200, private loadTimeout = 3000) {}
 
-  async load(seed: number, random = false): Promise<SavedState | null> {
+  // `period`: the journey's seconds per city, which places a saved time (absent from older saves).
+  async load(seed: number, random = false, period?: number): Promise<SavedState | null> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<"timeout">((res) => { timer = setTimeout(() => res("timeout"), this.loadTimeout); });
     try {
@@ -34,7 +36,8 @@ export class Persistence {
       // A load that loses the race says nothing about what is stored: run a fresh journey but
       // never save it, so the stored one is still there next time.
       if (s === "timeout") { this.status = "load timed out (not saving)"; this.readOnly = true; return null; }
-      if (!s || s.v !== STATE_VERSION || (random ? !s.random : s.seed !== seed)) { this.status = s ? "reset (version/seed)" : "fresh"; return null; }
+      const periodChanged = period !== undefined && s?.period !== undefined && s.period !== period;
+      if (!s || s.v !== STATE_VERSION || (random ? !s.random : s.seed !== seed) || periodChanged) { this.status = s ? "reset (version/seed/period)" : "fresh"; return null; }
       this.status = "resumed";
       return s;
     } catch (e: any) {

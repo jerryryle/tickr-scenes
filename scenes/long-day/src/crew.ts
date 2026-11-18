@@ -28,6 +28,7 @@ import type { BodyPose } from "./character.ts";
 
 const STRIDE = 1.2;   // metres per walk cycle (two steps)
 
+type CrewSave = { f: Record<string, unknown>; gag: THREE.Vector3; gagOn: boolean };   // (the vector kept when there is no gag)
 export class Crew {
   readonly driver: Character;
   readonly helper: Character;
@@ -121,8 +122,14 @@ export class Crew {
   // The springs and per-stop state that carry over between frames (main.ts: preview snapshots and
   // part-ticks); everything else follows from the journey each frame.
   private static SAVED = ["yaw", "yawV", "walkPhase", "time", "feetY", "helperFeetY", "drv", "mate", "doorNow", "toolHeld", "inSeat", "pose", "tmpPose", "yard"] as const;
-  saveState() { return { f: saveFields(this, Crew.SAVED), gag: this.gagPoint ? this.gagV.clone() : null }; }
-  loadState(s: ReturnType<Crew["saveState"]>) { loadFields(this, s.f); this.gagPoint = s.gag ? this.gagV.copy(s.gag) : null; }
+  // (`into`: an earlier save, filled again in place.)
+  saveState(into?: CrewSave): CrewSave {
+    const s = into ?? { f: {}, gag: new THREE.Vector3(), gagOn: false };
+    s.f = saveFields(this, Crew.SAVED, [], s.f);
+    s.gagOn = !!this.gagPoint; if (s.gagOn) s.gag.copy(this.gagV);
+    return s;
+  }
+  loadState(s: CrewSave) { loadFields(this, s.f); this.gagPoint = s.gagOn ? this.gagV.copy(s.gag) : null; }
   update(dt: number, j: Journey, truck: Truck, other: Truck | null, cam: THREE.Camera) {
     this.inSeat = false;
     this.time = j.st.simTime + j.frac;   // journey time: idle motion is the same after a scrub

@@ -27,6 +27,7 @@
 // in its keyframes, so seeking replays it exactly. The journey never reads it back.
 import * as THREE from "three@0.187.0";
 import { hash2, hash3 } from "./rng.ts";
+import { journeyPeriod } from "./env.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
 import { truckExtents, truckLayout } from "./truck.ts";
@@ -181,7 +182,7 @@ export class Journey {
     this.advanceTo(Math.max(0, t));
   }
 
-  get period() { return this.cfg.cityMinutes * 60 + this.cfg.countrySeconds; }
+  get period() { return journeyPeriod(this.cfg); }
   cityAt(t: number) { return Math.max(0, Math.floor(t / this.period + 1e-9)); }
 
   // ---- city starts --------------------------------------------------------------------------
@@ -294,7 +295,9 @@ export class Journey {
     this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k;
   }
   // How far the render time is between the last two steps (0 = the previous, 1 = the latest).
-  get alpha() { return THREE.MathUtils.clamp(1 + this.frac / SIM_DT, 0, 1); }
+  get alpha() { return this.alphaAt(this.st.simTime + this.frac); }
+  // The same for journey time t at or before the latest step (0 at or before the previous one).
+  alphaAt(t: number) { return THREE.MathUtils.clamp(1 + (t - this.st.simTime) / SIM_DT, 0, 1); }
 
   private restore(json: string) {
     const k = JSON.parse(json);

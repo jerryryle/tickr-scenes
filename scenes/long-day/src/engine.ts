@@ -39,6 +39,7 @@ export class Engine {
     this.gl = sys.gl({ antialias: true });
     this.renderer = new THREE.WebGLRenderer({ canvas: this.gl.canvas as any, context: this.gl });
     this.renderer.setSize(sys.width, sys.height, false);
+    this.renderer.info.autoReset = false;   // (draw resets it once a frame, for the HUD)
     this.camera = new THREE.PerspectiveCamera(38, sys.width / sys.height, 0.5, 400);
     this.scene.add(this.world, this.hemi, this.sun, this.sun.target);
     this.sun.position.copy(Engine.DAY.sunDir);
@@ -81,6 +82,7 @@ export class Engine {
 
   draw(ctx: CanvasRenderingContext2D) {
     const r = this.renderer;
+    r.info.reset();   // (counted over the frame's passes, backdrop and world: autoReset is off)
     r.autoClear = false;
     r.setClearColor(this.sky, 1);
     r.clear();

@@ -509,11 +509,33 @@ export class FreewayTraffic {
   }
   // Headlight patches on the deck ahead of the cars within `reach` of `at` (atmosphere.ts
   // HEAD_LIGHTS): x, z, heading, strength and the deck's height, nearest first.
-  headlights(at: { x: number; z: number }, reach: number, out: number[][]) {
+  headlights(at: { x: number; z: number }, reach: number, out: HeadSpots) {
     const d = this.poses;
     for (let i = 0; i < d.length; i += 4) {
       const h = d[i + 2], x = d[i] + Math.cos(h) * 7.5, z = d[i + 1] - Math.sin(h) * 7.5, dist = Math.hypot(x - at.x, z - at.z);
-      if (dist < reach) out.push([dist, x, z, h, 0.7, d[i + 3]]);
+      if (dist < reach) out.add(dist, x, z, h, 0.7, d[i + 3]);
     }
+  }
+}
+
+// Candidate headlight patches for the shader's few slots (main.ts), nearest taken first; the
+// records are reused from frame to frame, so a night frame allocates nothing for them.
+// A record: [distance, x, z, heading, strength, surface y, taken].
+export class HeadSpots {
+  n = 0;
+  private recs: number[][] = [];
+  clear() { this.n = 0; }
+  add(dist: number, x: number, z: number, h: number, w: number, y: number) {
+    let r = this.recs[this.n];
+    if (!r) r = this.recs[this.n] = [0, 0, 0, 0, 0, 0, 0];
+    r[0] = dist; r[1] = x; r[2] = z; r[3] = h; r[4] = w; r[5] = y; r[6] = 0;
+    this.n++;
+  }
+  // The nearest not yet taken (the first added among equals), or null when all are.
+  takeNearest(): number[] | null {
+    let best: number[] | null = null;
+    for (let i = 0; i < this.n; i++) { const r = this.recs[i]; if (!r[6] && (!best || r[0] < best[0])) best = r; }
+    if (best) best[6] = 1;
+    return best;
   }
 }

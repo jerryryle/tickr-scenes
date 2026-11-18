@@ -5,6 +5,16 @@ import * as THREE from "three@0.187.0";
 
 interface Puff { x: number; y: number; z: number; vx: number; vy: number; vz: number; age: number; life: number; size: number; color: THREE.Color }
 
+function copyPuffs(from: Puff[], to: Puff[]): Puff[] {
+  to.length = from.length;
+  for (let i = 0; i < from.length; i++) {
+    const p = from[i]; let q = to[i];
+    if (!q) q = to[i] = { ...p, color: p.color.clone() };
+    else { q.x = p.x; q.y = p.y; q.z = p.z; q.vx = p.vx; q.vy = p.vy; q.vz = p.vz; q.age = p.age; q.life = p.life; q.size = p.size; q.color.copy(p.color); }
+  }
+  return to;
+}
+
 export class PuffSystem {
   readonly mesh: THREE.InstancedMesh;
   private puffs: Puff[] = [];
@@ -24,8 +34,10 @@ export class PuffSystem {
     if (this.puffs.length >= this.max) this.puffs.shift();
     this.puffs.push({ x: at.x, y: at.y, z: at.z, vx: vel.x, vy: vel.y, vz: vel.z, age: 0, life, size, color: new THREE.Color(color) });
   }
-  save() { return this.puffs.map((p) => ({ ...p, color: p.color.clone() })); }
-  load(s: Puff[]) { this.puffs = s.map((p) => ({ ...p, color: p.color.clone() })); this.update(0); }
+  // Saved puffs (`into`: an earlier save, its records filled again in place), and back: into the
+  // puffs' own records where there are enough.
+  save(into?: Puff[]): Puff[] { return copyPuffs(this.puffs, into ?? []); }
+  load(s: Puff[]) { copyPuffs(s, this.puffs); this.update(0); }
   clear() { this.puffs.length = 0; this.mesh.count = 0; }
   rebase(dx: number, dz: number) { for (const p of this.puffs) { p.x += dx; p.z += dz; } }
   update(dt: number) {

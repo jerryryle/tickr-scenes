@@ -54,6 +54,7 @@ export class Traffic {
   private rng = new Rng(0x7a4f);
   private rnd = this.rng.next;
   private nextId = 0;
+  private byId = new Map<number, Car>(); private ignore: number[] = [];   // (step's, reused)
   private groups = new Map<number, THREE.Object3D>();   // Ryder trucks' models, by car id
   private spare = new Map<TruckModel, THREE.Object3D[]>();   // models of Ryder trucks that left, for reuse (each is new GPU geometry)
   time = 0;   // render time (the police lights)
@@ -136,9 +137,12 @@ export class Traffic {
     // Drive.
     this.obstacles.length = 0;
     for (const c of this.cars) this.carCircles(c, this.obstacles);
-    const byId = new Map<number, Car>();
+    // (The lookup and the deadlock answers are reused from step to step: seeks replay thousands.)
+    const byId = this.byId, ignore = this.ignore;
+    byId.clear();
     for (const c of this.cars) byId.set(c.id, c);
-    const ignore = this.cars.map((c) => this.deadlockBlocker(c, byId));   // from last step's state, before anyone moves
+    ignore.length = this.cars.length;
+    for (let i = 0; i < this.cars.length; i++) ignore[i] = this.deadlockBlocker(this.cars[i], byId);   // from last step's state, before anyone moves
     for (let i = this.cars.length - 1; i >= 0; i--) this.drive(this.cars[i], dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]);
   }
 
@@ -168,7 +172,8 @@ export class Traffic {
     const path = new Path(route);
     path.eval(0, this.pose);
     // Not on top of anything.
-    for (const o of [...truck, ...this.obstacles]) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
+    for (const o of truck) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
+    for (const o of this.obstacles) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const c of this.cars) if (Math.hypot(c.x - this.pose.x, c.z - this.pose.z) < 14) return;
     // Short of a light that isn't green: not past its stop line, and stopped there if it is too
     // close to stop from speed.

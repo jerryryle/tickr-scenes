@@ -4,7 +4,7 @@
 // work at each stop.
 import * as THREE from "three@0.187.0";
 import { hash2 } from "./rng.ts";
-import { readConfig } from "./env.ts";
+import { journeyPeriod, readConfig } from "./env.ts";
 import { DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
@@ -28,7 +28,7 @@ import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
 import type { CityMaterials } from "./city.ts";
 import { facilityAt, facilityName } from "./facilities.ts";
-import { marquee, plateAtlas, signAtlas } from "./signs.ts";
+import { ATLAS_UPLOAD, marquee, plateAtlas, signAtlas } from "./signs.ts";
 import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { smooth } from "./route.ts";
 import type { Pose } from "./route.ts";
@@ -41,7 +41,7 @@ import { DockFx, FrontDoorFx } from "./dockfx.ts";
 import { FleetBaker } from "./fleet.ts";
 import { COUNTRY_CLEAR, CountryWorld } from "./countryworld.ts";
 import { ElevatedReach, elevatedLift } from "./elevated.ts";
-import { Frame, FreewayReach, FreewayTraffic, FW_TIP } from "./freeway.ts";
+import { Frame, FreewayReach, FreewayTraffic, FW_TIP, HeadSpots } from "./freeway.ts";
 import { Backdrop } from "./backdrop.ts";
 import { Traffic } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
@@ -93,6 +93,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let atmosphere: Atmosphere;
   let roadShown: CountryRoad | null = null;
   const skyTmp = new THREE.Color(), skyTmp2 = new THREE.Color();
+  const headSpots = new HeadSpots();   // (the headlight slots' candidates, reused every frame)
   let memLogSlot = -1;
   let baked = false, cityShown = -1, tabletKey = "";
   let lastMode: Mode | "" = "";
@@ -103,7 +104,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let lastX = NaN, lastZ = 0;   // the truck's last rendered position, for wheel travel
 
   function snapshot(): SavedState {
-    return { v: STATE_VERSION, seed: cfg.seed, random: randomSeed, season: journey.startSeason, simTime: journey.st.simTime, journey: null };
+    return { v: STATE_VERSION, seed: cfg.seed, random: randomSeed, season: journey.startSeason, simTime: journey.st.simTime, period: journey.period, journey: null };
   }
 
   function buildCity() {
@@ -131,20 +132,25 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     streamer.cacheLimit = CHUNK_CACHE_BYTES;
     streamer.exact = PREVIEW;   // a scrubbed frame shows the same blocks as the played one
     streamer.keepCached = () => signAtlas.freeSlots >= SIGN_RESERVE && plateAtlas.freeSlots >= PLATE_RESERVE;
-    prefetchKey = "";
+    prefetchKey.length = 0;
     cityShown = journey.st.city;
   }
 
   // The cells the truck will want next (ChunkStreamer.setPrefetch): along the rest of its route,
   // nearest the route first, then round its next stops. Worked out again when the route or the
   // stops change.
-  let prefetchKey = "";
+  // (What they depend on, compared field by field: this runs every frame, and allocates nothing
+  // unless something changed. Cleared, with prefetchKey.length = 0, to work them out again.)
+  const prefetchKey: (number | string | null)[] = [];
   const prefetchPose: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  let pfAt = 0, pfChanged = false;
+  function pfPut(v: number | string | null) { if (prefetchKey[pfAt] !== v) { prefetchKey[pfAt] = v; pfChanged = true; } pfAt++; }
   function updatePrefetch() {
-    const st = journey.st, path = st.mode === "drive" ? journey.path : null;
-    const key = `${st.city}|${st.mode}|${path && st.route ? `${st.route.ix},${st.route.iz},${st.route.moves}` : ""}|${st.stops.slice(0, PREFETCH_STOPS).map((p) => p.site ? p.site.bx + "," + p.site.bz : "-").join(";")}`;
-    if (key === prefetchKey) return;
-    prefetchKey = key;
+    const st = journey.st, path = st.mode === "drive" ? journey.path : null, r = path ? st.route : null;
+    pfAt = 0; pfChanged = prefetchKey.length === 0;
+    pfPut(st.city); pfPut(st.mode); pfPut(r ? r.ix : null); pfPut(r ? r.iz : null); pfPut(r ? r.moves : null);
+    for (let k = 0; k < PREFETCH_STOPS; k++) { const site = st.stops[k]?.site; pfPut(site ? site.bx : null); pfPut(site ? site.bz : null); }
+    if (!pfChanged) return;
     const cells: [number, number][] = [], seen = new Set<string>();
     const ring = (bx: number, bz: number, r: number) => {
       const round: [number, number, number][] = [];
@@ -193,26 +199,55 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   function newTruck(model: TruckModel) {
     const t = new Truck(kit, model, puffs);
     engine.scene.add(t.root);
+    freshTruck.set(t, t.save());
     return t;
+  }
+  // Trucks out of use (swapped out, the spare gone): hidden rather than disposed, so undoing a
+  // part-tick or loading a snapshot (presLoad) puts back the very trucks it saved. Past a few the
+  // oldest are disposed; a board, which keeps no snapshots, disposes them at the next tick (tick).
+  // One taken back into use starts as a new one would, unless its saved state is put back (presLoad).
+  const IDLE_TRUCKS = 3;
+  const idleTrucks: Truck[] = [];
+  const freshTruck = new WeakMap<Truck, ReturnType<Truck["save"]>>();
+  function idleTruck(t: Truck) {
+    t.root.visible = false; idleTrucks.push(t);
+    if (idleTrucks.length > IDLE_TRUCKS) idleTrucks.shift()!.dispose();
+  }
+  // (The latest idled of the model: the one a part-tick's undo wants back. `fresh`: reset as new,
+  // for one whose saved state doesn't follow.)
+  function wakeTruck(model: TruckModel, fresh: boolean) {
+    let i = idleTrucks.length - 1;
+    while (i >= 0 && idleTrucks[i].model !== model) i--;
+    if (i < 0) return newTruck(model);
+    const t = idleTrucks.splice(i, 1)[0];
+    t.root.visible = true;
+    if (fresh) { t.load(freshTruck.get(t)!); t.resetLooks(); }
+    return t;
+  }
+  // Make the driven truck and the second one (or none) these models, keeping the trucks already
+  // there where they fit: for the driven model the driven truck first (a swap: the second one),
+  // for the second model the second truck first. Says whether the driven truck changed.
+  function placeTrucks(tm: TruckModel, om: TruckModel | null, fresh = true) {
+    const prev = truck, prevOther = other;
+    const fits = (x: Truck | null, m: TruckModel, taken: Truck | null) => (x && x !== taken && x.model === m ? x : null);
+    const t = fits(prev, tm, null) ?? fits(prevOther, tm, null) ?? wakeTruck(tm, fresh);
+    const o = om ? fits(prevOther, om, t) ?? fits(prev, om, t) ?? wakeTruck(om, fresh) : null;
+    for (const x of [prev, prevOther]) if (x && x !== t && x !== o) idleTruck(x);
+    truck = t; other = o;
+    return t !== prev;
   }
 
   // Keep the second truck in step with the journey: the spare parked ahead at a swap stop,
   // which becomes the driven truck at the hand-over, leaving the old one parked.
   function syncTrucks() {
     const st = journey.st;
-    if (st.truck !== truck.model) {
-      if (other && other.model === st.truck) { const t = truck; truck = other; other = t; }
-      else { truck.dispose(); truck = newTruck(st.truck); }
-      truck.engineOn = true; tabletKey = "";
-    }
-    const want = st.spare ?? st.parked?.model ?? null;
-    if (other && other.model !== want) { other.dispose(); other = null; }
-    if (want && !other) other = newTruck(want);
+    // (A new driven truck, somewhere else: its wheels and trailer don't travel from where the last one stood.)
+    if (placeTrucks(st.truck, st.spare ?? st.parked?.model ?? null)) { truck.engineOn = true; tabletKey = ""; lastX = NaN; }
     if (other) {
       if (st.spare) journey.sparePose(pose);
       else if (st.parked) { pose.x = st.parked.x; pose.z = st.parked.z; pose.h = st.parked.h; pose.k = 0; }
       other.follow(pose.x, pose.z, pose.h, 0, 0);
-      other.speed = 0; other.accel = 0; other.engineOn = false; other.hazards = false; other.signal = 0;
+      other.speed = 0; other.accel = 0; other.engineOn = false; other.hazards = false; other.signal = 0; other.headlights = false;
     }
   }
 
@@ -452,23 +487,32 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let lastRoad: RoadPick | null = null;
   type PresSnap = {
     k: number; city: number; dir: ReturnType<Director["save"]>; crew: ReturnType<Crew["saveState"]>; puffs: ReturnType<PuffSystem["save"]>; atm: [number, number];
-    truck: { model: TruckModel; s: ReturnType<Truck["save"]> }; other: { model: TruckModel; s: ReturnType<Truck["save"]> } | null;
+    truck: { model: TruckModel; s: ReturnType<Truck["save"]> };
+    other: { model: TruckModel | null; s: ReturnType<Truck["save"]> | null };   // (model null: no second truck; its record is kept for reuse)
     m: { lastX: number; lastZ: number; fogClear: number; lastMode: Mode | ""; tabletKey: string; revFrom: number | null; radius: number };
   };
   const snaps = new Map<number, PresSnap>();
-  function presSave(): PresSnap {
-    return {
-      k: presK, city: presCity, dir: director.save(), crew: crew.saveState(), puffs: puffs.save(), atm: atmosphere.offset,
-      truck: { model: truck.model, s: truck.save() }, other: other ? { model: other.model, s: other.save() } : null,
-      m: { lastX, lastZ, fogClear, lastMode, tabletKey, revFrom, radius: streamer.radius },
-    };
+  // (`into`: an earlier snapshot, filled again in place: the frame's part-tick saves one every frame.)
+  function presSave(into?: PresSnap): PresSnap {
+    const p = into ?? ({ truck: {}, other: { model: null, s: null }, m: {} } as PresSnap);
+    p.k = presK; p.city = presCity;
+    p.dir = director.save(p.dir); p.crew = crew.saveState(p.crew); p.puffs = puffs.save(p.puffs); p.atm = atmosphere.offsetInto(p.atm ?? [0, 0]);
+    p.truck.model = truck.model; p.truck.s = truck.save(p.truck.s);
+    p.other.model = other ? other.model : null; if (other) p.other.s = other.save(p.other.s ?? undefined);
+    const m = p.m;
+    m.lastX = lastX; m.lastZ = lastZ; m.fogClear = fogClear; m.lastMode = lastMode; m.tabletKey = tabletKey; m.revFrom = revFrom; m.radius = streamer.radius;
+    return p;
   }
+  let partSnap: PresSnap | undefined;   // the part-tick's, reused (never one of the snapshots kept in `snaps`)
   function presLoad(p: PresSnap) {
-    syncTrucks();
-    if (truck.model === p.truck.model) truck.load(p.truck.s);
-    if (other && p.other && other.model === p.other.model) other.load(p.other.s);
+    // (The trucks it saved where they're still about: just idled by the part-tick, say. Their saved
+    // state follows, so they aren't reset as new.)
+    const changed = placeTrucks(p.truck.model, p.other.model, false);
+    truck.load(p.truck.s);
+    if (other && p.other.s) other.load(p.other.s);
     director.load(p.dir); crew.loadState(p.crew); puffs.load(p.puffs); atmosphere.offset = p.atm;
     ({ lastX, lastZ, fogClear, lastMode, tabletKey, revFrom } = p.m); streamer.setRadius(p.m.radius);
+    if (changed) tabletKey = "";   // (another driven truck than before: its tablet may not show the saved stop)
     presK = p.k; presCity = p.city;
   }
   // Is tick k on a snapshot boundary (every 10 s of a city's time, the journey's keyframes)?
@@ -483,6 +527,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   function tick() {
     presK++;
     step(presK / TICK_HZ, 1 / TICK_HZ, false);
+    if (!PREVIEW) while (idleTrucks.length) idleTrucks.pop()!.dispose();   // (only a part-tick's undo needs them)
     if (DEBUG_SCRUBTEST || DEBUG_CAMLOG) scrubTestLog();
     if (PREVIEW && onBoundary(presK)) {
       snaps.set(presK, presSave());
@@ -504,7 +549,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // Landing on the snapshot itself: no tick follows to put the truck, crew, doors and camera
       // where the snapshot has them (they still show where the scrub came from), so step to its
       // own moment, then put back the state exactly as saved.
-      if (best === K) { const h = presSave(); step(K / TICK_HZ, 0, false); presLoad(h); }
+      if (best === K) { const h = partSnap = presSave(partSnap); step(K / TICK_HZ, 0, false); presLoad(h); }   // (partSnap: free until the frame's part-tick)
     } else freshAt(boundaryAtOrBefore(K));
     while (presK < K) tick();
   }
@@ -610,7 +655,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     scrubLogged = presK;
     for (const f of SNAP_SKIPPED) if (!skipLogged.has(f)) { skipLogged.add(f); sys.log(`SNAP skipped ${f} (not plain data: not saved)`); }
     const c = engine.camera, p = truck.root.position;
-    sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant} ${journey.st.mode} ${journey.st.v.toFixed(2)} ${truck.heading.toFixed(4)} ${c.fov.toFixed(2)} ${p.y.toFixed(3)} fog ${fogClear.toFixed(3)} r${streamer.radius} acc ${journey.accel.toFixed(3)}`);
+    sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant} ${journey.st.mode} ${journey.st.v.toFixed(2)} ${truck.heading.toFixed(4)} ${c.fov.toFixed(2)} ${p.y.toFixed(3)} fog ${fogClear.toFixed(3)} r${streamer.radius} acc ${journey.accel.toFixed(3)} ${truck.model}/${other?.model ?? "-"}`);
   }
 
   function backdropState(pr: { road: CountryRoad; s: number } | null): { city: number; p: number } {
@@ -656,11 +701,18 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     async setup() {
       engine = new Engine(sys);
       engine.backdrop = backdrop;
+      ATLAS_UPLOAD.renderer = engine.renderer;   // (the sign and plate atlases upload just what they draw)
       hud = new Hud();
       persist = new Persistence(sys);
       // Seed 0 asks for a random journey: resume the one in storage, or draw a new one.
       const random = randomSeed = cfg.seed === 0;
-      const saved = await persist.load(cfg.seed, random);
+      // The images load meanwhile, all at once (independent of each other and of the storage read).
+      const loading = Promise.all([
+        Promise.all(LIVERY_ASSETS.map((n) => assets[n].loadImage())), assets.facades.loadImage(),
+        assets.logoWhite.loadImage(), assets.logoColor.loadImage(), assets.batonWordmark.loadImage(),
+      ]);
+      loading.catch(() => {});   // (a failure surfaces at the await below, not as unhandled while storage is read)
+      const saved = await persist.load(cfg.seed, random, journeyPeriod(cfg));
       // The preview has no lasting storage, so its random journey is the day's journey: the same on
       // every reload.
       const today = new Date();
@@ -674,15 +726,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).
       sys.log(`Long Day: seed ${cfg.seed}, starting at journey time ${base.toFixed(1)}s`);
+      const [liveries, facades, logoWhite, logoColor, batonWordmark] = await loading;
       const images = {} as Record<LiveryName, CanvasImageSource>;
-      for (const n of LIVERY_ASSETS) images[n] = uploadable(await assets[n].loadImage());
-      const atlas = uploadable(await assets.facades.loadImage());
+      LIVERY_ASSETS.forEach((n, i) => { images[n] = uploadable(liveries[i]); });
+      const atlas = uploadable(facades);
       puffs = new PuffSystem(engine.scene);
       kit = new TruckKit(images);
       fleet = new FleetBaker(kit);
-      signAtlas.logo = await assets.logoWhite.loadImage();
-      signAtlas.logoColor = await assets.logoColor.loadImage();
-      signAtlas.batonMark = await assets.batonWordmark.loadImage();
+      signAtlas.logo = logoWhite; signAtlas.logoColor = logoColor; signAtlas.batonMark = batonWordmark;
       truck = newTruck(journey.st.truck);
       placeTruck(0, true);
       syncTrucks();
@@ -719,6 +770,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       crowd = new Crowd(engine.scene, movers);
       cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);
+      // The clock first: attaching street life replays the city so far, and its vignettes and
+      // pedestrians keep the hours.
+      atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
+      CLOCK.hourAt = (t) => atmosphere.hourAt(t - base);   // (the vignettes keep the hours: they pass journey time, the sky runs on scene time)
       const tl = performance.now();
       journey.attachLife(new StreetLife(traffic, crowd, ambient));
       seekMs = performance.now() - tl;
@@ -732,8 +787,6 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       countryWorld.exact = PREVIEW;   // (a scrubbed frame shows the same road pieces as the played one)
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
       freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
-      atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
-      CLOCK.hourAt = (t) => atmosphere.hourAt(t - base);   // (the vignettes keep the hours: they pass journey time, the sky runs on scene time)
       VIG_LOG.out = (line) => sys.log(line);
       atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
       setSignalTime(base);
@@ -772,21 +825,18 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       while (presK < K) tick();
       // This frame's moment, between two ticks: a part-tick on top of the last one, undone after
       // drawing (never across a hand-over: that frame shows the tick).
-      // Nor across a change of trucks (a swap, the spare arriving or leaving): presLoad can't put
-      // back a truck the part-tick swapped or disposed.
       let held: PresSnap | null = null;
-      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) {
-        journey.advanceTo(target);   // (step does this first anyway; the journey isn't undone)
-        const st = journey.st;
-        if (st.truck === truck.model && (st.spare ?? st.parked?.model ?? null) === (other?.model ?? null)) { held = presSave(); step(target, target - presK / TICK_HZ, false, true); }
-      }
-      const pr = lastRoad, inCity = journey.st.mode !== "country", alpha = journey.alpha;
+      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) { held = partSnap = presSave(partSnap); step(target, target - presK / TICK_HZ, false, true); }
+      // The moment the frame shows: its own, or the last tick's when there was no part-tick (the
+      // street life is drawn there too, so it stays with the truck).
+      const shown = held ? target : presK / TICK_HZ;
+      const pr = lastRoad, inCity = journey.st.mode !== "country", alpha = journey.alphaAt(shown);
       const road = journey.st.mode === "country" ? journey.exitRoad : null;
       // Street life around the truck (none on the open road): simulated with the journey, drawn
       // between its last two steps.
-      traffic.time = target; traffic.draw(alpha);
-      crowd.draw(alpha, target);
-      ambient.update(target, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
+      traffic.time = shown; traffic.draw(alpha);
+      crowd.draw(alpha, shown);
+      ambient.update(shown, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
       if (!TOUR_VIEW) streamRound(true);
       {
         const bd = backdropState(pr);
@@ -796,7 +846,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       }
       // (The preview draws every sign before the frame, so a scrubbed frame shows the same signs.)
       if (PREVIEW) { signAtlas.bake(Infinity); plateAtlas.bake(Infinity); } else { signAtlas.bake(); plateAtlas.bake(); }
-      marquee.update(target);
+      marquee.update(shown);
       // Time of day from the clock, weather from the city (blended along the country road).
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);
       const sky = road ? skyTmp.setHex(journey.plan.style.sky).lerp(skyTmp2.setHex(road.inp.toStyle.sky), road.blendAt(journey.countryS)).getHex() : journey.plan.style.sky;
@@ -814,14 +864,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
           if (roadShown && journey.st.mode === "country" && journey.countryS > 400) countryWorld.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
           else traffic.headlights(HEAD_LIGHTS.value, 1, truck.root.position, HEAD_Y.value);
           // Freeway cars' too: the nearest of them and of the vehicles above share the slots.
-          const spots: number[][] = [];
+          const spots = headSpots;
+          spots.clear();
           cityCars.headlights(truck.root.position, 120, spots); roadCars.headlights(truck.root.position, 120, spots);
-          if (spots.length) {
+          if (spots.n) {
             const p = truck.root.position;
-            for (let k = 1; k < HEAD_LIGHTS.value.length; k++) { const V = HEAD_LIGHTS.value[k]; if (V.w > 0) spots.push([Math.hypot(V.x - p.x, V.y - p.z), V.x, V.y, V.z, V.w, HEAD_Y.value[k]]); }
-            spots.sort((a, b) => a[0] - b[0]);
+            for (let k = 1; k < HEAD_LIGHTS.value.length; k++) { const V = HEAD_LIGHTS.value[k]; if (V.w > 0) spots.add(Math.hypot(V.x - p.x, V.y - p.z), V.x, V.y, V.z, V.w, HEAD_Y.value[k]); }
             for (let k = 1; k < HEAD_LIGHTS.value.length; k++) {
-              const q = spots[k - 1];
+              const q = spots.takeNearest();
               if (q) { HEAD_LIGHTS.value[k].set(q[1], q[2], q[3], q[4]); HEAD_Y.value[k] = q[5]; } else HEAD_LIGHTS.value[k].w = 0;
             }
           }

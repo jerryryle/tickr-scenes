@@ -174,6 +174,7 @@ export function truckLayout(m: TruckModel) {
 }
 export type TruckLayout = ReturnType<typeof truckLayout>;
 
+type TruckSave = { f: Record<string, unknown>; x: number; z: number };
 export class Truck {
   readonly spec: TruckSpec;
   readonly root = new THREE.Group();   // world pose
@@ -331,8 +332,13 @@ export class Truck {
   // The moving parts' state (main.ts: preview snapshots and part-ticks); the meshes follow from it.
   private static SAVED = ["speed", "accel", "steer", "distance", "heading", "hazards", "signal", "engineOn", "rearDoor", "ramp", "liftgate", "liftgateDrop",
     "cabDoor", "trailerDoors", "trailerYaw", "interiorView", "cutaway", "bob", "puffTimer", "time"] as const;
-  save() { return { f: saveFields(this, Truck.SAVED), x: this.root.position.x, z: this.root.position.z }; }
-  load(s: ReturnType<Truck["save"]>) { loadFields(this, s.f); this.setPose(s.x, s.z, this.heading); this.update(0, this.time); }
+  // (`into`: an earlier save, of this truck or another, filled again in place.)
+  save(into?: TruckSave): TruckSave {
+    const s = into ?? { f: {}, x: 0, z: 0 };
+    s.f = saveFields(this, Truck.SAVED, [], s.f); s.x = this.root.position.x; s.z = this.root.position.z;
+    return s;
+  }
+  load(s: TruckSave) { loadFields(this, s.f); this.setPose(s.x, s.z, this.heading); this.update(0, this.time); }
 
   // Free GPU resources (truck swaps). Shared kit geometry and materials are kept.
   dispose() {
@@ -355,6 +361,13 @@ export class Truck {
     }
   }
 
+  // Back to how a new truck shows what its saved fields leave out (main.ts: a truck brought back
+  // into use): headlights off, the dash tablet blank.
+  resetLooks() {
+    this.headlights = false;
+    if (this.tabletCanvas) { this.tabletMat.map?.dispose(); this.tabletMat.map = placeholderTexture(); this.tabletCanvas = null; }
+  }
+
   // Dash tablet: shown once 2D canvases are available (from the first render frame on the board).
   setTablet(stop: string, cargo: string) {
     if (!canBakeTextures()) return false;
@@ -362,6 +375,7 @@ export class Truck {
       this.tabletCanvas = makeCanvas(160, 104);
       const tex = new THREE.CanvasTexture(this.tabletCanvas.canvas);
       tex.colorSpace = THREE.SRGBColorSpace; tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+      this.tabletMat.map?.dispose();   // (the blank placeholder)
       this.tabletMat.map = tex;
     }
     const { g } = this.tabletCanvas;

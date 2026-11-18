@@ -37,6 +37,53 @@ function centroidUV<M extends THREE.Material>(mat: M): M {
   return mat;
 }
 
+// Texture uploads of a canvas atlas: only the slots drawn since the last upload, each copied
+// through a slot-sized staging canvas into the texture already on the GPU (WebGLRenderer
+// copyTextureToTexture), rather than the whole atlas (megabytes) for every few signs. The whole
+// atlas goes up the first time, and whenever there is no renderer to copy with (set by the scene).
+export const ATLAS_UPLOAD = { renderer: null as THREE.WebGLRenderer | null, checked: false };
+const SLOTS_PER_UPLOAD = 32;   // (more than this at once: the whole atlas is quicker)
+const uploadAt = new THREE.Vector2();
+class SlotUploads {
+  private xy: number[] = [];   // the drawn slots' top-left corners, canvas pixels
+  private stage: { canvas: any; g: CanvasRenderingContext2D; tex: THREE.Texture } | null = null;
+  private whole = false;
+  constructor(private w: number, private h: number) {}
+  drew(x: number, y: number) { this.xy.push(x, y); }
+  all() { this.whole = true; }
+  // Send what was drawn to `tex` (whose image is `src`, `H` pixels high).
+  flush(tex: THREE.Texture, src: any, H: number) {
+    const r = ATLAS_UPLOAD.renderer, n = this.xy.length / 2;
+    if (this.whole || !r || tex.version === 0 || n > SLOTS_PER_UPLOAD) tex.needsUpdate = true;
+    else if (n) {
+      if (!this.stage) {
+        const c = makeCanvas(this.w, this.h);
+        // (Never drawn with, so never uploaded itself: copyTextureToTexture reads its canvas.)
+        this.stage = { ...c, tex: new THREE.Texture(c.canvas) };
+      }
+      const st = this.stage;
+      // The first time, WebGL's own errors too: a runtime that can't take a canvas for part of a
+      // texture says so there, not by throwing. (Once: reading them waits for the GPU.)
+      const gl = ATLAS_UPLOAD.checked ? null : r.getContext();
+      if (gl) for (let k = 0; k < 8 && gl.getError() !== gl.NO_ERROR; k++);   // (earlier errors aren't the copy's)
+      try {
+        for (let i = 0; i < this.xy.length; i += 2) {
+          const x = this.xy[i], y = this.xy[i + 1];
+          st.g.clearRect(0, 0, this.w, this.h);
+          st.g.drawImage(src, x, y, this.w, this.h, 0, 0, this.w, this.h);
+          // (The atlas is uploaded flipped, rows counted from the bottom: the slot's place there.)
+          r.copyTextureToTexture(st.tex, tex, null, uploadAt.set(x, H - y - this.h));
+        }
+        if (gl) { ATLAS_UPLOAD.checked = true; if (gl.getError() !== gl.NO_ERROR) throw new Error("atlas slot copy failed"); }
+      } catch {
+        // A runtime that can't copy into the texture: the whole atlas, now and from here on.
+        ATLAS_UPLOAD.renderer = null; tex.needsUpdate = true;
+      }
+    }
+    this.xy.length = 0; this.whole = false;
+  }
+}
+
 export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean }
 interface SignJob { slot: number; text: string; style: SignStyle; baked: boolean }
 export interface SignMesh { mesh: THREE.Mesh; slots: number[]; ads: boolean }
@@ -52,6 +99,7 @@ export class SignAtlas {
   private jobs = new Map<number, SignJob>();
   private meshes = new Set<SignMesh>();
   private adsBaked = false;
+  private uploads = new SlotUploads(SIGN_W, SIGN_H);
   constructor() { for (let i = SIGN_COLS * SIGN_ROWS - 1; i >= 0; i--) this.free.push(i); }
 
   // Reserve a name slot for `text`; -1 when the atlas is full (the chunk simply has no sign).
@@ -95,15 +143,16 @@ export class SignAtlas {
     if (!canBakeTextures()) return;
     let dirty = false, n = 0;
     if (!this.canvas) this.create();
-    if (!this.adsBaked) { ADS.forEach((ad, i) => this.drawAd(ad, i)); this.adsBaked = true; dirty = true; }
+    if (!this.adsBaked) { ADS.forEach((ad, i) => this.drawAd(ad, i)); this.adsBaked = true; dirty = true; this.uploads.all(); }
     for (const j of this.jobs.values()) {
       if (j.baked) continue;
       if (n++ >= max) break;
       this.draw(j);
+      this.uploads.drew((j.slot % SIGN_COLS) * SIGN_W, Math.floor(j.slot / SIGN_COLS) * SIGN_H);
       j.baked = true; dirty = true;
     }
     if (dirty) {
-      this.texture!.needsUpdate = true;
+      this.uploads.flush(this.texture!, this.canvas!.canvas, ATLAS_H);
       for (const m of this.meshes) this.refresh(m);
     }
   }
@@ -304,6 +353,7 @@ export class PlateAtlas {
   private jobs = new Map<number, PlateJob>();
   private byKey = new Map<string, number>();
   private meshes = new Set<{ mesh: THREE.Mesh; slots: number[] }>();
+  private uploads = new SlotUploads(PLATE_W, PLATE_H);
   constructor() { for (let i = PLATE_COLS * PLATE_ROWS - 1; i >= 0; i--) this.free.push(i); }
   // A slot showing `text` (shared with whoever already shows it); -1 when the atlas is full.
   get freeSlots() { return this.free.length; }
@@ -346,9 +396,10 @@ export class PlateAtlas {
       g.strokeStyle = j.style.fg; g.lineWidth = 2; g.strokeRect(x + 2, y + 2, PLATE_W - 4, PLATE_H - 4);   // the plate's white border
       g.fillStyle = j.style.fg; fitAtlasText(g, j.text, x + PLATE_W / 2, y + PLATE_H / 2 + 1, PLATE_W - 16, 21);
       g.restore();
+      this.uploads.drew(x, y);
       j.baked = true;
     }
-    if (n) { this.texture!.needsUpdate = true; for (const m of this.meshes) this.refresh(m); }
+    if (n) { this.uploads.flush(this.texture!, this.canvas.canvas, PLATE_ROWS * PLATE_H); for (const m of this.meshes) this.refresh(m); }
   }
 }
 export const plateAtlas = new PlateAtlas();

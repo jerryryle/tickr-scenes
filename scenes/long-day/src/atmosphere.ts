@@ -308,6 +308,7 @@ export class Atmosphere {
   // The world moved by (dx, dz) under the camera: the rain and snow move with it.
   private ox = 0; private oz = 0;
   get offset(): [number, number] { return [this.ox, this.oz]; }
+  offsetInto(o: [number, number]) { o[0] = this.ox; o[1] = this.oz; return o; }   // (the same, without a new array)
   set offset(o: [number, number]) { [this.ox, this.oz] = o; }
   rebase(dx: number, dz: number) { this.ox = (this.ox + dx) % 4600; this.oz = (this.oz + dz) % 4600; }
   precipitation(t: number, cam: THREE.Camera) {
