@@ -188,7 +188,7 @@ function tripLoad(id: string): number {
 export const handTrips = (L: TruckLayout, handling: Handling) => !L.trailer && !L.flatbed && handling !== "walkOn" && handling !== "flatbed" && handling !== "tow";
 // The most units one stop can move by hand.
 export function maxHandUnits(id: string) { return TRIP_CAP * tripLoad(id); }
-function tripCount(L: TruckLayout, id: string, units: number) {
+export function tripCount(L: TruckLayout, id: string, units: number) {
   const c = CARGO_BY_ID.get(id)!;
   if (!handTrips(L, c.handling)) { const st = STYLE[c.handling]; return Math.min(st.cap, Math.max(1, Math.ceil(units / st.perTrip))); }
   return Math.max(1, Math.ceil(units / tripLoad(id)));

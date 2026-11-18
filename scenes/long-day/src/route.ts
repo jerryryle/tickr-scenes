@@ -255,6 +255,15 @@ export class Path {
   // Lateral offset from the centre line at the last eval (traffic: NaN in a turn).
   lastOffset = LANE_KERB;
 
+  // eval, leaving the search cursor and lastOffset (which traffic reads) as they were: for
+  // looking elsewhere along the path than where the truck is.
+  peek(s: number, out: Pose): Pose {
+    const cursor = this.cursor, lastOffset = this.lastOffset;
+    this.eval(s, out);
+    this.cursor = cursor; this.lastOffset = lastOffset;
+    return out;
+  }
+
   eval(s: number, out: Pose): Pose {
     s = Math.min(Math.max(s, 0), this.length);
     const p = this.find(s);

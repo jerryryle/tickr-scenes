@@ -1212,8 +1212,9 @@ function doorBayA(side: number, a: number, w: number): number {
 // hut, a fair's ticket booth, a marina's bait shack, a wedding venue's caterer's cottage.
 // Its footprint in frontage: a shed beside the park path; a 20 ft container (6.06 x 2.44 m) right
 // at the back of the pavement, in front of a warehouse set 2.5 m back.
+export const END_ON_HALF = 1.22;   // half the end-on container's width (crew.ts stackPlan keeps the stack clear of it)
 const standBox = (L: StandLayout) => L.stand !== "container" ? { a0: 23.2, a1: 28.3, n0: 0.9, n1: L.forklift ? 6.6 : 4.1 }
-  : L.forklift ? { a0: L.a - 1.22, a1: L.a + 1.22, n0: 0.03, n1: 6.09 } : { a0: 23.0, a1: 29.06, n0: 0.03, n1: 2.47 };
+  : L.forklift ? { a0: L.a - END_ON_HALF, a1: L.a + END_ON_HALF, n0: 0.03, n1: 6.09 } : { a0: 23.0, a1: 29.06, n0: 0.03, n1: 2.47 };
 export const END_ON_DEPTH = 6.06;   // room behind an end-on container's doors (crew.ts parks the forklift in it)
 const standKeepOut = (L: StandLayout): Rect => { const b = standBox(L); return frontRect(L.side, b.a0 - 3.5, b.a1 + 2.5, -1, b.n1 + 3); };
 interface StandLook { wall: number; trim: number; roof: number; win: number; pitch: number }

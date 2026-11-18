@@ -30,6 +30,7 @@ import { hash2, hash3 } from "./rng.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
 import { truckExtents, truckLayout } from "./truck.ts";
+import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import type { TruckModel } from "./truck.ts";
 import { PREEMPT_CHANCE, PREEMPT_MAX, SIGNAL_CYCLE, signalGreenLeft, signalState, signalWait } from "./signals.ts";
@@ -84,9 +85,8 @@ export interface DockPlan {
   sign: { x: number; z: number; y: number; w: number; h: number; nx: number; nz: number } | null;
 }
 const DOCK_R: Record<TruckModel, number> = { box16: 6.5, box26: 8, reefer: 8, tractor: 10, flatbed: 0 };
-const YARD_PULL = 2.5;               // how much further a flatbed stops at a yard stand (crew.ts yardFrame)
-const TRAILER_TRAIL = 12.75;          // tractor rear axle to the trailer's axles
-const FIFTH_WHEEL = 0.25, KINGPIN_AXLES = TRAILER_TRAIL + FIFTH_WHEEL;   // (truck.ts SPECS.tractor, TRAILER)
+const YARD_PULL = 2.5;               // how much further a flatbed stops at a yard stand (crew.ts stackPlan)
+const TRAILER_TRAIL = KINGPIN_TO_AXLES - FIFTH_WHEEL;   // tractor rear axle to the trailer's axles
 const TRAILER_AXLE_TO_REAR = 2.25;
 
 // Dwell timeline: park, then the driver's chores (chores.ts: exit, load, close, enter for a
@@ -553,7 +553,7 @@ export class Journey {
         // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
         // on, to where the way in turns off (straight through the node before, to be in the kerb
         // lane), and on up onto its roof.
-        // (At a yard stand, a little further on, so the bed clears the container: crew.ts yardFrame.)
+        // (At a yard stand, a little further on, so the bed clears the container: crew.ts stackPlan.)
         const all = blockGoals(bx, bz, 30 - this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0)), L = siteLayout(this.plan, bx, bz);
         goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [blockGoals(bx, bz, GARAGE_IN_A, true)[(L as GarageLayout).side]] : all;
       }
@@ -718,17 +718,14 @@ export class Journey {
   private isYardStand(stop: Stop) { return this.stackKind(stop) === "yard"; }
   // Ahead of a stacking stop, where the truck will park and the door from there (the stack and
   // the forklift are there before the truck arrives), or null.
-  stackAhead(): { pose: Pose; door: KerbDoor; mode: "yard" | "road" } | null {
+  stackAhead(): { pose: Pose; y: number; door: KerbDoor; mode: "yard" | "road" } | null {
     const st = this.st, stop = st.stops[0];
     if (!stop || st.mode !== "drive" || !this.path || this.path.length - st.s > 150) return null;
     const mode = this.stackKind(stop);
     if (!mode) return null;
-    // (eval moves the path's search cursor and sets lastOffset, which traffic reads: both put back)
-    const p = this.path as any, cursor = p.cursor, lastOffset = this.path.lastOffset;
-    const pose = this.path.eval(this.path.length, this.tmpPose);
-    p.cursor = cursor; this.path.lastOffset = lastOffset;
+    const pose = this.path.peek(this.path.length, this.tmpPose);
     const door = this.findKerbDoor(stop, pose);
-    return door ? { pose: { ...pose }, door, mode } : null;
+    return door ? { pose: { ...pose }, y: this.path.yAt(this.path.length), door, mode } : null;
   }
 
   private planDwell() {
@@ -980,9 +977,9 @@ export class Journey {
 
   // Where the truck is at `s` along a bay path while reversing into it. A tractor-trailer's bay
   // path is its trailer axles' (the reference axle's): they follow it without sliding sideways,
-  // the trailer along the path's heading there, and the kingpin rides KINGPIN_AXLES ahead of
+  // the trailer along the path's heading there, and the kingpin rides KINGPIN_TO_AXLES ahead of
   // them. The tractor, its rear axle just behind the kingpin, heads the way the kingpin moves:
-  // off the trailer's heading by atan(KINGPIN_AXLES x curvature). (The curvature is smoothed over
+  // off the trailer's heading by atan(KINGPIN_TO_AXLES x curvature). (The curvature is smoothed over
   // a few metres, as a driver would steer it, and eased in over the first metres back from where
   // the drive in left the truck straight; docked, it's straight again.) Others: on the path.
   private revA: Pose = { x: 0, z: 0, h: 0, k: 0 }; private revB: Pose = { x: 0, z: 0, h: 0, k: 0 };
@@ -990,14 +987,17 @@ export class Journey {
     const p = this.path!;
     if (this.st.truck !== "tractor") { if (!yawOnly) p.eval(s, out); return 0; }
     const sa = s - TRAILER_TRAIL, s0 = Math.max(0, sa - 3), s1 = Math.min(p.length, sa + 3);
-    const h0 = p.eval(s0, this.revA).h, h1 = p.eval(s1, this.revB).h;
+    // (Looking along the trailer's stretch of the path leaves the path's state alone: traffic reads
+    // its lastOffset, which stays the truck's own, below.)
+    const h0 = p.peek(s0, this.revA).h, h1 = p.peek(s1, this.revB).h;
     const kap = s1 > s0 ? Math.atan2(Math.sin(h1 - h0), Math.cos(h1 - h0)) / (s1 - s0) : 0;
     const k = kap * THREE.MathUtils.smoothstep(p.length - s, 0, 3);
-    const yaw = -Math.atan(KINGPIN_AXLES * k);   // the trailer's heading less the tractor's
+    const yaw = -Math.atan(KINGPIN_TO_AXLES * k);   // the trailer's heading less the tractor's
     if (yawOnly) return yaw;
-    const a = p.eval(sa, this.revA), h = a.h - yaw;
-    const kx = a.x + Math.cos(a.h) * KINGPIN_AXLES, kz = a.z - Math.sin(a.h) * KINGPIN_AXLES;
+    const a = p.peek(sa, this.revA), h = a.h - yaw;
+    const kx = a.x + Math.cos(a.h) * KINGPIN_TO_AXLES, kz = a.z - Math.sin(a.h) * KINGPIN_TO_AXLES;
     out.x = kx - Math.cos(h) * FIFTH_WHEEL; out.z = kz + Math.sin(h) * FIFTH_WHEEL; out.h = h; out.k = k;
+    p.eval(s, this.revB);   // (the path's state at the truck, as for other trucks)
     return yaw;
   }
   // The trailer's articulation while reversing into a bay (reversePose), where the truck is

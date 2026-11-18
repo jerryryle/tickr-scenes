@@ -13,6 +13,7 @@ import { loadFields, saveFields } from "./snap.ts";
 import { applyDriverSpot } from "./cutaway.ts";
 import { applyLampLight } from "./atmosphere.ts";
 import { PuffSystem } from "./puffs.ts";
+import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 
 
 export type TruckModel = "box16" | "box26" | "reefer" | "tractor" | "flatbed";
@@ -78,12 +79,12 @@ export const SPECS: Record<TruckModel, TruckSpec> = {
   tractor: {
     cab: "daycab", wheelR: 0.5, frontAxle: 4.9, rearAxles: [-0.65, 0.65], frontZ: 1.05, rearZ: 0.92,
     cabBack: 2.6, cabFront: 4.6, noseFront: 6.4, cabFloor: 1.15, cabTop: 3.05, hoodTop: 1.9, frameTop: 1.05, cabHW: 1.22,
-    doorLen: 1.15, cargo: null, fifthWheel: 0.25, loader: "none", exhaust: "stack",
+    doorLen: 1.15, cargo: null, fifthWheel: FIFTH_WHEEL, loader: "none", exhaust: "stack",
   },
 };
 
 // 53 ft dry van, in its own frame: origin at the kingpin, extending to -x.
-const TRAILER = { front: 0.9, rear: -15.25, floor: 1.25, top: 4.1, hw: 1.3, axles: [-12.4, -13.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: 13.0 };
+const TRAILER = { front: 0.9, rear: -15.25, floor: 1.25, top: 4.1, hw: 1.3, axles: [-12.4, -13.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
 
 // Shared across every truck: materials, livery textures, the unit wheel geometry.
 export class TruckKit {

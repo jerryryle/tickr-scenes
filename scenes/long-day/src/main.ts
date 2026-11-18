@@ -154,15 +154,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       for (const [x, z] of round) cells.push([x, z]);
     };
     if (path) {
-      // (eval moves the path's search cursor and sets lastOffset, which traffic reads: both put back)
-      const p = path as any, cursor = p.cursor, lastOffset = path.lastOffset;
       let lx = NaN, lz = NaN;
       for (let s = st.s; s <= path.length && cells.length < PREFETCH_MAX; s += PREFETCH_STEP) {
-        path.eval(Math.min(s, path.length), prefetchPose);
+        path.peek(Math.min(s, path.length), prefetchPose);
         const bx = Math.floor(prefetchPose.x / BLOCK), bz = Math.floor(prefetchPose.z / BLOCK);
         if (bx !== lx || bz !== lz) { lx = bx; lz = bz; ring(bx, bz, STREAM_RADIUS); }
       }
-      p.cursor = cursor; path.lastOffset = lastOffset;
     }
     for (const p of st.stops.slice(0, PREFETCH_STOPS)) if (p.site && cells.length < PREFETCH_MAX) ring(p.site.bx, p.site.bz, STREAM_RADIUS);
     if (cells.length > PREFETCH_MAX) cells.length = PREFETCH_MAX;

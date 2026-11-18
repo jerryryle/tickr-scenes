@@ -11,11 +11,12 @@ import { CURB_H, KERB } from "./grid.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { ease, Truck, truckLayout } from "./truck.ts";
 import type { DoorGeom, TruckLayout, TruckModel } from "./truck.ts";
+import { END_ON_HALF } from "./city.ts";
 import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, STRAP_PULL, strapPulls, STYLE, toolStore, tripUnits } from "./chores.ts";
+import { ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
 import type { Chore, ItemKind, ToolRest } from "./chores.ts";
 import { Journey, siteKey } from "./journey.ts";
 import type { Aboard, DwellNow, Stop } from "./journey.ts";
@@ -94,6 +95,9 @@ export class Crew {
       this.forks = new THREE.Group(); this.forks.add(f.build(material)!);
       this.forklift.add(this.forks);
       this.forklift.visible = false; scene.add(this.forklift);
+      // A second one, parked by a stack while the first works elsewhere (yardProps; shared geometry).
+      this.parkedForklift = this.forklift.clone(); this.parkedForks = this.parkedForklift.children[1] as THREE.Group;
+      scene.add(this.parkedForklift);
     }
     const db = new Batch();
     db.box(0, 0.08, 0, 0.2, 0.16, 0.16, 0xf2c200); db.box(0.08, 0.2, 0, 0.12, 0.12, 0.12, 0xf2c200); db.box(0.16, 0.19, 0, 0.07, 0.03, 0.08, 0xe67e22);
@@ -128,13 +132,13 @@ export class Crew {
     if (this.load) { this.load.group.visible = false; this.load.group.scale.set(1, 1, 1); }
     this.herd?.hide();
     this.tools.handTruck.visible = this.tools.palletJack.visible = false;
-    this.forklift.visible = false;
+    this.forklift.visible = false; this.stackWorking = false;
     this.forkDoor = 0;
     this.gagPoint = null;
     d.root.visible = true;
     d.vestOn = false;   // (on for a dock stop, below: set on every update, so a scrub back takes it off)
     const stop = st.stops[0];
-    this.bed.update(truck, st.mode === "dwell" && stop && stop.kind !== "swap" ? this.bedView(j, stop) : st.aboard);
+    this.bed.update(truck, st.mode === "dwell" && stop && stop.kind !== "swap" ? this.bedView(j, truck, stop) : st.aboard);
     this.prepareCargo(st.mode === "dwell" && stop && stop.kind !== "swap" ? stop : null, j);
     this.worker(j, truck, stop);
     this.yardProps(j, truck);
@@ -656,15 +660,21 @@ export class Crew {
   // and from a stack (journey.ts stackMode): in the yard beside an industrial facility's end-on
   // container, one column, the forklift backing off the deck, turning round and driving up to it
   // (yardLegs); or on the pavement just behind the truck, the forklift unloading it from the road
-  // side and coming round its back (roadLegs: traffic waits, life.ts). One bundle a trip. The stack and the parked forklift stay when the truck leaves (`yard`: world space,
-  // saved), and are there before it arrives.
-  private yard: { city: number; x: number; y: number; z: number; h: number; sz: number; cols: number[][]; cargo: string; units: number;
+  // side and coming round its back (roadLegs: traffic waits, life.ts). One bundle a trip. The
+  // stack and its forklift, parked, stay when the truck leaves (`yard`: world space, saved), and
+  // are there before it arrives.
+  private yard: { city: number; x: number; y: number; z: number; h: number; sx: number; sz: number; count: number; n: number; cargo: string;
     fx: number; fy: number; fz: number; fyaw: number; fork: number } | null = null;
   private stack: THREE.Mesh | null = null; private stackKey = "";
+  private parkedForklift!: THREE.Group; private parkedForks!: THREE.Group;
+  private stackWorking = false;   // this frame, the forklift is working the stack (stackTrip)
+  private aheadPath: object | null = null;   // the drive whose stop's stack is already placed (yardProps)
 
   // A stop's stack in the truck's frame (parked at x, z, h), from the door: the building's front,
-  // the kerb, the stack's depth, and per trip the bed unit it moves and the stack column (x) and
-  // layer it goes to or comes from. Drops take the bed's last unit first; pickups fill it in order.
+  // the kerb, the column (sx) and its depth (sz), and per trip the bed unit it moves and the layer
+  // it goes to or comes from. The trips are the chores' (chores.ts tripCount, tripUnits: one
+  // bundle each): drops take the bed's last unit first, onto the stack; pickups fill the bed in
+  // order, from the top of a stack that starts full.
   private stackPlan(L: TruckLayout, model: TruckModel, stop: Stop, door: KerbDoor, x: number, z: number, h: number, mode: "yard" | "road") {
     const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
     const px = door.x - x, pz = door.z - z, dx = px * fx + pz * fz, front = px * rx + pz * rz;
@@ -672,18 +682,10 @@ export class Crew {
     // journey.ts YARD_PULL), but never beside the container.
     const mid = (L.bedRear + L.bedFront) / 2, s = Math.sign(mid - dx) || 1, clear = dx + s * (END_ON_HALF + 0.4 + CARGO_MODELS[stop.cargo].size[0] / 2);
     const sx = mode === "road" ? L.rear - 2.4 : s > 0 ? Math.max(mid, clear) : Math.min(mid, clear);
-    const units = bedUnits(L, model, stop.cargo, stop.units, stop.slot ?? 0), pickup = stop.kind === "pickup", n = units.length;
-    const colX = (u: number) => { void u; return sx; };
-    const initial = new Map<number, number>(), used = new Map<number, number>();
-    if (pickup) for (let u = 0; u < n; u++) initial.set(colX(u), (initial.get(colX(u)) ?? 0) + 1);
-    const trips: { u: number; cx: number; layer: number }[] = [];
-    for (let i = 0; i < n; i++) {
-      const u = pickup ? i : n - 1 - i, cx = colX(u), k = used.get(cx) ?? 0;
-      trips.push({ u, cx, layer: pickup ? initial.get(cx)! - 1 - k : k });
-      used.set(cx, k + 1);
-    }
-    const cols = [...new Set(units.map((_, u) => colX(u)))];
-    return { mode, s, front, kerb: front - KERB, sx, sz: mode === "yard" ? front + 4.5 : front - 0.55, units, trips, initial, cols };
+    const units = bedUnits(L, model, stop.cargo, stop.units, stop.slot ?? 0), pickup = stop.kind === "pickup";
+    const n = units.length ? tripCount(L, stop.cargo, stop.units) : 0;
+    const trips = Array.from({ length: n }, (_, i) => ({ u: Math.min(units.length - 1, tripUnits(stop, n, i)[0]), layer: pickup ? n - 1 - i : i }));
+    return { mode, s, front, kerb: front - KERB, sx, sz: mode === "yard" ? front + 4.5 : front - 0.55, units, trips };
   }
   private stackLegs(L: TruckLayout, P: ReturnType<Crew["stackPlan"]>, i: number, mh: number, pickup: boolean) {
     const T = P.trips[i], unit = P.units[T.u], sy = CURB_H + T.layer * (mh + 0.005);
@@ -702,16 +704,15 @@ export class Crew {
     const ti = Math.min(n - 1, inTrip ? i : Math.max(0, i - 1)), t = inTrip ? THREE.MathUtils.clamp(ph.ct, 0, c!.len) : i === 0 ? 0 : Infinity;
     const p = legsAt(this.stackLegs(L, P, ti, mh, pickup), t);
     // The stack now: whole trips done, and this one's bundle once it's taken (pickup) or given (drop).
-    const done = (k: number) => k < i || (k === ti && inTrip && (pickup ? p.took : p.gave));
-    const cols = P.cols.map((cx) => [cx, pickup ? (P.initial.get(cx) ?? 0) - P.trips.filter((q, k) => q.cx === cx && done(k)).length
-      : P.trips.filter((q, k) => q.cx === cx && done(k)).length]);
+    const done = Math.min(i, n) + (inTrip && i < n && (pickup ? p.took : p.gave) ? 1 : 0);
     // The forklift, in the truck's frame (up the kerb when on it), into the world.
     truck.root.updateMatrixWorld();
     const fl = this.forklift, ry = CURB_H * THREE.MathUtils.smoothstep(p.cz, P.kerb - 0.5, P.kerb + 0.5);
     this.v.set(p.x, ry, p.z).applyMatrix4(truck.root.matrixWorld);
     fl.visible = true; fl.position.copy(this.v); fl.rotation.set(0, truck.heading + p.yaw, 0);
     this.forks.position.y = p.fy; this.forks.scale.x = LONG_TINES;
-    this.yard = { city: j.st.city, x: tp.x, y: tp.y, z: tp.z, h: truck.heading, sz: P.sz, cols, cargo: stop.cargo, units: stop.units,
+    this.stackWorking = true;
+    this.yard = { city: j.st.city, x: tp.x, y: tp.y, z: tp.z, h: truck.heading, sx: P.sx, sz: P.sz, count: pickup ? n - done : done, n, cargo: stop.cargo,
       fx: fl.position.x, fy: fl.position.y, fz: fl.position.z, fyaw: fl.rotation.y, fork: p.fy };
     // The worker in the seat, and the bundle on the forks.
     const hp = this.helper;
@@ -727,50 +728,56 @@ export class Crew {
     }
   }
 
-  // The stack and the parked forklift, wherever the last stacking stop left them (or, ahead of
-  // one, where they will be), while the truck is in the same city and near.
+  // The stack and its parked forklift, wherever the last stacking stop left them (or, ahead of
+  // one, where they will be: placed once per drive), while the truck is in the same city and near.
   private yardProps(j: Journey, truck: Truck) {
     const st = j.st;
-    if (st.mode !== "dwell" || !j.stackMode) {
+    if ((st.mode !== "dwell" || !j.stackMode) && j.path && j.path !== this.aheadPath) {
       const ahead = j.stackAhead();
       if (ahead) {
+        this.aheadPath = j.path;
         const stop = st.stops[0], L = truckLayout(st.truck), pickup = stop.kind === "pickup", ap = ahead.pose;
-        const P = this.stackPlan(L, st.truck, stop, ahead.door, ap.x, ap.z, ap.h, ahead.mode);
-        if (P.trips.length) {
+        const P = this.stackPlan(L, st.truck, stop, ahead.door, ap.x, ap.z, ap.h, ahead.mode), n = P.trips.length;
+        if (n) {
           const p = legsAt(this.stackLegs(L, P, 0, CARGO_MODELS[stop.cargo].size[1], pickup), 0), h = ap.h;
           const ry = CURB_H * THREE.MathUtils.smoothstep(p.cz, P.kerb - 0.5, P.kerb + 0.5);
-          this.yard = { city: st.city, x: ap.x, y: 0, z: ap.z, h, sz: P.sz, cols: P.cols.map((cx) => [cx, pickup ? P.initial.get(cx) ?? 0 : 0]), cargo: stop.cargo, units: stop.units,
-            fx: ap.x + Math.cos(h) * p.x + Math.sin(h) * p.z, fy: ry, fz: ap.z - Math.sin(h) * p.x + Math.cos(h) * p.z, fyaw: h + p.yaw, fork: p.fy };
+          this.yard = { city: st.city, x: ap.x, y: ahead.y, z: ap.z, h, sx: P.sx, sz: P.sz, count: pickup ? n : 0, n, cargo: stop.cargo,
+            fx: ap.x + Math.cos(h) * p.x + Math.sin(h) * p.z, fy: ahead.y + ry, fz: ap.z - Math.sin(h) * p.x + Math.cos(h) * p.z, fyaw: h + p.yaw, fork: p.fy };
         }
       }
     }
+    if (this.yard && (this.yard.city !== st.city || Math.hypot(truck.root.position.x - this.yard.x, truck.root.position.z - this.yard.z) > 250)) this.yard = null;
     const Y = this.yard;
-    if (Y && (Y.city !== st.city || Math.hypot(truck.root.position.x - Y.x, truck.root.position.z - Y.z) > 250)) this.yard = null;
-    const key = this.yard ? `${Y!.cargo}|${Y!.units}|${Y!.cols.map((q) => q.join(":")).join(",")}|${Y!.x}|${Y!.z}|${Y!.h}|${Y!.sz}` : "";
+    // (Rebuilt when its bundles change; placed every frame.)
+    const key = Y ? `${Y.cargo}|${Y.n}|${Y.count}|${Y.sx}|${Y.sz}` : "";
     if (key !== this.stackKey) {
       this.stackKey = key;
       if (this.stack) { this.stack.removeFromParent(); this.stack.geometry.dispose(); this.stack = null; }
-      if (Y && Y.cols.some((q) => q[1] > 0)) {
+      if (Y && Y.count > 0) {
         const m = CARGO_MODELS[Y.cargo], b = new Batch();
-        // (Layer k holds the stop's unit units - 1 - k, either way: stackPlan; coloured as in the bed.)
-        for (const [cx, n] of Y.cols) for (let k = 0; k < n; k++) m.build(b, cx, CURB_H + k * (m.size[1] + 0.005), Y.sz, Y.units - 1 - k);
+        // (Layer k holds the stop's unit n - 1 - k, either way: stackPlan; coloured as in the bed.)
+        for (let k = 0; k < Y.count; k++) m.build(b, Y.sx, CURB_H + k * (m.size[1] + 0.005), Y.sz, Y.n - 1 - k);
         const mesh = b.build(this.material);
-        if (mesh) { mesh.position.set(Y.x, Y.y, Y.z); mesh.rotation.set(0, Y.h, 0); this.scene.add(mesh); this.stack = mesh; }
+        if (mesh) { this.scene.add(mesh); this.stack = mesh; }
       }
     }
-    if (this.yard && !this.forklift.visible) {
-      const fl = this.forklift;
-      fl.visible = true; fl.position.set(Y!.fx, Y!.fy, Y!.fz); fl.rotation.set(0, Y!.fyaw, 0);
-      this.forks.position.y = Y!.fork; this.forks.scale.x = LONG_TINES;
+    if (this.stack && Y) { this.stack.position.set(Y.x, Y.y, Y.z); this.stack.rotation.set(0, Y.h, 0); }
+    // Parked by the stack unless it's the one working it this frame (the other may be busy elsewhere).
+    const pf = this.parkedForklift;
+    pf.visible = !!Y && !this.stackWorking;
+    if (Y && pf.visible) {
+      pf.position.set(Y.fx, Y.fy, Y.fz); pf.rotation.set(0, Y.fyaw, 0);
+      this.parkedForks.position.y = Y.fork; this.parkedForks.scale.x = LONG_TINES;
     }
   }
-  // When in a stacking trip the bundle leaves or reaches the truck's deck (bedView).
-  // (Only a road-side stop's first trip starts with the drive out from where it's parked.)
-  private stackTruckAt(mode: "yard" | "road", pickup: boolean, first: boolean) {
-    const L = truckLayout("flatbed"), P = { s: 1, kerb: 4.5, front: 7.5, sx: 0, sz: 10 };
-    const legs = mode === "yard" ? yardLegs(L, P, 0, L.floor, CURB_H, pickup) : roadLegs(L, { ...P, sx: -5 }, 0, L.floor, CURB_H, pickup, first, false);
+  // When in a stop's stacking trip i the bundle leaves or reaches the truck's deck (bedView): the
+  // end of its leg at the truck.
+  private stackTruckAt(j: Journey, truck: Truck, stop: Stop, i: number) {
+    const L = truckLayout(truck.model), tp = truck.root.position;
+    const P = this.stackPlan(L, truck.model, stop, j.kerbDoor!, tp.x, tp.z, truck.heading, j.stackMode!);
+    if (!P.trips.length) return 0;
     let t = 0;
-    for (const g of legs) { t += g.d; if (g.truck) return t; }
+    for (const g of this.stackLegs(L, P, Math.min(i, P.trips.length - 1), CARGO_MODELS[stop.cargo].size[1], stop.kind === "pickup")) { t += g.d; if (g.truck) return t; }
     return t;
   }
 
@@ -808,7 +815,7 @@ export class Crew {
   // What the bed shows during a stop: the ledger, with this stop's units appearing (pickup) or
   // leaving (drop) trip by trip as the driver stows them, rather than all at once when the
   // ledger changes halfway through.
-  private bedView(j: Journey, stop: Stop): Aboard[] {
+  private bedView(j: Journey, truck: Truck, stop: Stop): Aboard[] {
     const ph = j.dwellPhase();
     const steps = j.chores.filter((c) => c.kind === "stow" || (c.kind === "wait" && !!c.forklift));
     let done = 0;
@@ -818,8 +825,8 @@ export class Crew {
       // A load lands in the bed when it is set down (pickup) and leaves it as it is lifted (drop):
       // late in a stow, early in a drop's; halfway through a forklift trip, as it lets go or lifts (worker).
       const pickup = stop.kind === "pickup";
-      const first = steps[0];
-      const at = (c: Chore) => c.kind === "wait" ? (j.stackMode ? this.stackTruckAt(j.stackMode, pickup, c === first) : c.len * 0.5) : pickup ? c.len * 0.97 : c.len * 0.03;
+      const stacking = !!j.stackMode && !!j.kerbDoor;
+      const at = (c: Chore) => c.kind === "wait" ? (stacking ? this.stackTruckAt(j, truck, stop, steps.indexOf(c)) : c.len * 0.5) : pickup ? c.len * 0.97 : c.len * 0.03;
       for (const c of steps) { const k = j.chores.indexOf(c); if (k < idx || (k === idx && ph.ct > at(c))) done++; }
     }
     // Trip by trip, exactly what each trip carries (chores.ts tripUnits).
@@ -1236,7 +1243,6 @@ function teamHand(arm: [number, number]): [number, number] {
 interface YPose { x: number; z: number; yaw: number }
 interface YLeg { d: number; kind: "line" | "s" | "curve" | "spin" | "turn" | "hold"; a: YPose; b: YPose; f0: number; f1: number; ev?: "take" | "give"; rev?: boolean; truck?: boolean }
 const FL_MID = 1.15;
-const END_ON_HALF = 1.22;   // half the end-on container's width (city.ts standBox)
 const LONG_TINES = (1.27 + 0.55) / 1.13;   // tines long enough to reach a flatbed's middle from its side
 const fvec = (yaw: number): [number, number] => [Math.cos(yaw), -Math.sin(yaw)];
 function spinTo(a: YPose, d: number): YPose {
