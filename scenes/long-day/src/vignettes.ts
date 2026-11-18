@@ -1340,7 +1340,6 @@ export class Vignettes {
     if (!dbg && Math.hypot(vx - c.focus.x, vz - c.focus.z) < VIG_SPAWN[0] - 8) return;
     if (v.pst.length !== v.st.length) v.pst = v.st.slice();
     this.list.push(v);
-    void tot;
   }
 
   private spawnTicket(c: Ctx, p: KerbParked) {
@@ -1354,7 +1353,6 @@ export class Vignettes {
         const v: Vig = { k: "ticket", bx, bz, side, a, n: -1, t: 0, pt: 0, on: true, seed: 1, c: [], st: [0, 1, p.cabX, p.cabZ], pst: [0, 1, p.cabX, p.cabZ], rel: 0 };
         v.c.push(0x2f4f7f, 0x1f2f55, pick(r, SKINS), pick(r, HAIRS), s);
         this.list.push(v);
-        void c;
         return;
       }
     }

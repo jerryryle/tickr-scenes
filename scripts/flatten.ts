@@ -5,7 +5,7 @@
 // tickr stores a scene as one source file that may import only npm packages, and every standard
 // bundler emits JavaScript. This does the one thing they don't: starting at the entry, it
 // follows relative imports in the order ES modules run (each module after the modules it
-// imports), drops relative imports and `export` modifiers, and joins the modules under one
+// imports for values; modules imported for types only come last), drops relative imports and `export` modifiers, and joins the modules under one
 // `// ==== <file> ====` banner each. Package imports are hoisted to the top, unchanged.
 //
 // Because the modules end up in one scope, the rules are: no two modules declare the same
@@ -35,6 +35,10 @@ const order: Module[] = [];
 const state = new Map<string, "visiting" | "done">();
 const packageImports = new Map<string, string>();   // import line -> first module using it
 const declaredBy = new Map<string, string>();       // top-level name -> module
+// Modules imported for types only: ES modules don't run them for that import, so they don't order
+// the modules here either. Each is visited after everything imported for values (types are
+// declared before use wherever they are in the file).
+const typeOnly: [string, string][] = [];
 
 const where = (sf: ts.SourceFile, node: ts.Node) =>
   `${path.relative(process.cwd(), sf.fileName)}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
@@ -63,7 +67,9 @@ function visit(file: string, from?: string) {
       const nb = c?.namedBindings;
       if (c?.name || (nb && ts.isNamespaceImport(nb)) || (nb && nb.elements.some((e) => e.propertyName)))
         fail(`${where(sf, s)}: local imports must name things as declared (no default, \`* as\` or \`as\`)`);
-      visit(path.resolve(path.dirname(file), spec), path.relative(process.cwd(), file));
+      const target = path.resolve(path.dirname(file), spec), by = path.relative(process.cwd(), file);
+      const types = !!c && (c.isTypeOnly || (!!nb && ts.isNamedImports(nb) && nb.elements.length > 0 && nb.elements.every((e) => e.isTypeOnly)));
+      if (types) typeOnly.push([target, by]); else visit(target, by);
       continue;
     }
     if (ts.isExportAssignment(s) && !s.isExportEquals) {
@@ -108,6 +114,7 @@ function declaredNames(s: ts.Statement): string[] {
 }
 
 visit(entry);
+for (let i = 0; i < typeOnly.length; i++) visit(...typeOnly[i]);
 
 let code = [
   `// Generated from ${path.relative(process.cwd(), root) || "."}/ by scripts/flatten.ts: edit the modules, not this file.`,

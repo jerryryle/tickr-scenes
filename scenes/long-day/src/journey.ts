@@ -361,7 +361,10 @@ export class Journey {
   private rand(salt: number) { return hash3(this.st.jobCounter, this.st.city, salt, this.cfg.seed, 0x10b); }
 
   private season() { return cargoSeason(this.climate); }
-  climateOf(N: number): Climate { return cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), this.startSeason); }
+  climateOf(N: number): Climate {
+    const c = cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), this.startSeason);
+    return this.cfg.weather ? c : { ...c, weather: "clear" };   // (weather off: clear skies; the season stays)
+  }
 
   // Rough seconds for a run of stops from block (bx, bz): driving at ~6 m/s across blocks, about
   // 50 s at each stop, and a reverse at docks.

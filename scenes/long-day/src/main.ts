@@ -3,11 +3,11 @@
 // minutes; the camera director films it, and the crew (the driver and a dock worker) does the
 // work at each stop.
 import * as THREE from "three@0.187.0";
-import { hash2, mulberry32 } from "./rng.ts";
+import { hash2 } from "./rng.ts";
 import { readConfig } from "./env.ts";
 import { DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
-import { ChunkStreamer } from "./chunks.ts";
+import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
 import { OCCLUSION } from "./occlusion.ts";
 import { Persistence, STATE_VERSION } from "./persist.ts";
@@ -46,6 +46,7 @@ import { Backdrop } from "./backdrop.ts";
 import { Traffic } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
 import { CLOCK, VIG_LOG } from "./vignettes.ts";
+import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
 import { StreetLife } from "./life.ts";
 
@@ -60,8 +61,6 @@ const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock";   // test renders with a tour camera
-
-const rnd01 = mulberry32(0x5eed);
 
 // The cutaway cone's radius at the truck (cutaway.ts): enough to take in every corner of the truck
 // (a box `half` long either way from `centre`, heading `h`, CUT_HW to each side and up to CUT_TOP)
@@ -115,7 +114,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(st));
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
       const g = yield* build(cx, cz);
-      yield;
+      // (The block holds its sign slots and lamp sites from here: dropped at this yield, as
+      // ChunkStreamer.clear does, it hands them back.)
+      let dropped = true;
+      try { yield; dropped = false; } finally { if (dropped && g) disposeTree(g); }
       if (g) {
         const f = OCCLUSION.add(g, cx * BLOCK, cz * BLOCK, [mats.ground], "city"), u = g.userData;
         const prev = u.onDispose, stash = u.onStash, restore = u.onRestore;
@@ -602,9 +604,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return t < S ? t : Math.min(S, S / 2 + (t - S) * 2.1 + 0.004);
   }
   let scrubLogged = -1;
+  const skipLogged = new Set<string>();
   function scrubTestLog() {
     if (presK === scrubLogged) return;
     scrubLogged = presK;
+    for (const f of SNAP_SKIPPED) if (!skipLogged.has(f)) { skipLogged.add(f); sys.log(`SNAP skipped ${f} (not plain data: not saved)`); }
     const c = engine.camera, p = truck.root.position;
     sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant} ${journey.st.mode} ${journey.st.v.toFixed(2)} ${truck.heading.toFixed(4)} ${c.fov.toFixed(2)} ${p.y.toFixed(3)} fog ${fogClear.toFixed(3)} r${streamer.radius} acc ${journey.accel.toFixed(3)}`);
   }
@@ -729,7 +733,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
       freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
-      CLOCK.hourAt = (t) => atmosphere.hourAt(t);   // (the vignettes keep the hours)
+      CLOCK.hourAt = (t) => atmosphere.hourAt(t - base);   // (the vignettes keep the hours: they pass journey time, the sky runs on scene time)
       VIG_LOG.out = (line) => sys.log(line);
       atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
       setSignalTime(base);
@@ -768,8 +772,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       while (presK < K) tick();
       // This frame's moment, between two ticks: a part-tick on top of the last one, undone after
       // drawing (never across a hand-over: that frame shows the tick).
+      // Nor across a change of trucks (a swap, the spare arriving or leaving): presLoad can't put
+      // back a truck the part-tick swapped or disposed.
       let held: PresSnap | null = null;
-      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) { held = presSave(); step(target, target - presK / TICK_HZ, false, true); }
+      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) {
+        journey.advanceTo(target);   // (step does this first anyway; the journey isn't undone)
+        const st = journey.st;
+        if (st.truck === truck.model && (st.spare ?? st.parked?.model ?? null) === (other?.model ?? null)) { held = presSave(); step(target, target - presK / TICK_HZ, false, true); }
+      }
       const pr = lastRoad, inCity = journey.st.mode !== "country", alpha = journey.alpha;
       const road = journey.st.mode === "country" ? journey.exitRoad : null;
       // Street life around the truck (none on the open road): simulated with the journey, drawn

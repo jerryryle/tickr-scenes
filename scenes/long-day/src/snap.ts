@@ -6,7 +6,13 @@
 // A field's value is copied when it is plain data: numbers, strings, booleans, null, three.js
 // vectors, quaternions, eulers and colours, and arrays and plain objects of those. Anything else
 // (meshes, materials, functions, maps, other objects) is a reference the snapshot leaves alone.
+// That is silent, so a new stateful field that isn't plain data (an Rng, a Map) would drop out of
+// the snapshots unnoticed: the scrub-test builds record every field left out (SNAP_SKIPPED, which
+// main.ts logs once each), to check against what is meant to be a reference.
 import * as THREE from "three@0.187.0";
+import { DEBUG_CAMLOG, DEBUG_SCRUBTEST } from "./debug.ts";
+
+export const SNAP_SKIPPED = new Set<string>();   // "Class.field", scrub-test builds only
 
 const SKIP = Symbol("skip");
 type Snap = Record<string, unknown>;
@@ -36,6 +42,7 @@ export function saveFields(obj: object, keys: readonly string[] | null = null, s
     if (skip.includes(k)) continue;
     const c = snapClone((obj as any)[k]);
     if (c !== SKIP) out[k] = c;
+    else if (DEBUG_SCRUBTEST || DEBUG_CAMLOG) SNAP_SKIPPED.add(`${obj.constructor.name}.${k}`);
   }
   return out;
 }

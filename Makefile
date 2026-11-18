@@ -39,7 +39,8 @@ node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-le
 # Copy a scene's assets for the toolkit, which finds each asset by its scene.json name with no
 # extension (assets/logo.png -> assets/logo). $(call copy-assets,src,dst)
 copy-assets = rm -rf $(2) && mkdir -p $(2) && \
-  for f in $(1)/*; do [ -f "$$f" ] && n=$$(basename "$$f") && cp "$$f" "$(2)/$${n%.*}"; done; true
+  for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
+    if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
 .PHONY: all check clean distclean debug run test list tool FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES))

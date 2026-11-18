@@ -231,12 +231,10 @@ export class ChunkStreamer {
   setRadius(r: number) { if (r !== this.radius) { this.radius = r; this.fx = this.fz = NaN; } }
 
   clear() {
-    if (this.job) {   // (finished, so whatever it holds is released)
-      let r = this.job.gen.next();
-      while (!r.done) r = this.job.gen.next();
-      if (r.value) disposeTree(r.value);
-      this.job = null;
-    }
+    // An unfinished build is dropped, not finished (return() runs its finally blocks): a builder
+    // holding something registered outside its own objects (sign slots, lamp sites, the occlusion
+    // map) at a yield hands it back in a finally (main.ts withOcclusion).
+    if (this.job) { this.job.gen.return(null); this.job = null; }
     for (const c of this.chunks.values()) { this.parent.remove(c.obj); disposeTree(c.obj); }
     for (const c of this.cache.values()) disposeTree(c.obj);
     this.chunks.clear(); this.cache.clear(); this.cacheBytes = 0; this.queue.length = 0; this.fx = this.fz = NaN;

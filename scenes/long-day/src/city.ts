@@ -258,7 +258,8 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
 
 // A generator (see ChunkStreamer): the doors in one stage, the block in the next. (Each stage
 // runs whole: cityBatches works through module state, CS and DC, that a stage leaves as it found
-// it for whatever runs between stages.)
+// it for whatever runs between stages. Sign slots and lamp sites are taken only in the last stage,
+// after the last yield, so a build dropped at a yield, ChunkStreamer.clear, holds nothing.)
 export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet: FleetBuilder | null = null): (cx: number, cz: number) => ChunkBuild {
   return function* (cx, cz) {
     // The entrance doors of a kerb facility (one per side, where kerbDoors found the building).
