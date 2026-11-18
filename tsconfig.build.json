@@ -1,5 +1,0 @@
-{
-  // Type-checks what the build produced: each build/<dir>/scene.ts, as tickr will see it.
-  "extends": "./tsconfig.base.json",
-  "include": ["build/*/scene.ts", "types/tickr-scene.d.ts"]
-}

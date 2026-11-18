@@ -54,6 +54,9 @@ export class Engine {
   // chunks popping in beyond it are never seen. `keepClear` is a distance (normally the truck's)
   // that should stay unfogged where possible.
   setViewDistance(clear: number, keepClear = 0) {
+    // (The streamer says 0 before anything is built round the camera and Infinity when nothing
+    // round it is unbuilt: keep the camera's far plane finite and past its near one.)
+    clear = Number.isFinite(clear) ? Math.max(clear, 20) : 400;
     const far = Math.max(20, clear * 0.95);
     this.fog.far = far;
     this.fog.near = Math.min(far - 12, Math.max(far * 0.5, keepClear + 8));

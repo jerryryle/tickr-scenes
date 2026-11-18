@@ -319,6 +319,21 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return false;
   }
 
+  const truckOutside = () => cityDistance(Math.floor(truck.root.position.x / BLOCK), Math.floor(truck.root.position.z / BLOCK)) > 0;
+  // How far the city is streamed round the truck, decided on ticks only (it is presentation state,
+  // saved with the snapshots): out of town further (its edge in view from the open land), coming
+  // back in once the fog has eased in to match.
+  function streamRadius() {
+    if (truckOutside()) streamer.setRadius(5);
+    else if (streamer.radius > STREAM_RADIUS && fogClear >= 0 && fogClear <= (STREAM_RADIUS + 0.6) * BLOCK) streamer.setRadius(STREAM_RADIUS);
+  }
+  // The city streamed round the truck at that radius. `ahead`: also build ahead of need (prefetch,
+  // the next ring out), as frames do.
+  function streamRound(ahead: boolean) {
+    if (ahead) { aheadDir.x = Math.cos(truck.heading); aheadDir.z = -Math.sin(truck.heading); if (!truckOutside()) updatePrefetch(); }
+    if (!((DEBUG_VIEW as string) === "vignette" && crowd.vig.view())) streamer.update(truck.root.position, ahead ? aheadDir : null);   // (test renders: streamed round the vignette instead)
+  }
+
   function placeCamera(dt: number) {
     director.update({ journey, truck, other, dt, gag: crew.gagPoint, driver: crew.inSeat ? null : driverChest.copy(crew.driver.root.position).setY(crew.driver.root.position.y + 1.1) });
     if (DEBUG_VIEW === "countryTop") {   // test renders: straight down over the truck
@@ -436,14 +451,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   type PresSnap = {
     k: number; city: number; dir: ReturnType<Director["save"]>; crew: ReturnType<Crew["saveState"]>; puffs: ReturnType<PuffSystem["save"]>; atm: [number, number];
     truck: { model: TruckModel; s: ReturnType<Truck["save"]> }; other: { model: TruckModel; s: ReturnType<Truck["save"]> } | null;
-    m: { lastX: number; lastZ: number; fogClear: number; lastMode: Mode | ""; tabletKey: string };
+    m: { lastX: number; lastZ: number; fogClear: number; lastMode: Mode | ""; tabletKey: string; revFrom: number | null; radius: number };
   };
   const snaps = new Map<number, PresSnap>();
   function presSave(): PresSnap {
     return {
       k: presK, city: presCity, dir: director.save(), crew: crew.saveState(), puffs: puffs.save(), atm: atmosphere.offset,
       truck: { model: truck.model, s: truck.save() }, other: other ? { model: other.model, s: other.save() } : null,
-      m: { lastX, lastZ, fogClear, lastMode, tabletKey },
+      m: { lastX, lastZ, fogClear, lastMode, tabletKey, revFrom, radius: streamer.radius },
     };
   }
   function presLoad(p: PresSnap) {
@@ -451,7 +466,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (truck.model === p.truck.model) truck.load(p.truck.s);
     if (other && p.other && other.model === p.other.model) other.load(p.other.s);
     director.load(p.dir); crew.loadState(p.crew); puffs.load(p.puffs); atmosphere.offset = p.atm;
-    ({ lastX, lastZ, fogClear, lastMode, tabletKey } = p.m);
+    ({ lastX, lastZ, fogClear, lastMode, tabletKey, revFrom } = p.m); streamer.setRadius(p.m.radius);
     presK = p.k; presCity = p.city;
   }
   // Is tick k on a snapshot boundary (every 10 s of a city's time, the journey's keyframes)?
@@ -493,7 +508,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   }
   function freshAt(k: number) {
     journey.seekTo(k / TICK_HZ);
-    director.reset(); puffs.clear(); lastX = NaN; fogClear = -1; tabletKey = ""; lastMode = journey.st.mode;
+    director.reset(); puffs.clear(); lastX = NaN; fogClear = -1; tabletKey = ""; lastMode = journey.st.mode; revFrom = null;
+    streamer.setRadius(STREAM_RADIUS);   // (from scratch: in town, the usual radius; step widens it out of town)
     countryWorld.setRoad(null); roadShown = null;
     presCity = -1; presK = k;
     step(k / TICK_HZ, 0, true);
@@ -501,8 +517,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (DEBUG_SCRUBTEST || DEBUG_CAMLOG) scrubTestLog();
   }
   // One update of the presentation at journey time `time`, `dt` after the last (0 and `fresh` when
-  // starting from scratch).
-  function step(time: number, dt: number, fresh: boolean) {
+  // starting from scratch; `part` for a frame's part-tick, which is undone after drawing).
+  function step(time: number, dt: number, fresh: boolean, part = false) {
     journey.advanceTo(time);
     // A new city: carried straight on from the road out of the last one (continuous playback), or
     // from scratch.
@@ -572,6 +588,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     truck.update(dt, time);
     other?.update(dt, time);
     puffs.update(dt);
+    // (The preview also streams exactly what is round the truck at every tick, not only when a frame
+    // is drawn: the view distance follows what is built, so it then depends only on the tick, and a
+    // scrub's catch-up ticks see what playing forward saw. A part-tick leaves both to the frame.)
+    if (!TOUR_VIEW && !part) { streamRadius(); if (streamer.exact) streamRound(false); }
     placeCamera(dt);
   }
   // Test renders (DEBUG_SCRUBTEST): the camera and truck at every tick, to compare a scrub with playing forward.
@@ -586,7 +606,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (presK === scrubLogged) return;
     scrubLogged = presK;
     const c = engine.camera, p = truck.root.position;
-    sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant} ${journey.st.mode} ${journey.st.v.toFixed(2)} ${truck.heading.toFixed(4)} ${c.fov.toFixed(2)} ${p.y.toFixed(3)}`);
+    sys.log(`TICK ${presK} ${c.position.x.toFixed(5)} ${c.position.y.toFixed(5)} ${c.position.z.toFixed(5)} ${c.quaternion.x.toFixed(6)} ${c.quaternion.y.toFixed(6)} ${c.quaternion.z.toFixed(6)} ${c.quaternion.w.toFixed(6)} ${p.x.toFixed(4)} ${p.z.toFixed(4)} ${director.beat}/${director.variant} ${journey.st.mode} ${journey.st.v.toFixed(2)} ${truck.heading.toFixed(4)} ${c.fov.toFixed(2)} ${p.y.toFixed(3)} fog ${fogClear.toFixed(3)} r${streamer.radius} acc ${journey.accel.toFixed(3)}`);
   }
 
   function backdropState(pr: { road: CountryRoad; s: number } | null): { city: number; p: number } {
@@ -705,6 +725,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
+      countryWorld.exact = PREVIEW;   // (a scrubbed frame shows the same road pieces as the played one)
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
       freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
@@ -736,7 +757,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // The presentation runs on fixed ticks of journey time (see step); a scrub, a long jump ahead
       // or the first frame lands on a tick from a snapshot or from scratch, and replays from there.
       const K = Math.floor(target * TICK_HZ + 1e-6);
-      if (presK < 0 || K < presK || K > presK + 5 * TICK_HZ) {
+      // (A board keeps no snapshots: after a hitch it ticks on from where it was, keeping the
+      // camera and the rest, unless starting afresh at the last 10 s boundary is fewer ticks.)
+      const far = K > presK + 5 * TICK_HZ;
+      if (presK < 0 || K < presK || (far && (PREVIEW || K - presK > K - boundaryAtOrBefore(K) || journey.cityAt(K / TICK_HZ) !== presCity))) {
         const ts = performance.now();
         if (presK < 0 && !PREVIEW) freshAt(K); else jumpTo(K);
         seekMs = performance.now() - ts;
@@ -745,7 +769,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // This frame's moment, between two ticks: a part-tick on top of the last one, undone after
       // drawing (never across a hand-over: that frame shows the tick).
       let held: PresSnap | null = null;
-      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) { held = presSave(); step(target, target - presK / TICK_HZ, false); }
+      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) { held = presSave(); step(target, target - presK / TICK_HZ, false, true); }
       const pr = lastRoad, inCity = journey.st.mode !== "country", alpha = journey.alpha;
       const road = journey.st.mode === "country" ? journey.exitRoad : null;
       // Street life around the truck (none on the open road): simulated with the journey, drawn
@@ -753,16 +777,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       traffic.time = target; traffic.draw(alpha);
       crowd.draw(alpha, target);
       ambient.update(target, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
-      if (!TOUR_VIEW) {
-        // Out of town the city is streamed further (its edge in view from the open land); the radius
-        // comes back in once the fog has eased in to match.
-        const outside = cityDistance(Math.floor(truck.root.position.x / BLOCK), Math.floor(truck.root.position.z / BLOCK)) > 0;
-        if (outside) streamer.setRadius(5);
-        else if (streamer.radius > STREAM_RADIUS && fogClear >= 0 && fogClear <= (STREAM_RADIUS + 0.6) * BLOCK) streamer.setRadius(STREAM_RADIUS);
-        aheadDir.x = Math.cos(truck.heading); aheadDir.z = -Math.sin(truck.heading);
-        if (!outside) updatePrefetch();
-        if (!((DEBUG_VIEW as string) === "vignette" && crowd.vig.view())) streamer.update(truck.root.position, aheadDir);   // (test renders: streamed round the vignette instead)
-      }
+      if (!TOUR_VIEW) streamRound(true);
       {
         const bd = backdropState(pr);
         const bc = bd.city === journey.st.city ? { style: journey.plan.style, seed: journey.st.citySeed } : { style: journey.exitRoad!.inp.toStyle, seed: citySeedOf(cfg.seed, bd.city) };

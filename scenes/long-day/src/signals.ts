@@ -31,8 +31,10 @@ export interface SignalPreempt { ix: number; iz: number; axis: SignalAxis; p0: n
 export const PREEMPT_CHANCE = 0.8;
 export const PREEMPT_MAX = 3;            // requests held at once (the next lights come up fast)
 let signalPreempt: SignalPreempt[] = [];
+// The request in force at this node at `time`, if any.
+const preemptAt = (prs: SignalPreempt[] | null, ix: number, iz: number, time: number) => prs?.find((p) => p.ix === ix && p.iz === iz && time >= p.p0 && time < p.p1 + 3) ?? null;
 function preemptState(prs: SignalPreempt[] | null, ix: number, iz: number, axis: SignalAxis, time: number): SignalColor | null {
-  const pr = prs?.find((p) => p.ix === ix && p.iz === iz && time >= p.p0 && time < p.p1 + 3);
+  const pr = preemptAt(prs, ix, iz, time);
   if (!pr) return null;
   if (pr.ext) return axis === pr.axis ? (time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red") : "red";
   if (axis === pr.axis) return time < pr.p0 + 3 ? "red" : time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red";
@@ -66,8 +68,11 @@ export function signalWait(ix: number, iz: number, axis: SignalAxis, time: numbe
   return t < SIG_GREEN ? 0 : SIGNAL_CYCLE - t;
 }
 
-// Seconds of green left for this approach (0 unless green now).
-export function signalGreenLeft(ix: number, iz: number, axis: SignalAxis, time: number, seed: number): number {
+// Seconds of green left for this approach (0 unless green now), with the truck's priority
+// requests `pr` taken into account when given (as signalState does).
+export function signalGreenLeft(ix: number, iz: number, axis: SignalAxis, time: number, seed: number, pr: SignalPreempt[] | null = null): number {
+  const q = preemptAt(pr, ix, iz, time);
+  if (q) return preemptState([q], ix, iz, axis, time) === "green" ? q.p1 - time : 0;
   let t = (time + signalOffset(ix, iz, seed)) % SIGNAL_CYCLE;
   if (axis === 1) t = (t + SIG_HALF) % SIGNAL_CYCLE;
   return t < SIG_GREEN ? SIG_GREEN - t : 0;

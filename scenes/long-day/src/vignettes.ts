@@ -691,10 +691,9 @@ const K: Record<VK, Kind> = {
       // The light at the next node, for this axis.
       const nx = ix + fx, nz = iz + fz, stopAt = BLOCK - 9 - 2.5;
       if (s < stopAt + 0.5 && insideCity(nx, nz)) {
-        const sig = signalState(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs), green = signalGreenLeft(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed);
+        const sig = signalState(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs);
         const justRed = sig === "red" && signalState(nx, nz, (d % 2) as SignalAxis, c.simTime - 0.5, c.plan.seed, c.prs) !== "red";
         if (!(sig === "green" || sig === "yellow" || justRed)) gap = Math.min(gap, stopAt - s);
-        void green;
       }
       const want = Math.max(0, Math.min(6.5, (gap - 1.5) * 1.6));
       sp += Math.max(-6 * SIM_DT, Math.min(2.5 * SIM_DT, want - sp));
@@ -806,7 +805,7 @@ const K: Record<VK, Kind> = {
       const S = v.st, ph = S[0], since = v.t - S[1];
       if (ph === 0) {
         const g = blockGoals(v.bx, v.bz, 0)[v.side], d = g.dir, nx = g.ix + DIR_X[d], nz = g.iz + DIR_Z[d];
-        const green = signalState(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs) === "green" && signalGreenLeft(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed) > 8.5;
+        const green = signalState(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs) === "green" && signalGreenLeft(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs) > 8.5;
         const f = frameOf(v.bx, v.bz, v.side), [cx, cz] = P(f, 60, 1.7);
         const clear = c.truck.every((o) => Math.hypot(o.x - cx, o.z - cz) > o.r + 10);
         if (since > 12 && green && clear) { S[0] = 1; S[1] = v.t; }

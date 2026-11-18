@@ -62,11 +62,10 @@ scenes/<scene>/
   src/              the scene's ES modules; src/main.ts is the entry
   scene.ts          ...or a single-file scene instead of src/
   test/             tests: Node programs that exit non-zero on failure, run by `make check`
-  tsconfig.json     the scene's TypeScript project (src/ and test/)
+  tsconfig.json     the scene's TypeScript project (src/, test/ and tools/)
 scripts/flatten.ts  joins a scene's modules into one TypeScript scene.ts
 types/              the tickr scene API declarations
 tsconfig.base.json  compiler settings shared by the scenes
-tsconfig.build.json type-checks the built scene.ts files
 tsconfig.json       type-checks scripts/
 Makefile
 ```

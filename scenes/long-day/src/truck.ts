@@ -185,7 +185,12 @@ export class Truck {
   // Motion state (drive() integrates it; phase 4 may set it directly).
   speed = 0; accel = 0; steer = 0; distance = 0; heading = 0;
   // Controls.
-  headlights = false; hazards = false; signal: -1 | 0 | 1 = 0; engineOn = true;
+  hazards = false; signal: -1 | 0 | 1 = 0; engineOn = true;
+  // Headlights (and with them the tail and marker lamps' glow): set per frame by the scene, after
+  // the ticks that update the truck, so a change shows at once rather than at the next update.
+  private head = false;
+  get headlights() { return this.head; }
+  set headlights(on: boolean) { if (on !== this.head) { this.head = on; this.applyLights(); } }
   rearDoor = 0; ramp = 0; liftgate = 0; liftgateDrop = 0; cabDoor = 0; trailerDoors = 0;
   trailerYaw = 0;
   interiorView = false;
@@ -315,6 +320,14 @@ export class Truck {
     if (d !== 0) this.hitch(x0, z0, h0);
   }
 
+  private applyLights() {
+    const blink = (this.time % 0.7) < 0.35;
+    const brake = this.engineOn && (this.accel < -0.4 || Math.abs(this.speed) < 0.05);
+    this.strapMat.emissive.setHex(this.head ? STRAP_GLOW : 0x000000);
+    this.lights.set(this.head, brake, this.speed < -0.05,
+      (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink);
+  }
+
   // The moving parts' state (main.ts: preview snapshots and part-ticks); the meshes follow from it.
   private static SAVED = ["speed", "accel", "steer", "distance", "heading", "hazards", "signal", "engineOn", "rearDoor", "ramp", "liftgate", "liftgateDrop",
     "cabDoor", "trailerDoors", "trailerYaw", "interiorView", "cutaway", "bob", "puffTimer", "time"] as const;
@@ -386,12 +399,7 @@ export class Truck {
     // Roll away from the turn (a left turn leans the body toward +z).
     this.body.rotation.x = THREE.MathUtils.clamp(this.speed * this.speed * Math.tan(this.steer) / s.frontAxle * 0.004, -0.02, 0.02);
 
-    // Lights.
-    const blink = (this.time % 0.7) < 0.35;
-    const brake = this.engineOn && (this.accel < -0.4 || Math.abs(this.speed) < 0.05);
-    this.strapMat.emissive.setHex(this.headlights ? STRAP_GLOW : 0x000000);
-    this.lights.set(this.headlights, brake, this.speed < -0.05,
-      (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink);
+    this.applyLights();
 
     // Moving parts.
     this.driverDoor.rotation.y = -1.25 * ease(this.cabDoor);

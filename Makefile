@@ -78,9 +78,12 @@ FORCE:
 check: $(addprefix check-,$(SCENES))
 	@$(BIN)/tsc -p tsconfig.json && echo "ok   scripts"
 
+# (The built scene.ts alone, as tickr will see it: not the test, debug and tool builds beside it,
+# which may be left over from older sources.)
 $(addprefix check-,$(SCENES)): check-%: %
 	@if [ -f scenes/$*/tsconfig.json ]; then $(BIN)/tsc -p scenes/$* && echo "ok   $*: modules"; fi
-	@$(BIN)/tsc -p tsconfig.build.json && echo "ok   $*: build/$*/scene.ts"
+	@printf '{ "extends": "../tsconfig.base.json", "include": ["$*/scene.ts", "../types/tickr-scene.d.ts"] }\n' > build/tsconfig.$*.json
+	@$(BIN)/tsc -p build/tsconfig.$*.json && echo "ok   $*: build/$*/scene.ts"
 	@$(call node-bundle,build/$*/scene.ts,build/$*/load.mjs) && \
 	 node --input-type=module -e 'await import("./build/$*/load.mjs")' && echo "ok   $*: loads (top-level code runs in order)"
 	@$(MAKE) --no-print-directory -s test-$*

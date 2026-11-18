@@ -112,6 +112,9 @@ export class CountryWorld {
   private base: THREE.Mesh;
 
   lastBuildMs = 0; maxBuildMs = 0;
+  // Exact (for a timeline that scrubs): the segments in the scene are a pure function of where the
+  // truck is: exactly those in range, all built at once (no hysteresis, no one-a-frame catching up).
+  exact = false;
   private lightMat = new THREE.MeshBasicMaterial({ vertexColors: true });   // crossing lights, shared
   get active() { return this.road !== null; }
   // The road's place in the current frame (main.ts: the last city's road, still in view after the
@@ -222,8 +225,9 @@ export class CountryWorld {
     const road = this.road;
     if (!road) return;
     const i0 = Math.floor((sTruck - SEG_BEHIND) / SEG), i1 = Math.floor((sTruck + SEG_AHEAD) / SEG);
-    for (const [i, g] of this.segs) if (i < i0 - 1 || i > i1 + 1) { this.group.remove(g); disposeTree(g); this.segs.delete(i); }
-    let budget = jumped ? Infinity : 1;
+    const keep = this.exact ? 0 : 1;
+    for (const [i, g] of this.segs) if (i < i0 - keep || i > i1 + keep) { this.group.remove(g); disposeTree(g); this.segs.delete(i); }
+    let budget = jumped || this.exact ? Infinity : 1;
     // Nearest first: the one ahead of the truck, then outwards.
     const want: number[] = [];
     const iMax = Math.floor((road.length - 0.01) / SEG);

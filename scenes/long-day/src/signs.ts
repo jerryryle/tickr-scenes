@@ -19,12 +19,30 @@ const SIGN_W = 256, SIGN_H = 32, SIGN_COLS = 4, SIGN_ROWS = 64;   // 256 name sl
 export const AD_W = 256, AD_H = 96, AD_COLS = 4, AD_ROWS = 6, AD_Y0 = SIGN_ROWS * SIGN_H;
 const ATLAS_W = 1024, ATLAS_H = AD_Y0 + AD_ROWS * AD_H;
 
+// An atlas material's texture coordinates, interpolated at the centroid of the samples a pixel
+// covers. With multisampling, a pixel on a quad's edge is shaded at its centre even when that lies
+// outside the quad, so its coordinates run past the slot's rectangle into the next slot, and the
+// edge takes on whatever sign happens to be drawn there (a matter of which slots were free when).
+// (Chained after any patch the material already has, like the other shader patches.)
+// (The facade atlas needs none: its shader clamps each sample inside its tile.)
+function centroidUV<M extends THREE.Material>(mat: M): M {
+  const at = (chunk: string) => chunk.replace("varying vec2 vMapUv;", "centroid varying vec2 vMapUv;");
+  const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (shader, renderer) => {
+    prev(shader, renderer);
+    shader.vertexShader = shader.vertexShader.replace("#include <uv_pars_vertex>", at(THREE.ShaderChunk.uv_pars_vertex));
+    shader.fragmentShader = shader.fragmentShader.replace("#include <uv_pars_fragment>", at(THREE.ShaderChunk.uv_pars_fragment));
+  };
+  mat.customProgramCacheKey = () => prevKey() + "|centroid-uv";
+  return mat;
+}
+
 export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean }
 interface SignJob { slot: number; text: string; style: SignStyle; baked: boolean }
 export interface SignMesh { mesh: THREE.Mesh; slots: number[]; ads: boolean }
 
 export class SignAtlas {
-  readonly material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  readonly material = centroidUV(new THREE.MeshBasicMaterial({ color: 0xffffff }));
   logo: CanvasImageSource | null = null;      // logoWhite, for Ryder's own signs
   logoColor: CanvasImageSource | null = null; // logoColor, for Ryder billboards
   batonMark: CanvasImageSource | null = null; // the BATON wordmark (white), for Baton's own signs
@@ -279,7 +297,7 @@ const PLATE_W = 256, PLATE_H = 32, PLATE_COLS = 4, PLATE_ROWS = 64;
 export const PLATE_GREEN: SignStyle = { bg: "#1e6b3a", fg: "#ffffff", logo: false };
 interface PlateJob { key: string; text: string; style: SignStyle; refs: number; baked: boolean }
 export class PlateAtlas {
-  readonly material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  readonly material = centroidUV(new THREE.MeshBasicMaterial({ color: 0xffffff }));
   private canvas: { canvas: any; g: CanvasRenderingContext2D } | null = null;
   private texture: THREE.Texture | null = null;
   private free: number[] = [];

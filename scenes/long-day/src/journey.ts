@@ -195,6 +195,7 @@ export class Journey {
     this.facCache.clear(); this.dockCache = null;
     for (const c of [...this.frames.keys()]) if (this.keepNeighbours ? Math.abs(c - N) > 1 : c !== N) this.frames.delete(c);
     this.path = null; this.chores = [];
+    this.accel = 0; this.lastStep = 0; this.lightAhead = "-";   // (as a journey starting here has them)
     const start = N * this.period;
     const freight = this.freightFor(N);
     // In through the entry gate: the slot starts on the highway, ARRIVE_DUR seconds out.
@@ -269,7 +270,7 @@ export class Journey {
   seekTo(t: number) {
     t = Math.max(0, t);
     const N = this.cityAt(t);
-    if (N === this.st.city && t >= this.st.simTime - 1e-9) { this.advanceTo(t); this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; return; }
+    if (N === this.st.city && t >= this.st.simTime - 1e-9) { this.advanceTo(t); this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k; return; }
     const f = this.frames.get(N), target = Math.floor((t - N * this.period) / SIM_DT + 1e-6);
     let best = -1;
     if (f) for (const k of f.k.keys()) if (k <= target && k > best) best = k;
@@ -296,12 +297,13 @@ export class Journey {
   get alpha() { return THREE.MathUtils.clamp(1 + this.frac / SIM_DT, 0, 1); }
 
   private restore(json: string) {
-    this.st = JSON.parse(json);
+    const k = JSON.parse(json);
+    this.st = k.st; this.accel = k.accel; this.lastStep = k.lastStep; this.lightAhead = k.lightAhead;
     ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
     this.path = this.st.route ? new Path(this.st.route) : null;
     this.dockCache = null; this.chores = [];
+    this.placePose();   // (first: planDwell works in the truck's frame, from where it is parked)
     if (this.st.mode === "dwell") this.planDwell();
-    this.placePose();
   }
 
   // The truck's pose for rendering: between the last two steps.
@@ -845,7 +847,8 @@ export class Journey {
     const st = this.st;
     if (this.keyframing && st.step % KEYFRAME_STEPS === 0) {
       const f = this.framesOf(st.city);
-      if (!f.k.has(st.step)) { f.k.set(st.step, JSON.stringify(st)); if (this.life) f.l.set(st.step, this.life.save()); }
+      // (With what the last step left outside the state: the truck's acceleration and its last move.)
+      if (!f.k.has(st.step)) { f.k.set(st.step, JSON.stringify({ st, accel: this.accel, lastStep: this.lastStep, lightAhead: this.lightAhead })); if (this.life) f.l.set(st.step, this.life.save()); }
     }
     st.step++;
     st.cityTime = st.step * SIM_DT; st.simTime = st.cityStart + st.cityTime; st.modeTime += dt;
