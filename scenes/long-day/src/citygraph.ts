@@ -22,6 +22,7 @@
 // which on a regular grid is exactly the old one-block-per-chunk ownership.
 
 export const TILE = 60;
+export const MIN_FRONTAGE = 12;
 export type GMove = "S" | "L" | "R";
 export type Control = "signal" | "stop" | "none";
 
@@ -42,6 +43,7 @@ export interface CStreet {
   name: string;
   inCity: boolean;              // drivable by the truck and traffic (city streets and gate streets)
   gate: number;                 // index into gates, or -1
+  oneway: boolean;              // driven only from n0 to n1 (a roundabout's ring)
   tags: { elevated?: boolean; cable?: boolean; freeway?: boolean };
 }
 export interface CBlock {
@@ -56,6 +58,11 @@ export interface CBlock {
   square: boolean;              // the old grid's block: 42 m square, sides north, south, west and east (the grid's own builders and sites fit it)
   water: boolean;               // a river (citygen.ts): water between its quays, nothing built
   park: boolean;                // a superblock park (citygen.ts): several blocks' worth of green
+  // Where the old grid's 42 m square block fits against one of its faces, for a site laid out
+  // for it (a dock, garage, rental lot or stand): that face, and how far along it the square's
+  // frontage starts past the grid's (a square's frontage a is the face's a - delta). Null on a
+  // square block (it is the grid's own) or where none fits.
+  anchor: { face: number; delta: number } | null;
 }
 export interface CGate { node: number; street: number; out: 0 | 1 }   // the perimeter node, its gate street, and which end of it is outside
 export interface GPt { x: number; z: number; h: number }
@@ -84,11 +91,11 @@ export class CityGraph {
   }
   // A straight street from node a to node b (k = 0), or an arc leaving a on heading h0 with
   // curvature k that ends at b (the caller makes sure it does).
-  addStreet(a: number, b: number, opts: Partial<Pick<CStreet, "half" | "kerb" | "name" | "inCity" | "tags">> & { k?: number; h0?: number; len?: number } = {}): number {
+  addStreet(a: number, b: number, opts: Partial<Pick<CStreet, "half" | "kerb" | "name" | "inCity" | "tags" | "oneway">> & { k?: number; h0?: number; len?: number } = {}): number {
     const A = this.nodes[a], B = this.nodes[b], id = this.streets.length;
     let h0 = opts.h0 ?? Math.atan2(-(B.z - A.z), B.x - A.x), k = opts.k ?? 0, len = opts.len ?? Math.hypot(B.x - A.x, B.z - A.z);
     if (k === 0) { h0 = Math.atan2(-(B.z - A.z), B.x - A.x); len = Math.hypot(B.x - A.x, B.z - A.z); }
-    this.streets.push({ id, n0: a, n1: b, x0: A.x, z0: A.z, h0, k, len, half: opts.half ?? 9, kerb: opts.kerb ?? 3, name: opts.name ?? "", inCity: opts.inCity ?? true, gate: -1, tags: opts.tags ?? {} });
+    this.streets.push({ id, n0: a, n1: b, x0: A.x, z0: A.z, h0, k, len, half: opts.half ?? 9, kerb: opts.kerb ?? 3, name: opts.name ?? "", inCity: opts.inCity ?? true, gate: -1, oneway: opts.oneway ?? false, tags: opts.tags ?? {} });
     return id;
   }
   // Once every node and street is in: arms, mouths, blocks, faces, signal phases, tiles.
@@ -104,6 +111,7 @@ export class CityGraph {
       this.phasesOf(n);
     }
     this.findBlocks();
+    this.anchors();
     this.indexTiles();
   }
 
@@ -175,12 +183,29 @@ export class CityGraph {
       let kx = Math.floor((cx - 9) / TILE), kz = Math.floor((cz - 9) / TILE);
       while (this.blockKey.has(`${kx},${kz}`)) kz += 1000;   // (two blocks in one cell: keep keys unique)
       this.blockKey.set(`${kx},${kz}`, id);
-      this.blocks.push({ id, faces: cyc, sides: cyc, poly, cx, cz, kx, kz, inCity: true, area, square: false, water: false, park: false });
+      this.blocks.push({ id, faces: cyc, sides: cyc, poly, cx, cz, kx, kz, inCity: true, area, square: false, water: false, park: false, anchor: null });
       for (const f of cyc) this.faceBlock[f] = id;
       const B = this.blocks[id];
       if (cyc.length === 4) { const old = [0, 1, 2, 3].map((k) => this.sideFace(B, k)); if (new Set(old).size === 4 && !old.includes(-1)) B.sides = old; }
       const xs = poly.map((p) => p[0]), zs = poly.map((p) => p[1]);
       B.square = B.sides !== B.faces && Math.abs(Math.max(...xs) - Math.min(...xs) - 42) < 1e-6 && Math.abs(Math.max(...zs) - Math.min(...zs) - 42) < 1e-6 && Math.abs(area - 42 * 42) < 1e-3;
+    }
+  }
+  // The faces' anchors (CBlock.anchor): the longest face first where the square fits inside.
+  private anchors() {
+    for (const B of this.blocks) {
+      if (B.square || B.water || B.park) continue;
+      const faces = B.faces.slice().sort((p, q) => (this.faceA1(q) - this.faceA0(q)) - (this.faceA1(p) - this.faceA0(p)) || p - q);
+      for (const f of faces) {
+        const A0 = this.faceA0(f), A1 = this.faceA1(f);
+        // (A metre or so short is room enough: what a site puts at its very edges is fences and
+        // the odd tree, and its buildings stand well inside.)
+        if (A1 - A0 < 40) break;
+        const delta = (A0 + A1) / 2 - 30;
+        let ok = true;
+        for (const a of [10.2, 30, 49.8]) for (const n of [0.5, 21, 40.2]) { const P = this.facePt(f, a + delta, n); if (!inPoly(B.poly, P.x, P.z)) ok = false; }
+        if (ok) { B.anchor = { face: f, delta }; break; }
+      }
     }
   }
   // A block's side number for face f (its index in sides), or -1.
@@ -308,9 +333,12 @@ export class CityGraph {
     const N = this.nodes[this.dedgeTo(d)], hin = this.dedgeEndH(d), out: { to: number; move: GMove; turn: number }[] = [];
     for (const a of N.arms) {
       const to = a.street * 2 + a.end;
-      if (to === (d ^ 1)) continue;
+      if (to === (d ^ 1) || (this.streets[a.street].oneway && a.end === 1)) continue;   // (no U-turns, nor the wrong way up a one-way street)
       const t = wrapPi(a.h - hin);
-      out.push({ to, move: Math.abs(t) < Math.PI / 4 ? "S" : t > 0 ? "L" : "R", turn: t });
+      // (Round a roundabout's ring, one one-way street to the next, is straight on, whatever the
+      // corner: it is a bend, not a turn off.)
+      const ring = this.streets[d >> 1].oneway && this.streets[a.street].oneway;
+      out.push({ to, move: ring || Math.abs(t) < Math.PI / 4 ? "S" : t > 0 ? "L" : "R", turn: t });
     }
     return out;
   }
@@ -342,6 +370,9 @@ export class CityGraph {
   faceA0(f: number) { return this.armOut(f).mouth; }
   faceEndMouth(f: number) { return this.armIn(f).mouth; }
   faceA1(f: number) { return this.faceLen(f) - this.faceEndMouth(f); }
+  // Whether a face is long enough to front onto (a truck can stop along it, a building faces it):
+  // between close intersections a face can be a sliver.
+  hasFrontage(f: number) { return this.faceA1(f) - this.faceA0(f) >= MIN_FRONTAGE; }
   // The point (a, n) of a face's frontage frame, and the heading along it (the dedge's).
   facePt(f: number, a: number, n: number, out: GPt = { x: 0, z: 0, h: 0 }): GPt {
     const st = this.streets[f >> 1];
@@ -381,6 +412,17 @@ export class CityGraph {
 }
 const EMPTY_TILE = { nodes: [] as number[], streets: [] as number[], blocks: [] as number[] };
 export const tileKey = (cx: number, cz: number) => (cx + 4096) * 8192 + (cz + 4096);
+// The part of a polygon (convex, or else its pieces come out joined by zero-width seams) where nx*x + nz*z <= c.
+export function clipHalf(poly: [number, number][], nx: number, nz: number, c: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], da = nx * a[0] + nz * a[1] - c, db = nx * b[0] + nz * b[1] - c;
+    if (da <= 0) out.push(a);
+    // (Only strictly across the line: a corner on it is pushed once, as itself.)
+    if ((da < 0 && db > 0) || (da > 0 && db < 0)) { const t = da / (da - db); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
+  }
+  return out;
+}
 export function inPoly(poly: [number, number][], x: number, z: number) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {

@@ -50,7 +50,7 @@ import type { Pose } from "./route.ts";
 import { CountryRoad, CUT_RUN, ONRAMP_SHOT, pieceSigns } from "./country.ts";
 import { FW_OFF_D } from "./freeway.ts";
 import type { RoadSign } from "./country.ts";
-import { BLADE_A } from "./city.ts";
+import { bladeSignA } from "./city.ts";
 import { hasSign, siteLayout } from "./facilities.ts";
 import { DWELL, Journey } from "./journey.ts";
 import type { DockPlan } from "./journey.ts";
@@ -747,8 +747,11 @@ export class Director {
     // The blade over the truck's own sidewalk, nearest where it stops.
     const G = j.plan.graph, blk = j.plan.blockOf(stop.site.bx, stop.site.bz);
     let B: THREE.Vector3 | null = null, best = 45;
-    for (const f of blk?.sides ?? []) {
-      const { x, z } = G.facePt(f, BLADE_A, -1.45);
+    for (const [side, f] of (blk?.sides ?? []).entries()) {
+      // (Where it hangs on that side: on an anchored block, a stand's moves along with the stand.)
+      const a = bladeSignA(j.plan, stop.site.bx, stop.site.bz, side);
+      if (a === null) continue;
+      const { x, z } = G.facePt(f, a, -1.45);
       const along = (x - P.x) * fx + (z - P.z) * fz, lat = (x - P.x) * rx + (z - P.z) * rz;
       if (lat < 1 || lat > 6) continue;
       if (Math.abs(along) < best) { best = Math.abs(along); B = new THREE.Vector3(x, 4.55, z); }

@@ -13,10 +13,16 @@ make check-long-day     # type-check, load-test and run the tests
 `src/citygraph.ts` is the city as a street graph: intersections, straight streets, the blocks
 they enclose and each block's faces along its streets (a face's frontage frame, `facePt`, is
 where everything along a street is placed). `src/citygen.ts` makes it from the city's seed: the
-square grid, or (in about half of cities) one bent out of square, with dropped streets, rivers,
-superblock parks, diagonal avenues, old towns, sweeping avenues and circuses. Routing, signals,
-traffic, the crowd and the city's drawing all work from the graph. To see a journey's layouts
-from above:
+square grid; one bent out of square, with dropped streets, rivers, superblock parks, diagonal
+avenues, old towns, sweeping avenues, radial circuses and one-way roundabouts (where traffic
+yields on entry); or, in towns without a freeway, an organic town with no grid at all (a relaxed
+Voronoi of streets). Sites (docks, garages, rental lots, stands) are drawn on any block with room
+for their 42 m layout, anchored to one face and turned to it, with lots filling the rest; curved
+streets are chains of straight segments. A big block's middle, past its lots, is filled for its
+district: set-back towers downtown; car parks (with cars in) and trees in planters commercially;
+sheds and stacked containers in industry; and where people live, a fenced back garden behind each
+house, with trees beyond. Routing, signals, traffic, the crowd and the city's drawing all work
+from the graph. To see a journey's layouts from above:
 
 ```bash
 make citymap SCENE=long-day SEED=11 CITIES=4    # -> build/long-day-citymap/city<N>.png

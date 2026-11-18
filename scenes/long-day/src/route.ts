@@ -23,7 +23,10 @@ export const DIR_X = [1, 0, -1, 0], DIR_Z = [0, -1, 0, 1];
 
 export const LANE_KERB = 4.5, LANE_INNER = 1.5;
 const R_RIGHT = 6.5, R_LEFT = 9, R_BEND = 40;
-const STOP_BACK = 4.1;   // the stop line, short of where the street's mouth opens into the intersection
+// The stop line, short of where the street's mouth opens into the intersection: far enough
+// back that a vehicle waiting there is clear of the truck's swing through a turn (city.ts paints
+// it there).
+export const STOP_BACK = 6.5;
 // A lane change: at most LANE_CHANGE metres, and at most LANE_CHANGE_SHARE of its line. The rest
 // of the line is split between a run out of the turn before it (LANE_HOLD) and a settled run in
 // the new lane before the turn or stop after it (LANE_LEAD), in that proportion when short.
@@ -39,7 +42,8 @@ export interface DockGeom { x: number; z: number; H: number; Lb: number; R: numb
 // The bay's roll-up door in world space (centre of its foot on the wall, half-width, height) and
 // the leveller lip's hinge at the platform edge: what DockFx opens and lowers.
 export interface DockDoor { x: number; z: number; w: number; h: number; lx: number; lz: number }
-export interface Route { d: number; before: number; edges: number[]; after: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom }
+// `lane`: the lane it starts in (the kerb lane unless the last route ended in the inner one).
+export interface Route { d: number; before: number; edges: number[]; after: number; lane?: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom }
 
 // A parking garage's rooftop stop (facilities.ts "garage", garage.ts builds it): from the kerb
 // lane a right turn into the block, a ramp up along its side, a left turn onto the level lane
@@ -134,19 +138,27 @@ function turnPiece(s0: number, x0: number, z0: number, h0: number, T: number, sg
   const U = turnUnit(ang), sc = T / U.T;
   // Same peak sideways pull as a plain arc of radius T at vmax (on a right angle; the unit turn's
   // peak curvature is 1 / sc whatever its angle).
-  return { kind: "arc", s0, len: U.len * sc, x0, z0, h0, sc, sgn, ang, vmax: vmax * Math.sqrt(sc / T) };
+  // (A turn squeezed tight, down to radius sc, also no faster than 1.1 sc m/s: the truck's heading
+  // then turns at most 1.1 rad a second.)
+  return { kind: "arc", s0, len: U.len * sc, x0, z0, h0, sc, sgn, ang, vmax: Math.min(vmax * Math.sqrt(sc / T), 1.1 * sc) };
 }
 
 export class Path {
   readonly pieces: Piece[] = [];
   readonly signals: SignalPoint[] = [];
+  // Where the path enters a roundabout (a one-way ring at an unsignalled node): the node and the
+  // give-way line on the approach.
+  readonly yields: { node: number; sLine: number }[] = [];
+  // Every node the path goes through: its stop line on the approach, where the far mouth is
+  // passed (roughly: straight across), and the dedges in and out.
+  readonly nodes: { node: number; sLine: number; sOut: number; from: number; to: number; move: Move }[] = [];
   readonly turns: { s: number; dir: -1 | 1 }[] = [];  // turn starts, for indicators
   length = 0;
   private cursor = 0;
   // Ramps (a garage's): height y0 at s0 to y1 at s1; level elsewhere, at the last one's end.
   readonly ramps: { s0: number; s1: number; y0: number; y1: number }[] = [];
-  // The dedge the path ends on, and how far along it (from the node it leaves).
-  endEdge = -1; endA = 0;
+  // The dedge the path ends on, how far along it (from the node it leaves), and in which lane.
+  endEdge = -1; endA = 0; endLane = LANE_KERB;
 
   // Steps from (x, z) on heading h, from the end of the path so far; the ramp over steps r0..r1
   // goes from y0 to y1.
@@ -214,7 +226,7 @@ export class Path {
     const G = this.graph;
     // The current leg: a straight line through (lx, lz) (on the centre line) on heading lh, from
     // `legS`, in lane `lo`; d is the dedge it is on.
-    let d = route.d, legS = this.length, lo = LANE_KERB;
+    let d = route.d, legS = this.length, lo = route.lane ?? LANE_KERB;
     const st0 = G.streets[d >> 1], P0 = G.facePt(d, st0.len - route.before, -st0.half);
     let lx = P0.x, lz = P0.z, lh = P0.h;
     const along = (x: number, z: number) => (x - lx) * Math.cos(lh) - (z - lz) * Math.sin(lh);
@@ -233,15 +245,21 @@ export class Path {
       }
       this.pieces.push({ kind: "line", s0: this.length, len, x0: lx, z0: lz, h: lh, o0: lo, o1, c0, tc });
       this.length += len;
+      lo = o1;
     };
-    for (const e of route.edges) {
-      const N = G.dedgeTo(d), node = G.nodes[N], hin = G.dedgeEndH(d), hout = G.dedgeStartH(e);
+    for (let ei = 0; ei < route.edges.length; ei++) {
+      const e = route.edges[ei], N = G.dedgeTo(d), node = G.nodes[N], hin = G.dedgeEndH(d), hout = G.dedgeStartH(e);
       const turn = angleDiff(hout - hin), ang = Math.abs(turn);
-      const m: Move = ang < Math.PI / 4 ? "S" : turn > 0 ? "L" : "R";
+      // (Round a roundabout's ring, one-way street to one-way street, a bend: straight on.)
+      const m: Move = ang < Math.PI / 4 || (G.streets[d >> 1].oneway && G.streets[e >> 1].oneway) ? "S" : turn > 0 ? "L" : "R";
       // Signal at this node, on the approach: STOP_BACK short of the street's mouth.
       const ai = G.armIndexIn(d);
       const toNode = along(node.x, node.z);
       if (node.control === "signal") this.signals.push({ node: N, phase: node.phaseOf[ai], sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK, move: m });
+      // (Its give-way line is the street's painted stop line, STOP_BACK short of the mouth: behind the
+      // crosswalk, not on it.)
+      else if (G.streets[e >> 1].oneway && !G.streets[d >> 1].oneway) this.yields.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK });
+      this.nodes.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK, sOut: legS + toNode + G.armOut(e).mouth, from: d, to: e, move: m });
       // Straight on along the same line (or near enough): the leg carries on.
       if (ang < 1e-4) { d = e; continue; }
       // The turn's lane: the kerb lane for a right, the inner for a left, the lane it is in for a
@@ -251,18 +269,37 @@ export class Path {
       // and ends T after.
       const fi = [Math.cos(hin), -Math.sin(hin)], fo = [Math.cos(hout), -Math.sin(hout)];
       const den = fi[0] * fo[1] - fi[1] * fo[0];
+      // (v: along the outgoing lane from abreast of the node to it.)
       const corner = (o: number) => {
         const ix = node.x + Math.sin(hin) * o, iz = node.z + Math.cos(hin) * o, ox = node.x + Math.sin(hout) * o, oz = node.z + Math.cos(hout) * o;
-        const uu = ((ox - ix) * fo[1] - (oz - iz) * fo[0]) / den;
-        return { u: uu, cx: ix + fi[0] * uu, cz: iz + fi[1] * uu };
+        const uu = ((ox - ix) * fo[1] - (oz - iz) * fo[0]) / den, cx = ix + fi[0] * uu, cz = iz + fi[1] * uu;
+        return { u: uu, v: (cx - ox) * fo[0] + (cz - oz) * fo[1], cx, cz };
       };
       const R = m === "R" ? R_RIGHT : m === "L" ? R_LEFT : R_BEND;
       let oIn = m === "R" ? LANE_KERB : m === "L" ? LANE_INNER : lo;
       if (oIn !== lo && toNode + corner(oIn).u - R * Math.tan(ang / 2) < MIN_CHANGE) oIn = lo;
-      const oOut = oIn, { u, cx, cz } = corner(oIn);
-      // (Where streets are short and turns close together, a turn tightens to fit the room the
-      // leg leaves it, rather than start behind where the last one ended.)
-      const T = Math.min(R * Math.tan(ang / 2), Math.max(0.3, toNode + u));
+      // (The last turn, a left from the kerb lane with too little room after it to move back to
+      // the kerb before the stop: taken wide, into the kerb lane, so the stop is at the kerb.)
+      if (ei === route.edges.length - 1 && oIn === LANE_INNER && lo === LANE_KERB && route.after - corner(oIn).v - R * Math.tan(ang / 2) < MIN_CHANGE) oIn = LANE_KERB;
+      const oOut = oIn, { u, v, cx, cz } = corner(oIn);
+      // (Where streets are short and turns close together, a turn tightens to fit the room it has:
+      // the leg behind it, half the way to the next turn's corner (past any nodes it goes straight
+      // on through), the way to the stop after the last. Its neighbours then never overlap it.)
+      let room = NaN, run = 0, ej = e;
+      for (let k = ei + 1; k < route.edges.length; k++) {
+        const e2 = route.edges[k], N2 = G.nodes[G.dedgeTo(ej)], h1 = G.dedgeEndH(ej), h2 = G.dedgeStartH(e2), t2 = angleDiff(h2 - h1);
+        run += G.faceLen(ej); ej = e2;
+        if (Math.abs(t2) < 1e-4) continue;
+        // (That turn's corner, in the lane it will take.)
+        const o2 = Math.abs(t2) < Math.PI / 4 ? oOut : t2 > 0 ? LANE_INNER : LANE_KERB;
+        const f1 = [Math.cos(h1), -Math.sin(h1)], f2 = [Math.cos(h2), -Math.sin(h2)], dn = f1[0] * f2[1] - f1[1] * f2[0];
+        const ix2 = N2.x + Math.sin(h1) * o2, iz2 = N2.z + Math.cos(h1) * o2, ox2 = N2.x + Math.sin(h2) * o2, oz2 = N2.z + Math.cos(h2) * o2;
+        const u2 = ((ox2 - ix2) * f2[1] - (oz2 - iz2) * f2[0]) / dn;
+        room = (run + u2 - v) / 2;
+        break;
+      }
+      if (Number.isNaN(room)) room = run + route.after - v - 0.5;   // (no turn left: on to the stop)
+      const T = Math.min(R * Math.tan(ang / 2), Math.max(0.3, toNode + u), Math.max(0.3, room));
       pushLine(toNode + u - T, oIn);
       this.turns.push({ s: this.length, dir: m === "L" ? -1 : m === "R" ? 1 : (turn > 0 ? -1 : 1) });
       const sx = cx - fi[0] * T, sz = cz - fi[1] * T;
@@ -277,7 +314,7 @@ export class Path {
     // Final leg to the stop point, `after` metres along the last dedge from the node it leaves.
     const stE = G.streets[d >> 1], PE = G.facePt(d, route.after, -stE.half);
     pushLine(along(PE.x, PE.z), LANE_KERB);
-    this.endEdge = d; this.endA = route.after;
+    this.endEdge = d; this.endA = route.after; this.endLane = lo;
     if (route.garageIn) {
       // On into a garage and up onto its roof, from the kerb lane where the street leg ends.
       const ex = PE.x + Math.sin(PE.h) * LANE_KERB, ez = PE.z + Math.cos(PE.h) * LANE_KERB;

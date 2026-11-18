@@ -2,7 +2,7 @@
 // is the original square grid, node for node and street for street: node (ix, iz) at
 // (ix*60 + 9, iz*60 + 9), every block 42 m square, gate streets running one block straight out
 // of town. The others (in stage 2 on) bend, drop and add streets.
-import { CityGraph } from "./citygraph.ts";
+import { CityGraph, clipHalf } from "./citygraph.ts";
 import { BLOCK, STREET } from "./grid.ts";
 import { hash2 } from "./rng.ts";
 
@@ -34,14 +34,16 @@ export interface WarpOpts {
   seed: number; jitter: number; drop: number; fixed: (ix: number, iz: number) => boolean; keep: (ix: number, iz: number, ew: boolean) => boolean;
   river?: number; parks?: [number, number][]; diagonals?: { ix: number; iz: number; dx: number; dz: number; n: number; name: string }[];
   oldTown?: { ix: number; iz: number; r: number }; sweep?: { bow: number; wave: number };
-  circuses?: { ix: number; iz: number; name: string }[];
+  circuses?: { ix: number; iz: number; name: string; round?: boolean }[];   // round: a one-way roundabout (smaller, four streets in, no signals)
   cuts?: { ix: number; iz: number; ew: boolean }[];   // segments left out whatever else (a slip ramp's superblock)
+  dropMore?: (ix: number, iz: number, ew: boolean) => number;   // extra chance a segment is left out (big plots: industry)
+  bend?: (ix: number, iz: number) => number;                     // how much a node may move, as a share of the jitter (1 by default)
 }
 // A circus: lattice node (ix, iz) and the streets round it give way to a ring road round a round
 // park, with eight streets running in to it: the four avenues that met there and four diagonals
 // from the corners beyond. The ring:
 // CIRCUS_R metres out, eight sides, an intersection where each street meets it.
-const CIRCUS_R = 45;
+const CIRCUS_R = 45, ROUND_R = 30;
 
 export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph {
   const g = new CityGraph(), at = (i: number) => i * BLOCK + STREET / 2;
@@ -58,7 +60,7 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
   // sweep's bow, faded in from the city's edge so its perimeter stays square.
   const amp = (ix: number, iz: number) => {
     const t = warp!.oldTown, d = t ? Math.hypot(ix - t.ix, iz - t.iz) / t.r : 9;
-    return warp!.jitter * (1 + 1.4 * Math.max(0, Math.min(1, (1.3 - d) / 0.5)));
+    return warp!.jitter * (1 + 1.4 * Math.max(0, Math.min(1, (1.3 - d) / 0.5))) * (warp!.bend?.(ix, iz) ?? 1);
   };
   const inset = (ix: number, iz: number) => Math.min(1, (Math.min(ix - o.lo, o.hi + 1 - ix, iz - o.lo, o.hi + 1 - iz)) / 3);
   for (let iz = o.lo; iz <= o.hi + 1; iz++) for (let ix = o.lo; ix <= o.hi + 1; ix++) {
@@ -104,7 +106,7 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
       return seen.size === adj.size;
     };
     segs.forEach((sg, i) => {
-      if (hash2(i, 7, warp.seed, 0xd70) >= warp.drop || !warp.keep(sg.ix, sg.iz, sg.ew) || !sg.on) return;
+      if (hash2(i, 7, warp.seed, 0xd70) >= warp.drop + (warp.dropMore?.(sg.ix, sg.iz, sg.ew) ?? 0) || !warp.keep(sg.ix, sg.iz, sg.ew) || !sg.on) return;
       if (warp.river !== undefined && (sg.iz === warp.river || sg.iz === warp.river + 1)) return;   // (the quays and bridges stay)
       const [[ax, az], [bx, bz]] = ends(sg);
       if (nearCircus(ax, az) || nearCircus(bx, bz)) return;   // (nor round a circus)
@@ -126,12 +128,18 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
     g.addStreet(id(ax, az), id(bx, bz), { name: dg.name });
   }
   // Circuses: the ring's eight corners, the ring, and the streets in (keys well clear of the lattice's).
+  const ringNodes: number[] = [];
   for (const c of warp?.circuses ?? []) {
-    const C = g.node(c.ix, c.iz)!, ring: number[] = [];
-    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ring.push(g.addNode(C.x + Math.cos(a) * CIRCUS_R, C.z - Math.sin(a) * CIRCUS_R, c.ix * 100 + 50 + k, c.iz * 100 + 50)); }
-    for (let k = 0; k < 8; k++) g.addStreet(ring[k], ring[(k + 1) % 8], { name: c.name });
+    // (A roundabout's ring runs anticlockwise seen from above, one way: traffic keeps right.)
+    const C = g.node(c.ix, c.iz)!, ring: number[] = [], R = c.round ? ROUND_R : CIRCUS_R;
+    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ring.push(g.addNode(C.x + Math.cos(a) * R, C.z - Math.sin(a) * R, c.ix * 100 + 50 + k, c.iz * 100 + 50)); }
+    for (let k = 0; k < 8; k++) g.addStreet(ring[k], ring[(k + 1) % 8], { name: c.name, oneway: !!c.round });
     const out = [[1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1]];
-    out.forEach(([dx, dz], k) => { const n = g.node(c.ix + dx, c.iz + dz); if (n) g.addStreet(ring[k], n.id, { name: k % 2 ? `${c.name} Diagonal` : (dx ? o.nameEW(c.iz) : o.nameNS(c.ix)) }); });
+    out.forEach(([dx, dz], k) => {
+      if (c.round && k % 2) return;
+      const n = g.node(c.ix + dx, c.iz + dz); if (n) g.addStreet(ring[k], n.id, { name: k % 2 ? `${c.name} Diagonal` : (dx ? o.nameEW(c.iz) : o.nameNS(c.ix)) });
+    });
+    if (c.round) ringNodes.push(...ring);
   }
   // Gate streets: out to a node a block beyond the edge (outside the city: no blocks round it).
   o.gates.forEach((gt, i) => {
@@ -144,9 +152,137 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
     g.gates.push({ node: id(gt.ix, gt.iz), street: sid, out: 1 });
   });
   g.finish();
+  // (A roundabout gives way to traffic on it: no signals round its ring.)
+  for (const id of ringNodes) { const N = g.nodes[id]; N.control = "none"; N.phases = 1; N.phaseOf.fill(0); }
   for (const c of warp?.circuses ?? []) { const C = g.node(c.ix, c.iz)!; for (const b of g.blocks) if (Math.hypot(b.cx - C.x, b.cz - C.z) < CIRCUS_R / 2) b.park = true; }
   for (const [px, pz] of warp?.parks ?? []) { const n = g.node(px + 1, pz + 1)!; for (const b of g.blocks) if (Math.hypot(b.cx - n.x, b.cz - n.z) < 30) b.park = true; }
   if (warp?.river !== undefined) for (const b of g.blocks) if (Math.floor((b.cz - STREET / 2) / BLOCK) === warp.river) { b.water = true; b.inCity = false; }
+  // (Parks and the river are marked only now, after finish fitted anchors: no site on them.)
+  for (const b of g.blocks) if (b.park || b.water) b.anchor = null;
   // Nodes outside the city (the gate streets' far ends) have no signal; perimeter nodes keep theirs.
+  return g;
+}
+
+// An organic town: no grid underneath. Points scattered over the town (a jittered lattice about a
+// block apart) each take the land nearest them (a Voronoi cell, clipped to the town's square);
+// the cells' edges are the streets, so junctions are mostly Y and T, at any angle, and blocks are
+// irregular polygons. Edges shorter than MERGE_EDGE close up into one junction. The town's edge
+// is a street all round, with the gates on it where the grid has them, and gate streets out.
+const MERGE_EDGE = 24;
+export function organicGraph(o: GridOpts, seed: number): CityGraph {
+  const at = (i: number) => i * BLOCK + STREET / 2, X0 = at(o.lo), X1 = at(o.hi + 1), Z0 = X0, Z1 = X1;
+  // The points: a lattice SP apart, each moved up to 40% of SP at random.
+  const SP = 64, pts: [number, number][] = [];
+  for (let z = Z0 + SP / 2; z < Z1; z += SP) for (let x = X0 + SP / 2; x < X1; x += SP)
+    pts.push([x + (hash2(x, z, seed, 0x0a1) - 0.5) * SP * 0.8, z + (hash2(x, z, seed, 0x0a2) - 0.5) * SP * 0.8]);
+  type P = [number, number];
+  // Each point's cell: the town's square, cut by the bisector with each point near it.
+  const cellsOf = () => pts.map(([px, pz]) => {
+    let poly: P[] = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
+    for (const [qx, qz] of pts) {
+      if ((qx === px && qz === pz) || Math.hypot(qx - px, qz - pz) > SP * 3) continue;
+      const nx = qx - px, nz = qz - pz;
+      poly = clipHalf(poly, nx, nz, (nx * (px + qx) + nz * (pz + qz)) / 2);
+    }
+    return poly;
+  });
+  // (Twice, each point moves to its cell's centroid: the cells even out, fewer slivers of street.)
+  for (let it = 0; it < 2; it++) cellsOf().forEach((c, i) => {
+    let A = 0, cx = 0, cz = 0;
+    for (let k = 0; k < c.length; k++) { const [x0, z0] = c[k], [x1, z1] = c[(k + 1) % c.length], w = x0 * z1 - x1 * z0; A += w; cx += (x0 + x1) * w; cz += (z0 + z1) * w; }
+    if (Math.abs(A) > 1) pts[i] = [cx / (3 * A), cz / (3 * A)];
+  });
+  const cells = cellsOf();
+  // Junctions: the cells' corners, merged where they coincide (cells share them), then where
+  // the edge between them is short.
+  const verts: P[] = [], key = new Map<string, number>();
+  // (Neighbouring cells' copies of a corner can round into adjacent half-metre cells: look in those too.)
+  const vid = (p: P) => {
+    const kx = Math.round(p[0] * 2), kz = Math.round(p[1] * 2);
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const i = key.get(`${kx + dx},${kz + dz}`);
+      if (i !== undefined && Math.hypot(verts[i][0] - p[0], verts[i][1] - p[1]) < 0.5) return i;
+    }
+    const i = verts.length; verts.push([p[0], p[1]]); key.set(`${kx},${kz}`, i); return i;
+  };
+  const edges = new Map<string, [number, number]>();
+  for (const c of cells) for (let i = 0; i < c.length; i++) {
+    const a = vid(c[i]), b = vid(c[(i + 1) % c.length]);
+    if (a !== b) edges.set(a < b ? `${a},${b}` : `${b},${a}`, a < b ? [a, b] : [b, a]);
+  }
+  // (Union-find over merged corners; a corner on the town's edge keeps its place, on that edge.)
+  const parent = verts.map((_, i) => i), find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const onEdge = (p: P) => Math.min(Math.abs(p[0] - X0), Math.abs(p[0] - X1), Math.abs(p[1] - Z0), Math.abs(p[1] - Z1)) < 0.5;
+  const corner = (p: P) => (Math.abs(p[0] - X0) < 0.5 || Math.abs(p[0] - X1) < 0.5) && (Math.abs(p[1] - Z0) < 0.5 || Math.abs(p[1] - Z1) < 0.5);
+  for (let pass = 0; pass < 4; pass++) {
+    const list = [...edges.values()].map(([a, b]) => [find(a), find(b)]).filter(([a, b]) => a !== b)
+      .sort((p, q) => Math.hypot(verts[p[0]][0] - verts[p[1]][0], verts[p[0]][1] - verts[p[1]][1]) - Math.hypot(verts[q[0]][0] - verts[q[1]][0], verts[q[0]][1] - verts[q[1]][1]));
+    for (const [a0, b0] of list) {
+      const a = find(a0), b = find(b0);
+      if (a === b) continue;
+      const A = verts[a], B = verts[b];
+      if (Math.hypot(A[0] - B[0], A[1] - B[1]) >= MERGE_EDGE) break;
+      if (corner(A) && corner(B)) continue;
+      // The merged corner: on the town's edge if either is (a square corner stays put).
+      const m: P = corner(A) ? A : corner(B) ? B : onEdge(A) && !onEdge(B) ? A : onEdge(B) && !onEdge(A) ? B : [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+      verts[a] = [m[0], m[1]]; parent[b] = a;
+    }
+  }
+  // The streets left: between distinct merged corners, once each.
+  const fe: [number, number][] = [], seen = new Set<string>();
+  for (const [a0, b0] of edges.values()) {
+    const a = find(a0), b = find(b0), k = a < b ? `${a},${b}` : `${b},${a}`;
+    if (a !== b && !seen.has(k)) { seen.add(k); fe.push([a, b]); }
+  }
+  // The gates: the town-edge corner nearest each gate's place, on the same side, moves onto it;
+  // with none near, the edge street there gets a corner at it.
+  const gatePos = o.gates.map((gt) => [at(gt.ix), at(gt.iz)] as P);
+  const sameSide = (v: P, gp: P) => (Math.abs(gp[0] - X0) < 0.5 || Math.abs(gp[0] - X1) < 0.5) ? Math.abs(v[0] - gp[0]) < 0.5 : Math.abs(v[1] - gp[1]) < 0.5;
+  for (const gp of gatePos) {
+    const rs = [...new Set(fe.flat())];
+    let best = -1, bd = 30;
+    for (const r of rs) { const v = verts[r]; if (corner(v) || !sameSide(v, gp)) continue; const d = Math.hypot(v[0] - gp[0], v[1] - gp[1]); if (d < bd) { bd = d; best = r; } }
+    if (best >= 0) { verts[best] = [gp[0], gp[1]]; continue; }
+    const i = fe.findIndex(([a, b]) => sameSide(verts[a], gp) && sameSide(verts[b], gp) && Math.hypot(verts[a][0] - gp[0], verts[a][1] - gp[1]) + Math.hypot(verts[b][0] - gp[0], verts[b][1] - gp[1]) < Math.hypot(verts[a][0] - verts[b][0], verts[a][1] - verts[b][1]) + 0.5);
+    if (i < 0) continue;
+    const n = verts.length; verts.push([gp[0], gp[1]]); parent.push(n);
+    const [a, b] = fe[i]; fe.splice(i, 1, [a, n], [n, b]);
+  }
+  // The graph: nodes for the merged corners (keyed by the grid cell they fall in), streets for
+  // the edges left between distinct ones.
+  const g = new CityGraph(), nodeOf = new Map<number, number>(), used = new Set<string>();
+  const keyed = (x: number, z: number): [number, number] => {
+    let kx = Math.floor((x - STREET / 2) / BLOCK + 0.5), kz = Math.floor((z - STREET / 2) / BLOCK + 0.5);
+    while (used.has(`${kx},${kz}`)) kz += 1000;
+    used.add(`${kx},${kz}`); return [kx, kz];
+  };
+  // (Gate corners take the grid's own keys for their places.)
+  o.gates.forEach((gt) => used.add(`${gt.ix},${gt.iz}`));
+  const node = (r: number) => {
+    let id = nodeOf.get(r);
+    if (id === undefined) {
+      const [x, z] = verts[r], gi = gatePos.findIndex((p) => Math.hypot(p[0] - x, p[1] - z) < 0.5);
+      const [kx, kz] = gi >= 0 ? [o.gates[gi].ix, o.gates[gi].iz] : keyed(x, z);
+      id = g.addNode(x, z, kx, kz); nodeOf.set(r, id);
+    }
+    return id;
+  };
+  // (Streets named by the way they run: east-west ones as streets, the rest as avenues.)
+  for (const [a, b] of fe) {
+    const [ax, az] = verts[a], [bx, bz] = verts[b], ew = Math.abs(bx - ax) > Math.abs(bz - az);
+    const [p, q] = ew ? (ax <= bx ? [a, b] : [b, a]) : (az <= bz ? [a, b] : [b, a]);
+    g.addStreet(node(p), node(q), { name: ew ? o.nameEW(Math.round((((az + bz) / 2) - STREET / 2) / BLOCK)) : o.nameNS(Math.round((((ax + bx) / 2) - STREET / 2) / BLOCK)) });
+  }
+  // Gate streets out of town, as on the grid.
+  o.gates.forEach((gt, i) => {
+    const inner = g.node(gt.ix, gt.iz);
+    if (!inner) return;
+    const ox = gt.ix + GEN_DX[gt.dir], oz = gt.iz + GEN_DZ[gt.dir], outer = g.addNode(at(ox), at(oz), ox * 1000 + 999, oz * 1000 + 999);
+    const ew = gt.dir === 0 || gt.dir === 2;
+    const sid = g.addStreet(inner.id, outer, { name: ew ? o.nameEW(gt.iz) : o.nameNS(gt.ix), inCity: false });
+    g.streets[sid].gate = i;
+    g.gates.push({ node: inner.id, street: sid, out: 1 });
+  });
+  g.finish();
   return g;
 }

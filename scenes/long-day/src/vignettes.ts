@@ -131,8 +131,19 @@ function frameOfFace(f: number, aRef?: number): VFrame {
   return { f, ox: p.x, oz: p.z, fx: Math.cos(h0), fz: -Math.sin(h0), rx: Math.sin(h0), rz: Math.cos(h0), h0, a0 };
 }
 const frameOf = (bx: number, bz: number, side: number, aRef?: number) => frameOfFace(sideFace(graph(), bx, bz, side), aRef);
-const P = (f: VFrame, a: number, n: number): [number, number] => { const p = graph().facePt(f.f, a, n, _ga); return [p.x, p.z]; };
-const toFront = (f: VFrame, x: number, z: number): [number, number] => [f.a0 + (x - f.ox) * f.fx + (z - f.oz) * f.fz, (x - f.ox) * f.rx + (z - f.oz) * f.rz];
+// Vignettes are laid out across a 3 m sidewalk (n from 0 at the building line to -3 at the kerb
+// face, then the street): on a face whose sidewalk is wider or narrower, the sidewalk's part of n
+// stretches to fit and the street's shifts with the kerb (`kn`; `nk` the other way).
+const AUTH_KERB = 3;
+const kerbOf = (f: number) => graph().streets[f >> 1].kerb;
+const kn = (n: number, k: number) => (n >= 0 || k === AUTH_KERB ? n : n >= -AUTH_KERB ? n * k / AUTH_KERB : n + AUTH_KERB - k);
+const nk = (n: number, k: number) => (n >= 0 || k === AUTH_KERB ? n : n >= -k ? n * AUTH_KERB / k : n - AUTH_KERB + k);
+const P = (f: VFrame, a: number, n: number): [number, number] => { const p = graph().facePt(f.f, a, kn(n, kerbOf(f.f)), _ga); return [p.x, p.z]; };
+const toFront = (f: VFrame, x: number, z: number): [number, number] => [f.a0 + (x - f.ox) * f.fx + (z - f.oz) * f.fz, nk((x - f.ox) * f.rx + (z - f.oz) * f.rz, kerbOf(f.f))];
+// A door's n (kerbDoors, facilities: the face's own) in a vignette's authored frame.
+const doorN = (v: { bx: number; bz: number; side: number }, n: number) => nk(n, kerbOf(sideFace(graph(), v.bx, v.bz, v.side)));
+// Someone handed on to the crowd (crowd.ts), whose n is the face's own.
+const adoptK = (V: Vignettes, p: Adopt) => { const f = sideFace(graph(), p.bx, p.bz, p.side); V.adopt?.(f < 0 ? p : { ...p, n: kn(p.n, kerbOf(f)) }); };
 // Yaws: along +a, towards the street (-n), towards the buildings (+n).
 const along = (f: VFrame, dir = 1) => (dir > 0 ? f.h0 : f.h0 + Math.PI);
 const toStreet = (f: VFrame) => f.h0 + Math.PI / 2;
@@ -243,7 +254,7 @@ interface KerbDoorLike { a: number; n: number; half: number; h: number; y?: numb
 function release(v: Vig, b: number, V: Vignettes, p: Omit<Adopt, "bx" | "bz" | "side">) {
   if (v.rel & (1 << b)) return;
   v.rel |= 1 << b;
-  V.adopt?.({ bx: v.bx, bz: v.bz, side: v.side, ...p });
+  adoptK(V, { bx: v.bx, bz: v.bz, side: v.side, ...p });
 }
 
 // A walking (or standing) person at frontage (a, n) of frame f.
@@ -700,7 +711,7 @@ const K: Record<VK, Kind> = {
       if (k > 0 && !(v.st[1] >= k)) {   // the one just served walks off along the pavement
         v.st[1] = k; v.rel = 0;
         const cs = extra(v, k - 1), s = -v.c[2] as 1 | -1;
-        V.adopt?.({ bx: v.bx, bz: v.bz, side: v.side, a: v.a + 1.4 + s * 0.5, n: -0.75, dir: s, ...cs, speed: 1.15 });
+        adoptK(V, { bx: v.bx, bz: v.bz, side: v.side, a: v.a + 1.4 + s * 0.5, n: -0.75, dir: s, ...cs, speed: 1.15 });
       }
     },
     draw(v, F, t, D) {
@@ -814,7 +825,7 @@ const K: Record<VK, Kind> = {
       const door = kerbDoors(c.plan, v.bx, v.bz)[v.side];
       const sp = spanOf(v.bx, v.bz, v.side);
       if (!door || door.y !== undefined || door.a < sp.a0 + 5 || door.a > sp.a1 - 5 || V.clashes(v.bx, v.bz, v.side, door.a - 3, door.a + 3, -2.5, 0)) return false;
-      v.a = door.a; v.n = door.n; cast(r, v.c); cast(r, v.c);
+      v.a = door.a; v.n = doorN(v, door.n); cast(r, v.c); cast(r, v.c);
       v.c.push(pick(r, [0xc89a2a, 0x2a7a7a, 0x7a4a2a, 0x8a2a3a, 0x4a5a8a]), door.half, door.h, door.frame);
       return true;
     },
@@ -901,7 +912,7 @@ const K: Record<VK, Kind> = {
           const to = faceRef(G, cr.to), a0 = G.faceA0(cr.to);
           for (let i = 0; i < guardKids(v, g); i++) {
             const cs = extra(v, g * 10 + i);
-            V.adopt?.({ ...to, a: a0 + 2 + i * 0.7, n: -0.75 - (i % 2) * 0.4, dir: 1, ...cs, s: 0.58 + (i % 3) * 0.04, speed: 1.3 });
+            adoptK(V, { ...to, a: a0 + 2 + i * 0.7, n: -0.75 - (i % 2) * 0.4, dir: 1, ...cs, s: 0.58 + (i % 3) * 0.04, speed: 1.3 });
           }
         }
         S[0] = 0; S[1] = v.t; S[2] = g + 1;
@@ -938,13 +949,13 @@ const K: Record<VK, Kind> = {
     place(v, c, r, V) {
       const door = nearFacility(c, v, ["cafe"], V, r);
       if (!door) return false;
-      v.a = door.a; v.n = door.n;
+      v.a = door.a; v.n = doorN(v, door.n);
       v.c.push(4 + Math.floor(r() * 3), door.a < spanOf(v.bx, v.bz, v.side).mid ? 1 : -1, door.half, door.h);
       return true;
     },
     step(v, c, V) {
       const k = Math.floor(v.t / 9);
-      if (k > 0 && !(v.st[1] >= k)) { v.st[1] = k; const s = (-v.c[1]) as 1 | -1; V.adopt?.({ bx: v.bx, bz: v.bz, side: v.side, a: v.a + s * 1.5, n: -0.7, dir: s, ...extra(v, 1000 + k), cup: true }); }
+      if (k > 0 && !(v.st[1] >= k)) { v.st[1] = k; const s = (-v.c[1]) as 1 | -1; adoptK(V, { bx: v.bx, bz: v.bz, side: v.side, a: v.a + s * 1.5, n: -0.7, dir: s, ...extra(v, 1000 + k), cup: true }); }
     },
     draw(v, F, t) {
       const f = frameOf(v.bx, v.bz, v.side, v.a), L = v.c[0], s = v.c[1], half = v.c[2], dh = v.c[3];
@@ -1028,7 +1039,7 @@ const K: Record<VK, Kind> = {
     place(v, c, r, V) {
       const door = nearFacility(c, v, ["bar", "theater", "restaurant", "musicStore"], V, r);
       if (!door) return false;
-      v.a = door.a; v.n = door.n; cast(r, v.c);
+      v.a = door.a; v.n = doorN(v, door.n); cast(r, v.c);
       v.c.push(3 + Math.floor(r() * 3), door.a < spanOf(v.bx, v.bz, v.side).mid ? 1 : -1, door.half, door.h, pick(r, [0xff3a8c, 0x7a3aff, 0x3af2ff]));
       return true;
     },

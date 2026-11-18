@@ -43,6 +43,6 @@ import { journeyStyle } from "../src/styles.ts";
     const head = new TextEncoder().encode(`P6\n${W} ${H}\n255\n`), out = new Uint8Array(head.length + img.length);
     out.set(head); out.set(img, head.length);
     fs.writeFileSync(`${outDir}/city${N}.ppm`, out);
-    console.log(`city ${N}: ${plan.style.id} ${plan.layout}, ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks (${G.blocks.filter((b) => b.water).length} water, ${G.blocks.filter((b) => b.park).length} superblock parks, ${G.blocks.filter((b) => !b.square && b.inCity).length} lotted)`);
+    console.log(`city ${N}: ${plan.style.id} ${plan.layout}, ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks (${G.blocks.filter((b) => b.water).length} water, ${G.blocks.filter((b) => b.park).length} superblock parks, ${G.blocks.filter((b) => !b.square && b.inCity).length} lotted, ${G.blocks.filter((b) => !b.square && b.inCity && b.anchor).length} of them with room for a site; ${G.streets.filter((s) => / Circle$/.test(s.name)).length / 8} circuses, ${G.streets.filter((s) => / Roundabout$/.test(s.name)).length / 8} roundabouts, ${new Set(G.streets.filter((s) => !/Circle|Roundabout/.test(s.name) && Math.abs(Math.abs(Math.cos(s.h0)) - Math.SQRT1_2) < 0.15).map((s) => s.name)).size} diagonal avenues; industrial blocks able to take a site ${G.blocks.filter((b) => plan.district(b.kx, b.kz) === "industrial" && (b.square || b.anchor)).length}/${G.blocks.filter((b) => plan.district(b.kx, b.kz) === "industrial").length})`);
   }
 }

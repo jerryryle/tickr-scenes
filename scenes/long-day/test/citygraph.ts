@@ -2,7 +2,7 @@
 // exactly: one block per grid block with the same key, its four faces in the old side order with
 // the same frontage frame (city.ts frontPt), usable frontage [9, 51], and two signal phases at
 // every four-way node, east-west first. Also checks blocks and faces are consistent in general.
-import { gridGraph } from "../src/citygen.ts";
+import { gridGraph, organicGraph } from "../src/citygen.ts";
 import { Path, planRoute } from "../src/route.ts";
 import { hash2 } from "../src/rng.ts";
 import { frontPt } from "../src/city.ts";
@@ -84,6 +84,30 @@ import { BLOCK } from "../src/grid.ts";
         px = q.x; pz = q.z;
       }
     }
+  }
+  // Organic towns: no two streets cross (the graph stays planar after short edges close up), every
+  // block is sound, every gate has its street, and the streets are all reachable from gate 0.
+  // (Twenty towns: gate snapping moves a corner up to 30 m, which could cross streets in any one.)
+  for (let seed = 1; seed <= 20; seed++) {
+    const O = organicGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, seed);
+    const segs = O.streets.map((st) => { const a = O.nodes[st.n0], b = O.nodes[st.n1]; return [a.x, a.z, b.x, b.z, st.n0, st.n1]; });
+    let crossings = 0;
+    for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
+      const [ax, az, bx, bz, a0, a1] = segs[i], [cx, cz, dx, dz, c0, c1] = segs[j];
+      if (a0 === c0 || a0 === c1 || a1 === c0 || a1 === c1) continue;
+      const o = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number) => Math.sign((qx - px) * (rz - pz) - (qz - pz) * (rx - px));
+      if (o(ax, az, bx, bz, cx, cz) * o(ax, az, bx, bz, dx, dz) < 0 && o(cx, cz, dx, dz, ax, az) * o(cx, cz, dx, dz, bx, bz) < 0) crossings++;
+    }
+    if (crossings) err(`organic ${seed}: ${crossings} pairs of streets cross`);
+    if (O.gates.length !== gates.length) err(`organic ${seed}: ${O.gates.length} gates of ${gates.length}`);
+    if (O.blocks.some((b) => b.area < 150)) err(`organic ${seed}: a block of ${Math.min(...O.blocks.map((b) => b.area)).toFixed(0)} m2`);
+    const from = O.streets[O.gates[0].street].id * 2 + 1;
+    for (let k = 0; k < 10; k++) {
+      const s = Math.floor(hash2(k, seed, 0, 2) * O.streets.length), d = s * 2 + (k % 2);
+      if (!O.streets[s].inCity) continue;
+      if (!planRoute(O, from, 20, [{ d, after: O.faceLen(d) / 2 }], 30000, (e) => O.streets[e >> 1].inCity)) err(`organic ${seed}: no route to street ${s}`);
+    }
+    if (seed === 1) console.log(`organic: ${O.nodes.length} nodes, ${O.streets.length} streets, ${O.blocks.length} blocks, shortest street ${Math.min(...O.streets.map((s) => s.len)).toFixed(1)} m`);
   }
   console.log(`citygraph: ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks, ${errs.length} errors`);
   if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }

@@ -19,6 +19,7 @@ import { facilityAt, siteLayout } from "../src/facilities.ts";
     if (L.kind !== "kerb" && L.kind !== "stand") continue;
     const ds = kerbDoors(j.plan, bx, bz);
     for (let side = 0; side < blk.sides.length; side++) {
+      if (!j.plan.graph.hasFrontage(blk.sides[side])) continue;   // (a sliver between close intersections: no frontage)
       if (L.kind === "stand" && side !== L.side) continue;
       sides++;
       if (!ds[side] && errs.length < 10) errs.push(`no door: ${facilityAt(j.plan, bx, bz)} (${j.plan.district(bx, bz)}) block ${bx},${bz} side ${side}`);

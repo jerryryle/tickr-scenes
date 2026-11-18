@@ -30,30 +30,37 @@ function cycleColor(n: CNode, phase: number, time: number, seed: number): [Signa
 // it replays the same); the lamps, cross traffic and pedestrians follow `signalPreempt`.
 // `ext`: the truck's green is held (it would have turned yellow before the truck got there).
 // (x, z): the node's centre, for the lamps.
-export interface SignalPreempt { node: number; x: number; z: number; phase: number; p0: number; p1: number; was: SignalColor; ext?: boolean }
+// `from`: the phase that was showing green or yellow when it was asked for (it goes yellow, then
+// red; every other phase stays red), or absent (older saves: `was`, then, for all the others).
+export interface SignalPreempt { node: number; x: number; z: number; phase: number; p0: number; p1: number; was: SignalColor; from?: number; ext?: boolean }
 export const PREEMPT_CHANCE = 0.8;
 export const PREEMPT_MAX = 3;            // requests held at once (the next lights come up fast)
 let signalPreempt: SignalPreempt[] = [];
+export const PREEMPT_CLEAR = 5;   // s from a priority request to the truck's green: 2.5 s yellow, 2.5 s all-red
 // The request in force at this node at `time`, if any.
 const preemptAt = (prs: SignalPreempt[] | null, node: number, time: number) => prs?.find((p) => p.node === node && time >= p.p0 && time < p.p1 + 3) ?? null;
 function preemptState(prs: SignalPreempt[] | null, node: number, phase: number, time: number): SignalColor | null {
   const pr = preemptAt(prs, node, time);
   if (!pr) return null;
   if (pr.ext) return phase === pr.phase ? (time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red") : "red";
-  if (phase === pr.phase) return time < pr.p0 + 3 ? "red" : time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red";
-  return time < pr.p0 + 2.5 && pr.was !== "red" ? "yellow" : "red";
+  // (The truck's own phase turns green PREEMPT_CLEAR after the request: the others' yellow, then
+  // an all-red while what crossed on the yellow clears the junction.)
+  if (phase === pr.phase) return time < pr.p0 + PREEMPT_CLEAR ? "red" : time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red";
+  return time < pr.p0 + 2.5 && (pr.from === undefined ? pr.was !== "red" : phase === pr.from) ? "yellow" : "red";
 }
 const preemptUniforms = { uPre: { value: [0, 1, 2].map(() => new THREE.Vector4(0, 0, 0, 0)) } };
 const COLOR_CODE: Record<SignalColor, number> = { red: 0, yellow: 1, green: 2 };
 // Each frame: the journey's priority requests, for the lamps and everyone else.
-// uPre[i] = (x, z, the requested phase's colour + 1 + 4 * phase, the other phases' colour + 1),
-// or zeros when unused.
+// uPre[i] = (x, z, the requested phase's colour + 1 + 4 * phase, the phase it was taken from's
+// colour + 1 + 4 * (that phase + 1)), or zeros when unused. (That phase -1, unknown: the colour is
+// every other phase's.)
 export function setSignalPreempt(prs: SignalPreempt[], time: number) {
   signalPreempt = prs;
   for (let i = 0; i < PREEMPT_MAX; i++) {
     const pr = prs[i], u = preemptUniforms.uPre.value[i];
-    const a = pr && preemptState([pr], pr.node, pr.phase, time), b = pr && preemptState([pr], pr.node, pr.phase + 1, time);
-    if (pr && a && b) u.set(pr.x, pr.z, COLOR_CODE[a] + 1 + 4 * pr.phase, COLOR_CODE[b] + 1); else u.set(0, 0, 0, 0);
+    const from = pr?.from ?? -1;
+    const a = pr && preemptState([pr], pr.node, pr.phase, time), b = pr && preemptState([pr], pr.node, from >= 0 ? from : pr.phase + 1, time);
+    if (pr && a && b) u.set(pr.x, pr.z, COLOR_CODE[a] + 1 + 4 * pr.phase, COLOR_CODE[b] + 1 + 4 * (from + 1)); else u.set(0, 0, 0, 0);
   }
 }
 
@@ -122,7 +129,8 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
     vec2 wxz = (modelMatrix * vec4(position, 1.0)).xz;
     for (int i = 0; i < 3; i++) if (uPre[i].z > 0.5 && distance(wxz, uPre[i].xy) < 16.0) {
       float pz = floor((uPre[i].z - 1.0) / 4.0), pc = uPre[i].z - 1.0 - pz * 4.0;
-      state = abs(phase - pz) < 0.5 ? pc : uPre[i].w - 1.0;
+      float fz = floor((uPre[i].w - 1.0) / 4.0) - 1.0, fc = uPre[i].w - 1.0 - (fz + 1.0) * 4.0;
+      state = abs(phase - pz) < 0.5 ? pc : (fz < -0.5 || abs(phase - fz) < 0.5 ? fc : 0.0);
     }
     vLit = abs(state - lamp) < 0.5 ? 1.0 : 0.0;
   } else if (aAux.y < 1.5) {

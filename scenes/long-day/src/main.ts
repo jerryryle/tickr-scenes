@@ -5,7 +5,7 @@
 import * as THREE from "three@0.187.0";
 import { hash2 } from "./rng.ts";
 import { journeyPeriod, readConfig } from "./env.ts";
-import { DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
+import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
@@ -61,7 +61,7 @@ const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
-const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock";   // test renders with a tour camera
+const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge";   // test renders with a tour camera
 
 // The cutaway cone's radius at the truck (cutaway.ts): enough to take in every corner of the truck
 // (a box `half` long either way from `centre`, heading `h`, CUT_HW to each side and up to CUT_TOP)
@@ -252,6 +252,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
   }
 
+  const siteEdgeAt = new THREE.Vector3();   // (the siteEdge view's streaming centre)
   // Test renders only: a tour camera on the downtown core nearest the start.
   let tourT = 0, tourTrain = -1;
   function tourCamera(dt: number): boolean {
@@ -326,6 +327,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (pickB) { cx = pickB.cx; cz = pickB.cz; }
       const a = tourT * 0.05;
       cam.position.set(cx + Math.cos(a) * 70, 95, cz + Math.sin(a) * 70); cam.lookAt(cx, 0, cz);
+    } else if (DEBUG_BLOCK) {
+      // Circling low over one block (its key after the colon: "block:kx,kz"), to see its ground.
+      const B = plan.graph.block(DEBUG_BLOCK[0], DEBUG_BLOCK[1]);
+      if (B) { cx = B.cx; cz = B.cz; }
+      const a = tourT * 0.12;
+      cam.position.set(cx + Math.cos(a) * 55, 38, cz + Math.sin(a) * 55); cam.lookAt(cx, 0, cz);
     } else if (DEBUG_VIEW === "street") {
       cam.position.set(cx - 1.5, 3.2, cz + 150 - tourT * 3);
       cam.lookAt(cx - 1.5, 9, cz - 100);
@@ -401,6 +408,15 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         streamer.update(new THREE.Vector3(w.x, 0, w.z));
         updateCutaway(engine.camera, focus, false); engine.setViewDistance(streamer.clearDistance(engine.camera.position.x, engine.camera.position.z), 30); return;
       }
+    }
+    // test renders: low in the street by a site laid on its block's anchor, looking past either end
+    // of its square (by turns, 5 s each) at the lots beside it
+    const ss = DEBUG_VIEW === "siteEdge" ? journey.st.stops[0]?.site : null, sb = ss ? journey.plan.blockOf(ss.bx, ss.bz) : null;
+    if (sb?.anchor && !sb.square) {
+      const { face, delta } = sb.anchor, end = Math.floor(journey.st.simTime / 5) % 2, s = end ? 1 : -1, a = delta + (end ? 51 : 9);
+      const G = journey.plan.graph, c = G.facePt(face, a - s * 9, -7), l = G.facePt(face, a + s * 6, 3);
+      engine.camera.position.set(c.x, 1.3, c.z); engine.camera.lookAt(l.x, 0.4, l.z); engine.camera.fov = 50; engine.camera.updateProjectionMatrix();
+      focus.copy(truck.root.position); updateDriverSpot(engine.camera, null); streamer.update(siteEdgeAt.set(c.x, 0, c.z)); return;
     }
     const dk = DEBUG_VIEW === "dock" ? journey.dock : null;
     if (dk) {   // test renders: high over the street, looking down on the bay the truck backs into

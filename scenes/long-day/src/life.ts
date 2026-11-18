@@ -3,20 +3,26 @@
 // in its keyframes. So any moment looks the same however it was reached, scrubbing included.
 // Traffic still yields to the truck and the journey still ignores traffic.
 import { hash2 } from "./rng.ts";
-import { truckLayout } from "./truck.ts";
-import type { Pose } from "./route.ts";
+import { truckExtents, truckLayout } from "./truck.ts";
+import type { Path, Pose } from "./route.ts";
 import { Journey } from "./journey.ts";
+import { GATES } from "./city.ts";
 import type { LifeHook } from "./journey.ts";
 import { Traffic, truckObstacles } from "./traffic.ts";
 import type { Obstacle } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
 import type { KerbParked } from "./vignettes.ts";
 import { Ambient } from "./ambient.ts";
+import { DEBUG_BLOCK } from "./debug.ts";
 
 export class StreetLife implements LifeHook {
   private obs: Obstacle[] = [];
   private spare: Pose = { x: 0, z: 0, h: 0, k: 0 };
   private busy = new Set<string>();
+  private truckPath = { path: null as unknown as Path, s: 0, v: 0, front: 0, rear: 0 };
+  private truckGate = { node: 0, street: 0 };
+  private extents = new Map<string, ReturnType<typeof truckExtents>>();   // (per model: truckExtents makes a new object each call)
+  private landing = { path: null as unknown as Path, s0: 0, s1: 0, at: 0 };
 
   constructor(private traffic: Traffic, private crowd: Crowd, private ambient: Ambient) {}
 
@@ -73,7 +79,23 @@ export class StreetLife implements LifeHook {
     this.busy.clear();
     for (const s of st.stops) if (s.site) this.busy.add(`${s.site.bx},${s.site.bz}`);
     this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy });
-    this.traffic.step(j.plan, st.simTime, prs, p, obs, p.h, this.crowd.obstacles);
+    // (Test renders watching one block, "block:kx,kz": the traffic round that block instead.)
+    let tf: { x: number; z: number } = p;
+    if (DEBUG_BLOCK) { const B = j.plan.graph.block(DEBUG_BLOCK[0], DEBUG_BLOCK[1]); if (B) tf = { x: B.cx, z: B.cz }; }
+    // (Driving on its path, the truck has traffic give way where their ways cross. Arriving, in
+    // its last 8 s before the gate, traffic gives way at the junction inside it: the truck's first.)
+    // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
+    const tp = st.mode === "drive" && j.path ? this.truckPath : null;
+    if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; }
+    const gi = st.mode === "inbound" ? GATES.indexOf(j.plan.entryGate) : -1, g = gi >= 0 && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[gi] : null;
+    const gate = g ? this.truckGate : null;
+    if (gate) { gate.node = g!.node; gate.street = g!.street; }
+    // (Coming down a freeway exit ramp, which joins the streets off any junction: traffic gives way
+    // where the ramp's last 15 m and the 25 m after it cross its way, from 70 m short of the foot.)
+    const rp = st.mode === "drive" && j.path?.route.garageOut ? j.path.ramps[j.path.ramps.length - 1] : null;
+    const landing = rp && st.s < rp.s1 + 10 && rp.s1 - st.s < 70 ? this.landing : null;
+    if (landing) { landing.path = j.path!; landing.s0 = Math.max(st.s, rp!.s1 - 15); landing.s1 = rp!.s1 + 25; landing.at = rp!.s1; }
+    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing);
     this.ambient.stepBlimp(p, st.simTime);
   }
 

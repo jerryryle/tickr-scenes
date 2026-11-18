@@ -243,11 +243,14 @@ const FLEET: TruckModel[] = ["box16", "box26", "box26", "reefer", "flatbed", "bo
 
 export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   if (plan.interchangeAt(bx, bz)) return { kind: "interchange", side: plan.interchange!.side };
-  // A block not of the old grid's shape is lotted (city.ts buildLots): its facility is at the kerb.
-  if (!(plan.blockOf(bx, bz)?.square ?? true)) return { kind: "kerb" };
+  // A block not of the old grid's shape is lotted (city.ts buildLots): its facility is at the
+  // kerb, unless the grid's square block fits against one of its faces (its anchor), where a
+  // site laid out for the grid's block goes, on that side.
+  const blk = plan.blockOf(bx, bz), anchored = !!blk && !blk.square && !!blk.anchor;
+  if (blk && !blk.square && !anchored) return { kind: "kerb" };
   const fac = facilityAt(plan, bx, bz);
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
-  const side = Math.floor(h(0x51de) * 4);
+  const side = anchored ? blk!.sides.indexOf(blk!.anchor!.face) : Math.floor(h(0x51de) * 4);
   if (fac === "rentalLot") {
     const stalls: LotLayout["stalls"] = [];
     for (let i = 0; i < 6; i++)
