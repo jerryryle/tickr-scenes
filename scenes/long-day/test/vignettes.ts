@@ -10,8 +10,6 @@ import type { StyleId } from "../src/styles.ts";
 import { Crowd } from "../src/crowd.ts";
 import { CLOCK, VIG_KINDS } from "../src/vignettes.ts";
 import type { KerbParked } from "../src/vignettes.ts";
-import { nodeX, nodeZ } from "../src/route.ts";
-import { BLOCK } from "../src/grid.ts";
 import { SIM_DT } from "../src/journey.ts";
 
 const proc = (globalThis as any).process;
@@ -33,11 +31,12 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
   const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }));
   crowd.reset(77 + i);
   // The focus: along a street's kerb lane, east, a row of blocks at a time; parked for 40 s of
-  // every 100.
+  // every 100. (From the node keyed (-8, iz): on the grid, column -8 of row iz.)
+  const G = plan.graph, node = (iz: number) => G.node(-8, iz) ?? G.nodes[0];
   const at = (k: number) => {
     const t = k * SIM_DT, cyc = t % 100, row = Math.floor(t / 100) % 6;
-    const moving = Math.min(cyc, 60) * 6, iz = -3 + row * 2;
-    const x = nodeX(-8) + 20 + moving + row * 37, z = nodeZ(iz) + 4.5;
+    const moving = Math.min(cyc, 60) * 6, n0 = node(-3 + row * 2);
+    const x = n0.x + 20 + moving + row * 37, z = n0.z + 4.5;
     const parked: KerbParked | null = cyc > 62 ? { x, z, h: 0, cabX: x + 5, cabZ: z } : null;
     return { x, z, parked, t };
   };
@@ -63,7 +62,6 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
     for (let k = SNAP; k <= END; k++) step(k);
     if (JSON.stringify(crowd.save()) !== end) fail(`${style} ${hour}h ${season}/${weather}: replaying from a save differs`);
   } catch (e) { fail(`${style} ${hour}h ${season}/${weather}: ${(e as Error).stack}`); }
-  void BLOCK;
 }
 console.log("vignettes seen (steps alive): " + VIG_KINDS.map((k) => `${k} ${seen.get(k) ?? 0}`).join(", "));
 const missing = VIG_KINDS.filter((k) => !seen.has(k));

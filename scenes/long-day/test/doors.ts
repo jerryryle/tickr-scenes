@@ -1,10 +1,10 @@
 // Test: every side of a kerb facility's block has a front door for the driver (city.ts
 // kerbDoors), and a park's stand or an industrial yard's container has one on its own side, so
-// no load appears from, or vanishes into, thin air. Checks every other block of the city.
+// no load appears from, or vanishes into, thin air. Checks every other block of the city (of any shape: one door per side).
 // Args (all optional): seed
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
-import { kerbDoors, insideCity } from "../src/city.ts";
+import { kerbDoors } from "../src/city.ts";
 import { facilityAt, siteLayout } from "../src/facilities.ts";
 {
   const proc = (globalThis as any).process;
@@ -12,12 +12,13 @@ import { facilityAt, siteLayout } from "../src/facilities.ts";
   const j = new Journey(readConfig({ seed } as SceneEnv), 0);
   let sides = 0;
   const errs: string[] = [];
-  for (let bx = -12; bx <= 11; bx += 2) for (let bz = -12; bz <= 11; bz += 2) {
-    if (!insideCity(bx, bz)) continue;
+  for (const blk of j.plan.graph.blocks) {
+    const bx = blk.kx, bz = blk.kz;
+    if (!blk.inCity || ((bx + bz) & 1)) continue;   // (every other block)
     const L = siteLayout(j.plan, bx, bz);
     if (L.kind !== "kerb" && L.kind !== "stand") continue;
     const ds = kerbDoors(j.plan, bx, bz);
-    for (let side = 0; side < 4; side++) {
+    for (let side = 0; side < blk.sides.length; side++) {
       if (L.kind === "stand" && side !== L.side) continue;
       sides++;
       if (!ds[side] && errs.length < 10) errs.push(`no door: ${facilityAt(j.plan, bx, bz)} (${j.plan.district(bx, bz)}) block ${bx},${bz} side ${side}`);

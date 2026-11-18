@@ -149,6 +149,12 @@ function makePoolMaterial() {
 const poolMat = makePoolMaterial();
 export class PoolBuilder {
   private pos: number[] = []; private col: number[] = []; private c = new THREE.Color();
+  mark() { return this.pos.length; }
+  // Put the pools added since mark m0 into a part's frame (city.ts).
+  transformFrom(m0: number, f: { ox: number; oz: number; rot: number }) {
+    const c = Math.cos(f.rot), s = Math.sin(f.rot), P = this.pos;
+    for (let o = m0; o < P.length; o += 3) { const x = P[o], z = P[o + 2]; P[o] = f.ox + c * x + s * z; P[o + 2] = f.oz - s * x + c * z; }
+  }
   // A disc at (x, y, z), radii rx along yaw's forward and rz across it.
   disc(x: number, y: number, z: number, rx: number, rz: number, yaw: number, color: number, strength: number, seg = 14) {
     this.c.set(color).multiplyScalar(strength);

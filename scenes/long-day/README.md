@@ -10,6 +10,18 @@ make check-long-day     # type-check, load-test and run the tests
 
 ## Source
 
+`src/citygraph.ts` is the city as a street graph: intersections, straight streets, the blocks
+they enclose and each block's faces along its streets (a face's frontage frame, `facePt`, is
+where everything along a street is placed). `src/citygen.ts` makes it from the city's seed: the
+square grid, or (in about half of cities) one bent out of square, with dropped streets, rivers,
+superblock parks, diagonal avenues, old towns, sweeping avenues and circuses. Routing, signals,
+traffic, the crowd and the city's drawing all work from the graph. To see a journey's layouts
+from above:
+
+```bash
+make citymap SCENE=long-day SEED=11 CITIES=4    # -> build/long-day-citymap/city<N>.png
+```
+
 `src/main.ts` is the entry; the other modules in `src/` are pulled in through its imports.
 `src/grid.ts` and `src/facadetiles.ts` hold constants that other modules use while loading, so
 they import nothing (most of the city, journey and rendering modules import each other in a
@@ -46,7 +58,7 @@ and stays in use if painting fails. To look at the atlas, bundle a script that c
 canvas class with `captureCanvasClass` and writes `paintFacadeAtlas()`'s canvases to PNG.
 
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,
-`DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_CAMLOG`).
+`DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_LAYOUT`, `DEBUG_EXIT`, `DEBUG_CAMLOG`).
 Shipping builds use its defaults; a debug build overrides them, since the board only passes env
 keys that are in the scene's schema:
 

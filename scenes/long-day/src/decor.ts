@@ -189,16 +189,17 @@ export function fireEscape(s: Batch, b: Rect, side: number, floors: number, firs
 // Along one sidewalk of a street segment: `at(p, across)` maps the segment's along coordinate and
 // an across offset to a box call; `busy` holds along positions already taken (trees, lights,
 // signs, driveways), widened as items are placed.
-export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcross: number, inward: number, axis: 0 | 1, busy: number[][], rnd: Rand) {
+// (Along the segment from a0 to a1: on the old grid, STREET to BLOCK.)
+export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcross: number, inward: number, axis: 0 | 1, busy: number[][], rnd: Rand, a0 = STREET, a1 = BLOCK) {
   const box = (al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
     axis === 0 ? s.box(al, y, ac, lal, h, lac, color) : s.box(ac, y, al, lac, h, lal, color);
   const cyl = (al: number, y: number, ac: number, r: number, h: number, color: number, seg = 8) =>
     axis === 0 ? s.cyl(al, y, ac, r, h, color, seg) : s.cyl(ac, y, al, r, h, color, seg);
   const rec = (p: number, across: number, r: number, kind = 0) => axis === 0 ? pavementObstacle(p, across, r, kind) : pavementObstacle(across, p, r, kind);
-  const free = (p: number, half: number) => p - half > STREET + 2.5 && p + half < BLOCK - 2.5 && busy.every(([a, b]) => p + half < a || p - half > b);
+  const free = (p: number, half: number) => p - half > a0 + 2.5 && p + half < a1 - 2.5 && busy.every(([a, b]) => p + half < a || p - half > b);
   const place = (half: number, f: (p: number) => void, kind = 0) => {
     for (let t = 0; t < 12; t++) {
-      const p = range(rnd, STREET + 3, BLOCK - 3);
+      const p = range(rnd, a0 + 3, a1 - 3);
       if (free(p, half)) { f(p); busy.push([p - half - 0.4, p + half + 0.4]); rec(p, ac, half + 0.15, kind); return true; }
     }
     return false;
@@ -216,7 +217,7 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   if (district === "commercial" || district === "downtown") {
     place(0.75, (p) => { for (const [k, c] of [[-0.4, 0xc0392b], [0.3, 0xf2c200]] as const) box(p + k, y0 + 0.5, ac, 0.45, 1.0, 0.4, c); }, PK.news);   // newspaper boxes
     // A row of parking meters along the kerb.
-    const start = range(rnd, STREET + 6, STREET + 14);
+    const start = range(rnd, a0 + 6, a0 + 14);
     for (let i = 0; i < 4; i++) {
       const p = start + i * 6;
       if (!free(p, 0.15)) continue;
@@ -232,7 +233,7 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   }
   if (district === "downtown" && rnd() < 0.5) place(0.9, (p) => { for (const k of [-0.6, 0, 0.6]) box(p + k, y0 + 0.4, ac, 0.05, 0.8, 0.6, 0x9aa0a6); }, PK.rack);   // bike rack
   // A manhole cover in the road.
-  const mh = range(rnd, STREET + 8, BLOCK - 8);
+  const mh = range(rnd, a0 + 8, a1 - 8);
   if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);
 }
 

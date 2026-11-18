@@ -26,11 +26,11 @@ import { signalState } from "../src/signals.ts";
       const pv = prev.get(c.id), half = c.kind.len / 2;
       if (pv && pv.path === c.path) for (const sg of c.path.signals) {
         if (!(pv.s + half < sg.sLine && c.s + half >= sg.sLine)) continue;
-        const state = signalState(sg.ix, sg.iz, sg.axis, j.st.simTime, j.plan.seed, j.st.preempt);
+        const N = j.plan.graph.nodes[sg.node], state = signalState(N, sg.phase, j.st.simTime, j.plan.seed, j.st.preempt);
         const k = state === "red" && sg.move === "R" ? "red-right" : state;
         tally[k] = (tally[k] ?? 0) + 1;
         if (k === "red" && errs.length < 20)
-          errs.push(`t${j.st.simTime.toFixed(1)} ${c.kind.id} #${c.id} ran the red at node ${sg.ix},${sg.iz} (move ${sg.move}, ${c.v.toFixed(1)} m/s)`);
+          errs.push(`t${j.st.simTime.toFixed(1)} ${c.kind.id} #${c.id} ran the red at node ${N.kx},${N.kz} (move ${sg.move}, ${c.v.toFixed(1)} m/s)`);
       }
       prev.set(c.id, { s: c.s, path: c.path });
     }

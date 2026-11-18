@@ -17,6 +17,9 @@
 #   make tool SCENE=long-day TOOL=showroom [SECS=17 DEFINE=...]
 #                              render a test scene from scenes/<scene>/tools/<tool>.ts (one frame a
 #                              second) to build/<scene>-<tool>/, every frame tiled into <tool>.png
+#   make citymap SCENE=long-day [SEED=1 CITIES=4 DEFINE=...]
+#                              draw the street graphs of a journey's first cities, top down, to
+#                              build/<scene>-citymap/city<N>.png (needs ffmpeg)
 #   make clean / distclean
 #
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
@@ -47,7 +50,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES))
 .SECONDEXPANSION:
@@ -168,6 +171,18 @@ tool: | $(DEPS)
 	@ffmpeg -loglevel error -y -i $(TOOL_OUT)/dist/frames/frame-%03d.png -frames:v 1 \
 	  -vf "scale=iw*2:ih*2:flags=neighbor,tile=2x$$(( ($(SECS) + 1) / 2 ))" $(TOOL_OUT)/$(TOOL).png
 	@echo "$(SCENE) $(TOOL) -> $(TOOL_OUT)/$(TOOL).png"
+
+# Top-down maps of a journey's cities (scenes/<scene>/tools/citymap.ts).
+SEED   ?= 1
+CITIES ?= 4
+citymap: | $(DEPS)
+	@test -f "scenes/$(SCENE)/tools/citymap.ts" || { echo "usage: make citymap SCENE=<scene> [SEED=... CITIES=... DEFINE=...]" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-citymap
+	@$(FLATTEN) scenes/$(SCENE)/tools/citymap.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-citymap/scene.ts
+	@$(call node-bundle,build/$(SCENE)-citymap/scene.ts,build/$(SCENE)-citymap/citymap.mjs)
+	@node build/$(SCENE)-citymap/citymap.mjs build/$(SCENE)-citymap $(SEED) $(CITIES)
+	@for f in build/$(SCENE)-citymap/city*.ppm; do ffmpeg -loglevel error -y -i $$f $$(dirname $$f)/$$(basename $$f .ppm).png; done
+	@echo "$(SCENE) city maps -> build/$(SCENE)-citymap/"
 
 # Install dev dependencies when package-lock.json changes.
 $(DEPS): package-lock.json

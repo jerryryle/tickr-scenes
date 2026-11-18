@@ -1,89 +1,95 @@
-// Traffic signals. Every intersection runs the same fixed cycle with its own offset (a hash of
-// its grid position), so a light's state is a pure function of journey time: the driving code
-// asks signalState() and the lamps compute the same thing in their vertex shader. Lamps are
-// ordinary geometry in each chunk's lamp batch, tagged with (offset, axis, colour); nothing is
-// updated per frame except one uniform.
-//   t in [0, 10)      east-west green   north-south red
-//   t in [10, 12.5)   east-west yellow
-//   t in [12.5, 13)   all red
-//   t in [13, 23)     north-south green
-//   t in [23, 25.5)   north-south yellow
-//   t in [25.5, 26)   all red
+// Traffic signals. Every signalled intersection cycles through its phases (one per pair of
+// opposite approaches, citygraph.ts), each green for SIG_GREEN, yellow for SIG_YELLOW, then all
+// red for the rest of its SIG_SLOT, with its own offset (a hash of its key), so a light's state is
+// a pure function of journey time: the driving code asks signalState() and the lamps compute the
+// same thing in their vertex shader. Lamps are ordinary geometry in each chunk's lamp batch,
+// tagged with (offset, phase, phases, colour); nothing is updated per frame except uniforms. On
+// the old grid (two phases): east-west green from 0 to 10 s, yellow to 12.5, all red to 13, then
+// north-south the same, a 26 s cycle.
 import type { PlateSet } from "./signs.ts";
 import * as THREE from "three@0.187.0";
 import { hash2 } from "./rng.ts";
 import { Batch } from "./geom.ts";
-import { nodeX, nodeZ } from "./route.ts";
+import type { CityGraph, CNode } from "./citygraph.ts";
 
-export const SIGNAL_CYCLE = 26;
-const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_HALF = SIGNAL_CYCLE / 2;
-export type SignalAxis = 0 | 1;          // 0 = east-west traffic, 1 = north-south traffic
+const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_SLOT = 13;
+export const SIGNAL_CYCLE = 2 * SIG_SLOT;            // a two-phase intersection's cycle
+const SIGNAL_WRAP = 12 * SIG_SLOT;                   // what the lamps' time wraps at: a whole number of cycles of 2, 3 or 4 phases
 export type SignalColor = "green" | "yellow" | "red";
-
-export function signalOffset(ix: number, iz: number, seed: number) { return hash2(ix, iz, seed, 0x51c) * SIGNAL_CYCLE; }
+export const signalCycle = (n: CNode) => Math.max(2, n.phases) * SIG_SLOT;
+export function signalOffset(n: CNode, seed: number) { return hash2(n.kx, n.kz, seed, 0x51c) * signalCycle(n); }
+// The colour of `phase` at node n with no priority request, `t` seconds into its cycle.
+function cycleColor(n: CNode, phase: number, time: number, seed: number): [SignalColor, number] {
+  const t = (time + signalOffset(n, seed)) % signalCycle(n), slot = Math.floor(t / SIG_SLOT), w = t - slot * SIG_SLOT;
+  return slot !== phase ? ["red", w] : w < SIG_GREEN ? ["green", w] : w < SIG_GREEN + SIG_YELLOW ? ["yellow", w] : ["red", w];
+}
 
 // Signal priority for the truck: as it comes up to a red light, the light usually changes for it
-// (the cross street goes yellow, then red, and the truck's way turns green), so it waits at only
+// (the other phases go yellow, then red, and the truck's way turns green), so it waits at only
 // some of the reds a fixed cycle would give it. The journey decides (a function of its state, so
 // it replays the same); the lamps, cross traffic and pedestrians follow `signalPreempt`.
 // `ext`: the truck's green is held (it would have turned yellow before the truck got there).
-export interface SignalPreempt { ix: number; iz: number; axis: SignalAxis; p0: number; p1: number; was: SignalColor; ext?: boolean }
+// (x, z): the node's centre, for the lamps.
+export interface SignalPreempt { node: number; x: number; z: number; phase: number; p0: number; p1: number; was: SignalColor; ext?: boolean }
 export const PREEMPT_CHANCE = 0.8;
 export const PREEMPT_MAX = 3;            // requests held at once (the next lights come up fast)
 let signalPreempt: SignalPreempt[] = [];
 // The request in force at this node at `time`, if any.
-const preemptAt = (prs: SignalPreempt[] | null, ix: number, iz: number, time: number) => prs?.find((p) => p.ix === ix && p.iz === iz && time >= p.p0 && time < p.p1 + 3) ?? null;
-function preemptState(prs: SignalPreempt[] | null, ix: number, iz: number, axis: SignalAxis, time: number): SignalColor | null {
-  const pr = preemptAt(prs, ix, iz, time);
+const preemptAt = (prs: SignalPreempt[] | null, node: number, time: number) => prs?.find((p) => p.node === node && time >= p.p0 && time < p.p1 + 3) ?? null;
+function preemptState(prs: SignalPreempt[] | null, node: number, phase: number, time: number): SignalColor | null {
+  const pr = preemptAt(prs, node, time);
   if (!pr) return null;
-  if (pr.ext) return axis === pr.axis ? (time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red") : "red";
-  if (axis === pr.axis) return time < pr.p0 + 3 ? "red" : time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red";
+  if (pr.ext) return phase === pr.phase ? (time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red") : "red";
+  if (phase === pr.phase) return time < pr.p0 + 3 ? "red" : time < pr.p1 ? "green" : time < pr.p1 + 2.5 ? "yellow" : "red";
   return time < pr.p0 + 2.5 && pr.was !== "red" ? "yellow" : "red";
 }
 const preemptUniforms = { uPre: { value: [0, 1, 2].map(() => new THREE.Vector4(0, 0, 0, 0)) } };
 const COLOR_CODE: Record<SignalColor, number> = { red: 0, yellow: 1, green: 2 };
-// Each frame: the journey's priority request, for the lamps and everyone else.
-// uPre[i] = (x, z, axis-0 colour + 1, axis-1 colour + 1), or zeros when unused.
+// Each frame: the journey's priority requests, for the lamps and everyone else.
+// uPre[i] = (x, z, the requested phase's colour + 1 + 4 * phase, the other phases' colour + 1),
+// or zeros when unused.
 export function setSignalPreempt(prs: SignalPreempt[], time: number) {
   signalPreempt = prs;
   for (let i = 0; i < PREEMPT_MAX; i++) {
     const pr = prs[i], u = preemptUniforms.uPre.value[i];
-    const a = pr && preemptState([pr], pr.ix, pr.iz, 0, time), b = pr && preemptState([pr], pr.ix, pr.iz, 1, time);
-    if (pr && a && b) u.set(nodeX(pr.ix), nodeZ(pr.iz), COLOR_CODE[a] + 1, COLOR_CODE[b] + 1); else u.set(0, 0, 0, 0);
+    const a = pr && preemptState([pr], pr.node, pr.phase, time), b = pr && preemptState([pr], pr.node, pr.phase + 1, time);
+    if (pr && a && b) u.set(pr.x, pr.z, COLOR_CODE[a] + 1 + 4 * pr.phase, COLOR_CODE[b] + 1); else u.set(0, 0, 0, 0);
   }
 }
 
-export function signalState(ix: number, iz: number, axis: SignalAxis, time: number, seed: number, pr: SignalPreempt[] | null = signalPreempt): SignalColor {
-  const o = preemptState(pr, ix, iz, axis, time);
+export function signalState(n: CNode, phase: number, time: number, seed: number, pr: SignalPreempt[] | null = signalPreempt): SignalColor {
+  if (n.control !== "signal") return "green";
+  const o = preemptState(pr, n.id, phase, time);
   if (o) return o;
-  let t = (time + signalOffset(ix, iz, seed)) % SIGNAL_CYCLE;
-  if (axis === 1) t = (t + SIG_HALF) % SIGNAL_CYCLE;
-  return t < SIG_GREEN ? "green" : t < SIG_GREEN + SIG_YELLOW ? "yellow" : "red";
+  return cycleColor(n, phase, time, seed)[0];
 }
 
 // Seconds until this approach next turns green (0 if green now).
-export function signalWait(ix: number, iz: number, axis: SignalAxis, time: number, seed: number): number {
-  let t = (time + signalOffset(ix, iz, seed)) % SIGNAL_CYCLE;
-  if (axis === 1) t = (t + SIG_HALF) % SIGNAL_CYCLE;
-  return t < SIG_GREEN ? 0 : SIGNAL_CYCLE - t;
+export function signalWait(n: CNode, phase: number, time: number, seed: number): number {
+  if (n.control !== "signal") return 0;
+  const C = signalCycle(n), t = (time + signalOffset(n, seed)) % C, start = phase * SIG_SLOT;
+  if (t >= start && t < start + SIG_GREEN) return 0;
+  return ((start - t) % C + C) % C;
 }
 
 // Seconds of green left for this approach (0 unless green now), with the truck's priority
 // requests `pr` taken into account when given (as signalState does).
-export function signalGreenLeft(ix: number, iz: number, axis: SignalAxis, time: number, seed: number, pr: SignalPreempt[] | null = null): number {
-  const q = preemptAt(pr, ix, iz, time);
-  if (q) return preemptState([q], ix, iz, axis, time) === "green" ? q.p1 - time : 0;
-  let t = (time + signalOffset(ix, iz, seed)) % SIGNAL_CYCLE;
-  if (axis === 1) t = (t + SIG_HALF) % SIGNAL_CYCLE;
-  return t < SIG_GREEN ? SIG_GREEN - t : 0;
+export function signalGreenLeft(n: CNode, phase: number, time: number, seed: number, pr: SignalPreempt[] | null = null): number {
+  if (n.control !== "signal") return Infinity;
+  const q = preemptAt(pr, n.id, time);
+  if (q) return preemptState([q], n.id, phase, time) === "green" ? q.p1 - time : 0;
+  const [c, w] = cycleColor(n, phase, time, seed);
+  return c === "green" ? SIG_GREEN - w : 0;
 }
+// A cycle number for hashing decisions per pass of the lights.
+export const signalCycleIndex = (n: CNode, time: number) => Math.floor(time / signalCycle(n));
 
-// Lamp tag (Batch.aux.x): lamp code * 32 + offset, where code = axis * 3 + (0 red, 1 yellow, 2 green).
-function lampTag(axis: SignalAxis, lamp: 0 | 1 | 2, offset: number) { return (axis * 3 + lamp) * 32 + offset; }
+// Lamp tags: aux.x = lamp (0 red, 1 yellow, 2 green) * 64 + offset; aux.z = phase + 4 * (phases - 2).
+const lampTag = (lamp: 0 | 1 | 2, offset: number) => lamp * 64 + offset;
 
-// Journey time modulo the cycle, so the shader's float32 time stays exact on long runs.
+// Journey time modulo SIGNAL_WRAP, so the shader's float32 time stays exact on long runs.
 const signalUniforms = { uSignalTime: { value: 0 } };
-export function setSignalTime(time: number) { signalUniforms.uSignalTime.value = time % SIGNAL_CYCLE; }
+export function setSignalTime(time: number) { signalUniforms.uSignalTime.value = time % SIGNAL_WRAP; }
 
 // The lamp batch also carries neon and flags, told apart by aux.y (signal lamps leave it 0):
 //   1 neon, steady with a rare flicker (aux.x = a seed)
@@ -91,7 +97,8 @@ export function setSignalTime(time: number) { signalUniforms.uSignalTime.value =
 //   3 neon, chasing (aux.x = this segment's index, aux.z = segments in the chase)
 //   4 flag cloth, waving (aux.x = distance from the pole, aux.z = the angle of the cloth's normal
 //     in the xz plane, which it ripples along)
-// uSignalTime wraps every SIGNAL_CYCLE seconds, so the wave and blink periods divide it.
+// uSignalTime wraps every SIGNAL_WRAP seconds, so the wave and blink periods divide it (they
+// divide 26, which divides it).
 export const NEON_STEADY = 1, NEON_BLINK = 2, NEON_CHASE = 3, FLAG_WAVE = 4;
 
 export function makeLampMaterial(): THREE.MeshBasicMaterial {
@@ -107,13 +114,16 @@ varying float vLit;
 float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>
   if (aAux.y < 0.5) {
-    float code = floor(aAux.x / 32.0);
-    float t = mod(uSignalTime + (aAux.x - code * 32.0), ${SIGNAL_CYCLE.toFixed(1)});
-    float axis = floor(code / 3.0), lamp = code - axis * 3.0;
-    if (axis > 0.5) t = mod(t + ${SIG_HALF.toFixed(1)}, ${SIGNAL_CYCLE.toFixed(1)});
-    float state = t < ${SIG_GREEN.toFixed(1)} ? 2.0 : (t < ${(SIG_GREEN + SIG_YELLOW).toFixed(1)} ? 1.0 : 0.0);
+    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0;
+    float phases = floor(aAux.z / 4.0) + 2.0, phase = aAux.z - (phases - 2.0) * 4.0;
+    float t = mod(uSignalTime + off, phases * ${SIG_SLOT.toFixed(1)});
+    float slot = floor(t / ${SIG_SLOT.toFixed(1)}), w = t - slot * ${SIG_SLOT.toFixed(1)};
+    float state = abs(slot - phase) > 0.5 ? 0.0 : (w < ${SIG_GREEN.toFixed(1)} ? 2.0 : (w < ${(SIG_GREEN + SIG_YELLOW).toFixed(1)} ? 1.0 : 0.0));
     vec2 wxz = (modelMatrix * vec4(position, 1.0)).xz;
-    for (int i = 0; i < 3; i++) if (uPre[i].z > 0.5 && distance(wxz, uPre[i].xy) < 16.0) state = (axis > 0.5 ? uPre[i].w : uPre[i].z) - 1.0;
+    for (int i = 0; i < 3; i++) if (uPre[i].z > 0.5 && distance(wxz, uPre[i].xy) < 16.0) {
+      float pz = floor((uPre[i].z - 1.0) / 4.0), pc = uPre[i].z - 1.0 - pz * 4.0;
+      state = abs(phase - pz) < 0.5 ? pc : uPre[i].w - 1.0;
+    }
     vLit = abs(state - lamp) < 0.5 ? 1.0 : 0.0;
   } else if (aAux.y < 1.5) {
     vLit = lampHash(floor(uSignalTime * 9.0) + aAux.x * 7.13) > 0.975 ? 0.25 : 1.0;
@@ -129,55 +139,57 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <common>", "#include <common>\nvarying float vLit;")
       .replace("#include <color_fragment>", "#include <color_fragment>\n  diffuseColor.rgb *= mix(0.12, 1.0, vLit);");
   };
-  mat.customProgramCacheKey = () => "signal-lamp-v3";
+  mat.customProgramCacheKey = () => "signal-lamp-v4";
   return mat;
 }
 
 const LAMP_COLORS = [0xff2a1a, 0xffb000, 0x22ff66];
 const POLE = 0x2b2f33, HOUSING = 0x15181a;
 
-// Mast-arm signals for the intersection occupying local [0, w) x [0, w) of a chunk, on a street
-// with lanes from `kerb` to `w - kerb`. Each approach gets a pole on its far-right corner and an
-// arm reaching over its two lanes with a head per lane. Poles and heads go in `solid`; lamps
-// (boxes that protrude, so their tops read from the overhead camera) go in `lamps`.
-// `names`: the streets crossing here (its east-west one and its north-south one), for the name
-// plates on the mast arms, each naming the cross street to the traffic coming up to it.
-export function buildSignals(solid: Batch, lamps: Batch, w: number, kerb: number, offset: number, names: { ew: string; ns: string; plates: PlateSet } | null = null) {
-  const c = w / 2;
-  // Approaches: heading (unit dx, dz), the pole corner, the arm's direction, and the axis.
-  // Facing the approaching traffic means the head's lamps point along -heading.
-  const approaches: { hx: number; hz: number; px: number; pz: number; ax: number; az: number; axis: SignalAxis }[] = [
-    { hx: 1, hz: 0, px: w - 1.4, pz: w - 1.4, ax: 0, az: -1, axis: 0 },   // eastbound, lanes c..w-kerb
-    { hx: -1, hz: 0, px: 1.4, pz: 1.4, ax: 0, az: 1, axis: 0 },           // westbound
-    { hx: 0, hz: 1, px: 1.4, pz: w - 1.4, ax: 1, az: 0, axis: 1 },        // southbound (+z)
-    { hx: 0, hz: -1, px: w - 1.4, pz: 1.4, ax: -1, az: 0, axis: 1 },      // northbound (-z)
-  ];
-  const armY = 6.2;
-  for (const a of approaches) {
-    const toCentre = a.ax !== 0 ? Math.abs(a.px - c) : Math.abs(a.pz - c);
-    const reach = toCentre + 0.4;                  // pole to just past the centre line
-    const ew = a.hx !== 0;                         // head faces along x
-    solid.cyl(a.px, armY / 2, a.pz, 0.16, armY, POLE, 6);
-    const ex = a.px + a.ax * reach, ez = a.pz + a.az * reach;
-    solid.span(Math.min(a.px, ex) - 0.08, armY - 0.1, Math.min(a.pz, ez) - 0.08,
-               Math.max(a.px, ex) + 0.08, armY + 0.08, Math.max(a.pz, ez) + 0.08, POLE);
-    if (names) {
-      // The cross street's name on a plate over the arm, near the pole, facing the traffic.
-      const sx = a.px + a.ax * 2.3, sz = a.pz + a.az * 2.3, y = armY + 0.42;
-      solid.box(sx, y, sz, ew ? 0.05 : 2.5, 0.42, ew ? 2.5 : 0.05, 0x1e6b3a);
-      solid.box(sx, armY + 0.12, sz, 0.06, 0.12, 0.06, POLE);
-      names.plates.put((ew ? names.ns : names.ew).toUpperCase(), sx - a.hx * 0.035, y, sz - a.hz * 0.035, 2.4, 0.3, Math.atan2(-a.hx, -a.hz));
-    }
-    // One head over each lane centre (1.5 m and 4.5 m from the centre line), lamps facing
-    // the approaching traffic: red on top, then yellow, then green.
-    for (const lane of [1.5, 4.5]) {
-      const hx = a.px + a.ax * (toCentre - lane), hz = a.pz + a.az * (toCentre - lane);
-      solid.box(hx, armY - 0.75, hz, ew ? 0.36 : 0.44, 1.25, ew ? 0.44 : 0.36, HOUSING);
-      for (const k of [0, 1, 2] as const) {
-        lamps.aux.set(lampTag(a.axis, k, offset), 0, 0);
-        lamps.box(hx - a.hx * 0.22, armY - 0.36 - k * 0.38, hz - a.hz * 0.22, ew ? 0.16 : 0.3, 0.3, ew ? 0.3 : 0.16, LAMP_COLORS[k]);
+// Mast-arm signals for node n, drawn relative to (ox, oz) (its tile's origin). Each approach gets
+// a pole on the far right corner of the intersection and an arm reaching over its two lanes, with
+// a head per lane. Poles and heads go in `solid`; lamps (boxes that protrude, so their tops read
+// from the overhead camera) go in `lamps`. `plates`: for the name plates on the mast arms, each
+// naming the cross street to the traffic coming up to it.
+export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null) {
+  if (n.control !== "signal") return;
+  const offset = signalOffset(n, seed), armY = 6.2, cx = n.x - ox, cz = n.z - oz;
+  n.arms.forEach((arm, i) => {
+    const st = G.streets[arm.street];
+    if (!st.inCity && st.gate < 0) return;
+    // The traffic coming in along this arm heads h; its right is r.
+    const h = arm.h + Math.PI, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+    // The far side: the mouth of the arm straight ahead (or this one's, if none).
+    let far = arm.mouth;
+    for (const b of n.arms) if (Math.abs(Math.atan2(Math.sin(b.h - h), Math.cos(b.h - h))) < Math.PI / 4) far = b.mouth;
+    const px = cx + fx * (far - 1.4) + rx * (st.half - 1.4), pz = cz + fz * (far - 1.4) + rz * (st.half - 1.4);
+    const toCentre = st.half - 1.4, reach = toCentre + 0.4;
+    solid.cyl(px, armY / 2, pz, 0.16, armY, POLE, 6);
+    // The arm reaches back over the lanes (to the traffic's left).
+    const ax = -rx, az = -rz, armH = Math.atan2(-az, ax);
+    solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, POLE, armH);
+    if (plates) {
+      // The cross street's name on a plate over the arm, near the pole, facing the traffic: the
+      // street of the arm nearest square to this one in another phase.
+      let cross = "", best = Infinity;
+      n.arms.forEach((b, j) => { if (n.phaseOf[j] === n.phaseOf[i]) return; const d = Math.abs(Math.abs(Math.atan2(Math.sin(b.h - arm.h), Math.cos(b.h - arm.h))) - Math.PI / 2); if (d < best) { best = d; cross = G.streets[b.street].name; } });
+      if (cross) {
+        const sx = px + ax * 2.3, sz = pz + az * 2.3, y = armY + 0.42;
+        solid.box(sx, y, sz, 2.5, 0.42, 0.05, 0x1e6b3a, armH);
+        solid.box(sx, armY + 0.12, sz, 0.06, 0.12, 0.06, POLE);
+        plates.put(cross.toUpperCase(), sx - fx * 0.035, y, sz - fz * 0.035, 2.4, 0.3, Math.atan2(-fx, -fz));
       }
     }
-  }
+    // One head over each lane centre (1.5 m and 4.5 m from the centre line), lamps facing the
+    // approaching traffic: red on top, then yellow, then green.
+    for (const lane of [1.5, 4.5]) {
+      const hx = px + ax * (toCentre - lane), hz = pz + az * (toCentre - lane);
+      solid.box(hx, armY - 0.75, hz, 0.36, 1.25, 0.44, HOUSING, h);
+      for (const k of [0, 1, 2] as const) {
+        lamps.aux.set(lampTag(k, offset), 0, n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2));
+        lamps.box(hx - fx * 0.22, armY - 0.36 - k * 0.38, hz - fz * 0.22, 0.16, 0.3, 0.3, LAMP_COLORS[k], h);
+      }
+    }
+  });
   lamps.aux.set(0, 0, -1);
 }

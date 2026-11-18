@@ -133,7 +133,7 @@ for (const d of ["downtown", "commercial", "residential", "industrial", "park"] 
 }
 
 export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
-  const t = FAC_BY_DISTRICT.get(plan.district(bx, bz))!;
+  const t = FAC_BY_DISTRICT.get(plan.blockOf(bx, bz)?.park ? "park" : plan.district(bx, bz))!;
   const r = hash2(bx, bz, plan.seed, 0xfac) * t.total;
   let i = 0;
   while (i < t.cum.length - 1 && t.cum[i] <= r) i++;
@@ -243,6 +243,8 @@ const FLEET: TruckModel[] = ["box16", "box26", "box26", "reefer", "flatbed", "bo
 
 export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   if (plan.interchangeAt(bx, bz)) return { kind: "interchange", side: plan.interchange!.side };
+  // A block not of the old grid's shape is lotted (city.ts buildLots): its facility is at the kerb.
+  if (!(plan.blockOf(bx, bz)?.square ?? true)) return { kind: "kerb" };
   const fac = facilityAt(plan, bx, bz);
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
   const side = Math.floor(h(0x51de) * 4);

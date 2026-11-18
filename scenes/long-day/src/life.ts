@@ -78,8 +78,8 @@ export class StreetLife implements LifeHook {
   }
 
   save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp() }); }
-  load(s: string) {
+  load(s: string, j: Journey) {
     const o = JSON.parse(s);
-    this.traffic.load(o.t); this.crowd.load(o.c); this.ambient.loadBlimp(o.b);
+    this.traffic.load(o.t, j.plan); this.crowd.load(o.c); this.ambient.loadBlimp(o.b);
   }
 }

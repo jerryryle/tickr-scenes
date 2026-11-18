@@ -50,9 +50,8 @@ import type { Pose } from "./route.ts";
 import { CountryRoad, CUT_RUN, ONRAMP_SHOT, pieceSigns } from "./country.ts";
 import { FW_OFF_D } from "./freeway.ts";
 import type { RoadSign } from "./country.ts";
-import { frontPt } from "./city.ts";
+import { BLADE_A } from "./city.ts";
 import { hasSign, siteLayout } from "./facilities.ts";
-import { BLOCK } from "./grid.ts";
 import { DWELL, Journey } from "./journey.ts";
 import type { DockPlan } from "./journey.ts";
 
@@ -746,10 +745,10 @@ export class Director {
     if (!stop?.site || !this.kerbSign(j, stop) || !j.path) return false;
     const P = j.path.eval(st.stopS, this.pose), fx = Math.cos(P.h), fz = -Math.sin(P.h), rx = Math.sin(P.h), rz = Math.cos(P.h);
     // The blade over the truck's own sidewalk, nearest where it stops.
-    const ox = stop.site.bx * BLOCK, oz = stop.site.bz * BLOCK;
+    const G = j.plan.graph, blk = j.plan.blockOf(stop.site.bx, stop.site.bz);
     let B: THREE.Vector3 | null = null, best = 45;
-    for (let side = 0; side < 4; side++) {
-      const [lx, lz] = frontPt(side, 31.5, -1.45), x = ox + lx, z = oz + lz;
+    for (const f of blk?.sides ?? []) {
+      const { x, z } = G.facePt(f, BLADE_A, -1.45);
       const along = (x - P.x) * fx + (z - P.z) * fz, lat = (x - P.x) * rx + (z - P.z) * rz;
       if (lat < 1 || lat > 6) continue;
       if (Math.abs(along) < best) { best = Math.abs(along); B = new THREE.Vector3(x, 4.55, z); }
@@ -817,7 +816,7 @@ export class Director {
       if (d > 520 && d < 760) return "under";   // (the on-ramp's way across under the freeway)
       return d < 850 && d > -FW_OFF_D - 10 ? "up" : null;
     }
-    if (st.mode === "drive" && j.path?.route.garageOut?.kind === "helix") {
+    if (st.mode === "drive" && j.path?.route.garageOut?.kind) {   // (down an off-ramp, either kind)
       if (j.path.yAt(st.s) > 1.5) return "up";
       return st.s < (j.path.ramps[0]?.s1 ?? 0) + 40 ? "under" : null;   // (out at the foot of the off-ramp, under the freeway)
     }

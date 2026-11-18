@@ -6,23 +6,24 @@
 // falafel cart and a club's velvet rope after dark, a sled, a shoveller and a snowman in the
 // snow, an open hydrant on a hot afternoon, and in the parks chess, tai chi, a frisbee dog and a
 // kite.
-// Each is anchored to a block side's frontage (city.ts frontPt: `a` along it, `n` across, 0 at
-// the building line and -3 at the kerb face), chosen for its district, the hour, the weather and
-// the season, and placed on the furniture it needs (decor.ts PK) or a free stretch of pavement.
+// Each is anchored to a block side's frontage (a face of the street graph, citygraph.ts: `a`
+// along it, `n` across, 0 at the building line and -3 at the kerb face on a 3 m sidewalk), chosen
+// for its district, the hour, the weather and the season, and placed on the furniture it needs (decor.ts PK) or a free stretch of pavement.
 // Most are choreographed as a function of their own clock (started when the truck comes near),
 // so stepping only advances the clock and drawing is the pose at a moment: seeking replays them
 // exactly. People who are done walk off as ordinary pedestrians (Crowd.adopt).
 import { Rng, hash2, mulberry32 } from "./rng.ts";
 import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, walkSwing } from "./figure.ts";
 import type { Body, V3 } from "./figure.ts";
-import { CityPlan, FRONT_NODE, insideCity, kerbDoors, pavementObstacles, pick } from "./city.ts";
+import { CityPlan, kerbDoors, pavementObstacles, pick } from "./city.ts";
 import type { District } from "./city.ts";
-import { BLOCK, CURB_H, STREET } from "./grid.ts";
+import { CURB_H } from "./grid.ts";
+import { TILE, angleDiff } from "./citygraph.ts";
+import type { CityGraph, CNode, GPt } from "./citygraph.ts";
 import { PK } from "./decor.ts";
 import { facilityAt, siteLayout } from "./facilities.ts";
 import { signalGreenLeft, signalState } from "./signals.ts";
-import type { SignalAxis, SignalPreempt } from "./signals.ts";
-import { blockGoals, DIR_X, DIR_Z, nodeX, nodeZ } from "./route.ts";
+import type { SignalPreempt } from "./signals.ts";
 import { weatherMix } from "./climate.ts";
 import type { WeatherMix } from "./climate.ts";
 import { OCCLUSION } from "./occlusion.ts";
@@ -60,16 +61,78 @@ export interface VigInput {
 interface Ctx extends VigInput { hour: number; w: WeatherMix; season: string; snow: boolean }
 
 // ---- frontage frames ----------------------------------------------------------------------------
-const V_FWD: [number, number][] = [[1, 0], [0, -1], [-1, 0], [0, 1]];
-const V_RIGHT: [number, number][] = [[0, 1], [1, 0], [0, -1], [-1, 0]];
-const V_NEXT_SIDE = [3, 2, 0, 1];
-interface VFrame { ox: number; oz: number; fx: number; fz: number; rx: number; rz: number; h0: number }
-function frameOf(bx: number, bz: number, side: number): VFrame {
-  const [nx, nz, d] = FRONT_NODE[side], [fx, fz] = V_FWD[d], [rx, rz] = V_RIGHT[d];
-  return { ox: bx * BLOCK + nx + rx * 9, oz: bz * BLOCK + nz + rz * 9, fx, fz, rx, rz, h0: d * Math.PI / 2 };
+// A block side is a face of the city graph (citygraph.ts): its frontage frame (a along the
+// street from the node it leaves, n across from the back of the sidewalk) is the graph's. Block
+// keys and side numbers (bx, bz, side) stay the plain, saveable reference; the graph resolves
+// them. Positions past a face's ends (round a corner, across the street ahead) continue its line.
+let VG: CityGraph | null = null;   // the graph of the city being stepped and drawn
+const graph = () => VG!;
+// The face of block (bx, bz) on side `side` (-1: none).
+export function sideFace(G: CityGraph, bx: number, bz: number, side: number): number { const b = G.block(bx, bz); return b ? b.sides[side] ?? -1 : -1; }
+// The block key and side number of a face.
+export function faceRef(G: CityGraph, f: number): { bx: number; bz: number; side: number } { const b = G.blocks[G.faceBlock[f]]; return { bx: b.kx, bz: b.kz, side: b.sides.indexOf(f) }; }
+// Whether face f exists and fronts a block of the city.
+export function faceInCity(G: CityGraph, f: number) { const b = f < 0 ? -1 : G.faceBlock[f]; return b >= 0 && G.blocks[b].inCity; }
+// A block of the city at or by (x, z), if any.
+export function blockNear(G: CityGraph, x: number, z: number) { const b = G.blockAt(x, z) ?? G.nearestBlock(x, z); return b && b.inCity ? b : null; }
+// The district round (x, z): its block's (or, off the city's blocks, the map tile's).
+export function districtAt(plan: CityPlan, x: number, z: number): District {
+  const b = plan.graph.blockAt(x, z) ?? plan.graph.nearestBlock(x, z);
+  return b ? plan.district(b.kx, b.kz) : plan.district(Math.floor(x / TILE), Math.floor(z / TILE));
 }
-const P = (f: VFrame, a: number, n: number): [number, number] => [f.ox + f.fx * a + f.rx * n, f.oz + f.fz * a + f.rz * n];
-const toFront = (f: VFrame, x: number, z: number): [number, number] => [(x - f.ox) * f.fx + (z - f.oz) * f.fz, (x - f.ox) * f.rx + (z - f.oz) * f.rz];
+// The usable frontage of a face (where the corner's curb returns end), its middle, its length
+// and the street's sidewalk width.
+export interface Span { a0: number; a1: number; mid: number; len: number; kerb: number }
+export function faceSpan(G: CityGraph, f: number): Span {
+  const a0 = G.faceA0(f), a1 = G.faceA1(f);
+  return { a0, a1, mid: (a0 + a1) / 2, len: G.faceLen(f), kerb: G.streets[f >> 1].kerb };
+}
+const spanOf = (bx: number, bz: number, side: number) => faceSpan(graph(), sideFace(graph(), bx, bz, side));
+const _ga: GPt = { x: 0, z: 0, h: 0 }, _gb: GPt = { x: 0, z: 0, h: 0 };
+// Where face f's line `n` across meets the next face's round the corner at its end: [a along f,
+// a along the next face]. (A dead end, where the next face is the far side of the same street:
+// the frontage ends.)
+export function faceCorner(G: CityGraph, f: number, n: number): [number, number] {
+  const g = G.nextFace(f), L = G.faceLen(f), p = G.facePt(f, L, n, _ga), q = G.facePt(g, 0, n, _gb);
+  const dfx = Math.cos(p.h), dfz = -Math.sin(p.h), dgx = Math.cos(q.h), dgz = -Math.sin(q.h);
+  const den = dfx * dgz - dfz * dgx;
+  if (Math.abs(den) < 1e-3) return [G.faceA1(f) - n, G.faceA0(g) + n];
+  const wx = q.x - p.x, wz = q.z - p.z;
+  return [L + (wx * dgz - wz * dgx) / den, (wx * dfz - wz * dfx) / den];
+}
+// The face before f across the intersection at its start (the one whose line f continues).
+export function faceBehind(G: CityGraph, f: number): number { const e = G.faceAcross(f ^ 1); return e < 0 ? -1 : e ^ 1; }
+// (x, z) in face f's frame continued straight past its end (atEnd) or start.
+function toFaceLine(G: CityGraph, f: number, x: number, z: number, atEnd: boolean): [number, number] {
+  const a = atEnd ? G.faceLen(f) : 0, p = G.facePt(f, a, 0, _ga), fx = Math.cos(p.h), fz = -Math.sin(p.h), dx = x - p.x, dz = z - p.z;
+  return [a + dx * fx + dz * fz, dx * Math.sin(p.h) + dz * Math.cos(p.h)];
+}
+// The crosswalk over the street ahead of someone walking along face f (fwd: with it, to the
+// intersection at its end; else back to its start): the face on the far side (the next along
+// the same line), and where its walkway begins (0.85 out from the frontage, 0.85 short of its
+// corner) in f's frame. Null at the edge of town (no face across, or not the city's).
+export function crossing(G: CityGraph, f: number, fwd: boolean): { to: number; a: number; n: number } | null {
+  const h = fwd ? G.faceAcross(f) : faceBehind(G, f);
+  if (!faceInCity(G, h)) return null;
+  const q = G.facePt(h, fwd ? G.faceA0(h) - 0.85 : G.faceA1(h) + 0.85, -0.85, _gb), [a, n] = toFaceLine(G, f, q.x, q.z, fwd);
+  return { to: h, a, n };
+}
+// The signal for walking on along f's street over that crosswalk: the node, and the phase of
+// the traffic going the same way.
+export function crossSignal(G: CityGraph, f: number, fwd: boolean): { node: CNode; phase: number } {
+  const node = G.nodes[fwd ? G.dedgeTo(f) : G.dedgeFrom(f)];
+  return { node, phase: node.phaseOf[G.armIndexIn(fwd ? f : f ^ 1)] };
+}
+
+interface VFrame { f: number; ox: number; oz: number; fx: number; fz: number; rx: number; rz: number; h0: number; a0: number }
+// A face's frame, with the heading (and a straight frame for toFront) taken at `aRef` along it.
+function frameOfFace(f: number, aRef?: number): VFrame {
+  const G = graph(), a0 = aRef ?? G.faceLen(f) / 2, p = G.facePt(f, a0, 0, _ga), h0 = p.h;
+  return { f, ox: p.x, oz: p.z, fx: Math.cos(h0), fz: -Math.sin(h0), rx: Math.sin(h0), rz: Math.cos(h0), h0, a0 };
+}
+const frameOf = (bx: number, bz: number, side: number, aRef?: number) => frameOfFace(sideFace(graph(), bx, bz, side), aRef);
+const P = (f: VFrame, a: number, n: number): [number, number] => { const p = graph().facePt(f.f, a, n, _ga); return [p.x, p.z]; };
+const toFront = (f: VFrame, x: number, z: number): [number, number] => [f.a0 + (x - f.ox) * f.fx + (z - f.oz) * f.fz, (x - f.ox) * f.rx + (z - f.oz) * f.rz];
 // Yaws: along +a, towards the street (-n), towards the buildings (+n).
 const along = (f: VFrame, dir = 1) => (dir > 0 ? f.h0 : f.h0 + Math.PI);
 const toStreet = (f: VFrame) => f.h0 + Math.PI / 2;
@@ -121,12 +184,16 @@ const city = (d: District, ...ok: District[]) => ok.includes(d);
 
 // A free stretch of pavement on a block side: a in [a0, a1] (searched), the rect (len along,
 // n0..n1 across) clear of furniture, other vignettes, crowd fixtures and anything the site uses.
-function freeSpot(V: Vignettes, c: Ctx, bx: number, bz: number, side: number, len: number, n0: number, n1: number, r: () => number, a0 = 13, a1 = 47): number | null {
+// (By default a in the frontage's usable stretch, 4 m clear of the corners: on the old grid 13..47.)
+function freeSpot(V: Vignettes, c: Ctx, bx: number, bz: number, side: number, len: number, n0: number, n1: number, r: () => number, a0?: number, a1?: number): number | null {
   if (!sideOk(c, bx, bz, side)) return null;
-  const f = frameOf(bx, bz, side), obs = pavementObstacles(c.plan, bx, bz);
+  const sp = spanOf(bx, bz, side);
+  a0 ??= sp.a0 + 4; a1 ??= sp.a1 - 4;
+  const obs = pavementObstacles(c.plan, bx, bz);
   for (let k = 0; k < 8; k++) {
     const a = a0 + len / 2 + r() * Math.max(0, a1 - a0 - len);
     let ok = true;
+    const f = frameOf(bx, bz, side, a);
     for (const o of obs) {
       const [oa, on] = toFront(f, o.x, o.z);
       if (oa + o.r > a - len / 2 - 0.3 && oa - o.r < a + len / 2 + 0.3 && on + o.r > n0 && on - o.r < n1) { ok = false; break; }
@@ -138,30 +205,33 @@ function freeSpot(V: Vignettes, c: Ctx, bx: number, bz: number, side: number, le
 }
 // A side the street life may use: not where the truck stops, docks or parks.
 function sideOk(c: Ctx, bx: number, bz: number, side: number) {
-  if (!insideCity(bx, bz) || c.busy.has(`${bx},${bz}`)) return false;
+  if (!c.plan.blockOf(bx, bz)?.inCity || c.busy.has(`${bx},${bz}`) || sideFace(c.plan.graph, bx, bz, side) < 0) return false;
   const site = siteLayout(c.plan, bx, bz);
   return site.kind === "kerb" || site.side !== side;
 }
-// Furniture of a kind (PK) on a block side, as frontage (a, n), within a in [13, 47].
+// Furniture of a kind (PK) on a block side, as frontage (a, n), 4 m clear of the corners.
 function furniture(c: Ctx, bx: number, bz: number, side: number, kind: number, V: Vignettes, len = 4): [number, number][] {
   if (!sideOk(c, bx, bz, side)) return [];
-  const f = frameOf(bx, bz, side), out: [number, number][] = [];
+  const G = c.plan.graph, fc = sideFace(G, bx, bz, side), sp = faceSpan(G, fc), out: [number, number][] = [];
   for (const o of pavementObstacles(c.plan, bx, bz)) {
     if (o.kind !== kind) continue;
-    const [a, n] = toFront(f, o.x, o.z);
-    if (a > 13 && a < 47 && n < -1.5 && n > -3 && !V.clashes(bx, bz, side, a - len, a + len, -3, 0)) out.push([a, n]);
+    const [a, n] = G.toFace(fc, o.x, o.z);
+    if (a > sp.a0 + 4 && a < sp.a1 - 4 && n < -1.5 && n > -sp.kerb && !V.clashes(bx, bz, side, a - len, a + len, -sp.kerb, 0)) out.push([a, n]);
   }
   return out;
 }
 // Move the vignette to a block nearby (within two) whose facility is one of `facs`, on a side
 // whose door it can use; false when there is none.
+// (The blocks tried: those anchored in the 5 x 5 map tiles round the vignette's own, row by row.)
 function nearFacility(c: Ctx, v: Vig, facs: string[], V: Vignettes, r: () => number): KerbDoorLike | null {
-  const bx0 = v.bx, bz0 = v.bz;
-  for (let k = 0; k < 25; k++) {
-    const bx = bx0 + ((k % 5) - 2), bz = bz0 + (Math.floor(k / 5) - 2), side = (v.side + Math.floor(r() * 4)) % 4;
-    if (!insideCity(bx, bz) || !facs.includes(facilityAt(c.plan, bx, bz) as string) || !sideOk(c, bx, bz, side)) continue;
-    const door = kerbDoors(c.plan, bx, bz)[side];
-    if (!door || door.y !== undefined || door.a < 16 || door.a > 44 || V.clashes(bx, bz, side, door.a - 6, door.a + 6, -2.5, 0)) continue;
+  const G = c.plan.graph, b0 = G.block(v.bx, v.bz);
+  if (!b0) return null;
+  const gx = Math.floor(b0.cx / TILE), gz = Math.floor(b0.cz / TILE);
+  for (let k = 0; k < 25; k++) for (const id of G.tile(gx + (k % 5) - 2, gz + Math.floor(k / 5) - 2).blocks) {
+    const B = G.blocks[id], bx = B.kx, bz = B.kz, nf = B.sides.length, side = (v.side + Math.floor(r() * nf)) % nf;
+    if (!B.inCity || !facs.includes(facilityAt(c.plan, bx, bz) as string) || !sideOk(c, bx, bz, side)) continue;
+    const door = kerbDoors(c.plan, bx, bz)[side], sp = faceSpan(G, B.sides[side]);
+    if (!door || door.y !== undefined || door.a < sp.a0 + 7 || door.a > sp.a1 - 7 || V.clashes(bx, bz, side, door.a - 6, door.a + 6, -2.5, 0)) continue;
     v.bx = bx; v.bz = bz; v.side = side;
     return door;
   }
@@ -230,7 +300,7 @@ const K: Record<VK, Kind> = {
       if (v.t > 21) { const cs = castAt(v, 0); release(v, 0, V, { a: v.a + walkU(v.t, 1.2, 20), n: -0.95, dir: 1, ...cs, dog: v.c[4] }); }
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), cs = castAt(v, 0), dc = v.c[4], S = v.c[5];
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), dc = v.c[4], S = v.c[5];
       peeSign(F, f, v.a, v.n);
       const pee = ramp(t, 13, 17.5);
       if (pee > 0) { const [x, z] = P(f, v.a + 0.05, -2.15); F.box(x, Y0 + 0.006, z, 0.25 + pee * 0.25, 0.006, 0.22 + pee * 0.2, f.h0, 0, 0xd8c040); }
@@ -264,7 +334,8 @@ const K: Record<VK, Kind> = {
     w: (d, c) => (city(d, "residential", "park", "commercial") && !wet(c) && day(c, 7, 19) ? 1 : 0), trigger: 0,
     place(v, c, r, V) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
-      v.a = 14 + r() * 20; v.n = -1.2; cast(r, v.c);
+      const sp = spanOf(v.bx, v.bz, v.side);
+      v.a = sp.a0 + 5 + r() * Math.max(0, sp.a1 - sp.a0 - 22); v.n = -1.2; cast(r, v.c);
       const n = 5 + Math.floor(r() * 3);
       for (let i = 0; i < n; i++) v.c.push(pick(r, DOGS), 0.65 + r() * 1.3, (i / (n - 1) - 0.5) * 2.1 + (r() - 0.5) * 0.3, 1.5 + r() * 1.6, r() * 10);
       v.st = [0, v.a]; v.pst = [0, v.a];
@@ -273,13 +344,10 @@ const K: Record<VK, Kind> = {
     step(v) {
       const t = v.t, drag = dragAt(t), sp = drag > 0 ? lerp(1.25, 3.4, drag) : 1.25;
       v.st[1] += sp * SIM_DT;
-      if (v.st[1] > 51 - v.n) {   // round the corner, clockwise
-        v.side = V_NEXT_SIDE[v.side]; v.st[1] = 9 + v.n + (v.st[1] - (51 - v.n));
-        v.pst = v.st.slice();
-      }
+      roundCorner(v);
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), a = D.st[1], cs = castAt(v, 0), drag = dragAt(t);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), a = D.st[1], cs = castAt(v, 0), drag = dragAt(t);
       const [x, z] = P(f, a, v.n), yaw = along(f), w = walkSwing(t * lerp(1.25, 0.2, drag));
       // Leaning back, arms out in front; dragged, the heels go out in front too.
       F.person({ x, z, yaw, y: Y0 + w.bob * (1 - drag), legs: drag > 0.3 ? [0.45, 0.25] : w.legs, lean: lerp(-0.18, -0.5, drag), arms: [1.05 + drag * 0.35, 1.0 + drag * 0.35], armOut: [0.1, 0.1], ...cs, turn: Math.sin(t * 0.7) * 0.3 });
@@ -311,7 +379,7 @@ const K: Record<VK, Kind> = {
     },
     step(v, c, V) { if (v.t > 25) release(v, 0, V, { a: v.a + v.c[4] * (2 + (v.t - 18) * 1.2), n: -0.95, dir: v.c[4] > 0 ? 1 : -1, ...castAt(v, 0) }); },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), s = v.c[4], seatN = v.n + 0.1, backN = v.n + 0.33;   // (the bench faces the street: its back on the building side)
+      const f = frameOf(v.bx, v.bz, v.side, v.a), s = v.c[4], seatN = v.n + 0.1, backN = v.n + 0.33;   // (the bench faces the street: its back on the building side)
       // The fresh coat, a little proud of the bench underneath, the sign, the can and brush.
       { let [x, z] = P(f, v.a, seatN); F.box(x, Y0 + 0.45, z, 1.84, 0.11, 0.47, f.h0, 0, PAINT);
         [x, z] = P(f, v.a, backN); F.box(x, Y0 + 0.75, z, 1.84, 0.42, 0.07, f.h0, 0, PAINT);
@@ -382,13 +450,13 @@ const K: Record<VK, Kind> = {
     step(v, c) {
       // Flushed by anyone close (a runner from further off), or by the truck; back after 9 s.
       if (v.st[0] === 0) {
-        const f = frameOf(v.bx, v.bz, v.side), [cx, cz] = P(f, v.a, v.n - 0.5);
+        const f = frameOf(v.bx, v.bz, v.side, v.a), [cx, cz] = P(f, v.a, v.n - 0.5);
         const near = c.peds.some((p) => Math.hypot(p.x - cx, p.z - cz) < (p.run ? 3.6 : 1.9)) || c.truck.some((o) => Math.hypot(o.x - cx, o.z - cz) < o.r + 2.5);
         if (near) { v.st[0] = 1; v.st[1] = v.t; }
       } else if (v.t - v.st[1] > 9) v.st[0] = 0;
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), cs = castAt(v, 0);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0);
       const [x, z] = P(f, v.a + 0.3, v.n + 0.17), toss = Math.max(0, Math.sin((t % 4.5) / 4.5 * Math.PI * 2 - 1.2));
       F.person({ x, z, yaw: toStreet(f), ...sitting(0.5), lean: 0.32, arms: [0.5, 0.5 + toss * 1.1], fore: [1.3, 0.8 + toss * 1.2], foreOut: [-0.5, 0.2], nod: 0.35, ...cs });
       { const [bx, bz] = P(f, v.a - 0.35, v.n + 0.12); F.box(bx, Y0 + 0.56, bz, 0.2, 0.14, 0.12, f.h0, 0, 0xe8dcc0); }   // the bag of crumbs
@@ -416,13 +484,14 @@ const K: Record<VK, Kind> = {
     w: (d, c) => (d !== "industrial" && c.w.rain > 0.3 ? 2.5 : 0), trigger: 45,
     place(v, c, r) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
-      v.a = 20 + r() * 12; v.n = -0.95; cast(r, v.c); v.c.push(pick(r, UMBRELLAS));
+      const sp = spanOf(v.bx, v.bz, v.side);
+      v.a = sp.mid - 10 + r() * 12; v.n = -0.95; cast(r, v.c); v.c.push(pick(r, UMBRELLAS));
       return true;
     },
     step(v, c, V) { if (v.t > 16) release(v, 0, V, { a: v.a - 10 + umbU(16), n: v.n, dir: 1, ...castAt(v, 0), umbrella: v.c[4] }); },
     draw(v, F, t) {
       if (v.rel & 1) return;
-      const f = frameOf(v.bx, v.bz, v.side), cs = castAt(v, 0), u = umbU(t), flip = ramp(t, 8, 8.25) * (1 - ramp(t, 11.2, 11.45));
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), u = umbU(t), flip = ramp(t, 8, 8.25) * (1 - ramp(t, 11.2, 11.45));
       const fight = t > 8 && t < 11.4, stagger = fight ? Math.sin((t - 8) * 3.1) * 0.35 : 0;
       const [x, z] = P(f, v.a - 10 + u, v.n + stagger * 0.4), w = walkSwing(u), moving = t < 8 || t > 11.4;
       const jerk = fight ? Math.sin((t - 8) * 9) * 0.25 : 0;
@@ -448,7 +517,7 @@ const K: Record<VK, Kind> = {
       if (v.t > 17) release(v, 2, V, { a: v.a + 3.9 - (v.t - 14.5) * 1.2 - 1.3, n: -1.0, dir: -1, ...castAt(v, 2), dog: v.c[13] });
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side);
+      const f = frameOf(v.bx, v.bz, v.side, v.a);
       // The cart and its striped umbrella; the vendor behind it on the kerb side.
       { const [x, z] = P(f, v.a, v.n);
         F.box(x, Y0 + 0.55, z, 1.5, 0.8, 0.85, f.h0, 0, 0xf6f2ec); F.box(x, Y0 + 0.97, z, 1.52, 0.06, 0.87, f.h0, 0, 0xff8fb0);
@@ -505,7 +574,7 @@ const K: Record<VK, Kind> = {
       if (v.t > 24) release(v, 0, V, { a: v.a + v.c[4] * (v.t - 18) * 1.1, n: -1.0, dir: v.c[4] > 0 ? 1 : -1, ...castAt(v, 0), hat: 0x1f2f55 });
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), s = v.c[4], cs = castAt(v, 0);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), s = v.c[4], cs = castAt(v, 0);
       if (t > 17.6 && D.st[1]) { const [x, z] = P(f, v.a, -3.32); F.box(x, Y0 + 1.75, z, 0.18, 0.1, 0.012, f.h0, 0.15, 0xfff2a0); }
       if (v.rel & 1) return;
       let body: Body;
@@ -531,7 +600,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), done = ramp(t, 2, 20);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), done = ramp(t, 2, 20);
       // Hopscotch: 1, 2, 3-4, 5, 6-7, 8 along a, then a sun beside it; drawn stroke by stroke.
       const cells: [number, number][] = [[0, 0], [0.55, 0], [1.1, -0.28], [1.1, 0.28], [1.65, 0], [2.2, -0.28], [2.2, 0.28], [2.75, 0]];
       const strokes = Math.floor(done * (cells.length * 4 + 12));
@@ -567,19 +636,21 @@ const K: Record<VK, Kind> = {
     w: (d, c) => (d === "downtown" && !wet(c) && day(c, 8, 17) && c.w.storm < 0.5 ? 1.3 : 0), trigger: 0,
     place(v, c, r, V) {
       if (c.plan.downtownHeight(v.bx, v.bz) < 0.4) return false;   // towers, not a plaza's edge
-      const a = freeSpot(V, c, v.bx, v.bz, v.side, 4, -0.8, 0, r, 15, 45);
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 4, -0.8, 0, r, sp.a0 + 6, sp.a1 - 6);
       if (a === null) return false;
       v.a = a; v.n = 0; cast(r, v.c); cast(r, v.c);
       return true;
     },
     draw(v, F, t) {
       // The wall: a tower's face across the pavement (or a plaza), near the spot or round the block.
-      let f = frameOf(v.bx, v.bz, v.side), A = v.a, wallN = 99, top = 0;
-      search: for (let k = 0; k < 4; k++) {
-        const ff = frameOf(v.bx, v.bz, (v.side + k) % 4);
+      const B = graph().block(v.bx, v.bz)!, nf = B.sides.length;
+      let f = frameOf(v.bx, v.bz, v.side, v.a), A = v.a, wallN = 99, top = 0;
+      search: for (let k = 0; k < nf; k++) {
+        const fc = B.sides[(v.side + k) % nf], sp = faceSpan(graph(), fc);
         for (const da of [0, 5, -5, 10, -10, 15, -15]) {
-          const a = k === 0 ? v.a + da : 30 + da;
-          if (a < 14 || a > 46) continue;
+          const a = k === 0 ? v.a + da : sp.mid + da;
+          if (a < sp.a0 + 5 || a > sp.a1 - 5) continue;
+          const ff = frameOfFace(fc, a);
           // (Across open ground, a plaza, to the first thing that stands: a tower, or give up.)
           for (let n = -0.5; n <= 34; n += 0.5) {
             let hmin = Infinity, hmax = 0;
@@ -590,7 +661,7 @@ const K: Record<VK, Kind> = {
         }
       }
       if (wallN > 50) return;
-      washSeen[2] = (v.side + 0) % 4; washSeen[3] = A; washSeen[4] = f.h0;
+      washSeen[2] = v.side; washSeen[3] = A; washSeen[4] = f.h0;
       const lo = 4.5, hi = top - 2.5, span = hi - lo, down = span / 0.12, upT = span / 0.5, cyc = (t + Math.max(0, hi - 12) / 0.12) % (down + upT + 20);
       const y = cyc < down ? hi - cyc * 0.12 : cyc < down + 10 ? lo : cyc < down + 10 + upT ? lo + (cyc - down - 10) * 0.5 : hi;
       const yaw = toBldg(f), wn = wallN - 0.7;
@@ -617,7 +688,7 @@ const K: Record<VK, Kind> = {
   foodTruck: {
     w: (d, c) => (d === "park" && !c.snow && day(c, 10, 20) && c.w.storm < 0.5 ? 2.2 : 0), trigger: 0,
     place(v, c, r, V) {
-      const a = freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, 12, 26) ?? freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, 34, 48);
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, sp.a0 + 3, sp.mid - 4) ?? freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, sp.mid + 4, sp.a1 - 3);
       if (a === null) return false;
       v.a = a; v.n = 1.7;
       v.c.push(pick(r, [0x16a085, 0xe67e22, 0xc0392b, 0x2e86c1, 0xf1c40f, 0x8e44ad]), c.hour >= 11.5 && c.hour < 13.8 ? 6 + Math.floor(r() * 3) : 2 + Math.floor(r() * 3), r() < 0.5 ? 1 : -1, 0);
@@ -633,7 +704,7 @@ const K: Record<VK, Kind> = {
       }
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), col = v.c[0], L = v.c[1], s = v.c[2];
+      const f = frameOf(v.bx, v.bz, v.side, v.a), col = v.c[0], L = v.c[1], s = v.c[2];
       const [x, z] = P(f, v.a, v.n);
       // Body, cab, wheels, the hatch and its awning, a menu board, the cook in the window.
       F.box(x, 0.95 + Y0 + 0.35, z, 5.0, 2.3, 2.2, f.h0, 0, col);
@@ -670,39 +741,51 @@ const K: Record<VK, Kind> = {
   courier: {
     w: (d, c) => (d !== "industrial" && c.hour >= 7 && c.hour < 23 && !c.snow ? 1.3 : 0), trigger: 0,
     place(v, c, r) {
-      // A street heading past the truck: start a block or so off, pointed its way.
-      const ix = Math.round((c.focus.x - STREET / 2) / BLOCK), iz = Math.round((c.focus.z - STREET / 2) / BLOCK);
-      const d = Math.floor(r() * 4), back = 1 + Math.floor(r() * 2), sx = ix - DIR_X[d] * back, sz = iz - DIR_Z[d] * back;
-      if (!insideCity(sx, sz) || !insideCity(sx + DIR_X[d], sz + DIR_Z[d])) return false;
-      if (c.plan.freewayStreet(d % 2, Math.min(sx, sx + DIR_X[d]), Math.min(sz, sz + DIR_Z[d]))) return false;
-      const x = nodeX(sx) + DIR_X[d] * 9, z = nodeZ(sz) + DIR_Z[d] * 9, h = d * Math.PI / 2;
-      v.st = [0, x, z, h, 5, sx, sz, d, 9]; v.pst = v.st.slice();   // [_, x, z, h, v, node ix, iz, dir, s along]
+      // A street heading past the truck: from the node nearest it, a street or two back along
+      // one of its arms (straight on through the nodes between), pointed its way.
+      const G = c.plan.graph, N = nearestNode(G, c.focus.x, c.focus.z);
+      if (!N) return false;
+      const arm = N.arms[Math.floor(r() * N.arms.length)], back = 1 + Math.floor(r() * 2);
+      let e = arm.street * 2 + arm.end;   // (away from N: the courier comes the other way)
+      for (let k = 1; k < back && e >= 0; k++) e = G.faceAcross(e);
+      if (e < 0) return false;
+      const d = e ^ 1, st = G.streets[d >> 1];
+      if (!st.inCity || !G.streets[arm.street].inCity) return false;
+      if (st.tags.freeway || freewayGrid(c.plan, d >> 1)) return false;
+      const s = G.faceA0(d), p = G.facePt(d, s, -st.half, _ga);
+      v.st = [0, p.x, p.z, p.h, 5, d, 0, 0, s]; v.pst = v.st.slice();   // [_, x, z, h, v, dedge, -, -, s along]
       v.c.push(pick(r, [0x27ae60, 0xff5722, 0xf1c40f, 0x00bcd4]), pick(r, PANTS), pick(r, SKINS), pick(r, HAIRS), pick(r, [0x2ecc71, 0xff7a1a, 0xe91e63, 0x1abc9c]));
       return true;
     },
     step(v, c) {
-      const S = v.st, d = S[7];
-      let ix = S[5], iz = S[6], s = S[8], sp = S[4];
+      const S = v.st, G = c.plan.graph;
+      let d = S[5], s = S[8], sp = S[4];
       // Anything just ahead in its line: brake.
-      const fx = DIR_X[d], fz = DIR_Z[d], x = S[1], z = S[2];
+      const fx = Math.cos(S[3]), fz = -Math.sin(S[3]), x = S[1], z = S[2];
       let gap = Infinity;
       const scan = (o: { x: number; z: number; r?: number }) => { const dx = o.x - x, dz = o.z - z, al = dx * fx + dz * fz, lat = Math.abs(-dx * fz + dz * fx); if (al > 0 && al < 12 && lat < (o.r ?? 0.4) + 0.75) gap = Math.min(gap, al - (o.r ?? 0.4)); };
       for (const o of c.truck) scan(o); for (const o of c.cars) scan(o); for (const p of c.peds) scan(p);
-      // The light at the next node, for this axis.
-      const nx = ix + fx, nz = iz + fz, stopAt = BLOCK - 9 - 2.5;
-      if (s < stopAt + 0.5 && insideCity(nx, nz)) {
-        const sig = signalState(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs);
-        const justRed = sig === "red" && signalState(nx, nz, (d % 2) as SignalAxis, c.simTime - 0.5, c.plan.seed, c.prs) !== "red";
+      // The light at the next node, for its approach.
+      const N = G.nodes[G.dedgeTo(d)], phase = N.phaseOf[G.armIndexIn(d)], stopAt = G.faceA1(d) - 2.5;
+      if (s < stopAt + 0.5) {
+        const sig = signalState(N, phase, c.simTime, c.plan.seed, c.prs);
+        const justRed = sig === "red" && signalState(N, phase, c.simTime - 0.5, c.plan.seed, c.prs) !== "red";
         if (!(sig === "green" || sig === "yellow" || justRed)) gap = Math.min(gap, stopAt - s);
       }
       const want = Math.max(0, Math.min(6.5, (gap - 1.5) * 1.6));
       sp += Math.max(-6 * SIM_DT, Math.min(2.5 * SIM_DT, want - sp));
       s += sp * SIM_DT;
-      if (s >= BLOCK) { s -= BLOCK; ix = nx; iz = nz; }
+      // On through the node, straight on; at the edge of town (no street on, or not the city's):
+      // gone (far off).
+      if (s >= G.faceLen(d)) {
+        const e = G.faceAcross(d);
+        if (e < 0 || !G.streets[e >> 1].inCity) { S[0] = 1; S[4] = sp; S[8] = s; return; }
+        s -= G.faceLen(d); d = e;
+      }
       const off = 2.9 + Math.sin(v.t * 0.8) * 0.15;   // right of travel, between the lanes
-      S[1] = nodeX(ix) + fx * s + Math.sin(d * Math.PI / 2) * off; S[2] = nodeZ(iz) + fz * s + Math.cos(d * Math.PI / 2) * off;
-      S[4] = sp; S[5] = ix; S[6] = iz; S[8] = s;
-      if (!insideCity(ix + fx, iz + fz) || !insideCity(ix, iz)) S[0] = 1;   // the edge of town: gone (far off)
+      const p = G.facePt(d, s, -G.streets[d >> 1].half + off, _ga);
+      S[1] = p.x; S[2] = p.z; S[3] += angleDiff(p.h - S[3]);   // (unwrapped: blended smoothly)
+      S[4] = sp; S[5] = d; S[8] = s;
     },
     draw(v, F, t, D) {
       const S = D.st, x = S[1], z = S[2], h = S[3], fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
@@ -729,13 +812,14 @@ const K: Record<VK, Kind> = {
     place(v, c, r, V) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
       const door = kerbDoors(c.plan, v.bx, v.bz)[v.side];
-      if (!door || door.y !== undefined || door.a < 14 || door.a > 46 || V.clashes(v.bx, v.bz, v.side, door.a - 3, door.a + 3, -2.5, 0)) return false;
+      const sp = spanOf(v.bx, v.bz, v.side);
+      if (!door || door.y !== undefined || door.a < sp.a0 + 5 || door.a > sp.a1 - 5 || V.clashes(v.bx, v.bz, v.side, door.a - 3, door.a + 3, -2.5, 0)) return false;
       v.a = door.a; v.n = door.n; cast(r, v.c); cast(r, v.c);
       v.c.push(pick(r, [0xc89a2a, 0x2a7a7a, 0x7a4a2a, 0x8a2a3a, 0x4a5a8a]), door.half, door.h, door.frame);
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), col = v.c[8], half = v.c[9], dh = v.c[10];
+      const f = frameOf(v.bx, v.bz, v.side, v.a), col = v.c[8], half = v.c[9], dh = v.c[10];
       { const [x, z] = P(f, v.a, v.n - 0.02); F.box(x, Y0 + dh / 2, z, 2 * half + 0.16, dh + 0.08, 0.04, f.h0, 0, v.c[11]); F.box(x, Y0 + dh / 2, z - 0, 2 * half, dh, 0.05, f.h0, 0, 0x1a1410); }
       // The couch: half in, swinging and tipping as they try every angle.
       const cyc = t % 14, tw = Math.sin(cyc / 14 * Math.PI * 2) * 0.35, tip = Math.max(0, Math.sin(cyc / 14 * Math.PI * 4)) * 0.55;
@@ -770,7 +854,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side);
+      const f = frameOf(v.bx, v.bz, v.side, v.a);
       { const [x, z] = P(f, v.a, v.n); F.box(x, Y0 + 0.004, z, 1.0, 0.012, 0.75, f.h0, 0, 0x0a0a0a);
         const [lx, lz] = P(f, v.a + 0.62, v.n); F.box(lx, Y0 + 0.36, lz, 0.06, 0.75, 0.75, f.h0, 0.25, 0x5a5c5e); }
       for (const [ca, cn] of [[-1.1, -2.75], [1.1, -2.75], [-1.1, -1.1], [1.1, -1.1]] as const) {
@@ -795,48 +879,53 @@ const K: Record<VK, Kind> = {
     w: (d, c) => (city(d, "residential", "commercial") && ((c.hour >= 7.4 && c.hour < 8.9) || (c.hour >= 14.6 && c.hour < 15.9)) ? 4 : 0), trigger: 0,
     place(v, c, r) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
-      const fd = FRONT_NODE[v.side][2];
-      if (!insideCity(v.bx + DIR_X[fd], v.bz + DIR_Z[fd])) return false;
-      v.a = 50.6; v.n = -2.3; cast(r, v.c);
+      const G = c.plan.graph, f = sideFace(G, v.bx, v.bz, v.side);
+      if (!crossing(G, f, true)) return false;   // (the edge of town: nowhere to cross to)
+      v.a = G.faceA1(f) - 0.4; v.n = -2.3; cast(r, v.c);
       v.st = [0, 0, 0]; v.pst = [0, 0, 0];   // [phase 0 gather, 1 crossing; phase start t, group number]
       return true;
     },
     step(v, c, V) {
       const S = v.st, ph = S[0], since = v.t - S[1];
+      const G = c.plan.graph, fc = sideFace(G, v.bx, v.bz, v.side);
       if (ph === 0) {
-        const g = blockGoals(v.bx, v.bz, 0)[v.side], d = g.dir, nx = g.ix + DIR_X[d], nz = g.iz + DIR_Z[d];
-        const green = signalState(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs) === "green" && signalGreenLeft(nx, nz, (d % 2) as SignalAxis, c.simTime, c.plan.seed, c.prs) > 8.5;
-        const f = frameOf(v.bx, v.bz, v.side), [cx, cz] = P(f, 60, 1.7);
+        const { node, phase } = crossSignal(G, fc, true);
+        const green = signalState(node, phase, c.simTime, c.plan.seed, c.prs) === "green" && signalGreenLeft(node, phase, c.simTime, c.plan.seed, c.prs) > 8.5;
+        const f = frameOf(v.bx, v.bz, v.side, v.a), [cx, cz] = P(f, G.faceLen(fc), 1.7);
         const clear = c.truck.every((o) => Math.hypot(o.x - cx, o.z - cz) > o.r + 10);
         if (since > 12 && green && clear) { S[0] = 1; S[1] = v.t; }
       } else if (since > 14) {
         // Across: the children walk on along the next block (in the crosswalk's frame, as the crowd does).
-        const fd = FRONT_NODE[v.side][2], g = S[2];
-        for (let i = 0; i < guardKids(v, g); i++) {
-          const cs = extra(v, g * 10 + i);
-          V.adopt?.({ bx: v.bx + DIR_X[fd], bz: v.bz + DIR_Z[fd], side: v.side, a: 11 + i * 0.7, n: -0.75 - (i % 2) * 0.4, dir: 1, ...cs, s: 0.58 + (i % 3) * 0.04, speed: 1.3 });
+        const g = S[2], cr = crossing(G, fc, true);
+        if (cr) {
+          const to = faceRef(G, cr.to), a0 = G.faceA0(cr.to);
+          for (let i = 0; i < guardKids(v, g); i++) {
+            const cs = extra(v, g * 10 + i);
+            V.adopt?.({ ...to, a: a0 + 2 + i * 0.7, n: -0.75 - (i % 2) * 0.4, dir: 1, ...cs, s: 0.58 + (i % 3) * 0.04, speed: 1.3 });
+          }
         }
         S[0] = 0; S[1] = v.t; S[2] = g + 1;
       }
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), S = D.st, ph = S[0], since = t - S[1], g = S[2];
-      const kids = guardKids(v, g), crossA = BLOCK + 9 - 0.85, mid = (51 + crossA) / 2;
+      const f = frameOf(v.bx, v.bz, v.side, v.a), S = D.st, ph = S[0], since = t - S[1], g = S[2];
+      const G = graph(), fc = f.f, A1 = G.faceA1(fc), cr = guardCross(G, fc);
+      const kids = guardKids(v, g), crossA = cr[0], crossN = cr[1], mid = (A1 + crossA) / 2;
       // The guard: at the kerb; out to the middle of the crosswalk, sign up; back.
       let ga: number, gn: number, up = 0, moving = false;
-      if (ph === 0) { ga = 50.3; gn = -2.5; }
-      else { const out = vEase(ramp(since, 0, 2.2)), back = vEase(ramp(since, 11.5, 14)); ga = lerp(50.3, mid, out * (1 - back)); gn = lerp(-2.5, 3.0, out * (1 - back)); up = ramp(since, 1.5, 2.2) * (1 - ramp(since, 11, 11.5)); moving = (since < 2.2) || (since > 11.5 && since < 14); }
+      if (ph === 0) { ga = A1 - 0.7; gn = -2.5; }
+      else { const out = vEase(ramp(since, 0, 2.2)), back = vEase(ramp(since, 11.5, 14)); ga = lerp(A1 - 0.7, mid, out * (1 - back)); gn = lerp(-2.5, 3.0, out * (1 - back)); up = ramp(since, 1.5, 2.2) * (1 - ramp(since, 11, 11.5)); moving = (since < 2.2) || (since > 11.5 && since < 14); }
       const [gx, gz] = P(f, ga, gn), w = walkSwing(t * 1.2);
       F.person({ x: gx, z: gz, yaw: up > 0.5 ? toStreet(f) : ph === 1 && since > 11.5 ? along(f, -1) : along(f), y: (gn > -0.1 ? 0.02 : Y0) + (moving ? w.bob : 0), legs: moving ? w.legs : [0, 0], arms: [moving ? w.arms[0] : 0.1, lerp(0.3, 2.9, up)], armOut: [0, 0.2], shirt: 0xd8f020, pants: 0x1f2a44, skin: v.c[2], hair: v.c[3], hat: 0xffffff });
       { const h = F.handR; F.seg(h[0], h[1] - 0.1, h[2], h[0], h[1] + 0.85, h[2], 0.04, 0xcccccc); F.box(h[0], h[1] + 1.05, h[2], 0.4, 0.4, 0.04, toStreet(f) + Math.PI / 2, 0, 0xd0202a); F.box(h[0], h[1] + 1.05, h[2], 0.42, 0.12, 0.03, toStreet(f) + Math.PI / 2, 0, 0xffffff); F.box(h[0], h[1] + 1.05, h[2], 0.3, 0.42, 0.045, toStreet(f) + Math.PI / 2, 0, 0xd0202a); }
       // The children: arriving along the pavement and waiting; then across in a line.
       for (let i = 0; i < kids; i++) {
-        const cs = extra(v, g * 10 + i), s = 0.58 + (i % 3) * 0.04, waitA = 48.8 - i * 0.75, waitN = -1.2 - (i % 2) * 0.55;
+        const cs = extra(v, g * 10 + i), s = 0.58 + (i % 3) * 0.04, waitA = A1 - 2.2 - i * 0.75, waitN = -1.2 - (i % 2) * 0.55;
         let a: number, n: number, mv = false, yaw = along(f);
         if (ph === 0) { const arr = ramp(since, i * 1.6, i * 1.6 + 8); a = lerp(waitA - 12, waitA, arr); n = waitN; mv = arr > 0 && arr < 1; if (arr <= 0) continue; }
-        else { const go = Math.max(0, since - 2.4 - i * 0.55) * 1.8, path = (crossA - waitA); a = waitA + Math.min(go, path + 1.5); n = go < 2 ? lerp(waitN, 1.7, vEase(go / 2)) : go > path - 1 ? lerp(1.7, -0.9, ramp(go, path - 1, path + 1)) : 1.7; mv = go > 0 && go < path + 1.5; }
+        else { const go = Math.max(0, since - 2.4 - i * 0.55) * 1.8, path = (crossA - waitA); a = waitA + Math.min(go, path + 1.5); n = go < 2 ? lerp(waitN, 1.7, vEase(go / 2)) : go > path - 1 ? lerp(1.7, crossN - 0.05, ramp(go, path - 1, path + 1)) : 1.7; mv = go > 0 && go < path + 1.5; }
         const [x, z] = P(f, a, n), ww = walkSwing(t * 1.6 + i);
-        F.person({ x, z, s, yaw, y: (a > 51.4 && a < crossA - 0.2 ? 0.02 : Y0) + (mv ? ww.bob : 0), legs: mv ? ww.legs : [0, 0], arms: mv ? ww.arms : [0.1, -0.1], turn: mv ? 0 : Math.sin(t * 0.8 + i) * 0.6, ...cs });
+        F.person({ x, z, s, yaw, y: (a > A1 + 0.4 && a < crossA - 0.2 ? 0.02 : Y0) + (mv ? ww.bob : 0), legs: mv ? ww.legs : [0, 0], arms: mv ? ww.arms : [0.1, -0.1], turn: mv ? 0 : Math.sin(t * 0.8 + i) * 0.6, ...cs });
         F.box(x - Math.cos(yaw) * 0.16 * s, Y0 + 1.15 * s + (mv ? ww.bob : 0), z + Math.sin(yaw) * 0.16 * s, 0.14, 0.32 * s, 0.3 * s, yaw, 0, pick(mulberry32(v.seed + i + g * 7), [0xd0202a, 0x2e86c1, 0xf1c40f, 0x8e44ad, 0x27ae60]));   // backpack
       }
     },
@@ -850,7 +939,7 @@ const K: Record<VK, Kind> = {
       const door = nearFacility(c, v, ["cafe"], V, r);
       if (!door) return false;
       v.a = door.a; v.n = door.n;
-      v.c.push(4 + Math.floor(r() * 3), door.a < 30 ? 1 : -1, door.half, door.h);
+      v.c.push(4 + Math.floor(r() * 3), door.a < spanOf(v.bx, v.bz, v.side).mid ? 1 : -1, door.half, door.h);
       return true;
     },
     step(v, c, V) {
@@ -858,7 +947,7 @@ const K: Record<VK, Kind> = {
       if (k > 0 && !(v.st[1] >= k)) { v.st[1] = k; const s = (-v.c[1]) as 1 | -1; V.adopt?.({ bx: v.bx, bz: v.bz, side: v.side, a: v.a + s * 1.5, n: -0.7, dir: s, ...extra(v, 1000 + k), cup: true }); }
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), L = v.c[0], s = v.c[1], half = v.c[2], dh = v.c[3];
+      const f = frameOf(v.bx, v.bz, v.side, v.a), L = v.c[0], s = v.c[1], half = v.c[2], dh = v.c[3];
       { const [x, z] = P(f, v.a, v.n - 0.02); F.box(x, Y0 + dh / 2, z, 2 * half, dh, 0.05, f.h0, 0, 0x2a1e14); }
       { const [x, z] = P(f, v.a - s * 2.6, -2.3); F.box(x, Y0 + 0.4, z, 0.06, 0.8, 0.55, f.h0, 0.18, 0x3a2a1e); F.box(x - 0.001, Y0 + 0.4, z, 0.065, 0.6, 0.45, f.h0, 0.18, 0x1a1a1a); for (const dy of [0.12, 0, -0.12]) F.box(x, Y0 + 0.4 + dy, z, 0.07, 0.04, 0.32, f.h0, 0.18, 0xf4f0d8); }
       // The queue: the front at the door, the rest along the building line; every 9 s the front
@@ -893,7 +982,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), sway = Math.sin(t * 0.8) * 0.06, kiss = vEase(ramp(t % 14, 9, 10)) * (1 - vEase(ramp(t % 14, 12, 13)));
+      const f = frameOf(v.bx, v.bz, v.side, v.a), sway = Math.sin(t * 0.8) * 0.06, kiss = vEase(ramp(t % 14, 9, 10)) * (1 - vEase(ramp(t % 14, 12, 13)));
       for (let i = 0; i < 2; i++) {
         const k = i ? 1 : -1, [x, z] = P(f, v.a + k * (0.3 - kiss * 0.08), v.n + sway);
         F.person({ x, z, yaw: along(f, -k), lean: kiss * 0.22, arms: [0.55, 0.3], armOut: [-0.25, 0.1], s: i ? 0.95 : 1, nod: kiss * -0.15, ...castAt(v, i) });
@@ -912,7 +1001,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), [x, z] = P(f, v.a, v.n);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = P(f, v.a, v.n);
       F.box(x, Y0 + 0.6, z, 1.7, 0.9, 1.0, f.h0, 0, 0xc8ccd0); F.box(x, Y0 + 1.06, z, 1.72, 0.04, 1.02, f.h0, 0, 0x2a7a3a);
       for (const k of [-0.65, 0.65]) { const [wx, wz] = P(f, v.a + k, v.n - 0.52); F.box(wx, Y0 + 0.2, wz, 0.38, 0.38, 0.06, f.h0, 0, 0x2a2a2a); }
       for (const k of [-0.8, 0.8]) { const [px, pz] = P(f, v.a + k, v.n); F.box(px, Y0 + 1.55, pz, 0.04, 0.95, 0.04, 0, 0, 0x8a8f94); }
@@ -940,11 +1029,11 @@ const K: Record<VK, Kind> = {
       const door = nearFacility(c, v, ["bar", "theater", "restaurant", "musicStore"], V, r);
       if (!door) return false;
       v.a = door.a; v.n = door.n; cast(r, v.c);
-      v.c.push(3 + Math.floor(r() * 3), door.a < 30 ? 1 : -1, door.half, door.h, pick(r, [0xff3a8c, 0x7a3aff, 0x3af2ff]));
+      v.c.push(3 + Math.floor(r() * 3), door.a < spanOf(v.bx, v.bz, v.side).mid ? 1 : -1, door.half, door.h, pick(r, [0xff3a8c, 0x7a3aff, 0x3af2ff]));
       return true;
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), L = v.c[4], s = v.c[5], half = v.c[6], dh = v.c[7];
+      const f = frameOf(v.bx, v.bz, v.side, v.a), L = v.c[4], s = v.c[5], half = v.c[6], dh = v.c[7];
       const [dx, dz] = P(f, v.a, v.n - 0.03);
       F.box(dx, Y0 + dh / 2, dz, 2 * half + 0.1, dh + 0.06, 0.04, f.h0, 0, 0x111111);
       F.glow(dx, Y0 + dh / 2, dz, 2 * half - 0.1, dh - 0.1, 0.045, f.h0, D.night ? v.c[8] : 0x553044);
@@ -982,17 +1071,18 @@ const K: Record<VK, Kind> = {
     w: (d, c) => (city(d, "residential", "park") && c.snow && day(c, 8, 18) ? 2 : 0), trigger: 0,
     place(v, c, r) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
-      v.a = 14 + r() * 20; v.n = -1.1; cast(r, v.c); cast(r, v.c);
+      const sp = spanOf(v.bx, v.bz, v.side);
+      v.a = sp.a0 + 5 + r() * Math.max(0, sp.a1 - sp.a0 - 22); v.n = -1.1; cast(r, v.c); cast(r, v.c);
       v.c[4] = pick(r, [0xd0202a, 0x2e86c1, 0xff7a1a, 0x8e44ad]);
       v.st = [0, v.a]; v.pst = [0, v.a];
       return true;
     },
     step(v) {
       v.st[1] += 1.05 * SIM_DT;
-      if (v.st[1] > 51 - v.n) { v.side = V_NEXT_SIDE[v.side]; v.st[1] = 9 + v.n + (v.st[1] - (51 - v.n)); v.pst = v.st.slice(); }
+      roundCorner(v);
     },
     draw(v, F, t, D) {
-      const f = frameOf(v.bx, v.bz, v.side), a = D.st[1], [x, z] = P(f, a, v.n), w = walkSwing(t * 1.05), yaw = along(f);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), a = D.st[1], [x, z] = P(f, a, v.n), w = walkSwing(t * 1.05), yaw = along(f);
       F.person({ x, z, yaw, y: Y0 + w.bob, legs: w.legs, lean: 0.25, arms: [w.arms[0], -0.7], turn: Math.sin(t * 0.4) > 0.8 ? 2.4 : 0, ...castAt(v, 0), hat: 0x2a2a2a, coat: castAt(v, 0).shirt });
       const hand = [...F.handR] as V3;
       const sa = a - 2.0, [sx, sz] = pathPt(v, sa, v.n), syaw = sidePathYaw(v, sa), fx = Math.cos(syaw), fz = -Math.sin(syaw);
@@ -1014,7 +1104,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), prog = Math.min(9, t / 7), stroke = (t % 2.6) / 2.6, done = prog >= 9;
+      const f = frameOf(v.bx, v.bz, v.side, v.a), prog = Math.min(9, t / 7), stroke = (t % 2.6) / 2.6, done = prog >= 9;
       // Cleared path behind, snow still ahead, the pile along the kerb side.
       if (prog > 0.05) { const [x, z] = P(f, v.a + prog / 2, -1.1); F.box(x, Y0 + 0.012, z, prog, 0.012, 1.6, f.h0, 0, 0x8f918f); }
       if (!done) { const [x, z] = P(f, v.a + (prog + 9) / 2, -1.1); F.box(x, Y0 + 0.04, z, 9 - prog, 0.07, 1.6, f.h0, 0, 0xe4eaf2); }
@@ -1046,7 +1136,7 @@ const K: Record<VK, Kind> = {
     },
     step(v, c, V) { if (v.t > 14) release(v, 0, V, { a: v.a + 1 + (v.t - 8) * 1.1, n: -0.8, dir: 1, ...castAt(v, 0), s: 0.62 }); },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), [x, z] = P(f, v.a, v.n), yaw = toStreet(f), fx = Math.cos(yaw), fz = -Math.sin(yaw);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = P(f, v.a, v.n), yaw = toStreet(f), fx = Math.cos(yaw), fz = -Math.sin(yaw);
       for (const [y, s] of [[0.32, 0.66], [0.85, 0.48], [1.24, 0.34]] as const) { F.box(x, Y0 + y, z, s, s * 0.95, s, yaw, 0, 0xf2f5fa); F.box(x, Y0 + y, z, s * 0.85, s * 0.8, s * 0.85, yaw + Math.PI / 4, 0, 0xeef2f8); }
       for (const k of [-0.07, 0.07]) F.box(x + fx * 0.17 + Math.sin(yaw) * k, Y0 + 1.29, z + fz * 0.17 + Math.cos(yaw) * k, 0.04, 0.04, 0.04, yaw, 0, 0x111111);
       F.seg(x + fx * 0.17, Y0 + 1.22, z + fz * 0.17, x + fx * 0.4, Y0 + 1.2, z + fz * 0.4, 0.05, 0xff7a1a);
@@ -1075,7 +1165,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side);
+      const f = frameOf(v.bx, v.bz, v.side, v.a);
       { const [x, z] = P(f, v.a, -4.6); F.box(x, 0.012, z, 3.2, 0.01, 2.6, f.h0, 0, 0x3a4a58); const [px, pz] = P(f, v.a + 0.4, -2.9); F.box(px, Y0 + 0.003, pz, 2.0, 0.006, 0.6, f.h0, 0, 0x6a7a88); }
       // The jet: three streams arcing out over the gutter, spray off their ends.
       const arc = (j: number, k: number): V3 => { const sp = (j - 1) * 0.3 + Math.sin(t * 2 + j) * 0.04, [x, z] = P(f, v.a + sp * k * 2.6, v.n - 0.15 - k * 3.2); return [x, Y0 + 0.45 + k * 1.9 - k * k * 2.25, z]; };
@@ -1098,7 +1188,7 @@ const K: Record<VK, Kind> = {
   chess: {
     w: (d, c) => (d === "park" && !wet(c) && !c.snow && day(c, 9, 19) ? 1.3 : 0), trigger: 0,
     place(v, c, r, V) {
-      const a = freeSpot(V, c, v.bx, v.bz, v.side, 3.4, 1.2, 4.6, r, 12, 27) ?? freeSpot(V, c, v.bx, v.bz, v.side, 3.4, 1.2, 4.6, r, 33, 48);
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 3.4, 1.2, 4.6, r, sp.a0 + 3, sp.mid - 3) ?? freeSpot(V, c, v.bx, v.bz, v.side, 3.4, 1.2, 4.6, r, sp.mid + 3, sp.a1 - 3);
       if (a === null) return false;
       v.a = a; v.n = 2.9;
       v.c.push(pick(r, [0x7a5a6a, 0x5a6a7a, 0x8a6a4a]), pick(r, PANTS), pick(r, SKINS), pick(r, OLD_HAIR));
@@ -1107,7 +1197,7 @@ const K: Record<VK, Kind> = {
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), [x, z] = P(f, v.a, v.n);
+      const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = P(f, v.a, v.n);
       F.box(x, Y0 + 0.37, z, 0.12, 0.74, 0.12, 0, 0, 0x6a6e72); F.box(x, Y0 + 0.76, z, 0.9, 0.05, 0.9, f.h0, 0, 0xb8b0a0);
       for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const [cx, cz] = P(f, v.a - 0.24 + i * 0.16, v.n - 0.24 + j * 0.16); F.box(cx, Y0 + 0.79, cz, 0.16, 0.012, 0.16, f.h0, 0, (i + j) % 2 ? 0x2a2a2a : 0xe8e0d0); }
       const move = Math.floor(t / 9), mt = (t % 9) / 9, who = move % 2;
@@ -1130,14 +1220,14 @@ const K: Record<VK, Kind> = {
   taichi: {
     w: (d, c) => (d === "park" && !wet(c) && !c.snow && c.hour >= 6 && c.hour < 10 ? 3 : 0), trigger: 0,
     place(v, c, r, V) {
-      const a = freeSpot(V, c, v.bx, v.bz, v.side, 7, 1.5, 9, r, 10, 27) ?? freeSpot(V, c, v.bx, v.bz, v.side, 7, 1.5, 9, r, 33, 50);
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 7, 1.5, 9, r, sp.a0 + 1, sp.mid - 3) ?? freeSpot(V, c, v.bx, v.bz, v.side, 7, 1.5, 9, r, sp.mid + 3, sp.a1 - 1);
       if (a === null) return false;
       v.a = a; v.n = 2.4;
       for (let i = 0; i < 7; i++) v.c.push(pick(r, [0xf4f4f0, 0xe8e0d0, 0xc0392b, 0xf4f4f0, 0x2c3e50]), pick(r, [0x2a2a2a, 0xf4f4f0, 0x4a4a4a]), pick(r, SKINS), pick(r, [...HAIRS, ...OLD_HAIR]));
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side);
+      const f = frameOf(v.bx, v.bz, v.side, v.a);
       const pose = (tt: number): Partial<Body> => {
         const c = (tt % 14) / 14 * Math.PI * 2, rise = (1 - Math.cos(c)) / 2, sweep = Math.sin(c), shift = Math.sin(c + 0.8);
         return { hip: 0.78 - rise * 0.06, legs: [0.15, 0.15], shins: [-0.1, -0.1], legOut: [0.28, 0.28], arms: [0.3 + rise * 1.1 + sweep * 0.2, 0.3 + rise * 1.1 - sweep * 0.2], fore: [0.3 + rise * 1.3, 0.3 + rise * 1.3], foreOut: [sweep * 0.5, -sweep * 0.5], armOut: [0.15 + Math.max(0, sweep) * 0.5, 0.15 + Math.max(0, -sweep) * 0.5], tilt: shift * 0.08, turn: sweep * 0.3 };
@@ -1154,14 +1244,14 @@ const K: Record<VK, Kind> = {
   frisbee: {
     w: (d, c) => (d === "park" && !wet(c) && !c.snow && day(c, 9, 19) && c.w.storm < 0.5 ? 1.5 : 0), trigger: 0,
     place(v, c, r, V) {
-      const a = freeSpot(V, c, v.bx, v.bz, v.side, 14, 2.0, 6.0, r, 12, 30) ?? freeSpot(V, c, v.bx, v.bz, v.side, 14, 2.0, 6.0, r, 30, 48);
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 14, 2.0, 6.0, r, sp.a0 + 3, sp.mid) ?? freeSpot(V, c, v.bx, v.bz, v.side, 14, 2.0, 6.0, r, sp.mid, sp.a1 - 3);
       if (a === null) return false;
       v.a = a; v.n = 3.6; cast(r, v.c);
       v.c.push(pick(r, [0x222222, 0xc8a060, 0x8a5a3a, 0xeeeeee]), pick(r, [0xff3a3a, 0xf2c200, 0x3af2ff, 0x7dff5a]));
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), c = t % 9, thrower = v.a - 6, catchA = v.a + 5.5, S = 1.35;
+      const f = frameOf(v.bx, v.bz, v.side, v.a), c = t % 9, thrower = v.a - 6, catchA = v.a + 5.5, S = 1.35;
       // The thrower: a wind-up and a flick; later stooping for the disc.
       const wind = ramp(c, 0, 0.45), flick = ramp(c, 0.45, 0.65), stoop = Math.sin(ramp(c, 6.2, 7.4) * Math.PI);
       const [tx, tz] = P(f, thrower, v.n);
@@ -1194,14 +1284,14 @@ const K: Record<VK, Kind> = {
   kite: {
     w: (d, c) => (d === "park" && !wet(c) && !c.snow && day(c, 9, 19) && c.w.storm < 0.5 && c.season !== "winter" ? 1.3 : 0), trigger: 0,
     place(v, c, r, V) {
-      const a = freeSpot(V, c, v.bx, v.bz, v.side, 3, 1.6, 5, r, 12, 27) ?? freeSpot(V, c, v.bx, v.bz, v.side, 3, 1.6, 5, r, 33, 48);
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 3, 1.6, 5, r, sp.a0 + 3, sp.mid - 3) ?? freeSpot(V, c, v.bx, v.bz, v.side, 3, 1.6, 5, r, sp.mid + 3, sp.a1 - 3);
       if (a === null) return false;
       v.a = a; v.n = 3.2; cast(r, v.c);
       v.c.push(pick(r, [0xff3a3a, 0xf2c200, 0x3af2ff, 0xff8fb0, 0x7dff5a]), pick(r, [0x2e86c1, 0xff7a1a, 0x8e44ad]));
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side), [x, z] = P(f, v.a, v.n), tug = Math.sin(t * 1.7) * 0.15;
+      const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = P(f, v.a, v.n), tug = Math.sin(t * 1.7) * 0.15;
       F.person({ x, z, yaw: toBldg(f) + 0.4, lean: -0.15 + tug * 0.3, arms: [1.6 + tug, 1.5 + tug], fore: [1.9 + tug, 1.8 + tug], legs: [0.2, -0.15], turn: 0, nod: -0.6, ...castAt(v, 0) });
       const h = F.handR;
       const ka = v.a + 6 + Math.sin(t * 0.35) * 3, kn = v.n + 9 + Math.sin(t * 0.7) * 1.2, ky = Y0 + 15 + Math.sin(t * 0.5) * 1.5;
@@ -1217,18 +1307,49 @@ const K: Record<VK, Kind> = {
 // Moving along a block side (the pack, the sled): a point `a` along it, round the next corner
 // clockwise if past its end, and the heading there.
 function pathPt(v: Vig, a: number, n: number): [number, number] {
-  const end = 51 - v.n;
-  if (a <= end) return P(frameOf(v.bx, v.bz, v.side), a, n);
-  return P(frameOf(v.bx, v.bz, V_NEXT_SIDE[v.side]), 9 + v.n + (a - end), n);
+  const G = graph(), f = sideFace(G, v.bx, v.bz, v.side), [end, start] = faceCorner(G, f, v.n);
+  const q = a <= end ? G.facePt(f, a, n, _gb) : G.facePt(G.nextFace(f), start + (a - end), n, _gb);
+  return [q.x, q.z];
 }
-function sidePathYaw(v: Vig, a: number) { return a <= 51 - v.n ? along(frameOf(v.bx, v.bz, v.side)) : along(frameOf(v.bx, v.bz, V_NEXT_SIDE[v.side])); }
+function sidePathYaw(v: Vig, a: number) {
+  const G = graph(), f = sideFace(G, v.bx, v.bz, v.side), [end, start] = faceCorner(G, f, v.n);
+  return a <= end ? G.facePt(f, a, 0, _gb).h : G.facePt(G.nextFace(f), start + (a - end), 0, _gb).h;
+}
+// Past the corner at the end of its side (the pack, the sled): on round the block, onto the next
+// side's frame.
+function roundCorner(v: Vig) {
+  const G = graph(), f = sideFace(G, v.bx, v.bz, v.side), [end, start] = faceCorner(G, f, v.n);
+  if (v.st[1] <= end) return;
+  const g = G.nextFace(f);
+  v.side = G.sideOf(g); v.st[1] = start + (v.st[1] - end);
+  v.pst = v.st.slice();
+}
 // The pack's bolts: one every 21 s or so, 3.5 s long (0..1, eased in and out).
 function dragAt(t: number) { const k = (t - 9) % 21; return t < 9 ? 0 : k < 3.5 ? Math.sin(Math.min(1, k / 0.4) * Math.PI / 2) * (1 - ramp(k, 3.0, 3.5)) : 0; }
 function squirrelAt(t: number) { const k = (t - 9) % 21; return t < 9 || k > 1.2 ? -1 : k / 1.2; }
 function walkU(t: number, sp: number, t0: number) { return -0.8 + (t - 18.5) * sp + 0 * t0; }
 function umbU(t: number) { return t < 8 ? t * 1.15 : t < 11.4 ? 8 * 1.15 + (t - 8) * 0.15 : 8 * 1.15 + 3.4 * 0.15 + (t - 11.4) * 1.15; }
+// The guard's crosswalk: where it lands on the far side, in the side's frame (as the crowd's).
+function guardCross(G: CityGraph, f: number): [number, number] { const cr = crossing(G, f, true); return cr ? [cr.a, cr.n] : [G.faceLen(f) + G.faceA0(f) - 0.85, -0.85]; }
 function guardKids(v: Vig, g: number) { return 3 + Math.floor(hash2(v.seed, g, 0, 0x6d) * 4); }
 function vWalkPose(ph: number): Partial<Body> { const w = walkSwing(ph); return { legs: w.legs, arms: w.arms, y: CURB_H + w.bob }; }
+// The node nearest (x, z), among those anchored in the map tiles round it.
+function nearestNode(G: CityGraph, x: number, z: number): CNode | null {
+  let best: CNode | null = null, bd = Infinity;
+  const gx = Math.floor(x / TILE), gz = Math.floor(z / TILE);
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++)
+    for (const id of G.tile(gx + dx, gz + dz).nodes) { const n = G.nodes[id], d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = n; } }
+  return best;
+}
+// Whether street `id` runs under the freeway, by the plan's grid-street test (for an
+// axis-aligned street between keyed nodes; the graph's own tag covers the rest).
+function freewayGrid(plan: CityPlan, id: number) {
+  const G = plan.graph, st = G.streets[id], a = G.nodes[st.n0], b = G.nodes[st.n1];
+  if (st.k !== 0) return false;
+  const ew = Math.abs(Math.sin(st.h0)) < 1e-6, ns = Math.abs(Math.cos(st.h0)) < 1e-6;
+  if (!ew && !ns) return false;
+  return plan.freewayStreet(ew ? 0 : 1, Math.min(a.kx, b.kx), Math.min(a.kz, b.kz));
+}
 const THREE_CLAMP = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : x);
 
 // ---- the set -----------------------------------------------------------------------------------
@@ -1246,6 +1367,7 @@ export class Vignettes {
   private logK = 0;
   readonly obstacles: Obstacle[] = [];   // people in the road (the crossing), for traffic
   adopt: ((p: Adopt) => void) | null = null;
+  private G: CityGraph | null = null;   // the city's graph, from the last step (for drawing)
 
   constructor(F: Figures) { this.F = F; }
 
@@ -1277,6 +1399,7 @@ export class Vignettes {
   }
 
   step(inp: VigInput) {
+    VG = this.G = inp.plan.graph;
     const c = this.ctx(inp, inp.simTime);
     for (const v of this.list) { v.pt = v.t; for (let i = 0; i < v.st.length; i++) v.pst[i] = v.st[i]; }
     // Gone: out of range or done.
@@ -1297,13 +1420,13 @@ export class Vignettes {
       if (key !== this.ticketed && !this.list.some((v) => v.k === "ticket") && (DEBUG_VIGNETTE === "ticket" || this.rnd() < SIM_DT / 9)) { this.ticketed = key; this.spawnTicket(c, inp.parked); }
     }
     if ((this.tryT += SIM_DT) >= (DEBUG_VIGNETTE ? SIM_DT : VIG_TRY)) { this.tryT = 0; this.spawn(c); }
-    if (DEBUG_VIGNETTE && VIG_LOG.out && (this.logK = (this.logK + 1) % 20) === 0) VIG_LOG.out(`VIG t=${inp.simTime.toFixed(1)} focus=${c.focus.x.toFixed(0)},${c.focus.z.toFixed(0)} d=${c.plan.district(Math.floor(c.focus.x / BLOCK), Math.floor(c.focus.z / BLOCK))} hour=${c.hour.toFixed(1)} parked=${inp.parked ? 1 : 0} list=${this.list.map((v) => `${v.k}@${v.bx},${v.bz}/${v.side} a=${v.a.toFixed(1)} t=${v.t.toFixed(1)}`).join(" ")}`);
+    if (DEBUG_VIGNETTE && VIG_LOG.out && (this.logK = (this.logK + 1) % 20) === 0) VIG_LOG.out(`VIG t=${inp.simTime.toFixed(1)} focus=${c.focus.x.toFixed(0)},${c.focus.z.toFixed(0)} d=${districtAt(c.plan, c.focus.x, c.focus.z)} hour=${c.hour.toFixed(1)} parked=${inp.parked ? 1 : 0} list=${this.list.map((v) => `${v.k}@${v.bx},${v.bz}/${v.side} a=${v.a.toFixed(1)} t=${v.t.toFixed(1)}`).join(" ")}`);
     // People in the road, for the traffic to wait for (the crossing).
     this.obstacles.length = 0;
     for (const v of this.list) {
       if (v.k === "guard" && v.st[0] === 1) {
-        const f = frameOf(v.bx, v.bz, v.side), since = v.t - v.st[1];
-        for (let a = 52; a < BLOCK + 8; a += 2.5) if (since > 1.5 && since < 13) { const [x, z] = P(f, a, 1.7); this.obstacles.push({ x, z, r: 0.5 }); }
+        const f = frameOf(v.bx, v.bz, v.side, v.a), since = v.t - v.st[1], G = graph(), end = guardCross(G, f.f)[0] - 0.1;
+        for (let a = G.faceA1(f.f) + 1; a < end; a += 2.5) if (since > 1.5 && since < 13) { const [x, z] = P(f, a, 1.7); this.obstacles.push({ x, z, r: 0.5 }); }
       }
     }
   }
@@ -1315,25 +1438,25 @@ export class Vignettes {
   private where(v: Vig): [number, number] {
     if (v.k === "courier") return [v.st[1], v.st[2]];
     const a = v.k === "dogPack" || v.k === "sled" ? v.st[1] : v.k === "umbrella" ? v.a - 10 + umbU(v.t) : v.a;
-    return P(frameOf(v.bx, v.bz, v.side), a, v.n);
+    return P(frameOf(v.bx, v.bz, v.side, v.a), a, v.n);
   }
 
   private spawn(c: Ctx) {
-    const d0 = c.plan.district(Math.floor(c.focus.x / BLOCK), Math.floor(c.focus.z / BLOCK)), dbg = DEBUG_VIGNETTE as VK | "";
+    const d0 = districtAt(c.plan, c.focus.x, c.focus.z), dbg = DEBUG_VIGNETTE as VK | "";
     if (dbg && this.list.some((v) => v.k === dbg)) return;
     if (!dbg && this.list.length >= WANT[d0]) return;
     const r = this.rnd, ang = r() * Math.PI * 2, dist = dbg ? 8 + r() * 260 : VIG_SPAWN[0] + r() * (VIG_SPAWN[1] - VIG_SPAWN[0]);
-    const bx = Math.floor((c.focus.x + Math.cos(ang) * dist) / BLOCK), bz = Math.floor((c.focus.z + Math.sin(ang) * dist) / BLOCK);
-    if (!insideCity(bx, bz)) return;
-    const d = c.plan.district(bx, bz);
+    const B = blockNear(c.plan.graph, c.focus.x + Math.cos(ang) * dist, c.focus.z + Math.sin(ang) * dist);
+    if (!B) return;
+    const bx = B.kx, bz = B.kz, d = c.plan.district(bx, bz);
     // A kind for here and now, not one already about.
     const ws = KINDS.map((k) => (dbg ? (k === dbg && K[k].w(d, c) > 0 ? 1 : 0) : this.list.some((v) => v.k === k) ? 0 : K[k].w(d, c)));
     let tot = ws.reduce((s, w) => s + w, 0);
     if (tot <= 0) return;
     let x = r() * tot, k: VK = KINDS[0];
     for (let i = 0; i < KINDS.length; i++) { x -= ws[i]; if (x < 0) { k = KINDS[i]; break; } }
-    const side = Math.floor(r() * 4), seed = Math.floor(r() * 2 ** 31);
-    const v: Vig = { k, bx, bz, side, a: 30, n: -1, t: 0, pt: 0, on: false, seed, c: [], st: [0, 0], pst: [0, 0], rel: 0 };
+    const side = Math.floor(r() * B.sides.length), seed = Math.floor(r() * 2 ** 31);
+    const v: Vig = { k, bx, bz, side, a: faceSpan(c.plan.graph, B.sides[side]).mid, n: -1, t: 0, pt: 0, on: false, seed, c: [], st: [0, 0], pst: [0, 0], rel: 0 };
     if (!K[k].place(v, c, mulberry32(seed), this)) return;
     // Not where the truck can already see it pop in.
     const [vx, vz] = this.where(v);
@@ -1343,12 +1466,13 @@ export class Vignettes {
   }
 
   private spawnTicket(c: Ctx, p: KerbParked) {
-    // The pavement beside the cab: the block side whose kerb lane it is in.
-    const bx0 = Math.floor(p.cabX / BLOCK), bz0 = Math.floor(p.cabZ / BLOCK);
-    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) for (let side = 0; side < 4; side++) {
-      const bx = bx0 + dx, bz = bz0 + dz, f = frameOf(bx, bz, side), [a, n] = toFront(f, p.cabX, p.cabZ);
-      if (n > -6.5 && n < -3.2 && a > 12 && a < 48 && insideCity(bx, bz)) {
-        const fx = Math.cos(p.h), fz = -Math.sin(p.h), s = fx * f.fx + fz * f.fz > 0 ? 1 : -1;
+    // The pavement beside the cab: the block side whose kerb lane it is in (among the blocks
+    // anchored in the map tiles round it).
+    const G = c.plan.graph, gx = Math.floor(p.cabX / TILE), gz = Math.floor(p.cabZ / TILE);
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) for (const id of G.tile(gx + dx, gz + dz).blocks) for (let side = 0; side < G.blocks[id].sides.length; side++) {
+      const B = G.blocks[id], fc = B.sides[side], sp = faceSpan(G, fc), [a, n] = G.toFace(fc, p.cabX, p.cabZ), bx = B.kx, bz = B.kz;
+      if (n > -sp.kerb - 3.5 && n < -sp.kerb - 0.2 && a > sp.a0 + 3 && a < sp.a1 - 3 && B.inCity) {
+        const h = G.facePt(fc, a, 0, _ga).h, s = Math.cos(angleDiff(p.h - h)) > 0 ? 1 : -1;
         const r = mulberry32(Math.floor(this.rnd() * 2 ** 31));
         const v: Vig = { k: "ticket", bx, bz, side, a, n: -1, t: 0, pt: 0, on: true, seed: 1, c: [], st: [0, 1, p.cabX, p.cabZ], pst: [0, 1, p.cabX, p.cabZ], rel: 0 };
         v.c.push(0x2f4f7f, 0x1f2f55, pick(r, SKINS), pick(r, HAIRS), s);
@@ -1360,6 +1484,8 @@ export class Vignettes {
 
   // Draw every vignette `alpha` of the way from its last step to this one.
   draw(alpha: number, time: number) {
+    if (!this.G) return;
+    VG = this.G;
     const F = this.F, hour = CLOCK.hourAt(time), dc: DrawCtx = { time, hour, night: night(hour) || hour < 6.5 || hour > 19.5, st: [] };
     F.begin();
     for (const v of this.list) {
@@ -1377,8 +1503,9 @@ export class Vignettes {
   // frontage and the way out to the street), and how far back and how high to look.
   view(): { x: number; z: number; fx: number; fz: number; ox: number; oz: number; back: number; y: number; look: number } | null {
     const v = this.list.find((u) => u.k === DEBUG_VIGNETTE) ?? null;
-    if (!v) return null;
-    const f = frameOf(v.bx, v.bz, v.side), [x, z] = this.where(v);
+    if (!v || !this.G) return null;
+    VG = this.G;
+    const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = this.where(v);
     const far: Partial<Record<VK, [number, number, number]>> = { washers: [13, 4, 9], kite: [24, 3, 6], taichi: [16, 4, 1], frisbee: [18, 4, 1], foodTruck: [14, 3, 1.4], courier: [9, 2.5, 1], dogPack: [9, 2.5, 0.6] };
     const [back, y, look] = far[v.k] ?? [5, 2.0, 0.8];
     if (v.k === "washers" && washPt[0] !== 0) { const [wx, wz] = washPt; return { x: wx, z: wz, fx: washF[0], fz: washF[1], ox: washF[2], oz: washF[3], back: back + washSeen[0], y, look: washSeen[1] }; }
@@ -1395,10 +1522,12 @@ export function drawVignette(F: Figures, v: Vig, t: number, D: Partial<DrawCtx> 
   K[v.k].draw(v, F, t, { time: t, hour: 12, night: false, st: v.st, ...D });
 }
 export function placeVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: Vignettes) {
+  VG = c.plan.graph;
   const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
   return K[v.k].place(v, full, mulberry32(v.seed), V);
 }
 export function stepVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: Vignettes) {
+  VG = c.plan.graph;
   const full: Ctx = { simTime: v.t, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
   for (let i = 0; i < v.st.length; i++) v.pst[i] = v.st[i];
   v.pt = v.t; v.t += SIM_DT; K[v.k].step?.(v, full, V);

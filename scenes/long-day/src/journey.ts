@@ -34,18 +34,18 @@ import { truckExtents, truckLayout } from "./truck.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import type { TruckModel } from "./truck.ts";
-import { PREEMPT_CHANCE, PREEMPT_MAX, SIGNAL_CYCLE, signalGreenLeft, signalState, signalWait } from "./signals.ts";
-import type { SignalAxis, SignalColor, SignalPreempt } from "./signals.ts";
+import { PREEMPT_CHANCE, PREEMPT_MAX, signalCycleIndex, signalGreenLeft, signalState, signalWait } from "./signals.ts";
+import type { SignalColor, SignalPreempt } from "./signals.ts";
 import { cityName, journeyStyle } from "./styles.ts";
 import { cargoSeason, cityClimate, realSeason, seasonalStyle } from "./climate.ts";
 import type { Climate, Season } from "./climate.ts";
-import { CITY_HI, CITY_LO, CityPlan, cityStreet, entryGateOf, gateEnd, GATES, insideCity, setCityLimits } from "./city.ts";
+import { CITY_HI, CITY_LO, CityPlan, entryGateOf, gateEnd, GATES, setCityLimits } from "./city.ts";
 import { BLOCK, CURB_H, STREET } from "./grid.ts";
 import type { Gate, KerbDoor } from "./city.ts";
 import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
-import { blockGoals, DIR_X, DIR_Z, LANE_KERB, nodeX, nodeZ, Path, planRoute } from "./route.ts";
+import { blockGoals, LANE_KERB, Path, planRoute } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
 import { interchangeTrack } from "./interchange.ts";
@@ -62,7 +62,7 @@ import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from 
 import { bedRearX, handTrips, maxHandUnits, planChores, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
-export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string): void }
+export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void }
 type StopKind = "pickup" | "drop" | "swap" | "depart";
 interface Site { bx: number; bz: number; fac: FacilityId; name: string }
 export interface Stop { kind: StopKind; site: Site | null; job: number; cargo: string; units: number; truck?: TruckModel; slot?: number }   // slot: where its loads go in the bed (set when the stop begins)
@@ -76,7 +76,7 @@ interface ParkedTruck { model: TruckModel; x: number; z: number; h: number }
 // DockGeom), which starts with the reference axle docked. The reference axle is the rear axle,
 // or a tractor's trailer axles, `trail` metres behind its rear axle.
 export interface DockPlan {
-  node: [number, number]; dir: number;
+  face: number;                                  // the dedge (face) the bay opens off
   p: number; R: number; pull: number; trail: number;
   stair: number;                                 // the platform steps, as an offset from the bay (dockStair)
   geom: DockGeom;
@@ -98,6 +98,7 @@ type DwellPhase = "park" | ChoreGroup | "startup";
 export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Chore | null; ct: number }
 const SWAP_GAP = 2.5;          // metres between the old truck's nose and the new truck's tail
 const WALK_SPEED = 1.35;
+const GATE_TRIM = STREET / 2;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
 
 interface JourneyState {
   city: number; citySeed: number; cityTime: number; simTime: number;
@@ -108,7 +109,7 @@ interface JourneyState {
   exit: { gate: number; dEst: number } | null;   // the gate it is leaving by (GATES) and the planned drive to the hand-over
   prev?: { gate: number; dEst: number; fromTruck: TruckModel; departAt: number; departV: number; departS0: number } | null;   // the last city's road out, to keep drawing it after the hand-over
   truck: TruckModel; mode: Mode; modeTime: number; dwellTotal: number; dwellDone: boolean;
-  route: Route | null; s: number; v: number; at: { ix: number; iz: number; dir: number; before: number };
+  route: Route | null; s: number; v: number; at: { d: number; before: number };   // the dedge the truck is on, and how far short of its end
   stopS: number; backS: number;     // where the truck stops, and where it reverses to (dock stops)
   dockExit: { geom: DockGeom; s: number } | null;   // leaving a bay: the next route starts in it
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
@@ -204,7 +205,7 @@ export class Journey {
     const st: JourneyState = {
       city: N, citySeed, cityTime: 0, simTime: start, cityStart: start, step: 0, retryAt: 0, departAt: -1, departV: 0, departS0: 0, departTruck: "box26", exit: null,
       truck: freight?.truck ?? "box26", mode: "inbound", modeTime: 0,
-      dwellTotal: 0, dwellDone: false, route: null, s: 0, v: V_JOIN, at: { ix: gate.ix, iz: gate.iz, dir: inward, before: BLOCK - STREET / 2 },
+      dwellTotal: 0, dwellDone: false, route: null, s: 0, v: V_JOIN, at: this.gateIn(gate),
       stopS: 0, backS: 0, dockExit: null, spare: null, parked: null,
       stops: [], aboard: [], loaded: 0, unloaded: 0, jobCounter: 0,
       // The first swap falls due 2 to 12 minutes in (each city plays from its own start, so the
@@ -217,12 +218,11 @@ export class Journey {
     // off-ramp (a "helix" tail) and out into the kerb lane under the freeway, towards the next node.
     const ic = this.takesFreeway(N) ? this.plan.interchange : null;
     if (ic) {
-      const ox = ic.bx * BLOCK, oz = ic.bz * BLOCK, track = interchangeTrack(ic.side), q = { x: 0, z: 0, h: 0, k: 0 };
+      const track = interchangeTrack(this.plan), q = { x: 0, z: 0, h: 0, k: 0 };
       track.eval(0, q);
-      st.garageExit = { x: ox + q.x, z: oz + q.z, h: q.h, kind: "helix" };
+      st.garageExit = { x: q.x, z: q.z, h: q.h, kind: ic.kind };
       track.eval(track.length, q);
-      const nx = ic.ix + DIR_X[ic.dir], nz = ic.iz + DIR_Z[ic.dir];
-      st.at = { ix: nx, iz: nz, dir: ic.dir, before: (nodeX(nx) - (ox + q.x)) * DIR_X[ic.dir] + (nodeZ(nz) - (oz + q.z)) * DIR_Z[ic.dir] };
+      st.at = this.plan.graph.locate(q.x, q.z, q.h);
     }
     this.st = st;
     if (freight) {
@@ -240,10 +240,18 @@ export class Journey {
     return st;
   }
 
-  // The city block at a gate's inner corner (where the way in or out is planned from).
+  // The city block at a gate's inner end (where the way in or out is planned from): the block on
+  // the right of the way in.
   private gateBlock(g: Gate): [number, number] {
-    for (const [dx, dz] of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) if (insideCity(g.ix + dx, g.iz + dz)) return [g.ix + dx, g.iz + dz];
-    return [0, 0];
+    const G = this.plan.graph, b = G.faceBlock[this.gateIn(g).d], gt = G.gates[GATES.indexOf(g)];
+    const blk = b >= 0 ? G.blocks[b] : G.nearestBlock(G.nodes[gt.node].x, G.nodes[gt.node].z);
+    return blk ? [blk.kx, blk.kz] : [0, 0];
+  }
+  // The way in by a gate: down its gate street from its outer end (GATE_TRIM short of the node
+  // beyond), towards the perimeter node.
+  gateIn(g: Gate): { d: number; before: number } {
+    const G = this.plan.graph, gt = G.gates[GATES.indexOf(g)], st = G.streets[gt.street];
+    return { d: st.id * 2 + (gt.out === 1 ? 1 : 0), before: st.len - GATE_TRIM };
   }
 
   // The freight city N arrives with (city 0 starts empty): a common cargo, from the seed. The
@@ -277,7 +285,7 @@ export class Journey {
     if (f) for (const k of f.k.keys()) if (k <= target && k > best) best = k;
     if (best >= 0) {
       if (N !== this.st.city) this.entryState(N);   // (the city's plan and caches; the keyframe has the rest)
-      this.restore(f!.k.get(best)!); this.life?.load(f!.l.get(best)!);
+      this.restore(f!.k.get(best)!); this.life?.load(f!.l.get(best)!, this);
     } else this.entryState(N);
     this.placePose();
     this.advanceTo(t);
@@ -303,7 +311,7 @@ export class Journey {
     const k = JSON.parse(json);
     this.st = k.st; this.accel = k.accel; this.lastStep = k.lastStep; this.lightAhead = k.lightAhead;
     ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
-    this.path = this.st.route ? new Path(this.st.route) : null;
+    this.path = this.st.route ? new Path(this.plan.graph, this.st.route) : null;
     this.dockCache = null; this.chores = [];
     this.placePose();   // (first: planDwell works in the truck's frame, from where it is parked)
     if (this.st.mode === "dwell") this.planDwell();
@@ -350,7 +358,7 @@ export class Journey {
         const d = Math.abs(dx) + Math.abs(dz);
         if (d < minDist || d > radius) continue;
         const x = bx + dx, z = bz + dz;
-        if (!insideCity(x, z) || avoid.has(`${x},${z}`) || this.plan.interchangeAt(x, z)) continue;
+        if (!this.plan.blockOf(x, z)?.inCity || avoid.has(`${x},${z}`) || this.plan.interchangeAt(x, z)) continue;
         if (types.includes(this.facility(x, z))) out.push({ s: this.site(x, z), d });
       }
     out.sort((a, b) => a.d - b.d);
@@ -546,26 +554,30 @@ export class Journey {
       const plan = this.planExit();
       if (!plan) { this.log("no way out of town"); this.forceLeave(); return; }
       st.route = plan.route; st.exit = { gate: plan.gate, dEst: plan.dEst };
-      this.log(`leaving by gate ${plan.gate}, ${plan.route.moves.length} blocks, planned ${plan.dEst.toFixed(0)} s of road`);
+      this.log(`leaving by gate ${plan.gate}, ${plan.route.edges.length} blocks, planned ${plan.dEst.toFixed(0)} s of road`);
     } else {
       // A dock stop pulls past its bay, ready to reverse in; a swap's path ends at the spare
       // truck, parked in front of the lot with its nose just short of the stop line ahead; any
       // other stop centres the truck on a side of the block.
-      const { bx, bz } = stop.site!;
+      const { bx, bz } = stop.site!, G = this.plan.graph, blk = this.plan.blockOf(bx, bz)!;
       let goals: Goal[];
-      if (dock) goals = [{ ix: dock.node[0], iz: dock.node[1], dir: dock.dir, after: dock.p + dock.R + dock.pull + dock.trail }];
+      if (dock) goals = [{ d: dock.face, after: dock.p + dock.R + dock.pull + dock.trail }];
       else if (stop.kind === "swap") {
-        const all = blockGoals(bx, bz, 47 - truckExtents(stop.truck!).front, true), L = siteLayout(this.plan, bx, bz);
+        // (Nose just short of the stop line ahead.)
+        const front = truckExtents(stop.truck!).front, L = siteLayout(this.plan, bx, bz);
+        const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - 4 - front, straight: true }));
         goals = L.kind === "lot" ? [all[L.side]] : all;
       } else {
         // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
         // on, to where the way in turns off (straight through the node before, to be in the kerb
         // lane), and on up onto its roof.
         // (At a yard stand, a little further on, so the bed clears the container: crew.ts stackPlan.)
-        const all = blockGoals(bx, bz, 30 - this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0)), L = siteLayout(this.plan, bx, bz);
-        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [blockGoals(bx, bz, GARAGE_IN_A, true)[(L as GarageLayout).side]] : all;
+        // (Centred on the side.)
+        const pull = -this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0), L = siteLayout(this.plan, bx, bz);
+        const all = blk.sides.map((f) => ({ d: f, after: (G.faceA0(f) + G.faceA1(f)) / 2 + pull }));
+        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A, straight: true }] : all;
       }
-      st.route = planRoute(st.at.ix, st.at.iz, st.at.dir, st.at.before, goals, 6000, cityStreet);
+      st.route = planRoute(G, st.at.d, st.at.before, goals, 6000, this.drivable);
       if (!st.route) { this.log(`no route to ${stop.site!.name}; skipping`); st.stops.shift(); return; }
       if (this.garageStop(stop)) { st.route.garageIn = true; this.log(`up onto the roof of ${stop.site!.name}`); }
       st.spare = stop.kind === "swap" ? stop.truck! : null;
@@ -574,7 +586,7 @@ export class Journey {
     let s0 = 0;
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
     if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
-    this.path = new Path(st.route);
+    this.path = new Path(this.plan.graph, st.route);
     st.s = s0; st.committed = ""; st.redWait = 0;
     st.stopS = this.path.length;
     if (stop.kind === "swap") {
@@ -606,16 +618,17 @@ export class Journey {
     const nRef = L.edge - (tractor ? TRAILER_AXLE_TO_REAR : -truckExtents(model).rear);
     const Lb = nRef - (R - LANE_KERB);          // the bay line ends where the turn onto the lane begins
     if (Lb < trail + 0.5) return null;          // a tractor's own axle must be in the bay line too
-    const g = blockGoals(bx, bz, 0)[L.side], d = g.dir;
+    const G = this.plan.graph, face = this.plan.face(bx, bz, L.side);
     const p = dockBayFor(L, model);
-    const h = d * Math.PI / 2, rx = Math.round(Math.sin(h)), rz = Math.round(Math.cos(h));
-    const at = (a: number, n: number) => ({ x: nodeX(g.ix) + DIR_X[d] * a + rx * (STREET / 2 + n), z: nodeZ(g.iz) + DIR_Z[d] * a + rz * (STREET / 2 + n) });
-    const ref = at(p, nRef), H = ((d + 1) % 4) * Math.PI / 2;
+    const h = G.facePt(face, p, 0).h, rx = Math.sin(h), rz = Math.cos(h);
+    const at = (a: number, n: number) => { const q = G.facePt(face, a, n); return { x: q.x, z: q.z }; };
+    // (Docked facing out to the street: a quarter turn left of the way along the face.)
+    const ref = at(p, nRef), H = h + Math.PI / 2;
     const dp = at(p, L.wall), lp = at(p, L.edge);
     const door: DockDoor = { x: dp.x, z: dp.z, w: dockDoorW(L), h: dockDoorH(L), lx: lp.x, lz: lp.z };
     const sp = L.deep ? at(30, L.wall - 0.13) : at(39, 1.87);
     const sign = hasSign(stop.site!.fac) ? { x: sp.x, z: sp.z, y: L.deep ? DOCK_PLATFORM + 5.7 : CURB_H + 5.5, w: L.deep ? 9.6 : 9.2, h: L.deep ? 1.2 : 1.15, nx: -rx, nz: -rz } : null;
-    return { node: [g.ix, g.iz], dir: d, p, R, pull: tractor ? 1.5 : 3, trail, stair: dockStair(L, p),
+    return { face, p, R, pull: tractor ? 1.5 : 3, trail, stair: dockStair(L, p),
       geom: { x: ref.x, z: ref.z, H, Lb, R, door }, edge: at(p, L.edge), H, sign };
   }
   get dock(): DockPlan | null { return this.dockPlan(this.st.stops[0]); }
@@ -637,20 +650,19 @@ export class Journey {
     const st = this.st;
     if (st.mode === "country" || st.mode === "inbound") return { y: 0, grade: 0 };
     if (this.path && this.path.ramps.length) { const s = st.s - (1 - this.alpha) * this.lastStep, y = this.path.yAt(s); return { y, grade: (this.path.yAt(s + wb) - y) / wb }; }
-    if (st.garageExit) return { y: st.garageExit.kind === "helix" ? HELIX_TOP : GARAGE_H, grade: 0 };
+    if (st.garageExit) return { y: st.garageExit.kind ? HELIX_TOP : GARAGE_H, grade: 0 };
     return { y: 0, grade: 0 };
   }
   // The height of the current path at s (0 off a garage).
-  pathY(s: number) { return this.path ? this.path.yAt(s) : this.st.garageExit ? (this.st.garageExit.kind === "helix" ? HELIX_TOP : GARAGE_H) : 0; }
+  pathY(s: number) { return this.path ? this.path.yAt(s) : this.st.garageExit ? (this.st.garageExit.kind ? HELIX_TOP : GARAGE_H) : 0; }
 
   isDockStop(stop: Stop | undefined | null) { return this.dockPlan(stop) !== null; }
 
   // Where the truck is on the final leg of the current path (for planning the next leg).
   private arriveAtEnd() {
     const p = this.path!;
-    const d = p.endDir, [ex, ez] = p.endNode;
-    const past = p.route.after - (p.length - this.st.s);  // metres past the last node
-    this.st.at = { ix: ex + DIR_X[d], iz: ez + DIR_Z[d], dir: d, before: BLOCK - past };
+    const past = p.endA - (p.length - this.st.s);  // metres past the last node
+    this.st.at = { d: p.endEdge, before: this.plan.graph.streets[p.endEdge >> 1].len - past };
   }
 
   // Pose of the spare truck waiting at a swap stop (at the end of the path).
@@ -813,10 +825,8 @@ export class Journey {
       this.pose.h = ex.geom.H; this.pose.k = 0;
       return;
     }
-    const a = this.st.at;
-    this.pose.h = a.dir * Math.PI / 2; this.pose.k = 0;
-    this.pose.x = nodeX(a.ix) - DIR_X[a.dir] * a.before + Math.sin(this.pose.h) * 4.5;
-    this.pose.z = nodeZ(a.iz) - DIR_Z[a.dir] * a.before + Math.cos(this.pose.h) * 4.5;
+    const a = this.st.at, G = this.plan.graph, st = G.streets[a.d >> 1], q = G.facePt(a.d, st.len - a.before, LANE_KERB - st.half);
+    this.pose.h = q.h; this.pose.k = 0; this.pose.x = q.x; this.pose.z = q.z;
   }
 
   // ---- simulation -----------------------------------------------------------------------------
@@ -888,25 +898,25 @@ export class Journey {
     this.lightAhead = "-";
     if (st.mode === "drive") {
       for (const sg of p.signals) {
-        const target = sg.sLine - STOP_GAP - front;
-        const key = `${sg.ix},${sg.iz},${sg.sLine.toFixed(1)}`;
+        const target = sg.sLine - STOP_GAP - front, N = this.plan.graph.nodes[sg.node];
+        const key = `${sg.node},${sg.sLine.toFixed(1)}`;
         if (st.s > target + 0.5) continue;           // already past this one
         const seed = this.plan.seed, dist = target - st.s;
-        let state = signalState(sg.ix, sg.iz, sg.axis, st.simTime, seed, st.preempt);
+        let state = signalState(N, sg.phase, st.simTime, seed, st.preempt);
         // Ask for priority: most of the time the light changes for the truck.
         st.preempt = st.preempt.filter((p) => st.simTime < p.p1 + 3);
-        if (state === "red" && dist < 90 && st.preempt.length < PREEMPT_MAX && !st.preempt.some((p) => p.ix === sg.ix && p.iz === sg.iz)
-            && signalWait(sg.ix, sg.iz, sg.axis, st.simTime, seed) > 4
-            && hash3(sg.ix, sg.iz, Math.floor(st.simTime / SIGNAL_CYCLE), seed, 0x9e1) < PREEMPT_CHANCE) {
-          st.preempt.push({ ix: sg.ix, iz: sg.iz, axis: sg.axis, p0: st.simTime, p1: st.simTime + 3 + Math.max(6, dist / 5 + 6),
-            was: signalState(sg.ix, sg.iz, (1 - sg.axis) as SignalAxis, st.simTime, seed, null) });
+        if (state === "red" && dist < 90 && st.preempt.length < PREEMPT_MAX && !st.preempt.some((p) => p.node === sg.node)
+            && signalWait(N, sg.phase, st.simTime, seed) > 4
+            && hash3(N.kx, N.kz, signalCycleIndex(N, st.simTime), seed, 0x9e1) < PREEMPT_CHANCE) {
+          st.preempt.push({ node: sg.node, x: N.x, z: N.z, phase: sg.phase, p0: st.simTime, p1: st.simTime + 3 + Math.max(6, dist / 5 + 6),
+            was: signalState(N, (sg.phase + 1) % Math.max(2, N.phases), st.simTime, seed, null) });
         }
         // Or hold a green that would change before the truck gets there.
-        if (state === "green" && dist < 90 && st.preempt.length < PREEMPT_MAX && !st.preempt.some((p) => p.ix === sg.ix && p.iz === sg.iz)) {
+        if (state === "green" && dist < 90 && st.preempt.length < PREEMPT_MAX && !st.preempt.some((p) => p.node === sg.node)) {
           const eta = dist / Math.max(st.v, 4);
-          if (signalGreenLeft(sg.ix, sg.iz, sg.axis, st.simTime, seed) < eta + 2
-              && hash3(sg.ix, sg.iz, Math.floor(st.simTime / SIGNAL_CYCLE), seed, 0x9e2) < PREEMPT_CHANCE)
-            st.preempt.push({ ix: sg.ix, iz: sg.iz, axis: sg.axis, p0: st.simTime, p1: st.simTime + eta + 5, was: "red", ext: true });
+          if (signalGreenLeft(N, sg.phase, st.simTime, seed) < eta + 2
+              && hash3(N.kx, N.kz, signalCycleIndex(N, st.simTime), seed, 0x9e2) < PREEMPT_CHANCE)
+            st.preempt.push({ node: sg.node, x: N.x, z: N.z, phase: sg.phase, p0: st.simTime, p1: st.simTime + eta + 5, was: "red", ext: true });
         }
         this.lightAhead = state;
         if (state === "green" || st.committed === key) break;
@@ -960,9 +970,8 @@ export class Journey {
   private beginReverse() {
     const st = this.st, dock = this.dockPlan(st.stops[0]);
     if (!dock) { this.startDwell(); return; }
-    st.route = { ix: dock.node[0] + DIR_X[dock.dir], iz: dock.node[1] + DIR_Z[dock.dir], dir: dock.dir,
-      before: BLOCK - (dock.p + dock.R), moves: "", after: dock.p + dock.R + dock.pull + dock.trail - BLOCK, dock: dock.geom };
-    this.path = new Path(st.route);
+    st.route = { d: dock.face, before: this.plan.graph.faceLen(dock.face) - (dock.p + dock.R), edges: [], after: dock.p + dock.R + dock.pull + dock.trail, dock: dock.geom };
+    this.path = new Path(this.plan.graph, st.route);
     st.s = st.stopS = this.path.length; st.backS = dock.trail;
     st.mode = "reverse"; st.modeTime = 0;
     this.reversePose(st.s, this.pose);
@@ -1036,13 +1045,13 @@ export class Journey {
       st.stops.shift(); st.stopsDone++;
       if (dock) {
         // Out of the bay next: the route starts in it and joins the street after the turn.
-        st.at = { ix: dock.node[0] + DIR_X[dock.dir], iz: dock.node[1] + DIR_Z[dock.dir], dir: dock.dir, before: BLOCK - (dock.p + dock.R) };
+        st.at = { d: dock.face, before: this.plan.graph.faceLen(dock.face) - (dock.p + dock.R) };
         st.dockExit = { geom: dock.geom, s: dock.trail };
       } else if (this.path?.route.garageIn) {
         // Down off the roof next: the route starts there and comes out across the street, in the
         // kerb lane back towards the node the truck came in past.
-        const L = siteLayout(this.plan, stop.site!.bx, stop.site!.bz) as GarageLayout, g = blockGoals(stop.site!.bx, stop.site!.bz, 0)[L.side];
-        st.at = { ix: g.ix, iz: g.iz, dir: (g.dir + 2) % 4, before: GARAGE_OUT_BEFORE };
+        const L = siteLayout(this.plan, stop.site!.bx, stop.site!.bz) as GarageLayout, f = this.plan.face(stop.site!.bx, stop.site!.bz, L.side);
+        st.at = { d: f ^ 1, before: GARAGE_OUT_BEFORE };
         st.garageExit = { x: this.pose.x, z: this.pose.z, h: this.pose.h };
       } else this.arriveAtEnd();
       this.path = null; st.route = null; st.s = 0; st.v = 0;
@@ -1113,7 +1122,8 @@ export class Journey {
   private gateTime(bx: number, bz: number) {
     let best = Infinity;
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, this.st.city + 1)).dir + 2) % 4;
-    for (const g of GATES) if ((inward - g.dir + 4) % 4 !== 2) best = Math.min(best, Math.abs(g.ix - bx) + Math.abs(g.iz - bz));
+    const G = this.plan.graph;
+    GATES.forEach((g, i) => { const n = G.nodes[G.gates[i].node]; if ((inward - g.dir + 4) % 4 !== 2) best = Math.min(best, Math.abs(Math.floor(n.x / BLOCK) - bx) + Math.abs(Math.floor(n.z / BLOCK) - bz)); });
     return (best + 1) * BLOCK / GATE_SPEED + 20;
   }
 
@@ -1123,14 +1133,15 @@ export class Journey {
   private planExit(): { route: Route; gate: number; dEst: number } | null {
     const st = this.st, at = this.pathEnd();
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, st.city + 1)).dir + 2) % 4;
-    const after = BLOCK - STREET / 2;
+    const G = this.plan.graph;
     let best: { route: Route; gate: number; dEst: number; cost: number } | null = null;
     for (let i = 0; i < GATES.length; i++) {
       const g = GATES[i], turn = (inward - g.dir + 4) % 4;
       if (turn === 2 || g === this.plan.freeway) continue;   // (not out under the flyover the highway came in on)
-      const route = planRoute(at.ix, at.iz, at.dir, at.before, [{ ix: g.ix, iz: g.iz, dir: g.dir, after }], 6000, cityStreet);
+      const gt = G.gates[i], gst = G.streets[gt.street];
+      const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable);
       if (!route) continue;
-      const len = new Path(route).length;
+      const len = new Path(G, route).length;
       const dEst = Math.round((this.period - st.cityTime - len / GATE_SPEED) * 10) / 10;
       const cost = len + (turn !== 0 && dEst < 50 ? 1500 : 0);
       if (!best || cost < best.cost) best = { route, gate: i, dEst, cost };
@@ -1141,6 +1152,8 @@ export class Journey {
   }
   // Where the next route starts from: the current edge.
   private pathEnd() { return this.st.at; }
+  // The streets the truck may drive through (city streets: gate streets only as a goal).
+  private readonly drivable = (d: number) => this.plan.graph.streets[d >> 1].inCity;
 
   // Through the end of the gate street (or put there, as a last resort): onto the road, `s0`
   // metres along it already.

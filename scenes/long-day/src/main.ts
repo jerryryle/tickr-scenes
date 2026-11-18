@@ -22,6 +22,7 @@ import type { LiveryName, TruckModel } from "./truck.ts";
 import { makeFacadeMaterial, setFacadeAtlas } from "./facade.ts";
 import { paintFacadeAtlas } from "./facadeart.ts";
 import { makeLampMaterial, setSignalPreempt, setSignalTime } from "./signals.ts";
+import { interchangeTrack } from "./interchange.ts";
 import { realSeason, weatherMix } from "./climate.ts";
 import { CITY_HI, CITY_LO, cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, parkedObstacles, pavementObstacles } from "./city.ts";
 import { elevatedLine } from "./decor.ts";
@@ -148,7 +149,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   function updatePrefetch() {
     const st = journey.st, path = st.mode === "drive" ? journey.path : null, r = path ? st.route : null;
     pfAt = 0; pfChanged = prefetchKey.length === 0;
-    pfPut(st.city); pfPut(st.mode); pfPut(r ? r.ix : null); pfPut(r ? r.iz : null); pfPut(r ? r.moves : null);
+    pfPut(st.city); pfPut(st.mode); pfPut(r ? r.d : null); pfPut(r ? r.before.toFixed(1) : null); pfPut(r ? r.edges.join(",") : null);
     for (let k = 0; k < PREFETCH_STOPS; k++) { const site = st.stops[k]?.site; pfPut(site ? site.bx : null); pfPut(site ? site.bz : null); }
     if (!pfChanged) return;
     const cells: [number, number][] = [], seen = new Set<string>();
@@ -309,6 +310,22 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         cam.position.set(x - 30, DEBUG_VIEW === "elevatedHigh" ? 30 : 9, lz + 40); cam.lookAt(x, 3, lz);
       }
       cx = cam.position.x; cz = lz;
+    } else if (DEBUG_VIEW === "exit" && plan.interchange) {
+      // Over where the freeway's off-ramp comes down to the street: high, then low from the street.
+      const t = interchangeTrack(plan), q = { x: 0, z: 0, h: 0, k: 0 };
+      t.eval(t.length - 14, q);
+      const low = Math.floor(tourT / 4) % 2 === 1, fx = Math.cos(q.h), fz = -Math.sin(q.h);
+      if (low) cam.position.set(q.x + fx * 16 - Math.sin(q.h) * 7, 3.5, q.z + fz * 16 - Math.cos(q.h) * 7);
+      else cam.position.set(q.x - fx * 4 + Math.sin(q.h) * 16, 24, q.z - fz * 4 + Math.cos(q.h) * 16);
+      cam.lookAt(q.x, 0, q.z);
+      cx = q.x; cz = q.z;
+    } else if (DEBUG_VIEW === "aerial") {
+      // High over the downtown nearest the middle of town, circling slowly, looking down at the layout.
+      // (Over the river if the city has one, else the residential block nearest the middle.)
+      const G = plan.graph, pickB = G.blocks.find((b) => b.water) ?? G.blocks.filter((b) => plan.district(b.kx, b.kz) === "residential").sort((p, q) => Math.hypot(p.cx, p.cz) - Math.hypot(q.cx, q.cz))[0];
+      if (pickB) { cx = pickB.cx; cz = pickB.cz; }
+      const a = tourT * 0.05;
+      cam.position.set(cx + Math.cos(a) * 70, 95, cz + Math.sin(a) * 70); cam.lookAt(cx, 0, cz);
     } else if (DEBUG_VIEW === "street") {
       cam.position.set(cx - 1.5, 3.2, cz + 150 - tourT * 3);
       cam.lookAt(cx - 1.5, 9, cz - 100);
@@ -333,13 +350,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const plan = journey.plan;
     let roof = 0;
     const inBuildings = (x: number, z: number) => {
-      const lx = ((x % BLOCK) + BLOCK) % BLOCK, lz = ((z % BLOCK) + BLOCK) % BLOCK;
-      // Lots fill each chunk's [STREET, BLOCK) square (frontages run right to the sidewalk); keep
-      // five metres clear of them (closer, a wall fills half the frame).
-      const lotBand = (l: number) => l > STREET - 5 || l < 5;
-      if (!(lotBand(lx) && lotBand(lz))) return false;
-      const bx = Math.floor(x / BLOCK), bz = Math.floor(z / BLOCK);
-      if (!insideCity(bx, bz)) return false;
+      // Lots fill each block right to its sidewalks; keep five metres clear of them (closer, a
+      // wall fills half the frame).
+      const blk = plan.graph.blockNear(x, z, 5);
+      if (!blk?.inCity) return false;
+      const bx = blk.kx, bz = blk.kz;
       const d = plan.district(bx, bz);
       if (d === "park") return false;
       roof = d === "downtown" ? 22 + 90 * plan.downtownHeight(bx, bz) * plan.style.towerScale : 17;

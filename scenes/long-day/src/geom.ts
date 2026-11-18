@@ -29,6 +29,14 @@ export interface BatchModel { pos: Float32Array; nrm: Float32Array; col: Float32
 // Dry run: every Batch drops what it is given. For probe builds that only want to know where
 // things go (city.ts pavementObstacles), not their geometry.
 export const BATCH = { dry: false };
+// A part's local frame (city.ts: a street, intersection or block drawn in its own axes): local
+// (x, z) turned by `rot` about y (three.js's sense: local +x goes to (cos rot, -sin rot)), then
+// moved by (ox, oz).
+export interface Frame2 { ox: number; oz: number; rot: number }
+export function frameApply(f: Frame2, x: number, z: number): [number, number] {
+  const c = Math.cos(f.rot), s = Math.sin(f.rot);
+  return [f.ox + c * x + s * z, f.oz - s * x + c * z];
+}
 
 export class Batch {
   private pos = new Float32Array(36 * 3 * 64);
@@ -182,6 +190,17 @@ export class Batch {
 
   get empty() { return this.n === 0; }
   get vertexCount() { return this.n; }
+  // Vertices written so far (a mark for transformFrom).
+  mark() { return this.n; }
+  // Put the vertices written since mark n0 into frame f (positions and normals).
+  transformFrom(n0: number, f: Frame2) {
+    const c = Math.cos(f.rot), s = Math.sin(f.rot), P = this.pos, N = this.nrm;
+    for (let o = n0 * 3; o < this.n * 3; o += 3) {
+      const x = P[o], z = P[o + 2], nx = N[o], nz = N[o + 2];
+      P[o] = f.ox + c * x + s * z; P[o + 2] = f.oz - s * x + c * z;
+      N[o] = c * nx + s * nz; N[o + 2] = -s * nx + c * nz;
+    }
+  }
   build(material: THREE.Material): THREE.Mesh | null {
     if (this.n === 0) return null;
     const g = new THREE.BufferGeometry();

@@ -4,19 +4,20 @@
 // per-instance colour, so the whole crowd is a single draw call.
 // Pedestrians walk the sidewalks round a block (keeping right), and at a corner either turn
 // with the block or cross at the crosswalk when the parallel traffic has a green. Positions are
-// in a block side's frontage frame (city.ts frontPt) and converted to world each frame.
+// in a block side's frontage frame (a face of the street graph, citygraph.ts facePt) and
+// converted to world each step.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
 import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, walkSwing } from "./figure.ts";
 import type { Body } from "./figure.ts";
-import { CLOCK, Vignettes } from "./vignettes.ts";
+import { CLOCK, Vignettes, blockNear, crossing, crossSignal, districtAt, faceCorner, faceRef, sideFace } from "./vignettes.ts";
 import type { Adopt, KerbParked } from "./vignettes.ts";
 import { weatherMix } from "./climate.ts";
 import { signalState } from "./signals.ts";
-import type { SignalAxis, SignalPreempt } from "./signals.ts";
-import { CityPlan, FRONT_NODE, frontPt, insideCity, pick } from "./city.ts";
-import { BLOCK, CURB_H } from "./grid.ts";
-import { blockGoals, DIR_X, DIR_Z } from "./route.ts";
+import type { SignalPreempt } from "./signals.ts";
+import { CityPlan, pick } from "./city.ts";
+import type { CityGraph, GPt } from "./citygraph.ts";
+import { CURB_H } from "./grid.ts";
 import { SIM_DT } from "./journey.ts";
 import type { Obstacle } from "./traffic.ts";
 
@@ -24,6 +25,7 @@ type PedKind = "walk" | "jog" | "dog" | "vendor" | "musician" | "chase";
 interface Ped {
   kind: PedKind; bx: number; bz: number; side: number; a: number; dir: 1 | -1; n: number;
   speed: number; phase: number; state: "walk" | "wait" | "cross"; crossA: number; crossLen: number; waitT: number;
+  crossN?: number;   // where across the crossing lands, in the side's frame (default -0.85)
   shirt: number; pants: number; skin: number; hair: number;
   x: number; z: number; h: number; px: number; pz: number; ph: number; pphase: number;   // and one step ago
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
@@ -36,8 +38,9 @@ interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: nu
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
 const BELLE = 0xf4ead8;
-// Side order round a block, walking clockwise (+1): north (0) -> east (3) -> south (1) -> west (2).
-const NEXT_SIDE = [3, 2, 0, 1], PREV_SIDE_CW = [2, 3, 1, 0];
+const _pt: GPt = { x: 0, z: 0, h: 0 };
+// A pedestrian's face (block side) in the graph.
+const faceOf = (G: CityGraph, p: Ped) => sideFace(G, p.bx, p.bz, p.side);
 
 export class Crowd {
   private F: Figures;
@@ -51,6 +54,7 @@ export class Crowd {
   private time0 = 0;   // journey time this step
 
   readonly vig: Vignettes;
+  private G: CityGraph | null = null;   // the city's street graph (from the last step)
   constructor(scene: THREE.Scene, material: THREE.Material, cap = 520) {
     this.F = new Figures(scene, material, cap);
     this.vig = new Vignettes(new Figures(scene, material, 2400, 48));
@@ -71,6 +75,8 @@ export class Crowd {
 
   // Someone a vignette is done with, walking on as one of the crowd.
   adopt(a: Adopt) {
+    const G = this.G;
+    if (!G || sideFace(G, a.bx, a.bz, a.side) < 0) return;
     const p: Ped = {
       kind: a.dog !== undefined ? "dog" : "walk", bx: a.bx, bz: a.bz, side: a.side, a: a.a, dir: a.dir, n: a.n,
       speed: a.speed ?? 1.2, phase: this.rnd() * 10, state: "walk", crossA: 0, crossLen: 16, waitT: 0,
@@ -79,9 +85,10 @@ export class Crowd {
       s: a.s, hat: a.hat, umbrella: a.umbrella, cup: a.cup,
     };
     // (Round the corner first if handed over past the end of the side.)
-    if (p.dir > 0 && p.a > 51 - p.n) this.turnCorner(p);
-    else if (p.dir < 0 && p.a < 9 + p.n) this.turnCorner(p);
-    this.place(p);
+    const f = faceOf(G, p);
+    if (p.dir > 0 && p.a > faceCorner(G, f, p.n)[0]) this.turnCorner(G, p);
+    else if (p.dir < 0 && p.a < faceCorner(G, G.prevFace(f), p.n)[1]) this.turnCorner(G, p);
+    this.place(G, p);
     p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
     if (p.dog) { const fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h); p.dog.x = p.x - fx * 1.2 - rx * 0.45; p.dog.z = p.z - fz * 1.2 - rz * 0.45; p.dog.h = p.h; }
     this.peds.push(p);
@@ -89,7 +96,7 @@ export class Crowd {
 
   // One fixed step (the journey's), around `focus`; `prs` are the signals the truck has held.
   step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], more: CrowdMore = { cars: [], parked: null, busy: new Set() }) {
-    const dt = SIM_DT;
+    const dt = SIM_DT, G = this.G = plan.graph;
     this.time0 = simTime;
     for (const p of this.peds) { p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase; if (p.balloon) p.balloon.py = p.balloon.y; }
     for (const f of this.flocks) f.pa = f.a;
@@ -100,11 +107,11 @@ export class Crowd {
         this.peds.splice(i, 1);
       }
     }
-    const d = plan.district(Math.floor(focus.x / BLOCK), Math.floor(focus.z / BLOCK));
+    const d = districtAt(plan, focus.x, focus.z);
     const want = d === "downtown" ? 26 : d === "commercial" ? 20 : d === "park" ? 14 : d === "residential" ? 10 : 5;
     for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus);
     this.obstacles.length = 0;
-    for (const p of this.peds) { this.walk(p, dt, plan, simTime, prs, truck); this.obstacles.push({ x: p.x, z: p.z, r: 0.4 }); }
+    for (const p of this.peds) { this.walk(G, p, dt, plan, simTime, prs, truck); this.obstacles.push({ x: p.x, z: p.z, r: 0.4 }); }
     this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
     this.obstacles.push(...this.vig.obstacles);
     this.updateFlocks(dt, plan, focus);
@@ -114,17 +121,18 @@ export class Crowd {
   private spawn(plan: CityPlan, focus: { x: number; z: number }) {
     const r = this.rnd, ang = r() * Math.PI * 2, dist = PED_SPAWN[0] + r() * (PED_SPAWN[1] - PED_SPAWN[0]);
     const wx = focus.x + Math.cos(ang) * dist, wz = focus.z + Math.sin(ang) * dist;
-    const bx = Math.floor(wx / BLOCK), bz = Math.floor(wz / BLOCK);
-    if (!insideCity(bx, bz)) return;
-    const district = plan.district(bx, bz);
+    const G = plan.graph, B = blockNear(G, wx, wz);
+    if (!B) return;
+    const bx = B.kx, bz = B.kz, district = plan.district(bx, bz);
     if (district === "industrial" && r() < 0.6) return;
     let kind: PedKind = r() < (district === "park" ? 0.4 : 0.14) ? "jog" : r() < 0.15 ? "dog" : "walk";
     const fixed = (district === "downtown" || district === "commercial") && this.vendorCount < 2 && r() < 0.08;
     if (fixed) kind = r() < 0.55 ? "vendor" : "musician";
     else if (!this.peds.some((p) => p.kind === "chase") && r() < 0.04) kind = "chase";
     const dir: 1 | -1 = r() < 0.5 ? 1 : -1;
+    const side = Math.floor(r() * B.sides.length), f = B.sides[side], a0 = G.faceA0(f) + 4, a1 = G.faceA1(f) - 4;   // (4 m clear of the corners)
     const p: Ped = {
-      kind, bx, bz, side: Math.floor(r() * 4), a: 13 + r() * 34, dir, n: fixed ? -2.0 : dir > 0 ? -0.65 : -1.1,
+      kind, bx, bz, side, a: a0 + r() * Math.max(0, a1 - a0), dir, n: fixed ? -2.0 : dir > 0 ? -0.65 : -1.1,
       speed: kind === "jog" ? 2.8 + r() * 0.6 : kind === "chase" ? 3.0 : 1.1 + r() * 0.35, phase: r() * 10,
       state: fixed ? "wait" : "walk", crossA: 0, crossLen: 16, waitT: 0,
       shirt: kind === "jog" ? pick(r, [0xff5722, 0x00bcd4, 0xcddc39, 0xe91e63]) : pick(r, SHIRTS), pants: pick(r, PANTS), skin: pick(r, SKINS), hair: pick(r, HAIRS),
@@ -137,24 +145,25 @@ export class Crowd {
     // In the rain, umbrellas; first thing in the morning, coffee.
     if ((kind === "walk" || kind === "dog") && weatherMix(plan.climate?.weather ?? "clear").rain > 0.3 && r() < 0.65) p.umbrella = pick(r, UMBRELLAS);
     else if (kind === "walk" && district !== "park" && district !== "residential") { const hr = CLOCK.hourAt(this.time0); if (hr >= 6.5 && hr < 10 && r() < 0.35) p.cup = true; }
-    this.place(p);
+    this.place(G, p);
     p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
     if (Math.hypot(p.x - focus.x, p.z - focus.z) < PED_SPAWN[0] - 5) return;
     if (fixed) this.vendorCount++;
     this.peds.push(p);
   }
 
-  private place(p: Ped) {
-    const [x, z] = frontPt(p.side, p.a, p.n);
-    p.x = p.bx * BLOCK + x; p.z = p.bz * BLOCK + z;
-    const d = FRONT_NODE[p.side][2], h = d * Math.PI / 2;
+  private place(G: CityGraph, p: Ped) {
+    const q = G.facePt(faceOf(G, p), p.a, p.n, _pt), h = q.h;
+    p.x = q.x; p.z = q.z;
     p.h = p.dir > 0 ? h : h + Math.PI;
     if (p.kind === "vendor" || p.kind === "musician") p.h = h + Math.PI / 2;   // facing the street
   }
 
-  private walk(p: Ped, dt: number, plan: CityPlan, simTime: number, prs: SignalPreempt[], truck: Obstacle[]) {
-    if (p.kind === "vendor" || p.kind === "musician") { p.phase += dt; this.place(p); return; }
-    const corner = p.dir > 0 ? 51 - p.n : 9 + p.n;
+  private walk(G: CityGraph, p: Ped, dt: number, plan: CityPlan, simTime: number, prs: SignalPreempt[], truck: Obstacle[]) {
+    if (p.kind === "vendor" || p.kind === "musician") { p.phase += dt; this.place(G, p); return; }
+    const f = faceOf(G, p), kerb = G.streets[f >> 1].kerb, fwd = p.dir > 0;
+    // The corner ahead: where this walkway line meets the next side's (or the last side's).
+    const corner = fwd ? faceCorner(G, f, p.n)[0] : faceCorner(G, G.prevFace(f), p.n)[1];
     if (p.state === "walk") {
       // Wait for the truck if it's across the sidewalk just ahead.
       const fx = Math.cos(p.h), fz = -Math.sin(p.h);
@@ -164,8 +173,8 @@ export class Crowd {
       const fp = this.vig.blocker(p.bx, p.bz, p.side, p.a, p.dir);
       if (fp && fp[3] > nT - 0.35 && fp[2] < nT + 0.35) {
         const inner = fp[3] + 0.4, outer = fp[2] - 0.4;
-        if (inner <= -0.2 && (outer < -2.9 || Math.abs(inner - nT) < Math.abs(outer - nT))) nT = inner;
-        else if (outer >= -2.9) nT = outer;
+        if (inner <= -0.2 && (outer < 0.1 - kerb || Math.abs(inner - nT) < Math.abs(outer - nT))) nT = inner;
+        else if (outer >= 0.1 - kerb) nT = outer;
         else held = (p.dir > 0 ? fp[0] - p.a : p.a - fp[1]) < 1.2;
       }
       if (!blocked && !held) { p.a += p.dir * p.speed * dt; p.phase += p.speed * dt; }
@@ -173,31 +182,35 @@ export class Crowd {
       if ((p.dir > 0 && p.a >= corner) || (p.dir < 0 && p.a <= corner)) {
         p.a = corner;
         if (this.rnd() < 0.35 && p.kind !== "chase") { p.state = "wait"; p.waitT = 0; }
-        else this.turnCorner(p);
+        else this.turnCorner(G, p);
       }
     } else if (p.state === "wait") {
       // At the kerb: cross with the parallel traffic's green, unless the truck is right there.
       p.waitT += dt;
-      const g = blockGoals(p.bx, p.bz, 0)[p.side], d = g.dir;
-      const nx = p.dir > 0 ? g.ix + DIR_X[d] : g.ix, nz = p.dir > 0 ? g.iz + DIR_Z[d] : g.iz;
-      const green = signalState(nx, nz, (d % 2) as SignalAxis, simTime, plan.seed, prs) === "green";
+      const sg = crossSignal(G, f, fwd), cr = crossing(G, f, fwd);
+      const green = signalState(sg.node, sg.phase, simTime, plan.seed, prs) === "green";
       const clear = truck.every((o) => Math.hypot(o.x - p.x, o.z - p.z) > 12);
-      const fd = FRONT_NODE[p.side][2];
-      if (!insideCity(p.bx + DIR_X[fd] * p.dir, p.bz + DIR_Z[fd] * p.dir)) { p.state = "walk"; this.turnCorner(p); }   // the edge of town: no crossing
+      if (!cr) { p.state = "walk"; this.turnCorner(G, p); }   // the edge of town: no crossing
       else if (green && clear && p.waitT > 0.8) {
-        p.state = "cross"; p.crossA = p.a;
-        p.crossLen = p.dir > 0 ? (BLOCK + 9 - 0.85) - p.a : p.a - (51 + 0.85 - BLOCK);   // to the far corner's walkway
+        p.state = "cross"; p.crossA = p.a; p.crossN = cr.n;
+        p.crossLen = (cr.a - p.a) * p.dir;   // to the far corner's walkway
       }
-      else if (p.waitT > 30) { p.state = "walk"; this.turnCorner(p); }
+      else if (p.waitT > 30) { p.state = "walk"; this.turnCorner(G, p); }
     } else {
       // Crossing: step out to the crosswalk line (n = 1.7), across, and back to the walkway.
       p.a += p.dir * p.speed * dt; p.phase += p.speed * dt;
       const t = (p.a - p.crossA) * p.dir;
-      const L = p.crossLen;
-      p.n = t < 1.6 ? -0.85 + (1.7 + 0.85) * (t / 1.6) : t > L - 1.6 ? 1.7 - (1.7 + 0.85) * ((t - (L - 1.6)) / 1.6) : 1.7;
+      const L = p.crossLen, nE = p.crossN ?? -0.85;
+      p.n = t < 1.6 ? -0.85 + (1.7 + 0.85) * (t / 1.6) : t > L - 1.6 ? 1.7 - (1.7 - nE) * ((t - (L - 1.6)) / 1.6) : 1.7;
       if (t >= L) {
-        const d = FRONT_NODE[p.side][2];
-        p.bx += DIR_X[d] * p.dir; p.bz += DIR_Z[d] * p.dir; p.a -= BLOCK * p.dir; p.n = -0.85; p.state = "walk";
+        // Over: on along the side across, from its corner's walkway (as far on as this step went).
+        const cr = crossing(G, f, fwd);
+        if (cr) {
+          const to = cr.to;
+          Object.assign(p, faceRef(G, to));
+          p.a = (fwd ? G.faceA0(to) - 0.85 : G.faceA1(to) + 0.85) + (t - L) * p.dir;
+        }
+        p.n = -0.85; p.state = "walk"; p.crossN = undefined;
       }
     }
     // The runaway balloon: just ahead of its chaser, until it gets away and floats up.
@@ -207,16 +220,19 @@ export class Crowd {
       if (!bl.free) { const fx = Math.cos(p.h), fz = -Math.sin(p.h); bl.x = p.x + fx * 2.6; bl.z = p.z + fz * 2.6; bl.y = 2.1 + 0.25 * Math.sin(simTime * 3); }
       else { bl.y += dt * 1.6; bl.x += dt * 0.6; }
     }
-    this.place(p);
+    this.place(G, p);
     if (p.dog) {   // trotting a leash length behind, a little to the street side
       const fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h);
       p.dog.x = p.x - fx * 1.2 - rx * 0.45; p.dog.z = p.z - fz * 1.2 - rz * 0.45; p.dog.h = p.h; p.dog.phase = p.phase * 1.8;
     }
   }
 
-  private turnCorner(p: Ped) {
-    if (p.dir > 0) { p.side = NEXT_SIDE[p.side]; p.a = 9 + p.n; }
-    else { p.side = PREV_SIDE_CW[p.side]; p.a = 51 - p.n; }
+  // Round the corner ahead onto the next side (walking with the block on the right) or the
+  // last one, at the same distance out from the frontage.
+  private turnCorner(G: CityGraph, p: Ped) {
+    const f = faceOf(G, p);
+    if (p.dir > 0) { const g = G.nextFace(f); p.side = G.sideOf(g); p.a = faceCorner(G, f, p.n)[1]; }
+    else { const e = G.prevFace(f); p.side = G.sideOf(e); p.a = faceCorner(G, e, p.n)[0]; }
   }
 
   // ---- birds --------------------------------------------------------------------------------

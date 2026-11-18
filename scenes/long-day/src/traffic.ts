@@ -14,11 +14,11 @@ import { SPECS } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
-import { cableColumn } from "./decor.ts";
-import { CityPlan, cityStreet, pick } from "./city.ts";
-import { BLOCK, STREET } from "./grid.ts";
-import { DIR_X, DIR_Z, LANE_INNER, LANE_KERB, Path, turnDir } from "./route.ts";
-import type { Move, Pose } from "./route.ts";
+import { CityPlan, pick } from "./city.ts";
+import type { CityGraph } from "./citygraph.ts";
+import { BLOCK } from "./grid.ts";
+import { LANE_INNER, LANE_KERB, Path } from "./route.ts";
+import type { Move, Pose, Route } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
 
 export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id
@@ -113,9 +113,9 @@ export class Traffic {
   save() {
     return { rng: this.rng.s, id: this.nextId, cars: this.cars.map((c) => ({ ...c, kind: c.kind.id, path: c.path.route })) };
   }
-  load(o: ReturnType<Traffic["save"]>) {
+  load(o: ReturnType<Traffic["save"]>, plan: CityPlan) {
     this.rng.s = o.rng; this.nextId = o.id;
-    this.cars = o.cars.map((c) => ({ ...c, kind: this.kinds.find((k) => k.id === c.kind)!, path: new Path(c.path) }));
+    this.cars = o.cars.map((c) => ({ ...c, kind: this.kinds.find((k) => k.id === c.kind)!, path: new Path(plan.graph, c.path) }));
     for (const c of this.cars) c.path.eval(c.s, this.pose);   // the path remembers its last lane offset
     this.obstacles.length = 0;
   }
@@ -150,26 +150,22 @@ export class Traffic {
     const r = this.rnd;
     const ang = r() * Math.PI * 2, dist = TRAFFIC_SPAWN[0] + r() * (TRAFFIC_SPAWN[1] - TRAFFIC_SPAWN[0]);
     const px = focus.x + Math.cos(ang) * dist, pz = focus.z + Math.sin(ang) * dist;
-    // Snap to an edge: approach node (ix, iz) heading dir, `before` metres short of it.
-    const dir = Math.floor(r() * 4);
-    const ix = Math.round((px - STREET / 2) / BLOCK), iz = Math.round((pz - STREET / 2) / BLOCK);
-    const before = 15 + r() * 35;
+    // Onto the nearest street (a cable car: the nearest with tracks), one way or the other,
+    // `before` metres short of the node it runs to.
+    const G = plan.graph, fwd = r() < 0.5, before0 = 15 + r() * 35;
     let kind = this.pickKind(plan);
     let cable = false;
-    if (plan.style.cableCar && r() < 0.25) {
-      // A cable car on a track street, running north or south.
-      const col = [ix - 1, ix, ix + 1].find((x) => cableColumn(x));
-      if (col !== undefined && this.count("cablecar") < 2) { kind = this.kinds.find((k) => k.id === "cablecar")!; cable = true; }
-    }
+    if (plan.style.cableCar && r() < 0.25 && this.count("cablecar") < 2) { kind = this.kinds.find((k) => k.id === "cablecar")!; cable = true; }
     if (!kind || this.count(kind.id) >= kind.cap) return;
-    const route = { ix, iz, dir: cable ? (r() < 0.5 ? 1 : 3) : dir, before, moves: "S", after: 30 };
-    if (cable) route.ix = [ix - 1, ix, ix + 1].find((x) => cableColumn(x))!;
+    const sid = nearestStreet(G, px, pz, cable);
     // Only on the city's own streets (none out of town).
-    if (!cityStreet(route.ix - DIR_X[route.dir], route.iz - DIR_Z[route.dir], route.dir)) return;
-    const mv = this.validMove(route.ix, route.iz, route.dir, cable);
-    if (!mv) return;
-    route.moves = mv;
-    const path = new Path(route);
+    if (sid < 0 || !G.streets[sid].inCity) return;
+    const d = sid * 2 + (fwd ? 0 : 1), before = Math.min(before0, G.streets[sid].len - 6);
+    if (before < 8) return;
+    const mv = this.validMove(G, d, cable);
+    if (mv < 0) return;
+    const route: Route = { d, before, edges: [mv], after: 30 };
+    const path = new Path(G, route);
     path.eval(0, this.pose);
     // Not on top of anything.
     for (const o of truck) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
@@ -179,7 +175,7 @@ export class Traffic {
     // close to stop from speed.
     let v = kind.vmax * 0.7;
     const sg = path.signals[0];
-    if (sg && signalState(sg.ix, sg.iz, sg.axis, simTime, plan.seed, prs) !== "green") {
+    if (sg && signalState(G.nodes[sg.node], sg.phase, simTime, plan.seed, prs) !== "green") {
       const dist = sg.sLine - 0.8 - kind.len / 2;
       if (dist < 0.5) return;
       if (dist < v * v / 9 + 1) v = 0;
@@ -196,13 +192,19 @@ export class Traffic {
     for (const k of pool) { if ((t -= k.weight) < 0) return k; }
     return pool[0] ?? null;
   }
-  // A move at node (ix, iz), arriving heading dir, that stays on the city's streets.
-  private validMove(ix: number, iz: number, dir: number, cable: boolean): string | null {
-    for (let k = 0; k < 4; k++) { const m = this.pickMove(cable); if (cityStreet(ix, iz, turnDir(dir, m as Move))) return m; }
-    for (const m of ["S", "R", "L"]) if (!cable && cityStreet(ix, iz, turnDir(dir, m as Move))) return m;
-    return null;
+  // The dedge on from the end of dedge d, by a move picked at random, that stays on the city's
+  // streets (a cable car: straight on along its tracks), or -1.
+  private validMove(G: CityGraph, d: number, cable: boolean): number {
+    const ok = (e: number) => G.streets[e >> 1].inCity && (!cable || !!G.streets[e >> 1].tags.cable);
+    const moves = G.movesFrom(d);
+    for (let k = 0; k < 4; k++) {
+      const m = this.pickMove(cable), o = moves.filter((x) => x.move === m && ok(x.to));
+      if (o.length) return o[Math.floor(this.rnd() * o.length)].to;
+    }
+    if (!cable) for (const m of ["S", "R", "L"] as Move[]) { const o = moves.find((x) => x.move === m && ok(x.to)); if (o) return o.to; }
+    return -1;
   }
-  private pickMove(cable: boolean): string {
+  private pickMove(cable: boolean): Move {
     if (cable) return "S";
     const x = this.rnd();
     return x < 0.6 ? "S" : x < 0.85 ? "R" : "L";
@@ -241,15 +243,16 @@ export class Traffic {
     // path, or past its end the next node's: a path ends 30 m beyond its last node, so the next
     // stop line is only ~12 m into the next path, too late to stop from city speed. (Key
     // p.signals.length stands for that one; it becomes key 0 on the next path.)
-    let sg: { ix: number; iz: number; axis: 0 | 1; sLine: number; move: string } | null = null, key = 0;
+    const G = plan.graph;
+    let sg: { node: number; phase: number; sLine: number; move: string } | null = null, key = 0;
     for (; key < p.signals.length; key++) if (c.s <= p.signals[key].sLine - 0.8 - half + 0.5) { sg = p.signals[key]; break; }
     if (!sg) {
-      const d = p.endDir, [ex, ez] = p.endNode;
-      sg = { ix: ex + DIR_X[d], iz: ez + DIR_Z[d], axis: (d % 2) as 0 | 1, sLine: p.length + BLOCK - p.route.after - STREET / 2 - 4.1, move: "?" };
+      const e = p.endEdge, N = G.nodes[G.dedgeTo(e)], ai = G.armIndexIn(e);
+      if (N.control === "signal") sg = { node: N.id, phase: N.phaseOf[ai], sLine: p.length + G.faceLen(e) - p.endA - N.arms[ai].mouth - 4.1, move: "?" };
     }
-    {
+    if (sg) {
       const target = sg.sLine - 0.8 - half, dist = target - c.s;
-      const state = signalState(sg.ix, sg.iz, sg.axis, simTime, plan.seed, prs);
+      const state = signalState(G.nodes[sg.node], sg.phase, simTime, plan.seed, prs);
       if (state === "green") { if (c.stopFor === key) c.stopFor = -1; }
       else if (c.committed !== key) {
         if (state === "red" && sg.move === "R" && !c.cable && c.stillT > 1.2 && dist < 1.2) c.committed = key;
@@ -265,7 +268,7 @@ export class Traffic {
     // What's ahead in this lane: other vehicles, the truck, pedestrians.
     // (Judged along the street, not the car's own heading: easing across lanes after a turn, that
     // points at the kerb, and a truck parked in the kerb lane would seem to be dead ahead.)
-    const turningNow = Number.isNaN(p.lastOffset), hr = turningNow ? c.h : Math.round(c.h / (Math.PI / 2)) * (Math.PI / 2);
+    const turningNow = Number.isNaN(p.lastOffset), hr = turningNow ? c.h : p.lastLineH;
     const fx = Math.cos(hr), fz = -Math.sin(hr), lx = -fz, lz = fx;   // forward, right
     let gap = Infinity, truckBehind = Infinity, otherLaneBlocked = false, stillAhead = Infinity, gapOwner = -1, gapPed = false, truckAhead = Infinity;
     const look = 10 + c.v * 2.4;   // far enough to stop comfortably from city speed
@@ -362,11 +365,11 @@ export class Traffic {
     if (truckBehind < 2.5 && Math.abs(c.dodge) < 1) { this.cars.splice(index, 1); return; }
     // Next intersection: plan on from the end of this path.
     if (c.s >= p.length - 0.5) {
-      const past = p.route.after - (p.length - c.s), d = p.endDir, [ex, ez] = p.endNode;
-      const mv = this.validMove(ex + DIR_X[d], ez + DIR_Z[d], d, c.cable);
-      if (!mv) { this.cars.splice(index, 1); return; }
+      const past = p.endA - (p.length - c.s), d = p.endEdge;
+      const mv = this.validMove(G, d, c.cable);
+      if (mv < 0) { this.cars.splice(index, 1); return; }
       const next = p.signals.length;   // the next node's signal, already judged from this path
-      c.path = new Path({ ix: ex + DIR_X[d], iz: ez + DIR_Z[d], dir: d, before: BLOCK - past, moves: mv, after: 30 });
+      c.path = new Path(G, { d, before: G.faceLen(d) - past, edges: [mv], after: 30 });
       c.s = 0; c.committed = c.committed === next ? 0 : -1; c.stopFor = c.stopFor === next ? 0 : -1;
     }
     c.path.eval(c.s, this.pose);
@@ -519,4 +522,18 @@ export function truckObstacles(model: TruckModel, x0: number, z0: number, h: num
     const th = h + trailerYaw, tx = Math.cos(th), tz = -Math.sin(th), kx = x0 + fx * (spec.fifthWheel ?? 0), kz = z0 + fz * (spec.fifthWheel ?? 0);
     for (let a = -1; a >= -14.5; a -= 2.2) out.push({ x: kx + tx * a, z: kz + tz * a, r: 1.5 });
   }
+}
+
+// The street nearest (x, z) by its centre line (with tracks, for a cable car), round the point's
+// tile, or -1.
+function nearestStreet(G: CityGraph, x: number, z: number, cable: boolean): number {
+  let best = -1, bd = Infinity;
+  const gx = Math.floor(x / BLOCK), gz = Math.floor(z / BLOCK);
+  for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++)
+    for (const id of G.tile(gx + dx, gz + dz).streets) {
+      if (cable && !G.streets[id].tags.cable) continue;
+      const [s, o] = G.toStreet(id, x, z), st = G.streets[id], d = Math.abs(o) + Math.max(0, -s, s - st.len);
+      if (d < bd || (d === bd && id < best)) { bd = d; best = id; }
+    }
+  return best;
 }

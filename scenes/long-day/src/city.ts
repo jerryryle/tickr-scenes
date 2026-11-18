@@ -9,8 +9,8 @@
 // choice is hashed from the seed and the block, so a block is identical whenever it is rebuilt.
 import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
-import { Batch, BATCH, quadGeometry } from "./geom.ts";
-import type { Quad } from "./geom.ts";
+import { Batch, BATCH, frameApply, quadGeometry } from "./geom.ts";
+import type { Frame2, Quad } from "./geom.ts";
 import type { ChunkBuild } from "./chunks.ts";
 import { LAMP_SITES, PoolBuilder } from "./atmosphere.ts";
 import { truckExtents } from "./truck.ts";
@@ -18,7 +18,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE } from "./facadetiles.ts";
 import type { FacadeBand } from "./facade.ts";
-import { buildSignals, signalOffset } from "./signals.ts";
+import { buildSignals } from "./signals.ts";
 import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
@@ -26,7 +26,9 @@ import type { Climate } from "./climate.ts";
 import { PlateSet } from "./signs.ts";
 import { carKindAt, carPaintAt, parkedCar } from "./cars.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
-import { buildInterchange, INTERCHANGE_CLEAR, INTERCHANGE_DRIVE, interchangeOpen } from "./interchange.ts";
+import { buildInterchange, interchangeClear, interchangeDrive, interchangeFace, interchangeOpen } from "./interchange.ts";
+import { isExitKind } from "./route.ts";
+import type { ExitKind } from "./route.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
@@ -37,6 +39,10 @@ import type { SignMesh, SignStyle } from "./signs.ts";
 import { BIOME_OF } from "./country.ts";
 import { BIOMES, landTree } from "./countryworld.ts";
 import { BLOCK, STREET, KERB, CURB_H, RING } from "./grid.ts";
+import { angleDiff, CityGraph, inPoly, polyDist } from "./citygraph.ts";
+import type { CBlock, CNode, CStreet } from "./citygraph.ts";
+import { gridGraph } from "./citygen.ts";
+import { DEBUG_EXIT, DEBUG_LAYOUT } from "./debug.ts";
 
 const LANE_EAST_OUTER = 13.5; // local z of the eastbound kerb lane's centre
 
@@ -87,6 +93,96 @@ export class CityPlan {
   readonly name: string;
   climate: Climate | null = null;   // the city's season and weather (journey.ts), for the countryside round it
   constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal) { this.name = cityName(seed, style); }
+  // The street graph (citygraph.ts): built on first use, from the city's limits and gates.
+  private g: CityGraph | null = null;
+  get graph(): CityGraph {
+    if (this.g) return this.g;
+    const opts = { lo: CITY_LO, hi: CITY_HI, gates: GATES, nameEW: streetNameEW, nameNS: streetNameNS,
+      elevatedRow: (iz: number) => elevatedLine(this.style, iz), cableColumn: (ix: number) => !!this.style.cableCar && cableColumn(ix) };
+    const cuts = this.slipCuts();
+    if (this.layout === "grid") return this.g = gridGraph(opts, cuts.length ? { seed: this.seed, jitter: 0, drop: 0, fixed: () => true, keep: () => true, cuts } : null);
+    // A river across town, in some styles: a row of blocks clear of the freeway's line, elevated
+    // lines and gate rows.
+    let river: number | undefined;
+    if (this.style.id === "port" || this.style.id === "brick" || this.style.id === "coastal" || DEBUG_LAYOUT === "river") {
+      const rows = [];
+      for (let iz = CITY_LO + 2; iz <= CITY_HI - 2; iz++) if (![iz, iz + 1].some((r) => opts.elevatedRow(r) || GATES.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === r) || (this.freeway && (this.freeway.dir === 0 || this.freeway.dir === 2) && Math.abs(this.freeway.iz - r) <= 1))) rows.push(iz);
+      if (rows.length && (DEBUG_LAYOUT === "river" || hash2(this.seed, 0x1a7, 0, 3) < 0.5)) river = rows[Math.floor(hash2(this.seed, 0x1a7, 0, 4) * rows.length)];
+    }
+    // Kept straight: the freeway's line and the blocks either side of it (its off-ramp's), and the
+    // elevated and cable-car lines.
+    const fw = this.freeway, onFw = (ix: number, iz: number) => !!fw && (fw.dir === 0 || fw.dir === 2 ? Math.abs(iz - fw.iz) <= 1 : Math.abs(ix - fw.ix) <= 1);
+    // (And industrial districts stay square: their yards and loading docks are laid out for the
+    // grid's blocks.)
+    const industrial = (ix: number, iz: number) => [[ix - 1, iz - 1], [ix, iz - 1], [ix - 1, iz], [ix, iz]].some(([bx, bz]) => this.district(bx, bz) === "industrial");
+    const straight = (ix: number, iz: number) => onFw(ix, iz) || opts.elevatedRow(iz) || opts.cableColumn(ix) || industrial(ix, iz);
+    const h = (salt: number) => hash2(this.seed, 0x1a7, 0, salt);
+    const fl = this.flourishes(straight, river);
+    return this.g = gridGraph(opts, { seed: this.seed, jitter: 5 + 5 * h(1), drop: 0.05 + 0.1 * h(2), fixed: straight, river, ...fl, cuts, parks: this.superParks(straight, river, fl.circuses),
+      keep: (ix, iz, ew) => !(ew ? straight(ix, iz) && (opts.elevatedRow(iz) || onFw(ix, iz)) : straight(ix, iz) && (opts.cableColumn(ix) || onFw(ix, iz))) && !onFw(ix, iz) && !onFw(ew ? ix + 1 : ix, ew ? iz : iz + 1) });
+  }
+  // A superblock park or two (four blocks each, the streets between them gone), clear of
+  // whatever is kept straight, the river, the gates and the city's edge.
+  private superParks(straight: (ix: number, iz: number) => boolean, river: number | undefined, circuses: { ix: number; iz: number }[]): [number, number][] {
+    const out: [number, number][] = [], n = Math.floor(hash2(this.seed, 0x1a7, 0, 5) * 3);
+    for (let k = 0; k < 40 && out.length < n; k++) {
+      const px = CITY_LO + 2 + Math.floor(hash2(k, 1, this.seed, 0x5b1) * (CITY_HI - CITY_LO - 4)), pz = CITY_LO + 2 + Math.floor(hash2(k, 2, this.seed, 0x5b1) * (CITY_HI - CITY_LO - 4));
+      let ok = true;
+      for (let x = px; x <= px + 2 && ok; x++) for (let z = pz; z <= pz + 2 && ok; z++) if (straight(x, z) || GATES.some((g) => g.ix === x || g.iz === z)) ok = false;
+      if (river !== undefined && pz <= river + 1 && pz + 2 >= river) ok = false;
+      if (out.some(([x, z]) => Math.abs(x - px) < 4 && Math.abs(z - pz) < 4)) ok = false;
+      if (circuses.some((c) => c.ix >= px - 2 && c.ix <= px + 4 && c.iz >= pz - 2 && c.iz <= pz + 4)) ok = false;
+      if (ok) out.push([px, pz]);
+    }
+    return out;
+  }
+  // A warped city's larger moves (citygen.ts): a diagonal avenue or two across town, an old town
+  // of crooked streets, long avenues bowed into curves; each by chance, from the seed. Diagonals
+  // keep clear of what stays straight, the river and the gates, and cross no other.
+  private flourishes(straight: (ix: number, iz: number) => boolean, river: number | undefined) {
+    const h = (k: number) => hash2(this.seed, 0xf10, 0, k), span = CITY_HI - CITY_LO;
+    const diagonals: { ix: number; iz: number; dx: number; dz: number; n: number; name: string }[] = [], used = new Set<string>();
+    // A circus or two first: a node whose whole neighbourhood is free to bend, its four blocks
+    // kept off the diagonals.
+    const circuses: { ix: number; iz: number; name: string }[] = [], nc = h(11) < 0.45 ? (h(12) < 0.3 ? 2 : 1) : 0;
+    for (let t = 0; t < 40 && circuses.length < nc; t++) {
+      const ix = CITY_LO + 3 + Math.floor(h(300 + t) * (span - 5)), iz = CITY_LO + 3 + Math.floor(h(340 + t) * (span - 5));
+      let ok = !circuses.some((c) => Math.abs(c.ix - ix) < 5 && Math.abs(c.iz - iz) < 5) && !(river !== undefined && iz >= river - 1 && iz <= river + 2);
+      for (let x = ix - 2; x <= ix + 2 && ok; x++) for (let z = iz - 2; z <= iz + 2 && ok; z++) if (straight(x, z) || GATES.some((g) => g.ix === x || g.iz === z)) ok = false;
+      if (!ok) continue;
+      circuses.push({ ix, iz, name: ["Columbus Circle", "Union Circle", "Dupont Circle", "Logan Circle", "Grand Circle"][Math.floor(h(380 + t) * 5)] });
+      for (let x = ix - 1; x <= ix; x++) for (let z = iz - 1; z <= iz; z++) used.add(`${x},${z}`);
+    }
+    const nd = h(1) < 0.55 ? (h(2) < 0.35 ? 2 : 1) : 0;
+    for (let t = 0; t < 30 && diagonals.length < nd; t++) {
+      const dx = h(10 + t) < 0.5 ? 1 : -1, dz = h(40 + t) < 0.5 ? 1 : -1;
+      const ix = CITY_LO + 2 + Math.floor(h(70 + t) * (span - 3)), iz = CITY_LO + 2 + Math.floor(h(100 + t) * (span - 3));
+      let n = 0;
+      const blocks: string[] = [];
+      for (; n < 12; n++) {
+        const ax = ix + dx * n, az = iz + dz * n, bx = ax + dx, bz = az + dz, kb = `${Math.min(ax, bx)},${Math.min(az, bz)}`;
+        if (bx <= CITY_LO || bx >= CITY_HI + 1 || bz <= CITY_LO || bz >= CITY_HI + 1 || straight(ax, az) || straight(bx, bz) || used.has(kb)) break;
+        if (river !== undefined && (Math.min(az, bz) === river)) break;
+        if (GATES.some((g) => g.ix === bx || g.iz === bz)) break;
+        blocks.push(kb);
+      }
+      if (n < 4) continue;
+      for (const k of blocks) used.add(k);
+      diagonals.push({ ix, iz, dx, dz, n, name: ["Broadway", "Grand Diagonal", "Park Ave", "Bay Ave", "Diagonal St"][Math.floor(h(200 + t) * 5)] });
+    }
+    const oldTown = h(3) < 0.5 ? { ix: Math.round(CITY_LO + span * (0.25 + 0.5 * h(4))), iz: Math.round(CITY_LO + span * (0.25 + 0.5 * h(5))), r: 3 + 3 * h(6) } : undefined;
+    const sweep = h(7) < 0.5 ? { bow: 12 + 18 * h(8), wave: 6 + 8 * h(9) } : undefined;
+    return { diagonals, oldTown, sweep, circuses };
+  }
+  // How this city's streets are laid out (citygen.ts): the old square grid, or one bent out of square.
+  get layout(): "grid" | "warp" {
+    if (DEBUG_LAYOUT === "grid" || DEBUG_LAYOUT === "warp") return DEBUG_LAYOUT;
+    if (DEBUG_LAYOUT === "river") return "warp";
+    return hash2(this.seed, 0x1a7, 0, 0) < 0.5 ? "grid" : "warp";
+  }
+  // The block with key (bx, bz), its face on side `side`, and that face's frontage point.
+  blockOf(bx: number, bz: number) { return this.graph.block(bx, bz); }
+  face(bx: number, bz: number, side: number) { const b = this.graph.block(bx, bz); return b ? b.sides[side] ?? -1 : -1; }
   // The gate the highway comes in through: pure, from the city's seed.
   get entryGate(): Gate { return entryGateOf(this.seed); }
   // The gate whose street line the freeway runs along, if the city has one (freeway.ts).
@@ -94,18 +190,41 @@ export class CityPlan {
   get freeway(): Gate | null { if (this.fw === undefined) this.fw = freewayGate(this.seed, this.style); return this.fw; }
   get freewayMerge(): boolean { return !!this.freeway && freewayMerge(this.seed); }
   // Where the truck comes off the freeway (interchange.ts), in a city it takes it into: the block
-  // on the right a couple of blocks in, the side of it along the freeway (FRONT_NODE's), the node
-  // the off-ramp leaves past and the way in.
-  private ic: { bx: number; bz: number; side: number; ix: number; iz: number; dir: number } | null | undefined;
+  // on the right a couple of blocks in (the grid's key), the side of it along the freeway, the node
+  // the off-ramp leaves past and the way in, and the kind of off-ramp: a loop in that block, or
+  // a slip ramp down beside the freeway across it and the next two (one superblock).
+  private ic: { bx: number; bz: number; side: number; ix: number; iz: number; dir: number; kind: ExitKind } | null | undefined;
   get interchange() {
     if (this.ic !== undefined) return this.ic;
     const g = this.freeway;
     if (!g || !this.freewayMerge) return (this.ic = null);
     const d = (g.dir + 2) % 4, ix = g.ix + [1, 0, -1, 0][d] * FW_OFF_K, iz = g.iz + [0, -1, 0, 1][d] * FW_OFF_K;
     const [bx, bz] = d === 0 ? [ix, iz] : d === 2 ? [ix - 1, iz - 1] : d === 1 ? [ix, iz - 1] : [ix - 1, iz];
-    return (this.ic = { bx, bz, side: [0, 2, 1, 3][d], ix, iz, dir: d });
+    const kind: ExitKind = isExitKind(DEBUG_EXIT) ? DEBUG_EXIT : hash2(this.seed, 0x5e7, 0, 0x1c) < 0.5 ? "helix" : "slip";
+    return (this.ic = { bx, bz, side: [0, 2, 1, 3][d], ix, iz, dir: d, kind });
   }
-  interchangeAt(bx: number, bz: number) { const c = this.interchange; return !!c && c.bx === bx && c.bz === bz; }
+  // The streets left out for a slip ramp's superblock: the two that would cross it, running in
+  // from the freeway's line at the next two nodes (as WarpOpts cuts).
+  private slipCuts(): { ix: number; iz: number; ew: boolean }[] {
+    const c = this.interchange;
+    if (!c || c.kind !== "slip") return [];
+    const DX = [1, 0, -1, 0], DZ = [0, -1, 0, 1], r = (c.dir + 3) % 4;
+    return [1, 2].map((k) => {
+      const nx = c.ix + DX[c.dir] * k, nz = c.iz + DZ[c.dir] * k;
+      return r === 0 ? { ix: nx, iz: nz, ew: true } : r === 2 ? { ix: nx - 1, iz: nz, ew: true } : r === 3 ? { ix: nx, iz: nz, ew: false } : { ix: nx, iz: nz - 1, ew: false };
+    });
+  }
+  // The interchange's block: the grid's own, or the superblock it is part of.
+  private icKey: [number, number] | null | undefined;
+  interchangeAt(bx: number, bz: number) {
+    const c = this.interchange;
+    if (!c) return false;
+    if (this.icKey === undefined) {
+      const P = this.graph.facePt(interchangeFace(this), 30, 21), b = this.graph.blockAt(P.x, P.z);
+      this.icKey = b ? [b.kx, b.kz] : null;
+    }
+    return !!this.icKey && this.icKey[0] === bx && this.icKey[1] === bz;
+  }
   // On the freeway's street beside the interchange (the chunk's street along `axis`): where along
   // it (street-local) the deck's parapet opens for the off-ramp (and on which side, as
   // buildFreewayStreet's k), and where the way down crosses the sidewalk (no bents there).
@@ -115,16 +234,17 @@ export class CityPlan {
     // The street from the node before the interchange's (the deceleration lane starts there) and
     // from its own: each in the chunk of the node it leaves (heading east or south) or arrives at.
     const d = c.dir, [dx, dz] = [[1, 0], [0, -1], [-1, 0], [0, 1]][d];
-    for (const back of [1, 0]) {
+    for (const back of [1, 0, -1, -2]) {
       const ix = c.ix - dx * back, iz = c.iz - dz * back;
       const [sx, sz, sa] = d === 0 ? [ix, iz, 0] : d === 2 ? [ix - 1, iz, 0] : d === 1 ? [ix, iz - 1, 1] : [ix, iz, 1];
       if (sx !== cx || sz !== cz || sa !== axis) continue;
       const off = back * BLOCK, at = (a: number) => (d === 0 || d === 3 ? 9 + a + off : 69 - a - off);
       const span = (a0: number, a1: number): [number, number] => [Math.max(0, Math.min(at(a0), at(a1))), Math.min(BLOCK, Math.max(at(a0), at(a1)))];
-      const cl = span(INTERCHANGE_CLEAR[0], INTERCHANGE_CLEAR[1]);
+      const cl = span(...interchangeClear(c.kind));
       const op = interchangeOpen(), g = at(op[0] + 4);
       // (The exit's gantry where its lane opens, facing the traffic coming along it.)
-      return { open: span(op[0], op[1]), clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1,
+      const o = span(op[0], op[1]);
+      return { open: o[1] > o[0] ? o : [-99, -99], clear: cl[1] > cl[0] ? cl : [-99, -99], k: d === 0 || d === 3 ? -1 : 1,
         gantry: g > 1 && g < BLOCK - 1 ? g : null, face: d === 0 || d === 3 ? -1 : 1 };
     }
     return null;
@@ -199,61 +319,316 @@ export interface CityMaterials { ground: THREE.Material; solid: THREE.Material; 
 export interface StallPose { model: TruckModel; x: number; z: number; h: number }
 export type FleetBuilder = (stalls: StallPose[]) => THREE.Object3D | null;
 
-// Everything a city chunk is made of, as batches (`takeSlot` null: no sign atlas use, for probes).
+// Everything a city tile is made of, as batches (`takeSlot` null: no sign atlas use, for
+// probes): the intersections, streets and blocks the street graph anchors in it (citygraph.ts),
+// each drawn in its own frame, and the countryside's land where the tile has no city block.
 function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: string, style: SignStyle) => ReturnType<SignAtlas["uv"]> | null) | null) {
-  const seed = plan.seed;
+  const seed = plan.seed, G = plan.graph, T = G.tile(cx, cz), ox = cx * BLOCK, oz = cz * BLOCK;
   CS = plan.style;
   const ground = new Batch(), solid = new Batch(), lamps = new Batch();
   const rnd = mulberry32(Math.floor(hash2(cx, cz, seed, 99) * 4294967296));
   setFacadeChunk(cx, cz, seed);
   const district = plan.district(cx, cz);
   const plates = takeSlot ? new PlateSet() : null;
-  if (!insideCity(cx, cz)) {
-    Object.assign(DC, { plates, lamps, quads: [], ads: false, mquads: [], roofs: [], fac: "residence", plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
-    buildOutskirts(ground, solid, lamps, plan, cx, cz, rnd);
-    return { ground, solid, lamps, stalls: [] as StallPose[], district, site: { kind: "kerb" } as SiteLayout };
-  }
-  const site = siteLayout(plan, cx, cz);
-  Object.assign(DC, { plates, lamps, quads: [], ads: false, mquads: [], roofs: [], fac: facilityAt(plan, cx, cz), plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
-  const sign = takeSlot ? facilitySign(plan, cx, cz) : null;
-  const uv = sign && takeSlot ? takeSlot(sign.text, sign.style) : null;
-  // Base asphalt under everything; streets are what's left uncovered.
-  ground.box(BLOCK / 2, -0.05, BLOCK / 2, BLOCK, 0.1, BLOCK, C.asphalt);
-  // Each street's two sidewalks front this block and a neighbour (see streetFrontage).
-  buildStreet(ground, solid, 0, district, rnd, streetFrontage(plan, cx, cz - 1, 1), streetFrontage(plan, cx, cz, 0));
-  buildStreet(ground, solid, 1, district, rnd, streetFrontage(plan, cx - 1, cz, 3), streetFrontage(plan, cx, cz, 2));
-  buildCorners(ground); buildMouths(ground, cx, cz);
-  buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, seed), plates && { ew: streetNameEW(cz), ns: streetNameNS(cx), plates });
-  if (elevatedLine(CS, cz)) buildElevated(solid);
-  for (const axis of [0, 1]) if (plan.freewayStreet(axis, cx, cz)) {
-    const ic = plan.interchangeStreet(axis, cx, cz), F = plan.freewayFrame!;
-    const gantry = ic?.gantry != null && plates ? { at: ic.gantry, face: ic.face, k: ic.k, text: `EXIT ${F.exitNo} · ${F.name} CENTER`, other: `I-${F.route} ${F.wayOut}`, plates } : null;
-    buildFreewayStreet(ground, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null, gantry);
-  }   // (the ground batch: the truck's see-through spotlight leaves it be)
-  if (CS.cableCar && cableColumn(cx)) buildCableTracks(ground);
-  const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
-  let stalls: StallPose[] = [];
-  if (site.kind === "garage") buildGarage(ground, solid, site.side, rnd, plan.seed);
-  else if (site.kind === "interchange") buildInterchange(ground, solid, site.side, plan.seed);
-  else if (site.kind === "dock") buildDockSite(ground, solid, site, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
-  else if (site.kind === "lot") stalls = buildRentalLot(ground, solid, site, rnd, DC.quads, uv);
-  else if (CS.townSquare && district === "downtown" && plan.coreDistance(cx, cz) < 0.8) buildTownSquare(ground, solid, B, rnd);
-  else {
-    switch (district) {
-      case "downtown": buildDowntown(ground, solid, B, plan.downtownHeight(cx, cz), rnd); break;
-      case "commercial": buildCommercial(ground, solid, B, rnd); break;
-      case "residential": buildResidential(ground, solid, B, rnd); break;
-      case "industrial": buildIndustrial(ground, solid, B, rnd, site.kind === "stand" ? site : null); break;
-      case "park": buildPark(ground, solid, B, rnd, site.kind === "stand" ? standKeepOut(site) : null); break;
-    }
-    if (site.kind === "stand") buildStand(ground, solid, site, rnd);
-    if (uv) for (let side = 0; side < 4; side++) bladeSign(solid, side, DC.quads, uv);
-    // Main Street towns have a water tower with the town's name, over a back garden.
-    if (CS.townSquare && district === "residential" && hash2(cx, cz, seed, 0x77e) < 0.06)
-      waterTower(solid, 39, 39, takeSlot ? takeSlot(plan.name.toUpperCase(), { bg: "#a8c4d8", fg: "#1d2f5a", logo: false }) : null);
-  }
-  if ((district === "commercial" || district === "downtown" || district === "industrial") && rnd() < CS.billboards) roofBillboard(solid, B, rnd);
+  const city = T.blocks.map((b) => G.blocks[b]).filter((b) => b.inCity), water = T.blocks.map((b) => G.blocks[b]).filter((b) => b.water);
+  Object.assign(DC, { plates, lamps, quads: [], ads: false, mquads: [], roofs: [], fac: city.length ? facilityAt(plan, city[0].kx, city[0].kz) : "residence", plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
+  for (const n of T.nodes) buildNode(ground, solid, lamps, plan, G.nodes[n], ox, oz, plates);
+  for (const sid of T.streets) buildStreetPart(ground, solid, plan, G.streets[sid], ox, oz, city.length ? district : "residential", rnd);
+  let stalls: StallPose[] = [], site: SiteLayout = { kind: "kerb" } as SiteLayout;
+  for (const b of city) ({ stalls, site } = buildBlockPart(ground, solid, plan, b, ox, oz, rnd, takeSlot));
+  for (const b of water) buildRiver(ground, b, ox, oz);
+  if (!city.length && !water.length) buildOutskirts(ground, solid, plan, cx, cz, rnd);
   return { ground, solid, lamps, stalls, district, site };
+}
+
+// A part drawn in its own frame `f` (tile-local): what it adds to the batches and to the chunk's
+// other lists (signs, plates, lamps, light pools, the probes' obstacles) is turned and moved into
+// place afterwards.
+function inFrame(f: Frame2, bs: Batch[], fn: () => void) {
+  if (f.ox === 0 && f.oz === 0 && f.rot === 0) { fn(); return; }
+  const marks = bs.map((b) => b.mark()), q0 = DC.quads.length, m0 = DC.mquads.length, p0 = DC.plates?.quads.length ?? 0, l0 = DC.lampSites.length;
+  const pl0 = DC.pools.mark(), r0 = PAVEMENT.out?.length ?? 0, x0 = PAVEMENT.boxes?.length ?? 0, roofs0 = DC.roofs.length;
+  fn();
+  bs.forEach((b, i) => b.transformFrom(marks[i], f));
+  const tq = (q: Quad) => { [q.x, q.z] = frameApply(f, q.x, q.z); q.rotY = (q.rotY ?? 0) + f.rot; };
+  for (let i = q0; i < DC.quads.length; i++) tq(DC.quads[i]);
+  for (let i = m0; i < DC.mquads.length; i++) tq(DC.mquads[i]);
+  if (DC.plates) for (let i = p0; i < DC.plates.quads.length; i++) tq(DC.plates.quads[i]);
+  for (let i = l0; i < DC.lampSites.length; i += 3) [DC.lampSites[i], DC.lampSites[i + 2]] = frameApply(f, DC.lampSites[i], DC.lampSites[i + 2]);
+  DC.pools.transformFrom(pl0, f);
+  const R = PAVEMENT.out;
+  if (R) for (let i = r0; i < R.length; i += 4) [R[i], R[i + 1]] = frameApply(f, R[i], R[i + 1]);
+  const X = PAVEMENT.boxes;
+  if (X) for (let i = x0; i < X.length; i += 4) {
+    const c = [frameApply(f, X[i], X[i + 1]), frameApply(f, X[i + 2], X[i + 1]), frameApply(f, X[i], X[i + 3]), frameApply(f, X[i + 2], X[i + 3])];
+    X[i] = Math.min(...c.map((p) => p[0])); X[i + 1] = Math.min(...c.map((p) => p[1])); X[i + 2] = Math.max(...c.map((p) => p[0])); X[i + 3] = Math.max(...c.map((p) => p[1]));
+  }
+  DC.roofs.length = roofs0;   // (a part's roofs are its own: billboards go up within it)
+}
+
+// A flat polygon slab from y0 up to y1 (its top and its sides), its corners in order.
+export function slab(b: Batch, pts: [number, number][], y0: number, y1: number, color: number) {
+  for (let i = 1; i + 1 < pts.length; i++) b.tri(pts[0][0], y1, pts[0][1], pts[i][0], y1, pts[i][1], pts[i + 1][0], y1, pts[i + 1][1], color);
+  if (y1 - y0 < 1e-6) return;
+  let cx = 0, cz = 0; for (const [x, z] of pts) { cx += x; cz += z; } cx /= pts.length; cz /= pts.length;
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % pts.length];
+    let nx = bz - az, nz = -(bx - ax); if (nx * (ax - cx) + nz * (az - cz) < 0) { nx = -nx; nz = -nz; }
+    b.tri(ax, y0, az, bx, y0, bz, bx, y1, bz, color, [nx, 0, nz]); b.tri(ax, y0, az, bx, y1, bz, ax, y1, az, color, [nx, 0, nz]);
+  }
+}
+
+// An intersection (tile-local, about its node): its asphalt, sidewalk corners between its arms
+// (the sidewalk running on straight across where no street leaves), and its signals.
+function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNode, ox: number, oz: number, plates: PlateSet | null) {
+  const G = plan.graph, A = n.arms, cx = n.x - ox, cz = n.z - oz;
+  if (A.length >= 2) {
+    // Points at distance `t` along arm i, `o` to its right (negative: left).
+    const pt = (i: number, t: number, o: number): [number, number] => { const h = A[i].h; return [cx + Math.cos(h) * t + Math.sin(h) * o, cz - Math.sin(h) * t + Math.cos(h) * o]; };
+    const meet = (i: number, oi: number, j: number, oj: number): [number, number] => {
+      // Arm i's line `oi` to its right meets arm j's line `oj` to its right.
+      const hi = A[i].h, hj = A[j].h, di = [Math.cos(hi), -Math.sin(hi)], dj = [Math.cos(hj), -Math.sin(hj)];
+      const [px, pz] = pt(i, 0, oi), [qx, qz] = pt(j, 0, oj), den = di[0] * dj[1] - di[1] * dj[0];
+      if (Math.abs(den) < 1e-9) return [px, pz];
+      const t = ((qx - px) * dj[1] - (qz - pz) * dj[0]) / den;
+      return [px + di[0] * t, pz + di[1] * t];
+    };
+    const ring: [number, number][] = [];
+    for (let i = 0; i < A.length; i++) {
+      const j = (i + 1) % A.length, si = G.streets[A[i].street], sj = G.streets[A[j].street];
+      const ri = si.half - si.kerb, rj = sj.half - sj.kerb, hi = si.half, hj = sj.half;
+      let gap = (A[j].h - A[i].h + 2 * Math.PI) % (2 * Math.PI); if (A.length === 2 && i === 1) gap = 2 * Math.PI - ((A[1].h - A[0].h + 2 * Math.PI) % (2 * Math.PI));
+      ring.push(pt(i, A[i].mouth, ri), pt(i, A[i].mouth, -ri));
+      if (gap < Math.PI - 1e-3) {
+        // An inside corner: the kerb lines meet (the asphalt's corner), and the sidewalk corner
+        // between the kerb lines and the backs of the sidewalks.
+        const k = meet(i, -ri, j, rj);
+        ring.push(k);
+        slab(g, [k, meet(i, -hi, j, rj), meet(i, -hi, j, hj), meet(i, -ri, j, hj)], 0, CURB_H, C.sidewalk);
+      } else {
+        // No street between: the sidewalk runs straight on across, with its kerb.
+        const a = pt(i, A[i].mouth, -ri), b = pt(i, A[i].mouth, -hi), c = pt(j, A[j].mouth, hj), d = pt(j, A[j].mouth, rj);
+        slab(g, [a, b, c, d], 0, CURB_H, C.sidewalk);
+        const e0 = pt(i, A[i].mouth, -ri - 0.25), e1 = pt(j, A[j].mouth, rj + 0.25);
+        slab(g, [a, e0, e1, d], CURB_H + 0.004, CURB_H + 0.012, C.curb);
+      }
+    }
+    for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt);
+    g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
+  }
+  buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates);
+}
+
+// A street between two intersections (tile-local), drawn by buildStreet in the street's own
+// frame: local (9, 9) its first node's centre, x along it, z to its right. (An east-west or
+// north-south street draws in the tile's own axes, as the grid always did.)
+function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: number, oz: number, district: District, rnd: Rand) {
+  const G = plan.graph, A = G.nodes[st.n0];
+  const mA = G.armOut(st.id * 2).mouth, mB = G.armIn(st.id * 2).mouth;
+  const south = Math.abs(angleDiff(st.h0 + Math.PI / 2)) < 1e-9, east = Math.abs(angleDiff(st.h0)) < 1e-9;
+  const axis: 0 | 1 = south ? 1 : 0, rot = south || east ? 0 : st.h0;
+  const [rx, rz] = frameApply({ ox: 0, oz: 0, rot }, 9, 9);
+  const f: Frame2 = { ox: A.x - ox - rx, oz: A.z - oz - rz, rot };
+  // The faces either side: `hi` across (z > 9 in the street's frame; east of a north-south street's x), `lo` the other.
+  const fwd = st.id * 2, back = fwd + 1, [loFace, hiFace] = axis === 1 ? [fwd, back] : [back, fwd];
+  const front = (face: number): Frontage => {
+    const b = G.faceBlock[face], side = G.sideOf(face);
+    return b >= 0 && G.blocks[b].inCity ? streetFrontage(plan, G.blocks[b].kx, G.blocks[b].kz, side) : PLAIN_FRONT(side);
+  };
+  const along = (face: number) => (a: number) => (face === fwd ? 9 + a : 9 + st.len - a);
+  // Features along it: an elevated line, a cable car's tracks, the freeway overhead (on the old grid's axes).
+  const gridAxis = south || east;
+  const fw = gridAxis && plan.freewayStreet(axis, A.kx, A.kz);
+  const ic = fw ? plan.interchangeStreet(axis, A.kx, A.kz) : null;
+  inFrame(f, [g, s, DC.lamps], () => {
+    buildStreet(g, s, axis, district, rnd, front(loFace), front(hiFace), along(loFace), along(hiFace), 9 + mA, 9 + st.len - mB,
+      { el: !!st.tags.elevated && axis === 0, fw: !!fw, icClear: ic?.clear ?? null });
+    if (st.tags.elevated && axis === 0) buildElevated(s);
+    if (st.tags.cable && axis === 1) buildCableTracks(g);
+    if (fw) {
+      const F = plan.freewayFrame!;
+      const gantry = ic?.gantry != null && DC.plates ? { at: ic.gantry, face: ic.face, k: ic.k, text: `EXIT ${F.exitNo} · ${F.name} CENTER`, other: `I-${F.route} ${F.wayOut}`, plates: DC.plates } : null;
+      buildFreewayStreet(g, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null, gantry);
+    }   // (the ground batch: the truck's see-through spotlight leaves it be)
+  });
+}
+
+// A block of any shape (tile-local): its ground, then lots along each face, each a building of
+// its district drawn in the face's frame (its frontage at the back of the sidewalk, as on the
+// grid, so the door probe finds it), and what is left in the middle a yard or garden. Faces are
+// lotted longest first, so where two meet at a corner the longer one gets it; a lot must fit inside
+// the block and clear of the others.
+const LOT_DEPTH: Record<District, number> = { downtown: 15, commercial: 13, residential: 11, industrial: 17, park: 0 };
+const LOT_WIDTH: Record<District, [number, number]> = { downtown: [16, 26], commercial: [8, 14], residential: [9, 12], industrial: [18, 30], park: [0, 0] };
+function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, oz: number, district: District, rnd: Rand) {
+  const G = plan.graph, poly = blk.poly.map(([x, z]) => [x - ox, z - oz] as [number, number]);
+  slab(g, poly, 0, CURB_H, district === "residential" || district === "park" ? CS.grass : CS.pavers);
+  // A park: trees scattered clear of the edges, and (when a facility has its door here) a
+  // pavilion on each side.
+  const pavilions = district === "park" && hasSign(DC.fac);
+  if (district === "park") {
+    for (let k = 0; k < Math.floor(blk.area / 90); k++) {
+      const x = blk.cx - ox + range(rnd, -25, 25), z = blk.cz - oz + range(rnd, -25, 25);
+      if (inPoly(poly, x, z) && polyDist(poly, x, z) > (pavilions ? 12 : 3)) cityTree(s, x, CURB_H, z, range(rnd, 5, 8), range(rnd, 1.5, 2.3), pick(rnd, CS.trees.greens), rnd);
+    }
+    if (!pavilions) return;
+  }
+  const depth = pavilions ? 6 : LOT_DEPTH[district], [w0, w1] = pavilions ? [7, 9] : LOT_WIDTH[district], hs = plan.downtownHeight(blk.kx, blk.kz);
+  type Lot = { f: number; a0: number; a1: number; d: number; pts: [number, number][] };
+  const lots: Lot[] = [];
+  const corners = (f: number, a0: number, a1: number, d: number) => [[a0, 0.3], [a1, 0.3], [a1, d], [a0, d]].map(([a, n]) => { const p = G.facePt(f, a, n); return [p.x - ox, p.z - oz] as [number, number]; });
+  const overlaps = (p: [number, number][], q: [number, number][]) => {
+    for (const P of [p, q]) for (let i = 0; i < 4; i++) {
+      const [ax, az] = P[i], [bx, bz] = P[(i + 1) % 4], nx = bz - az, nz = -(bx - ax);
+      const pr = (R: [number, number][]) => R.map(([x, z]) => x * nx + z * nz);
+      const A = pr(p), B = pr(q);
+      if (Math.max(...A) <= Math.min(...B) + 0.05 || Math.max(...B) <= Math.min(...A) + 0.05) return false;
+    }
+    return true;
+  };
+  const faces = blk.faces.slice().sort((p, q) => (G.faceA1(q) - G.faceA0(q)) - (G.faceA1(p) - G.faceA0(p)) || p - q);
+  // (A lot that won't fit is tried shallower, then narrower; a park's pavilion goes mid-side.)
+  const tryLot = (f: number, a0: number, a1: number, d: number) => {
+    for (const k of [1, 0.65, 0.4]) {
+      const pts = corners(f, a0, a1, Math.max(5, d * k));
+      if (pts.every(([x, z]) => inPoly(poly, x, z)) && !lots.some((l) => overlaps(l.pts, pts))) { lots.push({ f, a0, a1, d: Math.max(5, d * k), pts }); return true; }
+    }
+    return false;
+  };
+  for (const f of faces) {
+    const A0 = G.faceA0(f), A1 = G.faceA1(f);
+    if (pavilions) { const m = (A0 + A1) / 2, w = range(rnd, w0, w1); tryLot(f, m - w / 2, m + w / 2, depth); continue; }
+    let a = A0 + 0.5;
+    while (a + w0 <= A1 - 0.5) {
+      const w = Math.min(range(rnd, w0, w1), A1 - 0.5 - a), d = depth * range(rnd, 0.8, 1.1);
+      tryLot(f, a, a + w, d);
+      a += w;
+    }
+    // Every side has a building at least (its facility's front door is on each).
+    if (!lots.some((l) => l.f === f)) for (const w of [w0, 7, 5, 3.6]) { const m = (A0 + A1) / 2; if (A1 - A0 > w + 1 && tryLot(f, m - w / 2, m + w / 2, depth)) break; }
+    // Still none: a small one mid-side, in place of corner lots of sides that have others.
+    if (!lots.some((l) => l.f === f) && A1 - A0 > 7) {
+      const m = (A0 + A1) / 2, pts = corners(f, m - 3, m + 3, 6);
+      // (Trimmed shorter from either end until clear; dropped only if it can't be.)
+      const hit = lots.filter((l) => overlaps(l.pts, pts));
+      const trimmed = hit.map((h) => {
+        for (let k = 1; h.a1 - h.a0 - k >= 5; k++) for (const [t0, t1] of [[h.a0 + k, h.a1], [h.a0, h.a1 - k]]) {
+          const q = corners(h.f, t0, t1, h.d);
+          if (!overlaps(q, pts)) return { ...h, a0: t0, a1: t1, pts: q };
+        }
+        return null;
+      });
+      if (pts.every(([x, z]) => inPoly(poly, x, z))) {
+        hit.forEach((h, i) => { const t = trimmed[i]; lots.splice(lots.indexOf(h), 1, ...(t ? [t] : [])); });
+        lots.push({ f, a0: m - 3, a1: m + 3, d: 6, pts });
+      }
+    }
+  }
+  // The buildings, each in its face's frame: x along the face, z in from it (the street at z < 0).
+  // Each building's front door, between two of its bays (as kerbDoors would put it): x0..x1 its
+  // street wall, n its depth in from the block's edge.
+  const door = (f: number, x0: number, x1: number, n: number) => {
+    const bays = Math.max(1, Math.round((x1 - x0) / BAY));
+    doorSpot(blk.sides.indexOf(f), bays > 1 ? x0 + (x1 - x0) * Math.round(bays / 2) / bays : (x0 + x1) / 2, n);
+  };
+  for (const L of lots) {
+    const P = G.facePt(L.f, 0, 0), fr: Frame2 = { ox: P.x - ox, oz: P.z - oz, rot: P.h };
+    inFrame(fr, [g, s, DC.lamps], () => {
+      const b: Rect = { x0: L.a0 + 0.3, z0: 0.4, x1: L.a1 - 0.3, z1: L.d - 0.3 };
+      if (district !== "residential") door(L.f, b.x0, b.x1, b.z0);
+      if (district === "downtown") {
+        const wall = pick(rnd, CS.walls.downtown), floors = Math.max(3, Math.round((3 + hs * range(rnd, 4, 14)) * CS.towerScale));
+        const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: rnd() < 0.5 ? FACADE.LOBBY : FACADE.STOREFRONT, floors: 1, floorH: 5 }, { tile: pick(rnd, CS.towerTiles), floors, floorH: 3.6 }], wall);
+        flatRoof(s, b, top, wall, rnd, 3);
+      } else if (district === "commercial") {
+        const floors = Math.min(CS.maxShopFloors, Math.max(1, 1 + Math.floor(rnd() * rnd() * 5))), wall = pick(rnd, CS.walls.commercial);
+        const bands: FacadeBand[] = [{ tile: FACADE.STOREFRONT, floors: 1, floorH: 4.2 }];
+        if (floors > 1) bands.push({ tile: pick(rnd, CS.upperTiles), floors: floors - 1, floorH: 3.4 });
+        const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, bands, wall);
+        flatRoof(s, b, top, wall, rnd, floors > 2 ? 2 : 1);
+        if (rnd() < 0.7) awning(s, b, 2, pick(rnd, CS.awnings));
+      } else if (pavilions) {
+        const wall = pick(rnd, CS.walls.commercial), top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.STOREFRONT, floors: 1, floorH: 4 }], wall);
+        flatRoof(s, b, top, wall, rnd, 0);
+      } else if (district === "residential") {
+        const h: Rect = { x0: b.x0 + 0.8, z0: b.z0 + range(rnd, 2.2, 3.2), x1: b.x1 - 0.8, z1: Math.min(b.z1, b.z0 + 10) };
+        door(L.f, h.x0, h.x1, h.z0);
+        const wall = pick(rnd, CS.walls.residential), floors = irange(rnd, 1, 2);
+        const top = facadeBox(s, h.x0, h.z0, h.x1, h.z1, CURB_H, [{ tile: FACADE.RESIDENTIAL, floors, floorH: 3.1 }], wall, 2, FACADE.DOOR);
+        flatRoof(s, h, top, wall, rnd, 0);
+        if (rnd() < 0.5) cityTree(s, (h.x0 + h.x1) / 2 + range(rnd, -2, 2), CURB_H, h.z1 + 2.5, range(rnd, 5, 7), 1.6, pick(rnd, CS.trees.greens), rnd);
+      } else {
+        const wall = pick(rnd, CS.walls.industrial);
+        const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.INDUSTRIAL, floors: 1, floorH: range(rnd, 6, 9) }], wall);
+        flatRoof(s, b, top, wall, rnd, 1);
+      }
+    });
+  }
+}
+
+// A river's stretch of water between its quays (tile-local): the water a metre and a half down,
+// and the quay walls round it, faced in stone.
+const RIVER = 0x2f6f9a, QUAY = 0x8f8a7e;
+function buildRiver(g: Batch, blk: CBlock, ox: number, oz: number) {
+  const poly = blk.poly.map(([x, z]) => [x - ox, z - oz] as [number, number]), y = -1.5;
+  slab(g, poly, y, y, RIVER);
+  let cx = 0, cz = 0; for (const [x, z] of poly) { cx += x; cz += z; } cx /= poly.length; cz /= poly.length;
+  for (let i = 0; i < poly.length; i++) {
+    const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length];
+    let nx = bz - az, nz = -(bx - ax); if (nx * (cx - ax) + nz * (cz - az) < 0) { nx = -nx; nz = -nz; }   // (facing the water)
+    g.tri(ax, y, az, bx, y, bz, bx, CURB_H, bz, QUAY, [nx, 0, nz]); g.tri(ax, y, az, bx, CURB_H, bz, ax, CURB_H, az, QUAY, [nx, 0, nz]);
+  }
+}
+
+// A city block (tile-local): its site or district buildings. A block of the old grid's shape (a
+// 42 m square, sides north, south, west and east) is drawn by the grid's builders in the tile's
+// own axes; others, as a plain lot for now.
+function buildBlockPart(ground: Batch, solid: Batch, plan: CityPlan, blk: CBlock, ox: number, oz: number, rnd: Rand, takeSlot: ((text: string, style: SignStyle) => ReturnType<SignAtlas["uv"]> | null) | null) {
+  const cx = blk.kx, cz = blk.kz, seed = plan.seed, district: District = blk.park ? "park" : plan.district(cx, cz);
+  // The freeway's off-ramp and its (super)block: drawn on the freeway's line, whatever its shape.
+  if (plan.interchangeAt(cx, cz)) { buildInterchange(ground, solid, plan, blk, ox, oz); return { stalls: [] as StallPose[], site: siteLayout(plan, cx, cz) }; }
+  const x0 = Math.min(...blk.poly.map((p) => p[0])), z0 = Math.min(...blk.poly.map((p) => p[1]));
+  if (!blk.square) {
+    const dcx = DC.cx, dcz = DC.cz;
+    DC.cx = cx; DC.cz = cz; DC.fac = facilityAt(plan, cx, cz);
+    buildLots(ground, solid, plan, blk, ox, oz, district, rnd);
+    DC.cx = dcx; DC.cz = dcz;
+    return { stalls: [] as StallPose[], site: { kind: "kerb" } as SiteLayout };
+  }
+  const f: Frame2 = { ox: x0 - STREET - ox, oz: z0 - STREET - oz, rot: 0 };
+  let stalls: StallPose[] = [];
+  const site = siteLayout(plan, cx, cz);
+  const dcx = DC.cx, dcz = DC.cz;
+  DC.cx = cx; DC.cz = cz; DC.fac = facilityAt(plan, cx, cz);
+  inFrame(f, [ground, solid, DC.lamps], () => {
+    const sign = takeSlot ? facilitySign(plan, cx, cz) : null;
+    const uv = sign && takeSlot ? takeSlot(sign.text, sign.style) : null;
+    // Asphalt under the block (where its buildings leave it bare).
+    ground.box((STREET + BLOCK) / 2, -0.05, (STREET + BLOCK) / 2, BLOCK - STREET, 0.1, BLOCK - STREET, C.asphalt);
+    const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
+    if (site.kind === "garage") buildGarage(ground, solid, site.side, rnd, plan.seed);
+    else if (site.kind === "dock") buildDockSite(ground, solid, site, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
+    else if (site.kind === "lot") stalls = buildRentalLot(ground, solid, site, rnd, DC.quads, uv);
+    else if (CS.townSquare && district === "downtown" && plan.coreDistance(cx, cz) < 0.8) buildTownSquare(ground, solid, B, rnd);
+    else {
+      switch (district) {
+        case "downtown": buildDowntown(ground, solid, B, plan.downtownHeight(cx, cz), rnd); break;
+        case "commercial": buildCommercial(ground, solid, B, rnd); break;
+        case "residential": buildResidential(ground, solid, B, rnd); break;
+        case "industrial": buildIndustrial(ground, solid, B, rnd, site.kind === "stand" ? site : null); break;
+        case "park": buildPark(ground, solid, B, rnd, site.kind === "stand" ? standKeepOut(site) : null); break;
+      }
+      if (site.kind === "stand") buildStand(ground, solid, site, rnd);
+      if (uv) for (let side = 0; side < 4; side++) bladeSign(solid, side, DC.quads, uv);
+      // Main Street towns have a water tower with the town's name, over a back garden.
+      if (CS.townSquare && district === "residential" && hash2(cx, cz, seed, 0x77e) < 0.06)
+        waterTower(solid, 39, 39, takeSlot ? takeSlot(plan.name.toUpperCase(), { bg: "#a8c4d8", fg: "#1d2f5a", logo: false }) : null);
+    }
+    if ((district === "commercial" || district === "downtown" || district === "industrial") && rnd() < CS.billboards) roofBillboard(solid, B, rnd);
+  });
+  for (const p of stalls) { [p.x, p.z] = frameApply(f, p.x, p.z); p.h += f.rot; }
+  DC.cx = dcx; DC.cz = dcz;
+  return { stalls, site };
 }
 
 // A generator (see ChunkStreamer): the doors in one stage, the block in the next. (Each stage
@@ -262,13 +637,18 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
 // after the last yield, so a build dropped at a yield, ChunkStreamer.clear, holds nothing.)
 export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet: FleetBuilder | null = null): (cx: number, cz: number) => ChunkBuild {
   return function* (cx, cz) {
-    // The entrance doors of a kerb facility (one per side, where kerbDoors found the building).
-    const doors = insideCity(cx, cz) ? kerbDoors(plan, cx, cz) : [];
+    // The entrance doors of the tile's kerb facilities (one per side, where kerbDoors found the building).
+    const G = plan.graph, doors = G.tile(cx, cz).blocks.map((b) => G.blocks[b]).filter((b) => b.inCity).flatMap((b) => kerbDoors(plan, b.kx, b.kz).map((d, side) => d && { d, f: b.sides[side] }));
     yield;
     const slots: number[] = [];
     const takeSlot = (text: string, style: SignStyle) => { const k = signAtlas.alloc(text, style); if (k >= 0) slots.push(k); return k >= 0 ? signAtlas.uv(k) : null; };
     const { ground, solid, lamps, stalls, district } = cityBatches(plan, cx, cz, takeSlot);
-    doors.forEach((d) => { if (d) entranceDoor(solid, d); });
+    // (Each drawn as on the grid's side 0, in a frame on its face: local (a + 9, n + 18) is the face's (a, n).)
+    doors.forEach((e) => {
+      if (!e) return;
+      const P = G.facePt(e.f, 0, 0), [rx, rz] = frameApply({ ox: 0, oz: 0, rot: P.h }, 9, 18);
+      inFrame({ ox: P.x - cx * BLOCK - rx, oz: P.z - cz * BLOCK - rz, rot: P.h }, [solid, ground, lamps], () => entranceDoor(solid, { ...e.d, side: 0 }));
+    });
     const group = new THREE.Group();
     for (const [b, m] of [[ground, mats.ground], [solid, mats.solid], [lamps, mats.lamp]] as const) {
       const mesh = b.build(m);
@@ -360,11 +740,15 @@ export function pavementObstacles(plan: CityPlan, bx: number, bz: number): Pavem
   const hit = PAVEMENT_CACHE.get(key);
   if (hit) return hit;
   const out: PavementObstacle[] = [], parked: ParkedObstacle[] = [];
-  // The block's own chunk holds its north and west streets; the next chunks east and south
-  // hold the other two.
-  for (const [cx, cz] of [[bx, bz], [bx + 1, bz], [bx, bz + 1]]) {
+  // The tiles that draw the block and its streets (on the grid: its own, which holds its north
+  // and west streets, and the next ones east and south).
+  const G = plan.graph, blk = plan.blockOf(bx, bz);
+  if (!blk) { PAVEMENT_CACHE.set(key, []); PARKED_CACHE.set(key, []); return []; }
+  const own = [Math.floor(blk.cx / BLOCK), Math.floor(blk.cz / BLOCK)], tiles = [own];
+  for (const f of blk.faces) { const p = G.streetPt(f >> 1, G.streets[f >> 1].len / 2, 0), t = [Math.floor(p.x / BLOCK), Math.floor(p.z / BLOCK)]; if (!tiles.some((q) => q[0] === t[0] && q[1] === t[1])) tiles.push(t); }
+  for (const [cx, cz] of tiles) {
     const rec: number[] = [], boxes: number[] = [];
-    PAVEMENT.out = rec; PAVEMENT.boxes = cx === bx && cz === bz ? boxes : null; BATCH.dry = true;   // placement only: no geometry
+    PAVEMENT.out = rec; PAVEMENT.boxes = cx === own[0] && cz === own[1] ? boxes : null; BATCH.dry = true;   // placement only: no geometry
     try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = PAVEMENT.boxes = null; BATCH.dry = false; }
     for (let i = 0; i < rec.length; i += 4) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2], kind: rec[i + 3] });
     for (let i = 0; i < boxes.length; i += 4)
@@ -385,32 +769,41 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   const key = `${plan.seed}|${plan.style.id}|${bx},${bz}`;
   const hit = KERB_DOORS.get(key);
   if (hit) return hit;
-  const none: (KerbDoor | null)[] = [null, null, null, null];
+  const G = plan.graph, blk = plan.blockOf(bx, bz);
+  const none: (KerbDoor | null)[] = (blk?.sides ?? [0, 0, 0, 0]).map(() => null);
   const fac = facilityAt(plan, bx, bz), site = siteLayout(plan, bx, bz);
+  if (!blk) { KERB_DOORS.set(key, none); return none; }
+  // A side's frontage point (world) and the way out of the block to the street there.
+  const fp = (side: number, a: number, n: number) => G.facePt(blk.sides[side], a, n);
+  const outward = (side: number, a: number): [number, number] => { const h = fp(side, a, 0).h; return [-Math.sin(h), -Math.cos(h)]; };
   if (fac && site.kind === "garage") {
     // On the roof: the stair tower's door, beside the lane where trucks stop.
-    const [a, n] = GARAGE_DOOR, [fx, fz] = frontPt(site.side, a, n), [rx, rz] = RIGHT[FRONT_NODE[site.side][2]], out = none.slice();
-    out[site.side] = { side: site.side, a, n, x: bx * BLOCK + fx, z: bz * BLOCK + fz, nx: -rx, nz: -rz, frame: 0xf2efe8, panel: 0x23365e, half: DOOR_HALF, h: DOOR_H, plain: false, y: GARAGE_H };
+    const [a, n] = GARAGE_DOOR, P = fp(site.side, a, n), [nx, nz] = outward(site.side, a), out = none.slice();
+    out[site.side] = { side: site.side, a, n, x: P.x, z: P.z, nx, nz, frame: 0xf2efe8, panel: 0x23365e, half: DOOR_HALF, h: DOOR_H, plain: false, y: GARAGE_H };
     KERB_DOORS.set(key, out); return out;
   }
   if (!fac || (site.kind !== "kerb" && site.kind !== "stand")) { KERB_DOORS.set(key, none); return none; }
+  // (The block is drawn by the tile its centroid is in, in that tile's coordinates.)
+  const tx = Math.floor(blk.cx / BLOCK), tz = Math.floor(blk.cz / BLOCK), ox = tx * BLOCK, oz = tz * BLOCK;
   const spots: number[] = [];
   DOOR_SPOTS.out = spots;
   let built: ReturnType<typeof cityBatches>;
-  try { built = cityBatches(plan, bx, bz, null); } finally { DOOR_SPOTS.out = null; }
+  try { built = cityBatches(plan, tx, tz, null); } finally { DOOR_SPOTS.out = null; }
   const out = none.slice();
   // A facility that loads flatbeds by forklift has wide double service doors.
   const [half, dh] = wideDoor(fac) ? [WIDE_DOOR_HALF, WIDE_DOOR_H] : [DOOR_HALF, DOOR_H];
   const door = (side: number, a: number, n: number): KerbDoor => {
-    const [fx, fz] = frontPt(side, a, n), [rx, rz] = RIGHT[FRONT_NODE[side][2]];
+    const P = fp(side, a, n), [nx, nz] = outward(side, a);
     const r = (salt: number) => hash2(bx * 7 + side, bz, plan.seed, salt);
-    return { side, a, n, x: bx * BLOCK + fx, z: bz * BLOCK + fz, nx: -rx, nz: -rz,
+    return { side, a, n, x: P.x, z: P.z, nx, nz,
       frame: [0xf2efe8, 0x2a2b2e, 0x5b4636][Math.floor(r(1) * 3)], panel: [0x7a2b22, 0x23365e, 0x2e5a3a, 0x5b4636, 0xd8d2c4, 0x3a3c40][Math.floor(r(2) * 6)], half, h: dh, plain: false };
   };
+  // Where the truck's back is, stopped centred on a side.
+  const back = (side: number) => (G.faceA0(blk.sides[side]) + G.faceA1(blk.sides[side])) / 2 - 5;
   // Doors the builders placed themselves (row houses, park stands): the one nearest the truck's back.
   for (let i = 0; i < spots.length; i += SPOT) {
     const side = spots[i], a = spots[i + 1], cur = out[side];
-    if (cur && Math.abs(a - 25) >= Math.abs(cur.a - 25)) continue;
+    if (cur && Math.abs(a - back(side)) >= Math.abs(cur.a - back(side))) continue;
     const dd = out[side] = door(side, a, spots[i + 2]), [, , , h, hf, panel, frame, plain] = spots.slice(i, i + SPOT);
     if (h) dd.h = h;
     if (hf) dd.half = hf;
@@ -422,15 +815,17 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   const mesh = site.kind === "kerb" && out.some((d) => !d) ? built.solid.build(DOOR_PROBE_MAT) : null;
   if (mesh) {
     const probe = new LevelProbe(mesh.geometry.getAttribute("position").array, 24), o = new THREE.Vector3(), dir = new THREE.Vector3();
-    for (let side = 0; side < 4; side++) {
+    // (In the tile's coordinates, as the probe mesh is.)
+    const lp = (side: number, a: number, n: number): [number, number] => { const P = fp(side, a, n); return [P.x - ox, P.z - oz]; };
+    for (let side = 0; side < out.length; side++) {
       if (out[side]) continue;
-      const d = FRONT_NODE[side][2], [rx, rz] = RIGHT[d];
+      const f = blk.sides[side], A0 = G.faceA0(f), A1 = G.faceA1(f), a25 = back(side);
       for (let k = 0; k <= 30; k++) {
-        let a = 25 + (k % 2 ? -1 : 1) * Math.ceil(k / 2);   // 25, 24, 26, 23, ... out to 10 and 40
+        let a = a25 + (k % 2 ? -1 : 1) * Math.ceil(k / 2);   // 25, 24, 26, 23, ... out to 10 and 40 (on the grid)
         // From the middle of the pavement (n is measured from the block's edge, the back of the
         // pavement), in towards the block: the first wall facing the street at or behind the
         // block's edge (trees, poles and signs on the pavement don't count), not too far back.
-        const [px, pz] = frontPt(side, a, -1.8);
+        const [px, pz] = lp(side, a, -1.8), [onx, onz] = outward(side, a), rx = -onx, rz = -onz;
         o.set(px, 2.0, pz); dir.set(rx, 0, rz);
         let n = -99;
         for (const h of probe.hits(o, dir)) {
@@ -444,25 +839,25 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
         // of them: find the wall's ends (where the ray stops meeting it at the same depth), split
         // it into bays as facadeBox does, and take the bay boundary nearest the truck's back.
         const at = (aa: number) => {
-          const [qx, qz] = frontPt(side, aa, -1.8);
+          const [qx, qz] = lp(side, aa, -1.8);
           o.set(qx, 1.0, qz);
           const h2 = probe.first(o, dir);
           return h2 ? -1.8 + h2.distance : 99;
         };
         let w0 = a, w1 = a;
-        while (w0 > 9 && Math.abs(at(w0 - 0.25) - n) < 0.05) w0 -= 0.25;
-        while (w1 < 51 && Math.abs(at(w1 + 0.25) - n) < 0.05) w1 += 0.25;
+        while (w0 > A0 && Math.abs(at(w0 - 0.25) - n) < 0.05) w0 -= 0.25;
+        while (w1 < A1 && Math.abs(at(w1 + 0.25) - n) < 0.05) w1 += 0.25;
         const len = w1 - w0, bays = Math.max(1, Math.round(len / BAY));
         // (A wide service door takes a whole bay, over its window.)
         const wideD = half > DOOR_HALF;
         if (wideD ? len < 2 * half + 0.6 : bays < 2) continue;    // one window, nowhere to put a door
         let best = -1;
-        for (let i = wideD ? 0 : 1; i < bays; i++) { const b = w0 + (len * (wideD ? i + 0.5 : i)) / bays; if (best < 0 || Math.abs(b - 25) < Math.abs(best - 25)) best = b; }
+        for (let i = wideD ? 0 : 1; i < bays; i++) { const b = w0 + (len * (wideD ? i + 0.5 : i)) / bays; if (best < 0 || Math.abs(b - a25) < Math.abs(best - a25)) best = b; }
         a = best;
         // Room for the door: the wall is there a door's width either side too.
         let wide = true;
         for (const da of [-half - 0.1, half + 0.1]) {
-          const [qx, qz] = frontPt(side, a + da, n - 0.4);
+          const [qx, qz] = lp(side, a + da, n - 0.4);
           o.set(qx, 1.2, qz);
           const h2 = probe.first(o, dir);
           if (!h2 || h2.distance > 0.6) { wide = false; break; }
@@ -542,7 +937,7 @@ function signQuad(quads: Quad[], uv: ReturnType<SignAtlas["uv"]>, side: number, 
 // What a sidewalk must leave room for: a dock's driveway (no kerb, trees or lights) and a blade
 // sign (no tree under it), in frontage `a` of block (bx, bz)'s side `side`.
 interface Frontage { side: number; drive: [number, number] | null; sign: number | null; clear?: [number, number] }
-const BLADE_A = 31.5;
+export const BLADE_A = 31.5;
 // The block side whose frontage ends at the corner where side i's begins. A dock's bay is near
 // that corner, and the side view of a truck working there looks back across it, so that side
 // keeps most of its length free of street trees and lights.
@@ -553,7 +948,18 @@ function streetFrontage(plan: CityPlan, bx: number, bz: number, side: number): F
   if (L.kind === "dock") return { side, drive: L.side === side ? [Math.min(...dockUsedBays(L).map((i) => L.bays[i])) - 4.5, Math.max(...dockUsedBays(L).map((i) => L.bays[i])) + 18] : null, sign: null,
     clear: PREV_SIDE[L.side] === side ? [16, 51] : undefined };
   if (L.kind === "garage") return { side, drive: L.side === side ? GARAGE_DRIVE : null, sign: null };
-  if (L.kind === "interchange") return { side, drive: L.side === side ? INTERCHANGE_DRIVE : null, sign: null };
+  if (L.kind === "interchange") {
+    // The kerb cut where the way down crosses this side's sidewalk, if it does: in the freeway
+    // line's frontage, moved to this face's (whose start is that far along the line).
+    const G = plan.graph, f = plan.blockOf(bx, bz)?.sides[side] ?? -1, ic = plan.interchange!;
+    if (f < 0) return { side, drive: null, sign: null };
+    // (Measured along the line itself, not clamped to its first face: the ramp's foot is on the third.)
+    const f0 = interchangeFace(plan), N = G.nodes[G.dedgeFrom(f)], P0 = G.facePt(f0, 0, -STREET / 2);
+    const off = (N.x - P0.x) * Math.cos(P0.h) - (N.z - P0.z) * Math.sin(P0.h), n = (N.x - P0.x) * Math.sin(P0.h) + (N.z - P0.z) * Math.cos(P0.h) - STREET / 2;
+    const along = Math.abs(angleDiff(G.dedgeStartH(f) - G.dedgeStartH(f0))) < 0.01 && Math.abs(n + STREET / 2) < 0.5;   // (a face on the line)
+    const [d0, d1] = interchangeDrive(plan), drive: [number, number] = [d0 - off, d1 - off];
+    return { side, drive: along && drive[1] > 0 && drive[0] < G.faceLen(f) ? drive : null, sign: null };
+  }
   if (L.kind === "kerb" && hasSign(facilityAt(plan, bx, bz))) return { side, drive: null, sign: BLADE_A };
   if (L.kind === "stand") { const b = standBox(L); return { side, drive: null, sign: BLADE_A, clear: L.side === side ? [b.a0 - 1, b.a1 + 0.5] : undefined }; }
   return { side, drive: null, sign: null };
@@ -575,24 +981,31 @@ function bladeSign(s: Batch, side: number, quads: Quad[], uv: ReturnType<SignAtl
 // ---- streets --------------------------------------------------------------------------------
 // One street segment of the chunk: axis 0 runs east-west (x in [18, 60), z in [0, 18)), axis 1
 // north-south (z in [18, 60), x in [0, 18)). `along`/`across` are the segment's own coordinates.
-function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage) {
+// `loAl`/`hiAl`: each side's frontage a to this segment's along; [a0, a1]: the segment between the
+// intersections' mouths; `feat`: an elevated line or the freeway overhead (their bents), and where
+// the freeway's off-ramp crosses the sidewalk.
+function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
+  loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
     axis === 0 ? b.box(al, y, ac, lal, h, lac, color) : b.box(ac, y, al, lac, h, lal, color);
-  const a0 = STREET, a1 = BLOCK, len = a1 - a0, mid = (a0 + a1) / 2, cl = STREET / 2;
+  const len = a1 - a0, mid = (a0 + a1) / 2, cl = STREET / 2;
+  // The street's asphalt (kerb to kerb, and under the sidewalks).
+  box(g, mid, -0.05, cl, len, 0.1, STREET, C.asphalt);
   // The frontages in this segment's `along` coordinate.
+  const alOf = (f: Frontage) => (f === loF ? loAl : hiAl);
   const drive = (f: Frontage): [number, number] | null => {
     if (!f.drive) return null;
-    const p = frontAlong(f.side, f.drive[0]), q = frontAlong(f.side, f.drive[1]);
+    const p = alOf(f)(f.drive[0]), q = alOf(f)(f.drive[1]);
     return [Math.max(a0, Math.min(p, q)), Math.min(a1, Math.max(p, q))];
   };
   const loD = drive(loF), hiD = drive(hiF);
   const clear = (f: Frontage): [number, number] | null => {
     if (!f.clear) return null;
-    const p = frontAlong(f.side, f.clear[0]), q = frontAlong(f.side, f.clear[1]);
+    const p = alOf(f)(f.clear[0]), q = alOf(f)(f.clear[1]);
     return [Math.min(p, q), Math.max(p, q)];
   };
   const loC = clear(loF), hiC = clear(hiF);
-  const loS = loF.sign !== null ? frontAlong(loF.side, loF.sign) : null, hiS = hiF.sign !== null ? frontAlong(hiF.side, hiF.sign) : null;
+  const loS = loF.sign !== null ? loAl(loF.sign) : null, hiS = hiF.sign !== null ? hiAl(hiF.sign) : null;
   const inDrive = (d: [number, number] | null, p: number, m: number) => !!d && p > d[0] - m && p < d[1] + m;
   // Sidewalks with a pale kerb edge on the road side; a dock driveway drops to road level.
   for (const [lo, hi, edge, d] of [[0, KERB, KERB - 0.25, loD], [STREET - KERB, STREET, STREET - KERB, hiD]] as const) {
@@ -641,13 +1054,13 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // Under an elevated line (on an east-west street: elevatedLine), its bents: about every 17 m, at
   // the first spot near each where neither sidewalk has a driveway, streetlight or sign in the way
   // (a dock's side view is kept clear too, unless there is nowhere else). No street trees here.
-  const el = axis === 0 && elevatedLine(CS, DC.cz), fw = DC.plan.freewayStreet(axis, DC.cx, DC.cz);
+  const el = feat.el, fw = feat.fw;
   if (el || fw) {
-    const icClear = fw ? DC.plan.interchangeStreet(axis, DC.cx, DC.cz)?.clear ?? null : null;
+    const icClear = feat.icClear;
     const ok = (p: number, soft: boolean) => !(icClear && p > icClear[0] - 1.5 && p < icClear[1] + 1.5) && !inDrive(loD, p, 1.5) && !inDrive(hiD, p, 1.5) && Math.abs(p - (a0 + 10)) > 1.5 && Math.abs(p - (a0 + 31)) > 1.5
       && (loS === null || Math.abs(p - loS) > 2) && (hiS === null || Math.abs(p - hiS) > 2) && (!soft || (!inDrive(loC, p, 0.5) && !inDrive(hiC, p, 0.5)));
     let last = -Infinity;
-    for (const base of fw ? [26, 50] : [22, 39, 56]) {
+    for (const base of (fw ? [26, 50] : [22, 39, 56]).map((b) => a0 + b - STREET)) {
       let at = NaN;
       for (const soft of [true, false]) {
         for (const o of [0, 2, -2, 4, -4, 6]) {
@@ -681,8 +1094,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       }
     }
   }
-  streetFurniture(s, g, district, KERB, -1, axis, busy[0], rnd);
-  streetFurniture(s, g, district, STREET - KERB, 1, axis, busy[1], rnd);
+  streetFurniture(s, g, district, KERB, -1, axis, busy[0], rnd, a0, a1);
+  streetFurniture(s, g, district, STREET - KERB, 1, axis, busy[1], rnd, a0, a1);
 }
 
 // Sidewalk corners at the intersection's four corners.
@@ -719,12 +1132,9 @@ function inGateCorridor(wx: number, wz: number, margin = 13) {
   return false;
 }
 const PLAIN_FRONT = (side: number): Frontage => ({ side, drive: null, sign: null });
-function buildOutskirts(ground: Batch, solid: Batch, lamps: Batch, plan: CityPlan, cx: number, cz: number, rnd: Rand) {
+// (Its streets and intersections are the graph's: cityBatches draws them; this is the land.)
+function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number, cz: number, rnd: Rand) {
   const ew = ARM_ALL(cx, cz, 0), ns = ARM_ALL(cx, cz, 3), node = nodeInCity(cx, cz);
-  const front = (bx: number, bz: number, side: number) => insideCity(bx, bz) ? streetFrontage(plan, bx, bz, side) : PLAIN_FRONT(side);
-  if (node) { ground.box(STREET / 2, -0.05, STREET / 2, STREET, 0.1, STREET, C.asphalt); buildCorners(ground); buildMouths(ground, cx, cz); buildSignals(solid, lamps, STREET, KERB, signalOffset(cx, cz, plan.seed), DC.plates && { ew: streetNameEW(cz), ns: streetNameNS(cx), plates: DC.plates }); }
-  if (ew) { ground.box((STREET + BLOCK) / 2, -0.05, STREET / 2, BLOCK - STREET, 0.1, STREET, C.asphalt); buildStreet(ground, solid, 0, "residential", rnd, front(cx, cz - 1, 1), front(cx, cz, 0)); }
-  if (ns) { ground.box(STREET / 2, -0.05, (STREET + BLOCK) / 2, STREET, 0.1, BLOCK - STREET, C.asphalt); buildStreet(ground, solid, 1, "residential", rnd, front(cx - 1, cz, 3), front(cx, cz, 2)); }
   if (cityDistance(cx, cz) > RING) return;
   const rects: Rect[] = [{ x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK }];
   if (!ew) rects.push({ x0: STREET, z0: 0, x1: BLOCK, z1: STREET });
