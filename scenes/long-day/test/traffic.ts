@@ -13,7 +13,7 @@ import { journeyStyle } from "../src/styles.ts";
 import { Traffic } from "../src/traffic.ts";
 {
   const proc = (globalThis as any).process, seed = Number(proc.argv[2] ?? 3), TURN_MAX = 1.5, errs: string[] = [];
-  void new Journey(readConfig({ seed } as SceneEnv), 0);
+  void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
   const plan = new CityPlan(citySeedOf(seed, 0), journeyStyle(seed, 0)), G = plan.graph;
   const ring = [...new Set(G.streets.filter((s) => s.oneway).map((s) => s.n0))];
   if (!ring.length) { console.error(`seed ${seed}: no roundabout in its first city`); proc.exit(1); }
@@ -46,7 +46,7 @@ import { Traffic } from "../src/traffic.ts";
   // next light along a short street red, rightly misses a green: about 45 s. A gridlock never
   // clears.)
   for (const gs of [3, 11]) {
-    void new Journey(readConfig({ seed: gs } as SceneEnv), 0);
+    void new Journey(readConfig({ seed: gs } as SceneEnv), 0, "autumn");
     const P = new CityPlan(citySeedOf(gs, 0), journeyStyle(gs, 0)), GG = P.graph;
     let stuck = 0;
     for (const n of GG.nodes.filter((x) => x.control === "signal").filter((_, i) => i % 9 === 0).slice(0, 6)) {

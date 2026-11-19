@@ -20,7 +20,7 @@ export function realSeason(): Season {
   return SEASONS[Math.floor(((m + 1) % 12) / 3)];
 }
 
-export function cityClimate(seed: number, N: number, style: CityStyle, start: Season = realSeason()): Climate {
+export function cityClimate(seed: number, N: number, style: CityStyle, start: Season): Climate {
   const season = SEASONS[(SEASONS.indexOf(start) + N) % 4];
   const r = hash2(N, 5, seed, 0xc11a);
   const dry = style.id === "desert", mild = style.id === "desert" || style.id === "coastal";

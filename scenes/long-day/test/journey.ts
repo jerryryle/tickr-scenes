@@ -12,7 +12,7 @@ import { Journey } from "../src/journey.ts";
   const env = JSON.parse(argv[1] ?? "{}");
   const cfg = readConfig(env as SceneEnv);
   const DT = 0.1;
-  const j = new Journey(cfg, 0);
+  const j = new Journey(cfg, 0, "autumn");
   const errs: string[] = [];
   const err = (m: string) => { if (errs.length < 40) errs.push(`t${j.st.simTime.toFixed(1)} ${m}`); };
   let px = j.pose.x, pz = j.pose.z, ph = j.pose.h, pmode = j.st.mode, ptruck = j.st.truck, pcity = j.st.city;
@@ -166,7 +166,7 @@ import { Journey } from "../src/journey.ts";
   // Seek test: a fresh journey jumping to the checkpoints in a scrambled order, and the original
   // seeking backwards within its own city, must land on exactly what linear playback saw.
   const order = [...checks.keys()].sort((a, b) => hash2(a, 3, 5, 7) - hash2(b, 3, 5, 7));
-  const q = new Journey(cfg, 0);
+  const q = new Journey(cfg, 0, "autumn");
   let seekBad = 0; const t0 = Date.now();
   let seekMax = 0;
   for (const i of order) { const a = Date.now(); q.seekTo(i * DT); seekMax = Math.max(seekMax, Date.now() - a); if (sig(q) !== checks.get(i)) { seekBad++; err(`seek ${(i * DT).toFixed(1)}: ${sig(q)} != ${checks.get(i)}`); } }

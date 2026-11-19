@@ -27,7 +27,7 @@ import { Traffic } from "../src/traffic.ts";
     return gap;
   };
   for (const [seed, city, spot] of [[7, 0, 63], [3, 0, 1], [11, 0, 1], [3, 1, 1], [2, 0, 18], [5, 0, 1], [8, 0, 478], [13, 0, 1]]) {
-    void new Journey(readConfig({ seed } as SceneEnv), 0);   // (sets the city limits the plan reads)
+    void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (sets the city limits the plan reads)
     const plan = new CityPlan(citySeedOf(seed, city), journeyStyle(seed, city)), n = plan.graph.nodes[spot];
     if (!n) { errs.push(`seed ${seed} city ${city}: no node ${spot}`); continue; }
     const T = new Traffic(new THREE.Scene(), new THREE.MeshBasicMaterial(), null) as any;

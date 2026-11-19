@@ -16,7 +16,7 @@ const runs: [number, string][] = proc.argv.length > 2 ? [[Number(proc.argv[2]), 
 let failed = false;
 for (const [minutes, envJson] of runs) {
   const cfg = readConfig(JSON.parse(envJson) as SceneEnv);
-  const j = new Journey(cfg, 0);
+  const j = new Journey(cfg, 0, "autumn");
   const BODY = 0.32;
   // Walk legs that cut through an obstacle (not one the walk starts or ends inside).
   const crossings = (chores: any[], obs: { x: number; z: number; r: number }[]) => {

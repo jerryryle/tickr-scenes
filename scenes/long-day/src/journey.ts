@@ -37,7 +37,7 @@ import type { TruckModel } from "./truck.ts";
 import { PREEMPT_CHANCE, PREEMPT_MAX, signalCycleIndex, signalGreenLeft, signalState, signalWait, PREEMPT_CLEAR } from "./signals.ts";
 import type { SignalColor, SignalPreempt } from "./signals.ts";
 import { cityName, journeyStyle } from "./styles.ts";
-import { cargoSeason, cityClimate, realSeason, seasonalStyle } from "./climate.ts";
+import { cargoSeason, cityClimate, seasonalStyle } from "./climate.ts";
 import type { Climate, Season } from "./climate.ts";
 import { CITY_HI, CITY_LO, CityPlan, entryGateOf, gateEnd, GATES, setCityLimits } from "./city.ts";
 import { BLOCK, CURB_H, STREET } from "./grid.ts";
@@ -181,10 +181,10 @@ export class Journey {
   private framesOf(N: number) { let f = this.frames.get(N); if (!f) { f = { k: new Map(), l: new Map() }; this.frames.set(N, f); } return f; }
   life: LifeHook | null = null;
 
-  readonly startSeason: Season;   // the first city's season (saved, so a restart replays the same)
+  readonly startSeason: Season;   // the first city's season (main: saved, or the real month's; always given, so a test can't pick up the month by leaving it out)
   climate!: Climate;
 
-  constructor(readonly cfg: Config, t = 0, startSeason: Season = realSeason()) {
+  constructor(readonly cfg: Config, t: number, startSeason: Season) {
     this.startSeason = startSeason;
     setCityLimits(cfg.cityMinutes);
     this.st = this.entryState(this.cityAt(Math.max(0, t)));

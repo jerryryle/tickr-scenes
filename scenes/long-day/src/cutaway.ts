@@ -1,7 +1,9 @@
 // Cutaway: thin out buildings between the camera and the truck so the overhead chase never
-// loses the truck behind one. The cut region is the cone from the camera to the truck (zero
-// radius at the camera, uCutRadius at the truck), i.e. the part of the world that actually hides
-// the truck; a cylinder would punch a huge disc through anything close to the camera. Done in the fragment shader so batched chunks stay one draw call
+// loses the truck behind one. The cut region is exactly what stands between the camera and the
+// truck: a fragment is thinned when the ray from the camera through it goes on to hit the truck
+// (one box, or two for a tractor and its trailer, padded by CUT_PAD) and the fragment is nearer
+// than where it enters, so nothing beside, above or behind the truck is touched. Done in the
+// fragment shader (a ray-box slab test, a few dozen flops) so batched chunks stay one draw call
 // each, as a screen-door dither (a checkerboard of dropped pixels) that reads as see-through on
 // LEDs and keeps the occluder's silhouette.
 // The test runs in view space (camera at the origin), which stays precise however far the
@@ -11,9 +13,14 @@
 // without it.
 import * as THREE from "three@0.187.0";
 
+// The truck's boxes in view space (updateCutaway): centre, axes (three per box) and half sizes.
+export const CUT_BOXES = 2;
+const CUT_PAD = 0.6;   // m round the truck: a little of its surroundings shows through too
 export const cutUniforms = {
-  uCutFocus: { value: new THREE.Vector3() }, // truck position in view space
-  uCutRadius: { value: 7.0 },  // at the truck: half its length and a margin (set per frame in main)
+  uCutC: { value: [new THREE.Vector3(), new THREE.Vector3()] },
+  uCutAx: { value: Array.from({ length: CUT_BOXES * 3 }, () => new THREE.Vector3()) },
+  uCutH: { value: [new THREE.Vector3(), new THREE.Vector3()] },
+  uCutN: { value: 0 },
   uCutOn: { value: 1.0 },
   // Anything closer to the camera than this is not drawn, so a shot that ends up in a tree crown,
   // against a wall or behind a pole still sees past it.
@@ -33,34 +40,60 @@ export function applyCutaway(mat: THREE.Material) {
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
 varying vec3 vCutView;
-uniform vec3 uCutFocus; uniform float uCutRadius; uniform float uCutOn; uniform float uNearClip;`)
+uniform vec3 uCutC[${CUT_BOXES}]; uniform vec3 uCutAx[${CUT_BOXES * 3}]; uniform vec3 uCutH[${CUT_BOXES}];
+uniform int uCutN; uniform float uCutOn; uniform float uNearClip;
+// Whether the fragment at view position p hides box i: the ray from the camera (at s = 0) to p
+// (at s = 1) meets the box, and only beyond p.
+bool cutHides(vec3 p, int i) {
+  vec3 c = uCutC[i], a0 = uCutAx[i * 3], a1 = uCutAx[i * 3 + 1], a2 = uCutAx[i * 3 + 2];
+  vec3 o = -vec3(dot(c, a0), dot(c, a1), dot(c, a2));   // the camera, in the box's frame
+  vec3 d = vec3(dot(p, a0), dot(p, a1), dot(p, a2));
+  d = mix(d, vec3(1e-6), lessThan(abs(d), vec3(1e-6)));
+  vec3 t1 = (-uCutH[i] - o) / d, t2 = (uCutH[i] - o) / d;
+  vec3 tn = min(t1, t2), tf = max(t1, t2);
+  float s0 = max(max(tn.x, tn.y), tn.z), s1 = min(min(tf.x, tf.y), tf.z);
+  return s1 >= s0 && s0 > 1.0;
+}`)
       .replace("void main() {", `void main() {
   {
     float dc = length(vCutView);
     if (dc < uNearClip) discard;   // gone outright: a dithered pole would streak across the frame
   }
   if (uCutOn > 0.5) {
-    float t = clamp(dot(vCutView, uCutFocus) / dot(uCutFocus, uCutFocus), 0.0, 1.0);
-    float d = distance(vCutView, uCutFocus * t);
-    // Stop short of the truck so its own surroundings on the far side stay solid.
-    if (t < 0.93 && d < uCutRadius * t) {
+    bool hides = false;
+    for (int i = 0; i < ${CUT_BOXES}; i++) {
+      if (i >= uCutN) break;
+      if (cutHides(vCutView, i)) { hides = true; break; }
+    }
+    if (hides) {
       vec2 cell = mod(floor(gl_FragCoord.xy), 2.0);
       if (cell.x == cell.y) discard;   // one even checkerboard: half the pixels, no rings
     }
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|cutaway-v7";
+  mat.customProgramCacheKey = () => prevKey() + "|cutaway-v8";
   mat.needsUpdate = true;
 }
 
-const cutTmp = new THREE.Vector3();
-// Call after the camera is placed for the frame. `on` = false for shots inside or beside the
-// truck (dashboard, side view), where nothing should be thinned out.
-export function updateCutaway(camera: THREE.Camera, focus: THREE.Vector3, on = true) {
+// A box to see the truck through: x0..x1 along, y0..y1 up and hw to either side, in obj's frame.
+export interface CutBox { obj: THREE.Object3D; x0: number; x1: number; y0: number; y1: number; hw: number }
+export const NO_CUT_BOXES: readonly CutBox[] = [];
+const cutTmp = new THREE.Vector3(), cutM = new THREE.Matrix4();
+// Call after the camera is placed for the frame, with the truck's boxes. `on` = false for shots
+// inside or beside the truck (dashboard, side view), where nothing should be thinned out.
+export function updateCutaway(camera: THREE.Camera, boxes: readonly CutBox[], on = true) {
   camera.updateMatrixWorld();
-  cutTmp.copy(focus); cutTmp.y += 2.0;
-  cutUniforms.uCutFocus.value.copy(cutTmp.applyMatrix4(camera.matrixWorldInverse));
-  cutUniforms.uCutOn.value = on ? 1 : 0;
+  const U = cutUniforms, n = on ? Math.min(boxes.length, CUT_BOXES) : 0;
+  for (let i = 0; i < n; i++) {
+    const b = boxes[i];
+    b.obj.updateWorldMatrix(true, false);
+    cutM.multiplyMatrices(camera.matrixWorldInverse, b.obj.matrixWorld);   // the box's frame to view space
+    U.uCutC.value[i].set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, 0).applyMatrix4(cutM);
+    for (let k = 0; k < 3; k++) U.uCutAx.value[i * 3 + k].setFromMatrixColumn(cutM, k).normalize();
+    U.uCutH.value[i].set((b.x1 - b.x0) / 2 + CUT_PAD, (b.y1 - b.y0) / 2 + CUT_PAD, b.hw + CUT_PAD);
+  }
+  U.uCutN.value = n;
+  U.uCutOn.value = n > 0 ? 1 : 0;
 }
 
 // The driver spotlight: a see-through hole, clear in the middle with a screen-door rim, on

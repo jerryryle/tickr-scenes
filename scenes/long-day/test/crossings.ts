@@ -14,7 +14,7 @@ import { Ambient } from "../src/ambient.ts";
   const proc = (globalThis as any).process, minutes = Number(proc.argv[2] ?? 6), errs: string[] = [];
   for (const seed of [659803215, 7, 3, 2, 8, 5, 11, 13]) {
     const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial(), traffic = new Traffic(scene, mat, null) as any, crowd = new Crowd(scene, mat) as any;
-    const j = new Journey(readConfig({ seed } as SceneEnv), 0);
+    const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
     j.attachLife(new StreetLife(traffic, crowd, new Ambient(scene, mat)));
     const was = new Map<unknown, string>(), still = new Map<number, number>();
     let hits = 0, crossings = 0, stuck = 0;

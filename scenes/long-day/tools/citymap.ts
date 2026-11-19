@@ -13,7 +13,7 @@ import { journeyStyle } from "../src/styles.ts";
   const [outDir, seedArg, nArg] = proc.argv.slice(2);
   const seed = Number(seedArg ?? 1), n = Number(nArg ?? 4);
   const cfg = readConfig({ seed } as SceneEnv);
-  void new Journey(cfg, 0);   // (sets the city's limits and gates as the scene does)
+  void new Journey(cfg, 0, "autumn");   // (sets the city's limits and gates as the scene does)
   setCityLimits(cfg.cityMinutes);
   const DIST: Record<string, [number, number, number]> = { downtown: [150, 160, 190], commercial: [215, 190, 150], residential: [170, 210, 150], industrial: [190, 180, 170], park: [90, 170, 90] };
   for (let N = 0; N < n; N++) {

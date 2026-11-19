@@ -16,7 +16,7 @@ import { BLOCK } from "../src/grid.ts";
 {
   const proc = (globalThis as any).process;
   const minutes = Number(proc.argv[2] ?? 70);
-  const j = new Journey(readConfig({} as SceneEnv), 0);
+  const j = new Journey(readConfig({} as SceneEnv), 0, "autumn");
   const reach = new ElevatedReach(new THREE.Scene(), new THREE.MeshBasicMaterial());
   const errs: string[] = [];
   const q = { x: 0, z: 0, h: 0, k: 0 }, a = { x: 0, z: 0, h: 0, k: 0 };

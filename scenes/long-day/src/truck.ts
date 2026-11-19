@@ -11,6 +11,7 @@ import { Batch, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { applyDriverSpot } from "./cutaway.ts";
+import type { CutBox } from "./cutaway.ts";
 import { applyLampLight } from "./atmosphere.ts";
 import { PuffSystem } from "./puffs.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
@@ -262,6 +263,25 @@ export class Truck {
     this.root.add(this.wheels);
     for (const a of Object.values(this.anchors)) this.body.add(a);
     this.update(0);
+  }
+
+  // The boxes the camera's cutaway sees the truck through (cutaway.ts): the truck whole, or a
+  // tractor's cab and its trailer apart, so the trailer's swing through a turn is followed.
+  private cutBoxList: CutBox[] | null = null;
+  get cutBoxes(): readonly CutBox[] {
+    if (this.cutBoxList) return this.cutBoxList;
+    const s = this.spec, c = s.cargo;
+    if (this.trailer) {
+      this.cutBoxList = [
+        { obj: this.body, x0: -1.5, x1: this.frontX, y0: 0, y1: s.exhaust === "stack" ? 4.1 : s.cabTop, hw: s.cabHW },   // (up to the stacks' tops)
+        { obj: this.trailer, x0: TRAILER.rear, x1: TRAILER.front, y0: 0, y1: TRAILER.top, hw: TRAILER.hw },
+      ];
+    } else {
+      // (A flatbed's load stands above its deck: as high as a box body's roof.)
+      const top = Math.max(s.cabTop, c ? (c.kind === "flatbed" ? 3.3 : c.top) : 0);
+      this.cutBoxList = [{ obj: this.body, x0: this.rearX, x1: this.frontX, y0: 0, y1: top, hw: Math.max(s.cabHW, c?.hw ?? 0) }];
+    }
+    return this.cutBoxList;
   }
 
   // Overall extents along x (for parking and docking), including a trailer when straight.

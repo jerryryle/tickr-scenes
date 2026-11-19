@@ -12,12 +12,12 @@ import type { ChunkBuild } from "./chunks.ts";
 import { OCCLUSION } from "./occlusion.ts";
 import { Persistence, STATE_VERSION } from "./persist.ts";
 import type { SavedState } from "./persist.ts";
-import { applyCutaway, applyDriverSpot, cutUniforms, updateCutaway, updateDriverSpot } from "./cutaway.ts";
+import { applyCutaway, applyDriverSpot, cutUniforms, NO_CUT_BOXES, updateCutaway, updateDriverSpot } from "./cutaway.ts";
 import { Engine } from "./engine.ts";
 import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, HEAD_Y, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
 import { Hud } from "./hud.ts";
 import { PuffSystem } from "./puffs.ts";
-import { LIVERY_ASSETS, Truck, truckExtents, TruckKit, truckLayout } from "./truck.ts";
+import { LIVERY_ASSETS, Truck, TruckKit, truckLayout } from "./truck.ts";
 import type { LiveryName, TruckModel } from "./truck.ts";
 import { makeFacadeMaterial, setFacadeAtlas } from "./facade.ts";
 import { paintFacadeAtlas } from "./facadeart.ts";
@@ -63,24 +63,6 @@ const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge";   // test renders with a tour camera
 
-// The cutaway cone's radius at the truck (cutaway.ts): enough to take in every corner of the truck
-// (a box `half` long either way from `centre`, heading `h`, CUT_HW to each side and up to CUT_TOP)
-// as seen from `cam`, where the cone is narrower for a corner nearer the camera; plus a margin.
-const CUT_HW = 1.35, CUT_TOP = 4.2, CUT_MARGIN = 1.2, CUT_Y = 2.0;   // (CUT_Y: updateCutaway's lift)
-const cutU = new THREE.Vector3(), cutV = new THREE.Vector3();
-function cutRadius(cam: THREE.Vector3, centre: THREE.Vector3, h: number, half: number) {
-  const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
-  cutU.set(centre.x - cam.x, centre.y + CUT_Y - cam.y, centre.z - cam.z);
-  const dist = cutU.length(); cutU.divideScalar(dist);
-  let r = 0;
-  for (const a of [-half, half]) for (const b of [-CUT_HW, CUT_HW]) for (const y of [0, CUT_TOP]) {
-    cutV.set(fx * a + rx * b, y - CUT_Y, fz * a + rz * b);
-    const along = cutV.dot(cutU), t = Math.max(0.3, (dist + along) / dist);
-    r = Math.max(r, Math.sqrt(Math.max(0, cutV.lengthSq() - along * along)) / t);
-  }
-  return r + CUT_MARGIN;
-}
-
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const cfg = readConfig(env);
   let engine: Engine, streamer: ChunkStreamer, hud: Hud, persist: Persistence;
@@ -100,7 +82,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let lastMode: Mode | "" = "";
   const focus = new THREE.Vector3(), aheadDir = { x: 0, z: 0 };
   const pose: Pose = { x: 0, z: 0, h: 0, k: 0 };
-  const spotSeat = new THREE.Vector3(), spotChest = new THREE.Vector3(), cutCentre = new THREE.Vector3();
+  const spotSeat = new THREE.Vector3(), spotChest = new THREE.Vector3();
   let base = 0, randomSeed = false, scrubPrev = 0;          // journey time at scene time 0 (the saved time)
   let lastX = NaN, lastZ = 0;   // the truck's last rendered position, for wheel travel
 
@@ -350,7 +332,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
     focus.set(cx, 0, cz);
     streamer.update(focus);
-    updateCutaway(cam, focus, false);
+    updateCutaway(cam, NO_CUT_BOXES, false);
     engine.setViewDistance(streamer.clearDistance(cam.position.x, cam.position.z), 30);
     return true;
   }
@@ -413,7 +395,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         engine.camera.position.set(w.x + w.ox * w.back - w.fx * w.back * 0.45, w.y, w.z + w.oz * w.back - w.fz * w.back * 0.45);
         engine.camera.lookAt(w.x, w.look, w.z); focus.copy(truck.root.position); updateDriverSpot(engine.camera, null);
         streamer.update(new THREE.Vector3(w.x, 0, w.z));
-        updateCutaway(engine.camera, focus, false); engine.setViewDistance(streamer.clearDistance(engine.camera.position.x, engine.camera.position.z), 30); return;
+        updateCutaway(engine.camera, NO_CUT_BOXES, false); engine.setViewDistance(streamer.clearDistance(engine.camera.position.x, engine.camera.position.z), 30); return;
       }
     }
     // test renders: low in the street by a site laid on its block's anchor, looking past either end
@@ -446,17 +428,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const cam = engine.camera;
     truck.interiorView = director.interior;
     focus.copy(truck.root.position);
-    // The see-through cone is centred on the middle of the truck (its origin is the rear axle) and
-    // sized to the truck as the camera sees it, trailer included: wide from the side, narrow end-on
-    // from ahead or behind, so it rings the truck without eating into the buildings beside it.
-    const ex = truckExtents(truck.model), h = truck.heading;
-    cutCentre.set(focus.x + Math.cos(h) * ex.center, focus.y, focus.z - Math.sin(h) * ex.center);
-    cutUniforms.uCutRadius.value = cutRadius(cam.position, cutCentre, h, (ex.front - ex.rear) / 2);
     // Held shots at a stop: street trees, poles and the like within 7 m of the camera are left out,
     // so nothing near the lens blocks the work at the truck (3 m otherwise).
     const held = director.beat === "curb" || director.beat === "load" || director.beat === "swap";
     cutUniforms.uNearClip.value = held && !director.interior ? 7 : 3;
-    updateCutaway(cam, cutCentre, director.cutaway);
+    updateCutaway(cam, truck.cutBoxes, director.cutaway);   // (only what stands between the camera and the truck)
     // The driver spotlight: only while the truck's door is open at a stop (journey.driverSpotOn), and
     // the driver is out of the seat and the camera outside.
     const d = crew.driver.root.position;

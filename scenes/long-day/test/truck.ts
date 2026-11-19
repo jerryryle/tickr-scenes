@@ -27,7 +27,7 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
   const proc = (globalThis as any).process, minutes = Number(proc.argv[2] ?? 10), OVERLAP_MAX = 0.4, PED_R = 0.3, HELD_MAX = 45, errs: string[] = [];
   for (const seed of [659803215, 7, 8, 5, 11, 1, 2, 3, 4, 6, 9, 10, 12, 13, 14]) {
     const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial(), traffic = new Traffic(scene, mat, null);
-    const j = new Journey(readConfig({ seed } as SceneEnv), 0);
+    const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
     const crowd = new Crowd(scene, mat);
     j.attachLife(new StreetLife(traffic, crowd, new Ambient(scene, mat)));
     let worst = 0, checks = 0, hits = 0, held = 0, heldMost = 0;

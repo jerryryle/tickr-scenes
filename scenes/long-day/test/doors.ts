@@ -9,7 +9,7 @@ import { facilityAt, siteLayout } from "../src/facilities.ts";
 {
   const proc = (globalThis as any).process;
   const seed = Number(proc.argv[2] ?? 1);
-  const j = new Journey(readConfig({ seed } as SceneEnv), 0);
+  const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
   let sides = 0;
   const errs: string[] = [];
   for (const blk of j.plan.graph.blocks) {

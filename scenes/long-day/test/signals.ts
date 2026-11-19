@@ -15,7 +15,7 @@ import { signalState } from "../src/signals.ts";
   const minutes = Number(proc.argv[2] ?? 15);
   const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial();
   const traffic = new Traffic(scene, mat, null);
-  const j = new Journey(readConfig({} as SceneEnv), 0);
+  const j = new Journey(readConfig({} as SceneEnv), 0, "autumn");
   j.attachLife(new StreetLife(traffic, new Crowd(scene, mat), new Ambient(scene, mat)));
   const prev = new Map<number, { s: number; path: unknown }>();
   const tally: Record<string, number> = {};
