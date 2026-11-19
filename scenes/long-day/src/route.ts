@@ -149,11 +149,15 @@ export class Path {
   // Where the path enters a roundabout (a one-way ring at an unsignalled node): the node and the
   // give-way line on the approach.
   readonly yields: { node: number; sLine: number }[] = [];
+  // Where the path comes to an all-way stop (a node whose control is "stop"): the node and its stop
+  // line on the approach.
+  readonly stops: { node: number; sLine: number }[] = [];
   // Every node the path goes through: its stop line on the approach, where the far mouth is
   // passed (roughly: straight across), and the dedges in and out.
   readonly nodes: { node: number; sLine: number; sOut: number; from: number; to: number; move: Move }[] = [];
   readonly turns: { s: number; dir: -1 | 1 }[] = [];  // turn starts, for indicators
   length = 0;
+  dockOut = 0;   // (out of a bay: where its turn out joins the kerb lane; else 0)
   private cursor = 0;
   // Ramps (a garage's): height y0 at s0 to y1 at s1; level elsewhere, at the last one's end.
   readonly ramps: { s0: number; s1: number; y0: number; y1: number }[] = [];
@@ -214,6 +218,7 @@ export class Path {
       const tp = turnPiece(this.length, k.x + ch * k.Lb, k.z - sh * k.Lb, k.H, k.R, -1, DOCK_TURN_SPEED);
       this.pieces.push(tp);
       this.length += tp.len;
+      this.dockOut = this.length;
     }
     if (route.garageOut) {
       // Down out of a garage: the route starts at its rooftop stop.
@@ -256,6 +261,7 @@ export class Path {
       const ai = G.armIndexIn(d);
       const toNode = along(node.x, node.z);
       if (node.control === "signal") this.signals.push({ node: N, phase: node.phaseOf[ai], sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK, move: m });
+      else if (node.control === "stop") this.stops.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK });
       // (Its give-way line is the street's painted stop line, STOP_BACK short of the mouth: behind the
       // crosswalk, not on it.)
       else if (G.streets[e >> 1].oneway && !G.streets[d >> 1].oneway) this.yields.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK });

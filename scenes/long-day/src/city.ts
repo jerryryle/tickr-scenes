@@ -18,7 +18,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE } from "./facadetiles.ts";
 import type { FacadeBand } from "./facade.ts";
-import { buildSignals } from "./signals.ts";
+import { buildSignals, buildStopSigns } from "./signals.ts";
 import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
@@ -98,6 +98,35 @@ export class CityPlan {
   private organicFailed = false;   // (an organic town was tried and lost a gate: see graph)
   get graph(): CityGraph {
     if (this.g) return this.g;
+    const G = this.buildGraph();
+    this.stopSigns(G);
+    return G;
+  }
+  // All-way stops: in a warped or organic town, most junctions of three or more streets that lie
+  // wholly among houses and parks have stop signs instead of lights (not one at a gate, nor on a
+  // roundabout, nor where an elevated line, cable car or freeway runs). The grid's own city keeps
+  // its lights everywhere.
+  private stopSigns(G: CityGraph) {
+    if (this.layout === "grid") return;
+    const gateNodes = new Set(G.gates.map((g) => g.node));
+    for (const N of G.nodes) {
+      if (N.control !== "signal" || N.arms.length < 3 || gateNodes.has(N.id)) continue;
+      let quiet = true;
+      for (const a of N.arms) {
+        const st = G.streets[a.street], t = st.tags;
+        if (!st.inCity || st.oneway || t.elevated || t.cable || t.freeway) { quiet = false; break; }
+        for (const f of [a.street * 2 + a.end, (a.street * 2 + a.end) ^ 1]) {
+          const b = G.faceBlock[f];
+          if (b < 0) continue;
+          const B = G.blocks[b], d = this.district(B.kx, B.kz);
+          if (B.water || (d !== "residential" && d !== "park")) { quiet = false; break; }
+        }
+        if (!quiet) break;
+      }
+      if (quiet && hash2(N.kx, N.kz, this.seed, 0x5709) < 0.7) { N.control = "stop"; N.phases = 1; N.phaseOf.fill(0); }
+    }
+  }
+  private buildGraph(): CityGraph {
     const opts = { lo: CITY_LO, hi: CITY_HI, gates: GATES, nameEW: streetNameEW, nameNS: streetNameNS,
       elevatedRow: (iz: number) => elevatedLine(this.style, iz), cableColumn: (ix: number) => !!this.style.cableCar && cableColumn(ix) };
     // (An organic town that could not put a junction at every gate is laid out warped instead:
@@ -215,7 +244,8 @@ export class CityPlan {
     const sweep = h(7) < 0.5 ? { bow: 12 + 18 * h(8), wave: 6 + 8 * h(9) } : undefined;
     return { diagonals, oldTown, sweep, circuses };
   }
-  // How this city's streets are laid out (citygen.ts): the old square grid, or one bent out of square.
+  // How this city's streets are laid out (citygen.ts): the old square grid, one bent out of square,
+  // or an organic town, by the style's odds.
   // An organic town (no grid underneath) only where nothing needs a straight line through it: no
   // freeway, elevated line or cable car.
   get layout(): "grid" | "warp" | "organic" {
@@ -223,8 +253,9 @@ export class CityPlan {
     if (DEBUG_LAYOUT === "grid" || DEBUG_LAYOUT === "warp") return DEBUG_LAYOUT;
     if (DEBUG_LAYOUT === "organic") return organicOk ? "organic" : "warp";
     if (DEBUG_LAYOUT === "river" || DEBUG_LAYOUT === "round") return "warp";
-    const r = hash2(this.seed, 0x1a7, 0, 0);
-    return organicOk && r < 0.4 ? "organic" : r < 0.75 ? "warp" : "grid";
+    // (By the style's odds: STYLES' layouts.)
+    const L = this.style.layouts, o = organicOk ? L.organic : 0, r = hash2(this.seed, 0x1a7, 0, 0) * (L.grid + L.warp + o);
+    return r < o ? "organic" : r < o + L.warp ? "warp" : "grid";
   }
   // The block with key (bx, bz), its face on side `side`, and that face's frontage point.
   blockOf(bx: number, bz: number) { return this.graph.block(bx, bz); }
@@ -505,6 +536,7 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
     g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates);
+  buildStopSigns(solid, G, n, ox, oz);
 }
 
 // A street between two intersections (tile-local), drawn by buildStreet in the street's own

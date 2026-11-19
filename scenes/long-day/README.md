@@ -16,13 +16,16 @@ where everything along a street is placed). `src/citygen.ts` makes it from the c
 square grid; one bent out of square, with dropped streets, rivers, superblock parks, diagonal
 avenues, old towns, sweeping avenues, radial circuses and one-way roundabouts (where traffic
 yields on entry); or, in towns without a freeway, an organic town with no grid at all (a relaxed
-Voronoi of streets). Sites (docks, garages, rental lots, stands) are drawn on any block with room
-for their 42 m layout, anchored to one face and turned to it, with lots filling the rest; curved
-streets are chains of straight segments. A big block's middle, past its lots, is filled for its
-district: set-back towers downtown; car parks (with cars in) and trees in planters commercially;
-sheds and stacked containers in industry; and where people live, a fenced back garden behind each
-house, with trees beyond. Routing, signals, traffic, the crowd and the city's drawing all work
-from the graph. To see a journey's layouts from above:
+Voronoi of streets). Each style has its own odds for the three (`layouts` in `src/styles.ts`).
+Outside the grid's own cities, most junctions among houses and parks are all-way stops: the
+truck and traffic stop at the line, wait a moment, then go in turn. Sites (docks, garages,
+rental lots, stands) are drawn on any block with room for their 42 m layout, anchored to one face
+and turned to it, with lots filling the rest; curved streets are chains of straight segments. A
+big block's middle, past its lots, is filled for its district: set-back towers downtown; car parks
+(with cars in) and trees in planters commercially; sheds and stacked containers in industry; and
+where people live, a fenced back garden behind each house, with trees beyond. Routing, signals,
+traffic, the crowd and the city's drawing all work from the graph. To see a journey's layouts
+from above:
 
 ```bash
 make citymap SCENE=long-day SEED=11 CITIES=4    # -> build/long-day-citymap/city<N>.png

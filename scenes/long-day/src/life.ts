@@ -23,6 +23,7 @@ export class StreetLife implements LifeHook {
   private truckGate = { node: 0, street: 0 };
   private extents = new Map<string, ReturnType<typeof truckExtents>>();   // (per model: truckExtents makes a new object each call)
   private landing = { path: null as unknown as Path, s0: 0, s1: 0, at: 0 };
+  private sweep = { path: null as Path | null, obs: [] as Obstacle[], at: [] as number[] };   // (a bay path's sweep, and the s of each obstacle's pose)
 
   constructor(private traffic: Traffic, private crowd: Crowd, private ambient: Ambient) {}
 
@@ -42,6 +43,27 @@ export class StreetLife implements LifeHook {
     obs.length = 0;
     truckObstacles(st.truck, p.x, p.z, p.h, j.trailerYaw() ?? 0, obs);
     const truckN = obs.length;
+    // Reversing into a bay: where it will be all the way in (every 2 m), as if parked there, so
+    // traffic waits clear of the whole sweep (the cab swings out across the lanes) rather than
+    // pull up alongside it.
+    // (And so from its last 30 m pulling past the bay: traffic coming up behind waits back, rather
+    // than pass it and be caught in the sweep when it starts back.)
+    // (Laid once per bay path, and handed on each step from just behind the truck on.)
+    const ahead = st.mode === "reverse" ? null : j.upcomingReverse();
+    const R = st.mode === "reverse" && j.path ? j.path : ahead?.path ?? null;
+    if (R) {
+      const back = ahead ? ahead.backS : st.backS, W = this.sweep;
+      if (W.path !== R) {
+        W.path = R; W.at.length = 0; W.obs.length = 0;
+        for (let s = R.length; s > back - 1; s -= 2) {
+          const n0 = W.obs.length, yaw = j.reverseSweepPose(Math.max(s, back), this.spare, R);
+          truckObstacles(st.truck, this.spare.x, this.spare.z, this.spare.h, yaw, W.obs);
+          for (let k = n0; k < W.obs.length; k++) { W.obs[k].still = true; W.obs[k].sweep = true; W.at.push(s); }
+        }
+      }
+      const s1 = ahead ? Infinity : st.s - 2;
+      for (let k = 0; k < W.obs.length; k++) if (W.at[k] <= s1) obs.push(W.obs[k]);
+    }
     // Parked at a stop (or just pulled up at one, or waiting for its next job), traffic changes
     // lanes early to pass (not at a red light).
     const parked = st.mode === "drive" && Math.abs(st.v) < 0.3 && (!j.path || st.stopS - st.s < 25);
@@ -78,7 +100,6 @@ export class StreetLife implements LifeHook {
     }
     this.busy.clear();
     for (const s of st.stops) if (s.site) this.busy.add(`${s.site.bx},${s.site.bz}`);
-    this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy });
     // (Test renders watching one block, "block:kx,kz": the traffic round that block instead.)
     let tf: { x: number; z: number } = p;
     if (DEBUG_BLOCK) { const B = j.plan.graph.block(DEBUG_BLOCK[0], DEBUG_BLOCK[1]); if (B) tf = { x: B.cx, z: B.cz }; }
@@ -87,14 +108,19 @@ export class StreetLife implements LifeHook {
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
     if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; }
+    this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp });
     const gi = st.mode === "inbound" ? GATES.indexOf(j.plan.entryGate) : -1, g = gi >= 0 && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[gi] : null;
     const gate = g ? this.truckGate : null;
     if (gate) { gate.node = g!.node; gate.street = g!.street; }
     // (Coming down a freeway exit ramp, which joins the streets off any junction: traffic gives way
     // where the ramp's last 15 m and the 25 m after it cross its way, from 70 m short of the foot.)
     const rp = st.mode === "drive" && j.path?.route.garageOut ? j.path.ramps[j.path.ramps.length - 1] : null;
-    const landing = rp && st.s < rp.s1 + 10 && rp.s1 - st.s < 70 ? this.landing : null;
+    let landing = rp && st.s < rp.s1 + 10 && rp.s1 - st.s < 70 ? this.landing : null;
     if (landing) { landing.path = j.path!; landing.s0 = Math.max(st.s, rp!.s1 - 15); landing.s1 = rp!.s1 + 25; landing.at = rp!.s1; }
+    // (Pulling out of a dock bay, swinging across the street into the kerb lane: likewise, from the
+    // truck to 25 m on from where it joins the lane, until it is 10 m into it.)
+    const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
+    if (!landing && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
     this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing);
     this.ambient.stepBlimp(p, st.simTime);
   }

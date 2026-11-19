@@ -11,6 +11,7 @@ import * as THREE from "three@0.187.0";
 import { hash2 } from "./rng.ts";
 import { Batch } from "./geom.ts";
 import type { CityGraph, CNode } from "./citygraph.ts";
+import { STOP_BACK } from "./route.ts";
 
 const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_SLOT = 13;
 export const SIGNAL_CYCLE = 2 * SIG_SLOT;            // a two-phase intersection's cycle
@@ -153,6 +154,45 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
 
 const LAMP_COLORS = [0xff2a1a, 0xffb000, 0x22ff66];
 const POLE = 0x2b2f33, HOUSING = 0x15181a;
+
+// An all-way stop's signs for node n (control "stop"), relative to (ox, oz): on each approach, a
+// stop sign on a post on the right-hand sidewalk near the kerb, just short of the stop line, facing
+// the traffic coming up to it. The sign is a red octagon 75 cm across with a white rim and STOP in
+// white, bolted to the front of its post (the post hidden behind it, seen only below it), with a
+// plain grey back.
+const STOP_GLYPHS = [["###", "#..", "###", "..#", "###"], ["###", ".#.", ".#.", ".#.", ".#."], ["###", "#.#", "#.#", "#.#", "###"], ["###", "#.#", "###", "#..", "#.."]];
+export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number) {
+  if (n.control !== "stop") return;
+  const cx = n.x - ox, cz = n.z - oz, y0 = 2.15, post = 0.04;
+  for (const arm of n.arms) {
+    const st = G.streets[arm.street];
+    if (!st.inCity) continue;
+    // Out along the arm to the stop line: (ux, uz), towards the traffic coming in, is the way the
+    // sign faces; that traffic's right is (rx, rz).
+    const t = arm.mouth + STOP_BACK - 0.9, ux = Math.cos(arm.h), uz = -Math.sin(arm.h);
+    const rx = -uz, rz = ux, side = st.half - st.kerb + 0.6;
+    const px = cx + ux * t - rx * side, pz = cz + uz * t - rz * side;
+    solid.cyl(px, (y0 + 0.2) / 2, pz, post, y0 + 0.2, POLE, 6);
+    // An octagon of circumradius R, d in front of the post's axis, facing (fx, fz).
+    const octagon = (R: number, d: number, color: number, fx: number, fz: number) => {
+      const qx = px + ux * d, qz = pz + uz * d, pts: [number, number, number][] = [];
+      for (let k = 0; k < 8; k++) { const a = Math.PI / 8 + k * Math.PI / 4; pts.push([qx + rx * R * Math.cos(a), y0 + R * Math.sin(a), qz + rz * R * Math.cos(a)]); }
+      for (let k = 1; k + 1 < 8; k++) solid.tri(...pts[0], ...pts[k], ...pts[k + 1], color, [fx, 0, fz]);
+    };
+    const R = 0.375 / Math.cos(Math.PI / 8);   // (75 cm across the flats)
+    octagon(R, post + 0.01, 0x8a8f94, -ux, -uz);          // the back
+    octagon(R, post + 0.02, 0xf2f2f2, ux, uz);            // the white rim
+    octagon(R * 0.88, post + 0.025, 0xc81e1e, ux, uz);    // the red face
+    // STOP in white, a 3 x 5 block letter each, reading left to right for the traffic facing it
+    // (whose right is (-rx, -rz)).
+    const cell = 0.035, yaw = Math.atan2(-rz, rx);
+    STOP_GLYPHS.forEach((rows, i) => rows.forEach((row, r) => { for (let c = 0; c < 3; c++) {
+      if (row[c] !== "#") continue;
+      const l = -0.2625 + i * 0.14 + (c + 0.5) * cell, y = y0 + 2.5 * cell - (r + 0.5) * cell;
+      solid.box(px + ux * (post + 0.03) - rx * l, y, pz + uz * (post + 0.03) - rz * l, cell, cell, 0.01, 0xf2f2f2, yaw);
+    } }));
+  }
+}
 
 // Mast-arm signals for node n, drawn relative to (ox, oz) (its tile's origin). Each approach gets
 // a pole on the far right corner of the intersection and an arm reaching over its two lanes, with

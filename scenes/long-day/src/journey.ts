@@ -98,6 +98,7 @@ const TRAILER_AXLE_TO_REAR = 2.25;
 export const DWELL = { park: 3, exit: 2.6, enter: 2.6, startup: 1.5 };
 type DwellPhase = "park" | ChoreGroup | "startup";
 export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Chore | null; ct: number }
+const STOP_SIGN_PAUSE = 1.5;     // s the truck stands at a stop sign's line before going on
 const SWAP_GAP = 2.5;          // metres between the old truck's nose and the new truck's tail
 const WALK_SPEED = 1.35;
 const GATE_TRIM = STREET / 2;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
@@ -119,7 +120,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; redWait: number; preempt: SignalPreempt[];
+  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[];   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -216,7 +217,7 @@ export class Journey {
       // timer can't carry over from the last one). A swap job may not fit in the time left, and
       // some cities have no source of another truck's cargo, so not every city gets one.
       swapAt: start + 60 * (2 + 10 * hash2(N, 1, this.cfg.seed, 0x5a9)), jobsSinceSwap: 0, noSwap: false, intercity: false,
-      committed: "", redWait: 0, preempt: [], stopsDone: N * 1000, events: [],
+      committed: "", stopGo: "", redWait: 0, preempt: [], stopsDone: N * 1000, events: [],
     };
     // By the freeway: the arrival ends at its off-ramp, where the city's route starts: down the
     // off-ramp (a "helix" tail) and out into the kerb lane under the freeway, towards the next node.
@@ -596,7 +597,7 @@ export class Journey {
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
     if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
     this.path = new Path(this.plan.graph, st.route);
-    st.s = s0; st.committed = ""; st.redWait = 0;
+    st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0;
     st.stopS = this.path.length;
     if (stop.kind === "swap") {
       const spare = truckExtents(stop.truck!);
@@ -937,6 +938,21 @@ export class Journey {
         break;
       }
     }
+    // All-way stops: a full stop at the line, a moment's look both ways, then on.
+    if (st.mode === "drive") {
+      for (const y of p.stops) {
+        const target = y.sLine - STOP_GAP - front, key = `stop ${y.node},${y.sLine.toFixed(1)}`;
+        if (st.s > target + 0.5) continue;           // already past this one
+        if (st.stopGo === key) break;
+        const dist = target - st.s;
+        if (st.redWait > STOP_SIGN_PAUSE && dist < 1.2) { st.stopGo = key; break; }
+        if (dist >= st.v * st.v / (2 * FIRM_BRAKE) - 0.5) {
+          limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, dist)));
+          hardStop = Math.min(hardStop, target);
+        } else st.stopGo = key;                      // too close to stop: go through
+        break;
+      }
+    }
     // The stop at the end of the path.
     if (st.mode === "drive" && st.stopS < THROUGH) {
       const dist = st.stopS - st.s;
@@ -983,11 +999,11 @@ export class Journey {
   // Pulled past the bay: switch to the bay path (whose far end is exactly here) and reverse
   // along it until the reference axle is docked at its start.
   private beginReverse() {
-    const st = this.st, dock = this.dockPlan(st.stops[0]);
-    if (!dock) { this.startDwell(); return; }
-    st.route = { d: dock.face, before: this.plan.graph.faceLen(dock.face) - (dock.pa + dock.R), edges: [], after: dock.pa + dock.R + dock.pull + dock.trail, dock: dock.geom };
-    this.path = new Path(this.plan.graph, st.route);
-    st.s = st.stopS = this.path.length; st.backS = dock.trail;
+    const st = this.st, bay = this.bayPath(st.stops[0]);
+    if (!bay) { this.startDwell(); return; }
+    st.route = bay.path.route;
+    this.path = bay.path;
+    st.s = st.stopS = this.path.length; st.backS = bay.backS;
     st.mode = "reverse"; st.modeTime = 0;
     this.reversePose(st.s, this.pose);
   }
@@ -1016,9 +1032,9 @@ export class Journey {
   // a few metres, as a driver would steer it, and eased in over the first metres back from where
   // the drive in left the truck straight; docked, it's straight again.) Others: on the path.
   private revA: Pose = { x: 0, z: 0, h: 0, k: 0 }; private revB: Pose = { x: 0, z: 0, h: 0, k: 0 };
-  private reversePose(s: number, out: Pose, yawOnly = false): number {
-    const p = this.path!;
-    if (this.st.truck !== "tractor") { if (!yawOnly) p.eval(s, out); return 0; }
+  private reversePose(s: number, out: Pose, yawOnly = false, peekOnly = false, path: Path | null = null): number {
+    const p = path ?? this.path!;
+    if (this.st.truck !== "tractor") { if (!yawOnly) { if (peekOnly) p.peek(s, out); else p.eval(s, out); } return 0; }
     const sa = s - TRAILER_TRAIL, s0 = Math.max(0, sa - 3), s1 = Math.min(p.length, sa + 3);
     // (Looking along the trailer's stretch of the path leaves the path's state alone: traffic reads
     // its lastOffset, which stays the truck's own, below.)
@@ -1030,8 +1046,33 @@ export class Journey {
     const a = p.peek(sa, this.revA), h = a.h - yaw;
     const kx = a.x + Math.cos(a.h) * KINGPIN_TO_AXLES, kz = a.z - Math.sin(a.h) * KINGPIN_TO_AXLES;
     out.x = kx - Math.cos(h) * FIFTH_WHEEL; out.z = kz + Math.sin(h) * FIFTH_WHEEL; out.h = h; out.k = k;
-    p.eval(s, this.revB);   // (the path's state at the truck, as for other trucks)
+    if (!peekOnly) p.eval(s, this.revB);   // (the path's state at the truck, as for other trucks)
     return yaw;
+  }
+  // Reversing into a bay (along `path`: its bay path, the current one by default): where the truck
+  // will be with the path at `s` (into `out`) and its trailer's yaw then (as trailerYaw), for
+  // traffic to keep out of its sweep. The path's state, which traffic reads, is left at the truck.
+  reverseSweepPose(s: number, out: Pose, path: Path | null = null): number { return this.reversePose(s, out, false, true, path); }
+  // Pulling past a dock's bay to reverse into it, its last 30 m: the bay path it will reverse
+  // along (as beginReverse lays it) and where it will stop on it, for traffic to hold clear of the
+  // sweep before it starts back. Else null. (Laid once per stop.)
+  upcomingReverse(): { path: Path; backS: number } | null {
+    const st = this.st, stop = st.stops[0];
+    if (st.mode !== "drive" || !this.path || !stop || st.backS >= st.stopS - 0.01 || st.stopS - st.s > 30) return null;
+    return this.bayPath(stop);
+  }
+  // A dock stop's bay path, which the truck reverses along from its far end (where it pulled past
+  // the bay) to backS, docked; or null (no dock there). (Laid once per stop: traffic's view of it
+  // ahead, upcomingReverse, and the truck's are the one path.)
+  private bay: { stop: Stop; path: Path; backS: number } | null = null;
+  private bayPath(stop: Stop): { path: Path; backS: number } | null {
+    if (this.bay?.stop !== stop) {
+      const dock = this.dockPlan(stop);
+      if (!dock) return null;
+      const route = { d: dock.face, before: this.plan.graph.faceLen(dock.face) - (dock.pa + dock.R), edges: [], after: dock.pa + dock.R + dock.pull + dock.trail, dock: dock.geom };
+      this.bay = { stop, path: new Path(this.plan.graph, route), backS: dock.trail };
+    }
+    return this.bay;
   }
   // The trailer's articulation while reversing into a bay (reversePose), where the truck is
   // drawn (between steps), or null to let the truck's own hitch model run.

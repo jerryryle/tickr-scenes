@@ -34,11 +34,16 @@ export interface CityStyle {
   cranes?: boolean;                   // container cranes and stacks in industrial blocks
   rail?: boolean;                     // rail spurs through industrial yards
   townSquare?: boolean;               // courthouse clock tower and a water tower with the town name
+  // How likely each street layout is (city.ts CityPlan.layout): the square grid, a grid bent out
+  // of square, an organic town with no grid. Relative weights; organic only where nothing needs a
+  // straight line through town (no freeway, elevated line or cable car), else its share goes to
+  // the other two.
+  layouts: { grid: number; warp: number; organic: number };
 }
 
 export const STYLES: Record<StyleId, CityStyle> = {
   coastal: {
-    id: "coastal", names: ["Bayview", "Fogcrest", "Golden Hollow", "Seacliff", "Twin Peaks Bay"],
+    id: "coastal", layouts: { grid: 0.15, warp: 0.45, organic: 0.4 }, names: ["Bayview", "Fogcrest", "Golden Hollow", "Seacliff", "Twin Peaks Bay"],
     walls: {
       downtown: [0xd8d2c4, 0xc9b79a, 0xe6e1d6, 0x9aa7b0, 0xb08d6e],
       commercial: [0xe7b7a3, 0xa8d0c8, 0xf0d58c, 0xc7a6d6, 0x9fc3e0, 0xe89a7a],
@@ -55,7 +60,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "bridge", backdropColor: 0x6f86a8, sky: 0x0b4fc4, cableCar: true,
   },
   metro: {
-    id: "metro", names: ["Metropolis Heights", "New Harbor City", "Grand Central", "Midtown", "Empire Point"],
+    id: "metro", layouts: { grid: 0.5, warp: 0.4, organic: 0.1 }, names: ["Metropolis Heights", "New Harbor City", "Grand Central", "Midtown", "Empire Point"],
     walls: {
       downtown: [0x7d8a96, 0x5f7f99, 0x9aa7b0, 0x3f5568, 0xd8d2c4, 0x8fa3b5, 0x2f4a62],
       commercial: [0xb5553c, 0x8f4a3a, 0xc0c4b8, 0x6d8f8a, 0xd9c7a0, 0x9b6fa0],
@@ -72,7 +77,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "skyline", backdropColor: 0x5a6f8f, sky: 0x0a49b8, elevated: true,
   },
   desert: {
-    id: "desert", names: ["Sun Mesa", "Dry Gulch", "Saguaro Springs", "Red Rock", "Palm Vista"],
+    id: "desert", layouts: { grid: 0.45, warp: 0.3, organic: 0.25 }, names: ["Sun Mesa", "Dry Gulch", "Saguaro Springs", "Red Rock", "Palm Vista"],
     walls: {
       downtown: [0xe6d3b3, 0xd9b48f, 0xc9a37a, 0xe8c8a0, 0xb88a6a],
       commercial: [0xf0d0a8, 0xe8a87c, 0xd98a6a, 0xf2e2c4, 0x6fb5a8, 0xe0c060],
@@ -89,7 +94,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "mesas", backdropColor: 0xb46a4a, sky: 0x0a58d0,
   },
   brick: {
-    id: "brick", names: ["Ironworks", "Millbrook", "Foundry Falls", "Steelton", "Brickport"],
+    id: "brick", layouts: { grid: 0.25, warp: 0.45, organic: 0.3 }, names: ["Ironworks", "Millbrook", "Foundry Falls", "Steelton", "Brickport"],
     walls: {
       downtown: [0x9a5a3e, 0x7f4a34, 0xb06a48, 0xc9b79a, 0x8a6a5a],
       commercial: [0xa0523a, 0x8f4a3a, 0xb5653c, 0x7a3e2e, 0xc98b5a],
@@ -106,7 +111,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "stacks", backdropColor: 0x6a5a58, sky: 0x0b4fc4, rail: true,
   },
   mainstreet: {
-    id: "mainstreet", names: ["Maple Falls", "Pleasantville", "Elm Grove", "Cedar Junction", "Willow Creek"],
+    id: "mainstreet", layouts: { grid: 0.15, warp: 0.3, organic: 0.55 }, names: ["Maple Falls", "Pleasantville", "Elm Grove", "Cedar Junction", "Willow Creek"],
     walls: {
       downtown: [0xd9c7a0, 0xb5553c, 0xc98b5a, 0xe6e1d6],
       commercial: [0xb5553c, 0xd9c7a0, 0x6d8f8a, 0xe0b85c, 0xc0c4b8, 0x8f4a3a, 0x9fb7e0],
@@ -123,7 +128,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "farmhills", backdropColor: 0x5f8a5a, sky: 0x0c55cc, townSquare: true,
   },
   port: {
-    id: "port", names: ["North Harbor", "Rainier Bay", "Puget Point", "Gray Haven", "Ferryport"],
+    id: "port", layouts: { grid: 0.2, warp: 0.5, organic: 0.3 }, names: ["North Harbor", "Rainier Bay", "Puget Point", "Gray Haven", "Ferryport"],
     walls: {
       downtown: [0x7d8a96, 0x5f6f7a, 0x8a9aa0, 0xc9b79a, 0x4a5a66],
       commercial: [0x6d8f8a, 0x8f4a3a, 0x4a6a7a, 0xc0c4b8, 0x7a6a5a],
