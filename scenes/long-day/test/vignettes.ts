@@ -28,7 +28,7 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
   const plan = new CityPlan(1000 + i * 7919, STYLES[style]);
   plan.climate = { season: season as any, weather: weather as any, snowCover: snow };
   CLOCK.hourAt = () => hour;
-  const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshLambertMaterial({ vertexColors: true }));   // (with the props material, as in the scene)
   crowd.reset(77 + i);
   // The focus: along a street's kerb lane, east, a row of blocks at a time; parked for 40 s of
   // every 100. (From the node keyed (-8, iz): on the grid, column -8 of row iz.)
@@ -51,7 +51,14 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
       if (k === SNAP) snap = JSON.stringify(crowd.save());
       step(k);
       if (k === END) end = JSON.stringify(crowd.save());
-      if (k % 7 === 0) crowd.draw(0.5, k * SIM_DT);
+      if (k % 7 === 0) {
+        crowd.draw(0.5, k * SIM_DT);
+        // No prop left out for want of room in the big-box mesh (Figures.bigMesh).
+        for (const [who, F] of [["vignettes", crowd.vig.F], ["crowd", (crowd as any).F]] as const) {
+          const bm = F.bigMesh!;
+          if (F.b >= bm.instanceMatrix.count) fail(`${style} ${hour}h: ${F.b} big boxes fill the ${who} props mesh (${bm.instanceMatrix.count})`);
+        }
+      }
       for (const kd of crowd.vig.kinds()) seen.set(kd, (seen.get(kd) ?? 0) + 1);
       const s = crowd.save() as any;
       for (const v of s.vig.list) if (![v.a, v.n, v.t, ...v.st].every(Number.isFinite)) { fail(`${style} ${hour}h: ${v.k} has a non-finite state`); break; }

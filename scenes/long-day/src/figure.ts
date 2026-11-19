@@ -49,18 +49,23 @@ export interface DogPose {
 }
 
 const DOWN = new THREE.Vector3(0, -1, 0);
+const BIG_BOX = 1.5;   // m: bigger than any part of a person, an umbrella or a dog
 
 export class Figures {
   readonly mesh: THREE.InstancedMesh;
   readonly glowMesh: THREE.InstancedMesh | null;
-  n = 0; g = 0;
+  // Boxes bigger than BIG_BOX in any direction (a food truck, a couch, a cradle: props, not
+  // people) go here when there is a big material, so they can thin in the driver spotlight while
+  // the people round them stay solid (main.ts).
+  readonly bigMesh: THREE.InstancedMesh | null;
+  n = 0; g = 0; b = 0;
   readonly handL: V3 = [0, 0, 0]; readonly handR: V3 = [0, 0, 0]; readonly head: V3 = [0, 0, 0];
   readonly footL: V3 = [0, 0, 0]; readonly footR: V3 = [0, 0, 0]; readonly hipC: V3 = [0, 0, 0];
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private q2 = new THREE.Quaternion(); private e = new THREE.Euler();
   private p3 = new THREE.Vector3(); private s3 = new THREE.Vector3(); private d3 = new THREE.Vector3(); private col = new THREE.Color();
   private end: V3 = [0, 0, 0];
 
-  constructor(scene: THREE.Scene, material: THREE.Material, cap: number, glowCap = 0) {
+  constructor(scene: THREE.Scene, material: THREE.Material, cap: number, glowCap = 0, big: { material: THREE.Material; cap: number } | null = null) {
     const b = new Batch(); b.box(0, 0, 0, 1, 1, 1, 0xffffff);
     const geo = b.build(material)!.geometry;
     this.mesh = new THREE.InstancedMesh(geo, material, cap);
@@ -73,11 +78,17 @@ export class Figures {
       for (let i = 0; i < glowCap; i++) this.glowMesh.setColorAt(i, this.col.set(0xffffff));
       scene.add(this.glowMesh);
     } else this.glowMesh = null;
+    if (big) {
+      this.bigMesh = new THREE.InstancedMesh(geo, big.material, big.cap);
+      this.bigMesh.count = 0; this.bigMesh.frustumCulled = false;
+      for (let i = 0; i < big.cap; i++) this.bigMesh.setColorAt(i, this.col.set(0xffffff));
+      scene.add(this.bigMesh);
+    } else this.bigMesh = null;
   }
 
   get cap() { return this.mesh.instanceMatrix.count; }
   room(k: number) { return this.n + k <= this.cap; }
-  begin() { this.n = 0; this.g = 0; }
+  begin() { this.n = 0; this.g = 0; this.b = 0; }
   end_() {
     this.mesh.count = this.n;
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -87,14 +98,22 @@ export class Figures {
       this.glowMesh.instanceMatrix.needsUpdate = true;
       if (this.glowMesh.instanceColor) this.glowMesh.instanceColor.needsUpdate = true;
     }
+    if (this.bigMesh) {
+      this.bigMesh.count = this.b;
+      this.bigMesh.instanceMatrix.needsUpdate = true;
+      if (this.bigMesh.instanceColor) this.bigMesh.instanceColor.needsUpdate = true;
+    }
   }
 
   // A box centred on (x, y, z), turned by yaw, then pitched (top forward for -pitch) and rolled.
   box(x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw: number, pitch: number, color: number, roll = 0) {
-    if (this.n >= this.cap) return;
+    const big = this.bigMesh !== null && Math.max(sx, sy, sz) > BIG_BOX;
+    const m = big ? this.bigMesh! : this.mesh, i = big ? this.b : this.n;
+    if (i >= m.instanceMatrix.count) return;
     this.q.setFromEuler(this.e.set(roll, yaw, pitch, "YXZ"));
-    this.mesh.setMatrixAt(this.n, this.m4.compose(this.p3.set(x, y, z), this.q, this.s3.set(sx, sy, sz)));
-    this.mesh.setColorAt(this.n++, this.col.set(color));
+    m.setMatrixAt(i, this.m4.compose(this.p3.set(x, y, z), this.q, this.s3.set(sx, sy, sz)));
+    m.setColorAt(i, this.col.set(color));
+    if (big) this.b++; else this.n++;
   }
   // The same, unlit (it glows): only drawn when there is a glow mesh.
   glow(x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw: number, color: number) {

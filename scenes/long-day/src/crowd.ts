@@ -60,9 +60,11 @@ export class Crowd {
 
   readonly vig: Vignettes;
   private G: CityGraph | null = null;   // the city's street graph (from the last step)
-  constructor(scene: THREE.Scene, material: THREE.Material, cap = 520) {
-    this.F = new Figures(scene, material, cap);
-    this.vig = new Vignettes(new Figures(scene, material, 2400, 48));
+  // `props`: for boxes too big to be part of a person (the vignettes' food truck, couch and the
+  // like), which the driver spotlight thins while the people stay solid (Figures.bigMesh).
+  constructor(scene: THREE.Scene, material: THREE.Material, props: THREE.Material | null = null, cap = 520) {
+    this.F = new Figures(scene, material, cap, 0, props && { material: props, cap: 32 });
+    this.vig = new Vignettes(new Figures(scene, material, 2400, 48, props && { material: props, cap: 64 }));
     this.vig.adopt = (a) => this.adopt(a);
   }
 

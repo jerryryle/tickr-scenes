@@ -801,11 +801,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // The crew material (driver, worker, loads and tools) never thins out in the driver spotlight.
       crew = new Crew(engine.scene, crewMat);
       dockFx = new DockFx(engine.scene); frontDoor = new FrontDoorFx(engine.scene);
-      // Cars, people and anything else that can stand between the camera and the driver get the
-      // driver spotlight.
+      // Cars and anything else big enough to stand between the camera and the driver get the
+      // driver spotlight, the vignettes' big props (a food truck, a couch) included. Passers-by (the
+      // crowd and the vignettes' people) don't: they're small and soon gone, so they may hide the
+      // driver for a moment.
       const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers);
+      const people = engine.mats.ground.clone(); applyLampGlow(people); applyLampLight(people);
       traffic = new Traffic(engine.scene, movers, (model) => fleet.build([{ model, x: 0, z: 0, h: 0 }]));
-      crowd = new Crowd(engine.scene, movers);
+      crowd = new Crowd(engine.scene, people, movers);
       cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);
       // The clock first: attaching street life replays the city so far, and its vignettes and

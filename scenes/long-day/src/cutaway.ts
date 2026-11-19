@@ -63,9 +63,11 @@ export function updateCutaway(camera: THREE.Camera, focus: THREE.Vector3, on = t
   cutUniforms.uCutOn.value = on ? 1 : 0;
 }
 
-// The driver spotlight: the same screen-door see-through, on everything that can hide the driver
-// (the trucks, buildings and street furniture, cars and passers-by), in a narrow cone from the camera to the driver whenever the driver is out of the seat,
-// so the driver stays in view working inside the box or walking behind the truck.
+// The driver spotlight: a see-through hole, clear in the middle with a screen-door rim, on
+// everything big that can hide the driver (the trucks, buildings and street furniture, cars, and
+// the street vignettes' big props, but not passers-by: main.ts), in a narrow cone from the camera
+// to the driver whenever the driver is out of the seat, so the driver stays in view working
+// inside the box or walking behind the truck.
 const spotUniforms = {
   uSpotFocus: { value: new THREE.Vector3() },  // the driver's chest in view space
   uSpotRadius: { value: 1.0 },
@@ -95,13 +97,14 @@ uniform vec3 uSpotFocus; uniform float uSpotRadius; uniform float uSpotOn;`)
     // column or a wall half a metre away still clears.
     float flen = length(uSpotFocus);
     if (t * flen < flen - 0.3 && d < r) {
-      // Mostly see-through: one pixel in nine kept in the middle, one in four towards the rim.
-      if (d < r * 0.7) { vec2 c3 = mod(floor(gl_FragCoord.xy), 3.0); if (c3.x != 1.0 || c3.y != 1.0) discard; }
-      else { vec2 cell = mod(floor(gl_FragCoord.xy), 2.0); if (cell.x != 0.0 || cell.y != 0.0) discard; }
+      // Clear in the middle (a dither there just speckles the driver at this resolution), with a
+      // sparse rim, one pixel in nine, so the occluder's cut edge still reads.
+      if (d < r * 0.8) discard;
+      vec2 c3 = mod(floor(gl_FragCoord.xy), 3.0); if (c3.x != 1.0 || c3.y != 1.0) discard;
     }
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|spot-v4";
+  mat.customProgramCacheKey = () => prevKey() + "|spot-v5";
   mat.needsUpdate = true;
 }
 export function updateDriverSpot(camera: THREE.Camera, chest: THREE.Vector3 | null) {
