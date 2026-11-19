@@ -246,11 +246,14 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   // A block not of the old grid's shape is lotted (city.ts buildLots): its facility is at the
   // kerb, unless the grid's square block fits against one of its faces (its anchor), where a
   // site laid out for the grid's block goes, on that side.
-  const blk = plan.blockOf(bx, bz), anchored = !!blk && !blk.square && !!blk.anchor;
-  if (blk && !blk.square && !anchored) return { kind: "kerb" };
+  // (Never on the far side of a one-way street, whose kerb the truck can't drive along: the next
+  // side round instead, or, anchored there, at the kerb.)
+  const blk = plan.blockOf(bx, bz), G = plan.graph, anchored = !!blk && !blk.square && !!blk.anchor;
+  if (blk && !blk.square && (!anchored || !G.drivable(blk.anchor!.face))) return { kind: "kerb" };
   const fac = facilityAt(plan, bx, bz);
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
-  const side = anchored ? blk!.sides.indexOf(blk!.anchor!.face) : Math.floor(h(0x51de) * 4);
+  let side = anchored ? blk!.sides.indexOf(blk!.anchor!.face) : Math.floor(h(0x51de) * 4);
+  if (blk && !anchored) for (let k = 0; k < 4 && blk.sides[side] !== undefined && !G.drivable(blk.sides[side]); k++) side = (side + 1) % 4;
   if (fac === "rentalLot") {
     const stalls: LotLayout["stalls"] = [];
     for (let i = 0; i < 6; i++)

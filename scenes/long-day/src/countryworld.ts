@@ -123,6 +123,8 @@ export class CountryWorld {
   get offset() { return this.group.position; }
   // The far land under everything, centred on (x, z), in a colour.
   setBase(x: number, z: number, color: number, y = -0.3) { this.base.position.set(x, y, z); (this.base.material as THREE.MeshLambertMaterial).color.setHex(color); }
+  // The far land no higher than y (below a river town's water, the town in view from the road).
+  lowerBase(y: number) { if (this.base.position.y > y) this.base.position.y = y; }
   // A biome's ground colour in a climate (for the land round a city).
   groundOf(id: BiomeId, c: Climate) { return this.lookOf(id, c).ground; }
 

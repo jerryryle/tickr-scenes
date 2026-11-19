@@ -24,7 +24,15 @@ and turned to it, with lots filling the rest; curved streets are chains of strai
 big block's middle, past its lots, is filled for its district: set-back towers downtown; car parks
 (with cars in) and trees in planters commercially; sheds and stacked containers in industry; and
 where people live, a fenced back garden behind each house, with trees beyond. Routing, signals,
-traffic, the crowd and the city's drawing all work from the graph. To see a journey's layouts
+traffic, the crowd and the city's drawing all work from the graph. In about two cities in three,
+downtown's streets are one-way, alternate lattice lines each way (`oneWays` in `src/citygen.ts`,
+kept only where the network stays strongly connected): traffic keeps to the right half, and the
+other half is a green bike lane and a loading lane of parked vans and cars. Sites never face the
+far side of a one-way street, whose kerb the truck can't drive along. Downtown and commercial
+kerbs have a loading zone where the truck stops; some avenues there have a planted median; the
+most central kerb-only block downtown is a plaza with a fountain; big residential blocks may
+have a cul-de-sac with houses round its turning circle; and a river town's bridges have parapets
+and lanterns, its quays railings and benches, and boats lie moored along them. To see a journey's layouts
 from above:
 
 ```bash
@@ -52,7 +60,9 @@ lights held for it, and at an unmarked junction) a vehicle books on its approach
 left turn on a green, right on red, an all-way stop once stopped, joining a roundabout) it books
 at its line once the bookings ahead leave it a gap.
 The truck's footprint is its body's real sweep (the nose swinging wide, a trailer cutting in),
-and it waits its turn behind a car holding at the line in its lane. Drivers follow with the IDM,
+and it waits its turn behind a car holding at the line in its lane. Where the next junction's line
+lies inside the one it is going through (close junctions in an organic town), it books the two
+as one. Drivers follow with the IDM,
 each with their own following time, gap acceptance and pace. Pedestrians cross in the same
 system: cars give way to anyone on the crosswalk ahead, people wait for a gap in the traffic
 before stepping out (at a light, on their green, for cars turning across), and someone about to
@@ -87,7 +97,7 @@ and stays in use if painting fails. To look at the atlas, bundle a script that c
 canvas class with `captureCanvasClass` and writes `paintFacadeAtlas()`'s canvases to PNG.
 
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,
-`DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_LAYOUT`, `DEBUG_EXIT`, `DEBUG_CAMLOG`).
+`DEBUG_VIEW`, `DEBUG_HOUR`, `DEBUG_CLIMATE`, `DEBUG_CARGO`, `DEBUG_MEMLOG`, `DEBUG_SCRUBTEST`, `DEBUG_LAYOUT`, `DEBUG_EXIT`, `DEBUG_CAMLOG`, `DEBUG_ONEWAY`).
 Shipping builds use its defaults; a debug build overrides them, since the board only passes env
 keys that are in the scene's schema:
 

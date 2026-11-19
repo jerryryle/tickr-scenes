@@ -289,7 +289,7 @@ export class Journey {
   seekTo(t: number) {
     t = Math.max(0, t);
     const N = this.cityAt(t);
-    if (N === this.st.city && t >= this.st.simTime - 1e-9) { this.advanceTo(t); this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k; return; }
+    if (N === this.st.city && t >= this.st.simTime - 1e-9) { this.advanceTo(t); this.settlePrev(); return; }
     const f = this.frames.get(N), target = Math.floor((t - N * this.period) / SIM_DT + 1e-6);
     let best = -1;
     if (f) for (const k of f.k.keys()) if (k <= target && k > best) best = k;
@@ -299,7 +299,7 @@ export class Journey {
     } else this.entryState(N);
     this.placePose();
     this.advanceTo(t);
-    this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k;
+    this.settlePrev();
   }
 
   // Attach street life: replay this city up to now so it is in the state it would have had.
@@ -310,7 +310,7 @@ export class Journey {
     this.entryState(this.st.city);
     this.placePose();
     this.advanceTo(t);
-    this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k;
+    this.settlePrev();
   }
   // How far the render time is between the last two steps (0 = the previous, 1 = the latest).
   get alpha() { return this.alphaAt(this.st.simTime + this.frac); }
@@ -328,6 +328,17 @@ export class Journey {
   }
 
   // The truck's pose for rendering: between the last two steps.
+  // The pose (and trailer's yaw) the last step started from: where drawing blends from.
+  private prevHitch = 0;
+  private settlePrev() {
+    const p = this.prevPose, q = this.pose;
+    p.x = q.x; p.z = q.z; p.h = q.h; p.k = q.k; this.prevHitch = this.st.hitchYaw ?? 0;
+  }
+  // The trailer's yaw at render time, between the last two steps' as renderPose is.
+  renderHitchYaw(): number {
+    const a = THREE.MathUtils.clamp(1 + this.frac / SIM_DT, 0, 1), y = this.st.hitchYaw ?? 0;
+    return this.prevHitch + (y - this.prevHitch) * a;
+  }
   renderPose(out: Pose): Pose {
     const a = THREE.MathUtils.clamp(1 + this.frac / SIM_DT, 0, 1), p = this.prevPose, q = this.pose;
     out.x = p.x + (q.x - p.x) * a; out.z = p.z + (q.z - p.z) * a;
@@ -368,7 +379,10 @@ export class Journey {
         const d = Math.abs(dx) + Math.abs(dz);
         if (d < minDist || d > radius) continue;
         const x = bx + dx, z = bz + dz;
-        if (!this.plan.blockOf(x, z)?.inCity || avoid.has(`${x},${z}`) || this.plan.interchangeAt(x, z)) continue;
+        // (Nor the plaza, with no building to deliver to, nor a block whose every kerb is the wrong
+        // way up a one-way street.)
+        const blk = this.plan.blockOf(x, z), G = this.plan.graph;
+        if (!blk?.inCity || avoid.has(`${x},${z}`) || this.plan.interchangeAt(x, z) || blk.id === this.plan.plaza || !blk.faces.some((f) => G.drivable(f))) continue;
         if (types.includes(this.facility(x, z))) out.push({ s: this.site(x, z), d });
       }
     out.sort((a, b) => a.d - b.d);
@@ -893,7 +907,7 @@ export class Journey {
   }
   private stepJourney() {
     const dt = SIM_DT;
-    this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h; this.prevPose.k = this.pose.k;
+    this.settlePrev();
     // The slot's end: the next city starts, exactly as its seed says.
     if (this.st.simTime + 1e-6 >= (this.st.city + 1) * this.period) {
       const old = this.st, fromTruck = this.exitRoad?.inp.fromTruck ?? old.truck;
@@ -901,7 +915,7 @@ export class Journey {
       if (old.exit && old.departAt >= 0) this.st.prev = { gate: old.exit.gate, dEst: old.exit.dEst, fromTruck, departAt: old.departAt, departV: old.departV, departS0: old.departS0 };
       this.log(`arrived in city ${this.st.city}`);
       this.placePose();
-      this.prevPose.x = this.pose.x; this.prevPose.z = this.pose.z; this.prevPose.h = this.pose.h;
+      this.settlePrev();
     }
     const st = this.st;
     if (this.keyframing && st.step % KEYFRAME_STEPS === 0) {

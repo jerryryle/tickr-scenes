@@ -12,6 +12,7 @@ export const DEBUG_SEED: number = 0;       // test renders: this journey seed in
 export const DEBUG_SCRUBTEST: number = 0;  // test renders: play forward this many seconds, scrub back half way and play again, logging every tick
 export const DEBUG_VIGNETTE: string = "";  // test renders: spawn this street vignette (vignettes.ts VK) near the truck; DEBUG_VIEW "vignette" watches it
 export const DEBUG_EXIT: string = "";     // test renders: every freeway city's off-ramp of this kind (route.ts ExitKind: "helix", "slip")
+export const DEBUG_ONEWAY: string = "";   // test renders: "all" every city's downtown with one-way streets, "none" none
 export const DEBUG_LAYOUT: string = "";   // test renders: every city laid out this way (CityPlan.layout: "grid", "warp"; "river": warped with a river; "round": warped with two roundabouts; "organic": no grid, where the city allows)
 // (DEBUG_VIEW "block:kx,kz": that block's key, parsed once.)
 export const DEBUG_BLOCK: number[] | null = DEBUG_VIEW.startsWith("block:") ? DEBUG_VIEW.slice(6).split(",").map(Number) : null;

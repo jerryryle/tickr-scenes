@@ -194,7 +194,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (ty !== null) {
       if (jumped || revFrom === null) revFrom = jumped ? ty : truck.trailerYaw;
       truck.trailerYaw = revFrom + (ty - revFrom) * THREE.MathUtils.smoothstep(journey.reversed, 0, 4);
-    } else { revFrom = null; if (jumped) truck.trailerYaw = 0; }
+    } else {
+      revFrom = null;
+      // (Driving and stopped in town: at the angle the journey steps it to (hitchStep), the trailer
+      // street life and the tests know, rather than the truck's own model, which can drift from it.
+      // Out on the road, the truck's own.)
+      if (m === "drive" || m === "dwell") truck.trailerYaw = journey.renderHitchYaw();
+      else if (jumped) truck.trailerYaw = 0;
+    }
   }
 
   function newTruck(model: TruckModel) {
@@ -652,9 +659,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       roadCars.update(ahead ? roadFrame!.F : null, t, cam, true);
     }
     // The road (its cars and train at this moment), and the far land under everything in the city's
-    // own countryside colour in town.
-    if (pr) countryWorld.update(pr.u, pr.s, switched);
-    else countryWorld.setBase(truck.root.position.x, truck.root.position.z, countryWorld.groundOf(BIOME_OF[journey.plan.style.id], journey.climate));
+    // own countryside colour in town (below a river's water, in a town with one: city.ts buildRiver).
+    if (pr) { countryWorld.update(pr.u, pr.s, switched); if (journey.plan.hasRiver) countryWorld.lowerBase(-1.7); }
+    else countryWorld.setBase(truck.root.position.x, truck.root.position.z, countryWorld.groundOf(BIOME_OF[journey.plan.style.id], journey.climate), journey.plan.hasRiver ? -1.7 : -0.3);
     const inCountry = journey.st.mode === "country";
     syncTrucks();
     setSignalTime(time);

@@ -256,7 +256,7 @@ export class Path {
       const e = route.edges[ei], N = G.dedgeTo(d), node = G.nodes[N], hin = G.dedgeEndH(d), hout = G.dedgeStartH(e);
       const turn = angleDiff(hout - hin), ang = Math.abs(turn);
       // (Round a roundabout's ring, one-way street to one-way street, a bend: straight on.)
-      const m: Move = ang < Math.PI / 4 || (G.streets[d >> 1].oneway && G.streets[e >> 1].oneway) ? "S" : turn > 0 ? "L" : "R";
+      const m: Move = ang < Math.PI / 4 || (G.streets[d >> 1].ring && G.streets[e >> 1].ring) ? "S" : turn > 0 ? "L" : "R";
       // Signal at this node, on the approach: STOP_BACK short of the street's mouth.
       const ai = G.armIndexIn(d);
       const toNode = along(node.x, node.z);
@@ -264,7 +264,7 @@ export class Path {
       else if (node.control === "stop") this.stops.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK });
       // (Its give-way line is the street's painted stop line, STOP_BACK short of the mouth: behind the
       // crosswalk, not on it.)
-      else if (G.streets[e >> 1].oneway && !G.streets[d >> 1].oneway) this.yields.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK });
+      else if (G.streets[e >> 1].ring && !G.streets[d >> 1].ring) this.yields.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK });
       this.nodes.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK, sOut: legS + toNode + G.armOut(e).mouth, from: d, to: e, move: m });
       // Straight on along the same line (or near enough): the leg carries on.
       if (ang < 1e-4) { d = e; continue; }

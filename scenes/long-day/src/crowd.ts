@@ -37,7 +37,7 @@ interface Ped {
 // What else street life needs from the journey this step (vignettes.ts).
 // truckPath: the truck driving its path (its s, speed, and its body's reach about s), or null.
 // carsClear: whether no vehicle would come over the crossing from (x0, z0) to (x1, z1) within secs s.
-export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean }
+export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean; truckYieldsAt?: number }
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
@@ -116,9 +116,9 @@ export class Crowd {
     const want = d === "downtown" ? 26 : d === "commercial" ? 20 : d === "park" ? 14 : d === "residential" ? 10 : 5;
     for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus);
     this.obstacles.length = 0;
-    this.truckPath = more.truckPath ?? null;
+    this.truckPath = more.truckPath ?? null; this.truckYieldsAt = more.truckYieldsAt ?? -1;
     this.carsClear = more.carsClear ?? null; this.cars = more.cars;
-    this.crossers.length = 0;
+    this.crossers.length = 0; this.waiters.length = 0;
     for (const p of this.peds) { this.walk(G, p, dt, plan, simTime, prs, truck); this.obstacles.push({ x: p.x, z: p.z, r: 0.4 }); }
     this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
     this.obstacles.push(...this.vig.obstacles);
@@ -173,6 +173,11 @@ export class Crowd {
   // Those crossing the road now, for traffic to give way to: where each is and where the crossing
   // ends, on the crosswalk line (x, z, x1, z1 each).
   readonly crossers: number[] = [];
+  // Those waiting at the kerb of an all-way stop to cross, for the cars stopped there to let them go
+  // first in turn: where each stands, where their crossing ends, and how long they have waited
+  // (x, z, x1, z1, t each).
+  readonly waiters: number[] = [];
+  private truckYieldsAt = -1;   // (the all-way stop the truck stands at letting those waiting go first, or -1)
   // Whether the truck, driving on, comes within `reach` m (of its body's middle line) of any of the
   // first `n` points of `pts` (x, z pairs) in the next `secs` s: from where it is to where it would
   // get to by then on its path, at its speed but no less than `vMin` (it may be pulling away).
@@ -297,12 +302,17 @@ export class Crowd {
       const sg = crossSignal(G, f, fwd), cr = crossing(G, f, fwd);
       const green = signalState(sg.node, sg.phase, simTime, plan.seed, prs) === "green";
       // (Nor if the truck is to come over the crosswalk before they could be across.)
-      const clear = truck.every((o) => Math.hypot(o.x - p.x, o.z - p.z) > 12);
+      // (Unless it stands at this all-way stop letting them go first.)
+      const yielded = this.truckYieldsAt === sg.node.id, clear = yielded || truck.every((o) => Math.hypot(o.x - p.x, o.z - p.z) > 12);
+      // (Waiting at an all-way stop with nothing but the cars to wait for: their turn, for the cars
+      // stopped there to let them go first: traffic.ts pedFirst. Not while the truck holds them
+      // up, or the cars would wait on them as they wait on it.)
+      if (cr && clear && sg.node.control === "stop") { const q = G.facePt(f, cr.a, 1.7, _pt); this.waiters.push(p.x, p.z, q.x, q.z, p.waitT); }
       if (!cr) { p.state = "walk"; this.turnCorner(G, p); }   // the edge of town: no crossing
       // (And no car about to come over it: at a light on their green too, as a car turning across
       // it may be; elsewhere they wait for a gap, and once they are out cars give way to them. They
       // look for it four times a second.)
-      else if (green && clear && p.waitT > 0.8 && Math.floor(p.waitT * 4) !== Math.floor((p.waitT - dt) * 4) && !this.truckCrossing(G, p, (cr.a - p.a) * p.dir) && this.gapToCross(G, p, (cr.a - p.a) * p.dir)) {
+      else if (green && clear && p.waitT > 0.8 && Math.floor(p.waitT * 4) !== Math.floor((p.waitT - dt) * 4) && (yielded || !this.truckCrossing(G, p, (cr.a - p.a) * p.dir)) && this.gapToCross(G, p, (cr.a - p.a) * p.dir)) {
         p.state = "cross"; p.crossA = p.a; p.crossN = cr.n;
         p.crossLen = (cr.a - p.a) * p.dir;   // to the far corner's walkway
       }

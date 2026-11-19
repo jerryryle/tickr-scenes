@@ -13,6 +13,10 @@ export interface GridOpts {
   nameEW: (iz: number) => string; nameNS: (ix: number) => string;
   elevatedRow: (iz: number) => boolean;         // an elevated line along the east-west street of node row iz
   cableColumn: (ix: number) => boolean;         // a cable-car line along the north-south street of node column ix
+  // A one-way street the lattice segment from node (ix, iz) east (ew) or south should be: +1 driven
+  // that way (east or south), -1 the other, 0 two-way. (gridGraph keeps it only where its line runs
+  // on at both ends the same way, and only if every street can still reach every other.)
+  oneway?: (ix: number, iz: number, ew: boolean) => number;
 }
 const GEN_DX = [1, 0, -1, 0], GEN_DZ = [0, -1, 0, 1];
 
@@ -117,9 +121,13 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
       deg.set(k(ax, az), deg.get(k(ax, az))! - 1); deg.set(k(bx, bz), deg.get(k(bx, bz))! - 1);
     });
   }
+  const dirs = oneWays(o, segs);
   for (const sg of segs) if (sg.on) {
-    if (sg.ew) g.addStreet(id(sg.ix, sg.iz), id(sg.ix + 1, sg.iz), { name: o.nameEW(sg.iz), tags: o.elevatedRow(sg.iz) ? { elevated: true } : {} });
-    else g.addStreet(id(sg.ix, sg.iz), id(sg.ix, sg.iz + 1), { name: o.nameNS(sg.ix), tags: o.cableColumn(sg.ix) ? { cable: true } : {} });
+    // (A one-way street driven west or north runs from its far node: one-way streets are driven
+    // from n0 to n1.)
+    const d = dirs.get(sg) ?? 0, [a, b] = sg.ew ? [id(sg.ix, sg.iz), id(sg.ix + 1, sg.iz)] : [id(sg.ix, sg.iz), id(sg.ix, sg.iz + 1)], [n0, n1] = d < 0 ? [b, a] : [a, b];
+    if (sg.ew) g.addStreet(n0, n1, { name: o.nameEW(sg.iz), tags: o.elevatedRow(sg.iz) ? { elevated: true } : {}, oneway: d !== 0 });
+    else g.addStreet(n0, n1, { name: o.nameNS(sg.ix), tags: o.cableColumn(sg.ix) ? { cable: true } : {}, oneway: d !== 0 });
   }
   // Diagonal avenues, one block at a time between the intersections they pass through.
   for (const dg of warp?.diagonals ?? []) for (let k = 0; k < dg.n; k++) {
@@ -133,7 +141,7 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
     // (A roundabout's ring runs anticlockwise seen from above, one way: traffic keeps right.)
     const C = g.node(c.ix, c.iz)!, ring: number[] = [], R = c.round ? ROUND_R : CIRCUS_R;
     for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ring.push(g.addNode(C.x + Math.cos(a) * R, C.z - Math.sin(a) * R, c.ix * 100 + 50 + k, c.iz * 100 + 50)); }
-    for (let k = 0; k < 8; k++) g.addStreet(ring[k], ring[(k + 1) % 8], { name: c.name, oneway: !!c.round });
+    for (let k = 0; k < 8; k++) g.addStreet(ring[k], ring[(k + 1) % 8], { name: c.name, oneway: !!c.round, ring: !!c.round });
     const out = [[1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1]];
     out.forEach(([dx, dz], k) => {
       if (c.round && k % 2) return;
@@ -285,4 +293,45 @@ export function organicGraph(o: GridOpts, seed: number): CityGraph {
   });
   g.finish();
   return g;
+}
+
+// The lattice segments that are one-way streets, and which way (o.oneway): only those whose line
+// runs on from both ends (each next segment along it there, one-way the same way or two-way), so
+// none ends at a node it can't be driven on from; and none at all if then some segment can't be
+// reached from another, driving the right way (the junctions all keep a way in and out).
+type Seg = { ix: number; iz: number; ew: boolean; on: boolean };
+function oneWays(o: GridOpts, segs: Seg[]): Map<Seg, number> {
+  const dirs = new Map<Seg, number>();
+  if (!o.oneway) return dirs;
+  const key = (ew: boolean, ix: number, iz: number) => `${ew ? 1 : 0},${ix},${iz}`, at = new Map<string, Seg>();
+  for (const sg of segs) at.set(key(sg.ew, sg.ix, sg.iz), sg);
+  for (const sg of segs) if (sg.on) { const d = o.oneway(sg.ix, sg.iz, sg.ew); if (d) dirs.set(sg, Math.sign(d)); }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [sg, d] of dirs) {
+      const prev = at.get(sg.ew ? key(true, sg.ix - 1, sg.iz) : key(false, sg.ix, sg.iz - 1)), next = at.get(sg.ew ? key(true, sg.ix + 1, sg.iz) : key(false, sg.ix, sg.iz + 1));
+      const runs = (n: Seg | undefined) => !!n && n.on && (dirs.get(n) ?? d) === d;
+      if (!runs(prev) || !runs(next)) { dirs.delete(sg); changed = true; }
+    }
+  }
+  // (Nor a block every side of which runs the wrong way for its kerb, where the truck could never
+  // stop: its north side two-way instead. A side's kerb is on the right of its traffic: the north
+  // side's driven east, the south's west, the west's north, the east's south.)
+  for (const sg of segs) if (sg.ew && dirs.get(sg) === -1) {
+    const S = at.get(key(true, sg.ix, sg.iz + 1)), W = at.get(key(false, sg.ix, sg.iz)), E = at.get(key(false, sg.ix + 1, sg.iz));
+    if (S && W && E && S.on && W.on && E.on && dirs.get(S) === 1 && dirs.get(W) === 1 && dirs.get(E) === -1) dirs.delete(sg);
+  }
+  if (!dirs.size) return dirs;
+  // (Every node reached from one, both driving the right way and against it: strongly connected.)
+  const nk = (x: number, z: number) => `${x},${z}`, fwd = new Map<string, string[]>(), back = new Map<string, string[]>();
+  const arc = (m: Map<string, string[]>, a: string, b: string) => { let l = m.get(a); if (!l) m.set(a, (l = [])); l.push(b); };
+  for (const sg of segs) if (sg.on) {
+    const a = nk(sg.ix, sg.iz), b = sg.ew ? nk(sg.ix + 1, sg.iz) : nk(sg.ix, sg.iz + 1), d = dirs.get(sg) ?? 0;
+    if (d >= 0) { arc(fwd, a, b); arc(back, b, a); }
+    if (d <= 0) { arc(fwd, b, a); arc(back, a, b); }
+  }
+  const all = new Set([...fwd.keys(), ...back.keys()]), start = all.values().next().value!;
+  const reach = (m: Map<string, string[]>) => { const seen = new Set([start]), todo = [start]; while (todo.length) for (const n of m.get(todo.pop()!) ?? []) if (!seen.has(n)) { seen.add(n); todo.push(n); } return seen.size; };
+  if (reach(fwd) !== all.size || reach(back) !== all.size) dirs.clear();
+  return dirs;
 }

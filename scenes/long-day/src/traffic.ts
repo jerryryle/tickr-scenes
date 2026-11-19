@@ -45,7 +45,7 @@ interface Car {
   // order, its footprint (x, z every metre from 1 m short of the line), its conflict zones with
   // earlier bookings (each: that car's id and booking, where this car's middle is as its front
   // comes to the zone and as its back leaves, the same for the other) and where it is clear of it.
-  bk?: { node: number; from: number; seq: number; pts: number[]; at?: number[]; zones: number[]; end: number; wide?: boolean } | null;   // wide: turning from the next lane over
+  bk?: { node: number; from: number; seq: number; pts: number[]; at?: number[]; zones: number[]; end: number; wide?: boolean; also?: number[] } | null;   // wide: turning from the next lane over; also: the nodes on past it booked with it (the truck's, where their lines are inside this one: truckBook)
   gapT?: number;                       // the gap (s) it wants in the bookings ahead before it goes, giving way
   waitFor?: number;                    // the car whose booking it is waiting short of a zone for (-1: none)
   passStill?: boolean;                 // passing something parked in its lane (last step)
@@ -123,17 +123,17 @@ export class Traffic {
 
   // Remove every vehicle (a new city, or the country).
   clear() {
-    this.cars.length = 0; this.truckBk = null; this.truckCar = null;
+    this.cars.length = 0; this.truckBk = null; this.truckCar = null; this.truckStillT = 0; this.truckYieldsAt = -1;
     this.obstacles.length = 0;
   }
   // A new city: no vehicles, and the random stream from the city's seed.
   reset(seed: number) { this.clear(); this.rng.s = seed >>> 0; this.nextId = 0; this.bookSeq = 0; }
 
   save() {
-    return { rng: this.rng.s, id: this.nextId, seq: this.bookSeq, truckBk: this.truckBk, cars: this.cars.map((c) => ({ ...c, kind: c.kind.id, path: c.path.route, next: c.next?.route ?? null })) };
+    return { rng: this.rng.s, id: this.nextId, seq: this.bookSeq, truckBk: this.truckBk, truckStill: this.truckStillT, truckYields: this.truckYieldsAt, cars: this.cars.map((c) => ({ ...c, kind: c.kind.id, path: c.path.route, next: c.next?.route ?? null })) };
   }
   load(o: ReturnType<Traffic["save"]>, plan: CityPlan) {
-    this.rng.s = o.rng; this.nextId = o.id; this.bookSeq = o.seq ?? 0; this.truckBk = o.truckBk ?? null; this.truckCar = null;
+    this.rng.s = o.rng; this.nextId = o.id; this.bookSeq = o.seq ?? 0; this.truckBk = o.truckBk ?? null; this.truckStillT = o.truckStill ?? 0; this.truckYieldsAt = o.truckYields ?? -1; this.truckCar = null;
     this.cars = o.cars.map((c) => ({ ...c, kind: this.kinds.find((k) => k.id === c.kind)!, path: new Path(plan.graph, c.path), next: c.next ? new Path(plan.graph, c.next) : null }));   // (`next` absent in older saves: null)
     for (const c of this.cars) c.path.eval(c.s, this.pose);   // the path remembers its last lane offset
     this.obstacles.length = 0;
@@ -151,8 +151,8 @@ export class Traffic {
   private landing: number[] = [];
   private landingAt = 0;   // (where on the way the ramp meets the street)
   private landingS: number[] = [];
-  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null, crossers: number[] = []) {
-    this.truckPath = truckPath; this.truckGate = truckGate; this.crossers = crossers;
+  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null, crossers: number[] = [], waiters: number[] = []) {
+    this.truckPath = truckPath; this.truckGate = truckGate; this.crossers = crossers; this.waiters = waiters;
     // (Its body at each place on that way, from rear to nose along its heading every 1.5 m: pulling
     // out of a bay or off a ramp, its nose swings wide of the way its rear wheels take. landingS:
     // each point's place on the way.)
@@ -205,7 +205,7 @@ export class Traffic {
     const bks = this.bks; bks.length = 0;
     for (const c of this.cars) if (c.bk) bks.push(c);
     bks.sort(Traffic.bySeq);
-    for (const c of bks) { let l = this.booked.get(c.bk!.node); if (!l) this.booked.set(c.bk!.node, (l = [])); l.push(c); }
+    for (const c of bks) this.listAt(c.bk!.node).push(c);
     this.truckBook(plan.graph, simTime, plan.seed, prs);
     for (let i = this.cars.length - 1; i >= 0; i--) this.drive(this.cars[i], dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]);
   }
@@ -302,12 +302,11 @@ export class Traffic {
       else this.swOk = false;
     }
     if (!this.swOk) return false;
-    // (Its middle line, half its length either way, from o: within its half width and o's.)
-    const q = this.gwS, w = c.kind.width / 2 + Math.min(o.r, 1.3);
-    const qx = q.x + Math.sin(q.h) * c.dodge, qz = q.z + Math.cos(q.h) * c.dodge, qfx = Math.cos(q.h) * half, qfz = -Math.sin(q.h) * half;
-    const cfx = Math.cos(c.h) * half, cfz = -Math.sin(c.h) * half;
-    const dNext = segDist(o.x, o.z, qx - qfx, qz - qfz, qx + qfx, qz + qfz);
-    return dNext < w && dNext < segDist(o.x, o.z, c.x - cfx, c.z - cfz, c.x + cfx, c.z + cfz) - 0.02;
+    // (Its body, a rectangle, from o's middle: within o's radius. Corners and all: a long vehicle's
+    // back corner is what swings out.)
+    const q = this.gwS, r = Math.min(o.r, 1.3) + 0.1, hw = c.kind.width / 2;
+    const dNext = boxDist(o.x, o.z, q.x + Math.sin(q.h) * c.dodge, q.z + Math.cos(q.h) * c.dodge, q.h, half, hw);
+    return dNext < r && dNext < boxDist(o.x, o.z, c.x, c.z, c.h, half, hw) - 0.02;
   }
   // The node car c's path comes to next, within 30 m and its line not yet crossed, or null.
   // (`past`: how far past its line the car may be and the node still count.)
@@ -388,7 +387,7 @@ export class Traffic {
     for (let s = n.sLine - 1, i = 0; s <= Math.min(n.sOut + 2, P.length); s += 1, i++) {
       P.peek(s, this.gw0);
       const d = dodge * Math.max(0, 1 - i / 12);
-      pts.push(this.gw0.x + Math.sin(this.gw0.h) * d, this.gw0.z + Math.cos(this.gw0.h) * d);
+      pts.push(cm(this.gw0.x + Math.sin(this.gw0.h) * d), cm(this.gw0.z + Math.cos(this.gw0.h) * d));
     }
     return pts;
   }
@@ -433,8 +432,8 @@ export class Traffic {
   // when the bookings ahead leave it a gap. Short of that, it waits at the line: truckZoneStop.)
   private truckBook(G: CityGraph, simTime: number, seed: number, prs: SignalPreempt[]) {
     const T = this.truckPath;
-    this.truckLine = null;
-    if (!T) { this.truckCar = null; this.truckBk = null; return; }
+    this.truckLine = null; this.truckYieldsAt = -1;
+    if (!T) { this.truckCar = null; this.truckBk = null; this.truckStillT = 0; return; }
     const len = T.front - T.rear, mid = T.s + (T.front + T.rear) / 2;
     const tc = this.truckCar ?? ({ kind: { id: "truck", len, width: 2 * TRAILER.hw }, id: -2, dodge: 0, next: null } as unknown as Car);
     tc.path = T.path; tc.s = mid; tc.v = Math.abs(T.v); tc.kind.len = len;
@@ -444,9 +443,15 @@ export class Traffic {
     tc.bk = this.truckBk;
     // (Gone through its node: off it. Then the next node on its way within 60 m.)
     if (tc.bk && this.relOf(tc) > tc.bk.end) tc.bk = null;
-    const n = tc.bk ? T.path.nodes.find((x) => x.node === tc.bk!.node && x.from === tc.bk!.from) : T.path.nodes.find((x) => x.sOut + len / 2 + 2 > mid && x.sLine - (T.s + T.front) < 60);
-    if (!n) { this.truckBk = tc.bk = null; return; }
+    const n0 = tc.bk ? T.path.nodes.find((x) => x.node === tc.bk!.node && x.from === tc.bk!.from) : T.path.nodes.find((x) => x.sOut + len / 2 + 2 > mid && x.sLine - (T.s + T.front) < 60);
+    if (!n0) { this.truckBk = tc.bk = null; this.truckStillT = 0; return; }
+    // (With the nodes on past it whose lines are inside it, booked with it: else it would come to
+    // their lines still booked through this one, too late to stop at them or book in turn.)
+    const { n, also } = this.through(T.path, n0);
     const N = G.nodes[n.node], dLine = n.sLine - 0.6 - (T.s + T.front), short = dLine > -0.5, stopped = T.v < 0.3 && dLine < 2.5;
+    // (How long it has stood at its line: at an all-way stop, anyone who has waited at the kerb
+    // longer crosses first, as for a car: pedFirst.)
+    this.truckStillT = stopped && short ? this.truckStillT + SIM_DT : 0; tc.stillT = this.truckStillT;
     let sigOk = true, first = true;
     if (N.control === "signal") {
       const sg = T.path.signals.find((x) => x.node === n.node), state = sg ? signalState(N, sg.phase, simTime, seed, prs) : "red";
@@ -454,6 +459,15 @@ export class Traffic {
       first = state !== "red";
     } else if (N.control === "stop") { sigOk = stopped || !!tc.bk; first = false; }
     else if (T.path.yields.some((y) => y.node === n.node)) first = false;
+    // (The nodes booked with it, by their own controls too: a red light there holds it at this
+    // one's line, rather than waiting in this junction for it; an all-way stop or a give-way there,
+    // it books at its line once there is a gap, not on its approach.)
+    let alsoRed = false;
+    for (const a of also) {
+      const A = G.nodes[a];
+      if (A.control === "signal") { const sg = T.path.signals.find((x) => x.node === a); if (!sg || signalState(A, sg.phase, simTime, seed, prs) === "red") sigOk = first = false, alsoRed = true; }
+      else if (A.control === "stop" || T.path.yields.some((y) => y.node === a)) first = false;
+    }
     // (Behind a car in its lane holding at the line for its turn: the truck's comes after that
     // one's, as in any queue. Booked before it, those crossing its way would wait for the truck
     // as the truck waits behind the car, and the car for them. Nor, short of the line, does it keep
@@ -465,14 +479,24 @@ export class Traffic {
       const S = this.tSweep;
       if (S.node !== n.node || S.from !== n.from || Math.abs(S.s - T.s) > 0.05 || S.path !== T.path) { S.node = n.node; S.from = n.from; S.s = T.s; S.path = T.path; S.at = []; S.fp = this.truckSweep(T, n, S.at); }
       const at = S.at, fp = S.fp;
-      if (first || !short) this.book(tc, n, fp, at);
-      else if (dLine < 2.5 && T.v < 4 && this.gapOk(tc, n, fp, mid - n.sLine, 2.5, at)) this.book(tc, n, fp, at);
-    } else if (tc.bk) { let l = this.booked.get(tc.bk.node); if (!l) this.booked.set(tc.bk.node, (l = [])); if (!l.includes(tc)) l.push(tc); }
+      if (first || !short) this.book(tc, n, fp, at, also);
+      else if (dLine < 2.5 && T.v < 4) {
+        this.truckYieldsAt = N.control === "stop" && this.pedFirst(tc, fp) ? n.node : -1;
+        if (this.truckYieldsAt < 0 && this.gapOk(tc, n, fp, mid - n.sLine, 2.5, at, also)) this.book(tc, n, fp, at, also);
+      }
+    } else if (tc.bk) for (const nd of [tc.bk.node, ...(tc.bk.also ?? [])]) { const l = this.listAt(nd); if (!l.includes(tc)) l.push(tc); }
     // (Its turn not come, it waits at the line. At a red, the truck's own driving stops it.)
-    if (!tc.bk && short && !(N.control === "signal" && !sigOk)) this.truckLine = n.sLine - 0.6 - T.front;
+    // (A red at a node booked with it, its own light green: here, at this one's line, too, not at
+    // that one's inside this junction, as its own driving would.)
+    if (!tc.bk && short && !(N.control === "signal" && !sigOk && !alsoRed)) this.truckLine = n.sLine - 0.6 - T.front;
     this.truckBk = tc.bk ?? null;
   }
   private truckLine: number | null = null;
+  private truckStillT = 0;   // (how long the truck has stood at its line: saved)
+  // Whether the truck, stopped at an all-way stop, is letting someone waiting at the kerb cross
+  // first (pedFirst): that stop's node, or -1. The crowd's next step has them go, close as it is.
+  // (Saved.)
+  truckYieldsAt = -1;
   private tSweep = { node: -1, from: -1, s: 0, path: null as Path | null, fp: [] as number[], at: [] as number[] };   // (where the truck is to wait at its line: its rear axle's s)
   // Whether a car holding at node n's line for its turn (unbooked) is ahead of the truck in its lane.
   private heldAhead(T: NonNullable<Traffic["truckPath"]>, n: Path["nodes"][number]): boolean {
@@ -513,40 +537,66 @@ export class Traffic {
         tx = (kx - ax) / K; tz = (kz - az) / K;
       }
       if (!rec) continue;
-      for (let b = cabRear; b < T.front + 0.74; b += 1.5) { const u = Math.min(b, T.front); pts.push(q.x + fx * u, q.z + fz * u); at.push(rel); }
-      if (fw !== undefined) for (let b = TRAILER.rear; b < TRAILER.front + 0.74; b += 1.5) { const u = Math.min(b, TRAILER.front); pts.push(kx + tx * u, kz + tz * u); at.push(rel); }
+      for (let b = cabRear; b < T.front + 0.74; b += 1.5) { const u = Math.min(b, T.front); pts.push(cm(q.x + fx * u), cm(q.z + fz * u)); at.push(cm(rel)); }
+      if (fw !== undefined) for (let b = TRAILER.rear; b < TRAILER.front + 0.74; b += 1.5) { const u = Math.min(b, TRAILER.front); pts.push(cm(kx + tx * u), cm(kz + tz * u)); at.push(cm(rel)); }
     }
     return pts;
   }
   private booked = new Map<number, Car[]>();   // (this step's bookings by node)
+  private bkAt: Car[] = [];
   private bks: Car[] = [];   // (the booked cars, in booking order: kept, so a step makes no garbage)
   private static bySeq = (a: Car, b: Car) => a.bk!.seq - b.bk!.seq;
   // Book car c through node n (footprint fp): its conflict zones with every earlier booking there.
   // (`at`: a body sweep's, as zone's.)
-  private book(c: Car, n: Path["nodes"][number], fp: number[], at?: number[]) {
+  private book(c: Car, n: Path["nodes"][number], fp: number[], at?: number[], also?: number[]) {
     const zones: number[] = [];
     // (Not with one from the same approach, as they follow each other, as on any street; unless one
     // turns from the next lane over, across the other's.)
     const wide = n.move !== "S" && c.dodge < -1;
-    for (const o of this.booked.get(n.node) ?? []) {
+    for (const o of this.bookedAt(n.node, also)) {
       if (o === c || !o.bk || (o.bk.from === n.from && !wide && !o.bk.wide) || this.relOf(o) > o.bk.end) continue;
       const z = this.zone(fp, c.kind.len / 2, c.kind.width, o.bk.pts, o.kind.len / 2, o.kind.width, at, o.bk.at);
-      if (z) zones.push(o.id, o.bk.seq, z[0], z[1], z[2], z[3]);
+      if (z) zones.push(o.id, o.bk.seq, cm(z[0]), cm(z[1]), cm(z[2]), cm(z[3]));
     }
-    c.bk = { node: n.node, from: n.from, seq: this.bookSeq++, pts: fp, at, zones, end: n.sOut - n.sLine + 2 + c.kind.len / 2, wide };
-    let list = this.booked.get(n.node);
-    if (!list) this.booked.set(n.node, (list = []));
-    const i = list.indexOf(c);
-    if (i >= 0) list.splice(i, 1);
-    list.push(c);
+    c.bk = { node: n.node, from: n.from, seq: this.bookSeq++, pts: fp, at, zones, end: n.sOut - n.sLine + 2 + c.kind.len / 2, wide, also: also?.length ? also.slice() : undefined };
+    for (const nd of [n.node, ...(also ?? [])]) {
+      const list = this.listAt(nd), i = list.indexOf(c);
+      if (i >= 0) list.splice(i, 1);
+      list.push(c);
+    }
+  }
+  // This step's bookings at node nd (made if none).
+  private listAt(nd: number): Car[] { let l = this.booked.get(nd); if (!l) this.booked.set(nd, (l = [])); return l; }
+  // The bookings at node nd and at the nodes booked with it (`also`), each once.
+  private bookedAt(nd: number, also?: number[]): Car[] {
+    const l = this.booked.get(nd) ?? [];
+    if (!also?.length) return l;
+    const out = this.bkAt; out.length = 0; out.push(...l);   // (kept: a step makes no garbage)
+    for (const a of also) for (const o of this.booked.get(a) ?? []) if (!out.includes(o)) out.push(o);
+    return out;
+  }
+  // Node n on path P, run on through the nodes after it whose lines come before its far mouth (or
+  // within 2 m of it): as one, out at the last one's mouth; also: those nodes.
+  private thru = { P: null as Path | null, n0: null as Path["nodes"][number] | null, n: null as unknown as Path["nodes"][number], also: [] as number[] };
+  private through(P: Path, n: Path["nodes"][number]): { n: Path["nodes"][number]; also: number[] } {
+    // (Kept from the step before for the same node: a step makes no garbage.)
+    const T = this.thru;
+    if (T.P === P && T.n0 === n) return T;
+    T.P = P; T.n0 = n;
+    const i = P.nodes.indexOf(n);
+    let m = n;
+    const also: number[] = [];
+    for (let k = i + 1; k < P.nodes.length && P.nodes[k].sLine < m.sOut + 2; k++) { m = { ...m, sOut: Math.max(m.sOut, P.nodes[k].sOut) }; also.push(P.nodes[k].node); }
+    T.n = m; T.also = also;
+    return T;
   }
   // Whether car c, at rel from its line going v, could book footprint fp through n now: every
   // earlier booking there whose way it would cross has left the zone `gap` s before c gets to it.
-  private gapOk(c: Car, n: Path["nodes"][number], fp: number[], rel: number, gap: number, at?: number[]): boolean {
-    for (const o of this.booked.get(n.node) ?? []) {
+  private gapOk(c: Car, n: Path["nodes"][number], fp: number[], rel: number, gap: number, at?: number[], also?: number[]): boolean {
+    for (const o of this.bookedAt(n.node, also)) {
       if (o === c || !o.bk || (o.bk.from === n.from && !(n.move !== "S" && c.dodge < -1) && !o.bk.wide)) continue;
       const ro = this.relOf(o);
-      if (ro > o.bk.end) continue;
+      if (ro > o.bk.end || this.behindOnApproach(o, c, n.from)) continue;
       const z = this.zone(fp, c.kind.len / 2, c.kind.width, o.bk.pts, o.kind.len / 2, o.kind.width, at, o.bk.at);
       if (!z || ro > z[3]) continue;   // (clear of it already)
       const tIn = Traffic.tTravel(z[0] - rel, c.v), tOut = Traffic.tTravel(z[3] - ro, o.v);
@@ -565,7 +615,7 @@ export class Traffic {
       if (!o || !o.bk || o.bk.seq !== Z[k + 1] || this.relOf(o) > Z[k + 5]) continue;
       // (Unless that one is stuck behind this one, waiting on it to move: then this one goes on,
       // out of its way, first. Nor, for the truck, one behind it already, or one holding for it.)
-      if (this.stuckBehind(o, c.id)) continue;
+      if (this.stuckBehind(o, c.id) || this.behindOnApproach(o, c, c.bk!.from)) continue;
       if (c.id === -2 && ((o.x - c.x) * Math.cos(c.h) - (o.z - c.z) * Math.sin(c.h) < 0 || o.truckHold)) continue;
       if (rel < Z[k + 2] && Z[k + 2] - 1 < stop) { stop = Z[k + 2] - 1; c.waitFor = o.id; }
     }
@@ -625,6 +675,12 @@ export class Traffic {
     const c = id === undefined ? undefined : this.byId.get(id);
     return !!c && c.waitFor === -2 && c.v < 0.5;
   }
+  // Whether booking owner o is behind car c on the same approach (from), still short of the line:
+  // it can't come to the junction before c, so c doesn't wait for it, as from the lane beside.
+  private behindOnApproach(o: Car, c: Car, from: number): boolean {
+    if (!o.bk || o.bk.from !== from || c.id === -2) return false;
+    return (o.x - c.x) * Math.cos(c.h) - (o.z - c.z) * Math.sin(c.h) < -c.kind.len / 2 && this.relOf(o) + o.kind.len / 2 < 0;
+  }
   // Whether car o is held up, through a short chain of cars each stopped behind the next, by car `id`.
   private stuckBehind(o: Car, id: number): boolean {
     for (let k = 0, x: Car | undefined = o; k < 4 && x && x.v < 1 && x.blockedBy >= 0; k++) {
@@ -656,7 +712,7 @@ export class Traffic {
       // left it a gap: on the yellow, as that stops, it goes, as drivers do.)
       if (state === "yellow" && n.move === "L" && dLine < 2.5 && c.v < 1) sigOk = true;
     } else if (N.control === "stop") sigOk = c.stopOk === n.node || c.bk != null;
-    else first = P.yields.length === 0 && G.streets[n.from >> 1].oneway && G.streets[n.to >> 1].oneway;   // (on round a roundabout)
+    else first = P.yields.length === 0 && !!G.streets[n.from >> 1].ring && !!G.streets[n.to >> 1].ring;   // (on round a roundabout)
     // (A booking lapses while the car is still short of its line if the light turns against it,
     // or it stands stuck in a queue: else those booked after it, crossing on the next green, wait
     // for it all that time.)
@@ -694,7 +750,7 @@ export class Traffic {
     const tooClose = dLine < c.v * c.v / 9 - 0.5;
     const fp = () => this.footprint(P, n, wide ? c.dodge : 0);
     if (sigOk && !exitBlocked && !queued && first && dLine < Math.max(30, c.v * 4)) { this.book(c, n, fp()); return this.zoneStop(c, rel, line); }
-    if (sigOk && !exitBlocked && !queued && dLine < 2.5 && c.v < 4) { const f = fp(); if (this.gapOk(c, n, f, rel, c.gapT ?? 2)) { this.book(c, n, f); return this.zoneStop(c, rel, line); } }
+    if (sigOk && !exitBlocked && !queued && dLine < 2.5 && c.v < 4) { const f = fp(); if (!(N.control === "stop" && this.pedFirst(c, f)) && this.gapOk(c, n, f, rel, c.gapT ?? 2)) { this.book(c, n, f); return this.zoneStop(c, rel, line); } }
     // (Too close to stop and not booked, as on a light changing: in it goes, last in line.)
     if (tooClose && sigOk) { this.book(c, n, fp()); return this.zoneStop(c, rel, line); }
     return line;
@@ -706,6 +762,20 @@ export class Traffic {
   private sweep: Obstacle[] = [];
   // People crossing the road (crowd.ts crossers): where each is and where their crossing ends.
   private crossers: number[] = [];
+  private waiters: number[] = [];   // (crowd.ts waiters: x, z, x1, z1, t each)
+  // At an all-way stop, someone at the kerb who has waited longer than car c has stood at its line
+  // (for its first 10 s there), whose crossing its way through node n would come over (footprint
+  // fp): they go first, and c waits its turn.
+  private pedFirst(c: Car, fp: number[]): boolean {
+    const W = this.waiters;
+    if (!W.length || c.stillT > 10) return false;
+    const w = c.kind.width / 2 + 1;
+    for (let i = 0; i < W.length; i += 5) {
+      if (W[i + 4] <= c.stillT || Math.abs(W[i] - fp[0]) > 40 || Math.abs(W[i + 1] - fp[1]) > 40) continue;
+      for (let k = 0; k < fp.length; k += 2) if (segDist(fp[k], fp[k + 1], W[i], W[i + 1], W[i + 2], W[i + 3]) < w) return true;
+    }
+    return false;
+  }
   // Where car c is to wait (an s, as giveWay's) for someone crossing ahead of it, or null: short
   // of the first point in its next 30 m (on along its next path too) on the stretch of crosswalk
   // they have still to cross, or close by them. Once they are past its lane, it goes on behind
@@ -917,7 +987,7 @@ export class Traffic {
       let busy = false;
       for (const o of this.cars) {
         if (o === c || o.v <= 1 || Math.hypot(o.x - N.x, o.z - N.z) >= 16) continue;
-        const r = o.path.route, onRing = G.streets[r.d >> 1].oneway, joining = r.edges.length > 0 && G.streets[r.edges[0] >> 1].oneway;
+        const r = o.path.route, onRing = !!G.streets[r.d >> 1].ring, joining = r.edges.length > 0 && !!G.streets[r.edges[0] >> 1].ring;
         if (!onRing && !joining) continue;                       // out on an approach street
         if (G.dedgeTo(r.d) === y.node && (!joining || o.s > r.before)) continue;   // coming off the ring here, or gone on past
         busy = true; break;
@@ -1258,6 +1328,15 @@ export function truckObstacles(model: TruckModel, x0: number, z0: number, h: num
 // The street nearest (x, z) by its centre line (with tracks, for a cable car), round the point's
 // tile, or -1.
 // The distance from (x, z) to the segment (x0, z0)-(x1, z1).
+// To the centimetre: a booking's footprint and zones are saved with street life's keyframes (as
+// short numbers), and kept so when made, so a scrub replays them as they were.
+function cm(v: number): number { return Math.round(v * 100) / 100; }
+// How far (x, z) is from a box centred on (cx, cz), heading h, half length hl and half width hw
+// (0 inside it).
+function boxDist(x: number, z: number, cx: number, cz: number, h: number, hl: number, hw: number): number {
+  const dx = x - cx, dz = z - cz, u = dx * Math.cos(h) - dz * Math.sin(h), v = dx * Math.sin(h) + dz * Math.cos(h);
+  return Math.hypot(Math.max(0, Math.abs(u) - hl), Math.max(0, Math.abs(v) - hw));
+}
 function segDist(x: number, z: number, x0: number, z0: number, x1: number, z1: number): number {
   const dx = x1 - x0, dz = z1 - z0, l2 = dx * dx + dz * dz, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / l2)) : 0;
   return Math.hypot(x - x0 - dx * t, z - z0 - dz * t);

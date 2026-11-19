@@ -43,7 +43,8 @@ export interface CStreet {
   name: string;
   inCity: boolean;              // drivable by the truck and traffic (city streets and gate streets)
   gate: number;                 // index into gates, or -1
-  oneway: boolean;              // driven only from n0 to n1 (a roundabout's ring)
+  oneway: boolean;              // driven only from n0 to n1 (a roundabout's ring, or a one-way street downtown)
+  ring?: boolean;               // a roundabout's ring (one-way, and round it is straight on)
   tags: { elevated?: boolean; cable?: boolean; freeway?: boolean };
 }
 export interface CBlock {
@@ -91,11 +92,11 @@ export class CityGraph {
   }
   // A straight street from node a to node b (k = 0), or an arc leaving a on heading h0 with
   // curvature k that ends at b (the caller makes sure it does).
-  addStreet(a: number, b: number, opts: Partial<Pick<CStreet, "half" | "kerb" | "name" | "inCity" | "tags" | "oneway">> & { k?: number; h0?: number; len?: number } = {}): number {
+  addStreet(a: number, b: number, opts: Partial<Pick<CStreet, "half" | "kerb" | "name" | "inCity" | "tags" | "oneway" | "ring">> & { k?: number; h0?: number; len?: number } = {}): number {
     const A = this.nodes[a], B = this.nodes[b], id = this.streets.length;
     let h0 = opts.h0 ?? Math.atan2(-(B.z - A.z), B.x - A.x), k = opts.k ?? 0, len = opts.len ?? Math.hypot(B.x - A.x, B.z - A.z);
     if (k === 0) { h0 = Math.atan2(-(B.z - A.z), B.x - A.x); len = Math.hypot(B.x - A.x, B.z - A.z); }
-    this.streets.push({ id, n0: a, n1: b, x0: A.x, z0: A.z, h0, k, len, half: opts.half ?? 9, kerb: opts.kerb ?? 3, name: opts.name ?? "", inCity: opts.inCity ?? true, gate: -1, oneway: opts.oneway ?? false, tags: opts.tags ?? {} });
+    this.streets.push({ id, n0: a, n1: b, x0: A.x, z0: A.z, h0, k, len, half: opts.half ?? 9, kerb: opts.kerb ?? 3, name: opts.name ?? "", inCity: opts.inCity ?? true, gate: -1, oneway: opts.oneway ?? false, ring: opts.ring || undefined, tags: opts.tags ?? {} });
     return id;
   }
   // Once every node and street is in: arms, mouths, blocks, faces, signal phases, tiles.
@@ -337,7 +338,7 @@ export class CityGraph {
       const t = wrapPi(a.h - hin);
       // (Round a roundabout's ring, one one-way street to the next, is straight on, whatever the
       // corner: it is a bend, not a turn off.)
-      const ring = this.streets[d >> 1].oneway && this.streets[a.street].oneway;
+      const ring = !!this.streets[d >> 1].ring && !!this.streets[a.street].ring;
       out.push({ to, move: ring || Math.abs(t) < Math.PI / 4 ? "S" : t > 0 ? "L" : "R", turn: t });
     }
     return out;
@@ -395,6 +396,9 @@ export class CityGraph {
     return best;
   }
   nextFace(f: number) { return this.rightTurn(f); }
+  // Whether face f's kerb can be driven along (its dedge isn't the wrong way up a one-way street):
+  // where a stop on that side can be.
+  drivable(f: number) { const st = this.streets[f >> 1]; return !st.oneway || (f & 1) === 0; }
   prevFace(f: number) {
     const b = this.faceBlock[f];
     if (b < 0) return f;
