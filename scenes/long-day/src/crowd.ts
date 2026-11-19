@@ -21,6 +21,7 @@ import { CURB_H } from "./grid.ts";
 import { SIM_DT } from "./journey.ts";
 import type { Obstacle } from "./traffic.ts";
 import type { Path, Pose } from "./route.ts";
+import { TRAILER } from "./truck.ts";
 
 type PedKind = "walk" | "jog" | "dog" | "vendor" | "musician" | "chase";
 interface Ped {
@@ -35,7 +36,8 @@ interface Ped {
 }
 // What else street life needs from the journey this step (vignettes.ts).
 // truckPath: the truck driving its path (its s, speed, and its body's reach about s), or null.
-export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number } | null }
+// carsClear: whether no vehicle would come over the crossing from (x0, z0) to (x1, z1) within secs s.
+export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean }
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
@@ -115,6 +117,8 @@ export class Crowd {
     for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus);
     this.obstacles.length = 0;
     this.truckPath = more.truckPath ?? null;
+    this.carsClear = more.carsClear ?? null; this.cars = more.cars;
+    this.crossers.length = 0;
     for (const p of this.peds) { this.walk(G, p, dt, plan, simTime, prs, truck); this.obstacles.push({ x: p.x, z: p.z, r: 0.4 }); }
     this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
     this.obstacles.push(...this.vig.obstacles);
@@ -164,19 +168,37 @@ export class Crowd {
   }
 
   private truckPath: CrowdMore["truckPath"] = null;
-  // Whether the truck, driving on, comes within `reach` m (of its path's line) of any of the first
-  // `n` points of `pts` (x, z pairs) in the next `secs` s: by its path, from its tail now to where
-  // its nose would get to by then, at its speed but no less than `vMin` (it may be pulling away).
+  private carsClear: CrowdMore["carsClear"] | null = null;
+  private cars: Obstacle[] = [];   // (the vehicles' circles, as last stepped)
+  // Those crossing the road now, for traffic to give way to: where each is and where the crossing
+  // ends, on the crosswalk line (x, z, x1, z1 each).
+  readonly crossers: number[] = [];
+  // Whether the truck, driving on, comes within `reach` m (of its body's middle line) of any of the
+  // first `n` points of `pts` (x, z pairs) in the next `secs` s: from where it is to where it would
+  // get to by then on its path, at its speed but no less than `vMin` (it may be pulling away).
   private truckSweeps(pts: number[], n: number, secs: number, vMin: number, reach: number): boolean {
     const T = this.truckPath;
     if (!T) return false;
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
     for (let k = 0; k < n; k++) { x0 = Math.min(x0, pts[2 * k]); x1 = Math.max(x1, pts[2 * k]); z0 = Math.min(z0, pts[2 * k + 1]); z1 = Math.max(z1, pts[2 * k + 1]); }
-    const s1 = Math.min(T.path.length, T.s + T.front + Math.max(T.v, vMin) * secs);
-    for (let s = Math.max(0, T.s + T.rear); s <= s1; s += 1) {
+    // (Its body at each place it will be, from its rear to its nose along its heading there: on a
+    // turn its nose swings out wide of the path its rear wheels follow.)
+    const s1 = Math.min(T.path.length, T.s + Math.max(T.v, vMin) * secs), m = reach + T.front + 16;
+    // (A tractor's: the cab along its heading, and its trailer from the kingpin at its own angle,
+    // as it swings behind, pulling out of a bay or round a corner, as it is now.)
+    const trailer = T.fw !== undefined;
+    for (let s = T.s; s <= s1; s += 1) {
       T.path.peek(s, _tq);
-      if (_tq.x < x0 - reach || _tq.x > x1 + reach || _tq.z < z0 - reach || _tq.z > z1 + reach) continue;
-      for (let k = 0; k < n; k++) if (Math.hypot(_tq.x - pts[2 * k], _tq.z - pts[2 * k + 1]) < reach) return true;
+      if (_tq.x < x0 - m || _tq.x > x1 + m || _tq.z < z0 - m || _tq.z > z1 + m) continue;
+      const fx = Math.cos(_tq.h), fz = -Math.sin(_tq.h), rear = trailer ? T.fw! - 1.5 : T.rear;
+      const th = _tq.h + (T.yaw ?? 0), tx = Math.cos(th), tz = -Math.sin(th), kx = _tq.x + fx * (T.fw ?? 0), kz = _tq.z + fz * (T.fw ?? 0);
+      for (let k = 0; k < n; k++) {
+        const dx = pts[2 * k] - _tq.x, dz = pts[2 * k + 1] - _tq.z, a = Math.max(rear, Math.min(T.front, dx * fx + dz * fz));
+        if (Math.hypot(dx - fx * a, dz - fz * a) < reach) return true;
+        if (!trailer) continue;
+        const ex = pts[2 * k] - kx, ez = pts[2 * k + 1] - kz, b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
+        if (Math.hypot(ex - tx * b, ez - tz * b) < reach) return true;
+      }
     }
     return false;
   }
@@ -190,8 +212,16 @@ export class Crowd {
     return this.truckSweeps(pts, n, len / p.speed + 3, 6, 1.25 + 1.2);
   }
   // p's pace this step with the truck coming over its way (walking or crossing): it waits short of
-  // the truck's way (2 m on, along its line), or, in it, hurries on out (above its own pace). The
-  // truck doesn't stop for people: one already out when it turns this way gets clear.
+  // the truck's way (2 m on, along its line), or, in it, hurries on out (above its own pace), as the
+  // truck moves now (a truck standing, waiting for them as it does for those crossing in its way,
+  // they walk on past).
+  // Whether p, at the kerb, has a gap in the traffic to cross `len` m: no vehicle coming over the
+  // crosswalk within the time it takes them to get out to the middle of it, and a little more.
+  private gapToCross(G: CityGraph, p: Ped, len: number): boolean {
+    if (!this.carsClear) return true;
+    const f = faceOf(G, p), a = G.facePt(f, p.a, 1.7, _pt), x0 = a.x, z0 = a.z, b = G.facePt(f, p.a + p.dir * len, 1.7, _pt);
+    return this.carsClear(x0, z0, b.x, b.z, len / 2 / p.speed + 2.5);
+  }
   private truckPace(G: CityGraph, f: number, p: Ped, truck: Obstacle[]): number {
     // (Only near enough to be reached: within the truck's length and 2.5 s of travel, and the reach.)
     const T = this.truckPath, o = truck[0], pts = this.sweepPts;
@@ -199,15 +229,34 @@ export class Crowd {
     const R = T.front - T.rear + Math.max(T.v, 1) * 2.5 + 3;
     if (Math.abs(o.x - p.x) > R || Math.abs(o.z - p.z) > R) return p.speed;
     pts[0] = p.x; pts[1] = p.z;
-    if (this.truckSweeps(pts, 1, 2.5, 1, 1.25 + 1.0)) return Math.max(p.speed, 2.6);
+    if (this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.0)) {
+      // (In its way: out of it, forward or back, whichever is clear of it sooner.)
+      const hurry = Math.max(p.speed, 2.6);
+      if (p.state !== "cross") return hurry;
+      const fwd = G.facePt(f, p.a + p.dir * 2.5, p.n, _pt); pts[0] = fwd.x; pts[1] = fwd.z;
+      if (!this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.0)) return hurry;
+      const back = G.facePt(f, p.a - p.dir * 2.5, p.n, _pt); pts[0] = back.x; pts[1] = back.z;
+      return this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.0) ? hurry : -hurry;
+    }
     const q = G.facePt(f, p.a + p.dir * 2, p.n, _pt);
     pts[0] = q.x; pts[1] = q.z;
-    return this.truckSweeps(pts, 1, 2.5, 1, 1.25 + 1.2) ? 0 : p.speed;
+    return this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.2) ? 0 : p.speed;
   }
   private sweepPts: number[] = new Array(64).fill(0);
 
   private walk(G: CityGraph, p: Ped, dt: number, plan: CityPlan, simTime: number, prs: SignalPreempt[], truck: Obstacle[]) {
-    if (p.kind === "vendor" || p.kind === "musician") { p.phase += dt; this.place(G, p); return; }
+    if (p.kind === "vendor" || p.kind === "musician") {
+      // (Set up where the truck is to come over the pavement, into a driveway or out of one: they
+      // move their pitch along out of its way.)
+      const here = this.sweepPts; here[0] = p.x; here[1] = p.z;
+      // (Not past 4 m short of the corner: there they turn and go the other way along.)
+      if (this.truckSweeps(here, 1, 3, 3.5, 1.25 + 1.6)) {
+        const f = faceOf(G, p), a0 = G.faceA0(f) + 4, a1 = G.faceA1(f) - 4;
+        p.a += p.dir * 1.0 * dt;
+        if (p.a < a0 || p.a > a1) { p.a = Math.min(a1, Math.max(a0, p.a)); p.dir = p.dir > 0 ? -1 : 1; }
+      }
+      p.phase += dt; this.place(G, p); return;
+    }
     const f = faceOf(G, p), kerb = G.streets[f >> 1].kerb, fwd = p.dir > 0;
     // The corner ahead: where this walkway line meets the next side's (or the last side's).
     const corner = fwd ? faceCorner(G, f, p.n)[0] : faceCorner(G, G.prevFace(f), p.n)[1];
@@ -227,6 +276,10 @@ export class Crowd {
       // (The truck coming over the walkway, cutting a corner or turning in across it.)
       const sp = this.truckPace(G, f, p, truck);
       if (!blocked && !held) { p.a += p.dir * sp * dt; p.phase += sp * dt; }
+      // (Held up a while by the truck, standing across the pavement or swinging over it: they turn
+      // back and go another way, rather than stand waiting on it as it waits on them.)
+      p.waitT = blocked || sp === 0 ? p.waitT + dt : 0;
+      if (p.waitT > 4) { p.dir = p.dir > 0 ? -1 : 1; p.waitT = 0; }
       p.n += (nT - p.n) * Math.min(1, dt * 2);
       if ((p.dir > 0 && p.a >= corner) || (p.dir < 0 && p.a <= corner)) {
         p.a = corner;
@@ -236,12 +289,20 @@ export class Crowd {
     } else if (p.state === "wait") {
       // At the kerb: cross with the parallel traffic's green, unless the truck is right there.
       p.waitT += dt;
+      // (Standing in the truck's way, where it will swing round the corner: they step off along the
+      // pavement, back the way they came, out of it.)
+      const here = this.sweepPts; here[0] = p.x; here[1] = p.z;
+      // (As far ahead as the truck, stopped, looks for anyone in its way: else each waits on the other.)
+      if (this.truckSweeps(here, 1, 3, 3.5, 1.25 + 1.0)) { p.state = "walk"; p.dir = fwd ? -1 : 1; p.waitT = 0; this.place(G, p); return; }
       const sg = crossSignal(G, f, fwd), cr = crossing(G, f, fwd);
       const green = signalState(sg.node, sg.phase, simTime, plan.seed, prs) === "green";
       // (Nor if the truck is to come over the crosswalk before they could be across.)
       const clear = truck.every((o) => Math.hypot(o.x - p.x, o.z - p.z) > 12);
       if (!cr) { p.state = "walk"; this.turnCorner(G, p); }   // the edge of town: no crossing
-      else if (green && clear && p.waitT > 0.8 && !this.truckCrossing(G, p, (cr.a - p.a) * p.dir)) {
+      // (And no car about to come over it: at a light on their green too, as a car turning across
+      // it may be; elsewhere they wait for a gap, and once they are out cars give way to them. They
+      // look for it four times a second.)
+      else if (green && clear && p.waitT > 0.8 && Math.floor(p.waitT * 4) !== Math.floor((p.waitT - dt) * 4) && !this.truckCrossing(G, p, (cr.a - p.a) * p.dir) && this.gapToCross(G, p, (cr.a - p.a) * p.dir)) {
         p.state = "cross"; p.crossA = p.a; p.crossN = cr.n;
         p.crossLen = (cr.a - p.a) * p.dir;   // to the far corner's walkway
       }
@@ -252,10 +313,18 @@ export class Crowd {
       // and wait again rather than run out across its lane.)
       let sp = this.truckPace(G, f, p, truck);
       if (sp > p.speed && (p.a - p.crossA) * p.dir < 1.6) sp = -sp;
+      // (A vehicle right in front of them, going on over the crosswalk it had reached: they stop
+      // short of it and let it by, as it goes on off the crossing.)
+      if (sp > 0) {
+        const fx = Math.cos(p.h), fz = -Math.sin(p.h);
+        for (const o of this.cars) { const rx = o.x - p.x, rz = o.z - p.z, al = rx * fx + rz * fz; if (al > -0.3 && al < o.r + 1.4 && Math.abs(rx * -fz + rz * fx) < o.r + 0.7) { sp = 0; break; } }
+      }
+      // (Stepping back, they go no further back than where they set out from.)
       p.a += p.dir * sp * dt; p.phase += Math.abs(sp) * dt;
       if ((p.a - p.crossA) * p.dir <= 0) { p.a = p.crossA; p.n = -0.85; p.state = "wait"; p.waitT = 0; p.crossN = undefined; }
       const t = (p.a - p.crossA) * p.dir;
       const L = p.crossLen, nE = p.crossN ?? -0.85;
+      if (t < L - 1.6) { const q = G.facePt(f, p.crossA + p.dir * (L - 1.6), 1.7, _pt); this.crossers.push(p.x, p.z, q.x, q.z); }
       p.n = t < 1.6 ? -0.85 + (1.7 + 0.85) * (t / 1.6) : t > L - 1.6 ? 1.7 - (1.7 - nE) * ((t - (L - 1.6)) / 1.6) : 1.7;
       if (t >= L) {
         // Over: on along the side across, from its corner's walkway (as far on as this step went).

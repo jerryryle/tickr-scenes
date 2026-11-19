@@ -1,9 +1,11 @@
 // Street life as part of the journey: traffic, pedestrians, birds and the blimp step with the
 // journey's fixed clock (Journey.life), from a random stream seeded by each city, and are saved
 // in its keyframes. So any moment looks the same however it was reached, scrubbing included.
-// Traffic still yields to the truck and the journey still ignores traffic.
+// The truck is a road user in it: it books junctions as the cars do, and the journey's driving asks
+// street life where to stop (truckStop, reverseBlocked), so the two replay together.
 import { hash2 } from "./rng.ts";
-import { truckExtents, truckLayout } from "./truck.ts";
+import { SPECS, TRAILER, truckExtents, truckLayout } from "./truck.ts";
+import { KINGPIN_TO_AXLES } from "./hitch.ts";
 import type { Path, Pose } from "./route.ts";
 import { Journey } from "./journey.ts";
 import { GATES } from "./city.ts";
@@ -19,13 +21,30 @@ export class StreetLife implements LifeHook {
   private obs: Obstacle[] = [];
   private spare: Pose = { x: 0, z: 0, h: 0, k: 0 };
   private busy = new Set<string>();
-  private truckPath = { path: null as unknown as Path, s: 0, v: 0, front: 0, rear: 0 };
+  private truckPath = { path: null as unknown as Path, s: 0, v: 0, front: 0, rear: 0, yaw: 0, fw: undefined as number | undefined };
   private truckGate = { node: 0, street: 0 };
   private extents = new Map<string, ReturnType<typeof truckExtents>>();   // (per model: truckExtents makes a new object each call)
   private landing = { path: null as unknown as Path, s0: 0, s1: 0, at: 0 };
+  // Where the truck pulling out of a dock bay is to wait for a gap in the traffic it joins (its rear
+  // axle's s), or null: its nose 3 m short of the street (or where it stands, if that is past), as
+  // a driver pulls up to the street and looks; with the street clear for 6 s there, it goes, and
+  // after 15 s of waiting it noses out and the traffic stops for it. (From the traffic as it
+  // stands: the same played on as when scrubbed to.)
+  private outWait(j: Journey): number | null {
+    const st = j.st, out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
+    if (!(out > 0) || st.redWait >= 15) return null;
+    let E = this.extents.get(st.truck);
+    if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck)));
+    const at = out - E.front - 3;
+    if ((st.s > at + 0.5 && st.v > 0.3) || st.s + E.front > out) return null;   // (out already, or too close to stop)
+    if (at - st.s > 25) return null;                  // (nowhere near yet)
+    const q = j.path!.peek(out, this.spare);
+    return this.traffic.gapAt(q.x, q.z, 6) ? null : Math.max(at, st.s);
+  }
   private sweep = { path: null as Path | null, obs: [] as Obstacle[], at: [] as number[] };   // (a bay path's sweep, and the s of each obstacle's pose)
 
   constructor(private traffic: Traffic, private crowd: Crowd, private ambient: Ambient) {}
+  private carsClear = (x0: number, z0: number, x1: number, z1: number, secs: number) => this.traffic.crossingClear(x0, z0, x1, z1, secs);
 
   reset(j: Journey) {
     const s = j.st.citySeed;
@@ -41,7 +60,7 @@ export class StreetLife implements LifeHook {
     // The truck, and the second truck (the spare at a swap, or the old one left parked).
     const p = j.pose, obs = this.obs;
     obs.length = 0;
-    truckObstacles(st.truck, p.x, p.z, p.h, j.trailerYaw() ?? 0, obs);
+    truckObstacles(st.truck, p.x, p.z, p.h, j.hitchYaw, obs);
     const truckN = obs.length;
     // Reversing into a bay: where it will be all the way in (every 2 m), as if parked there, so
     // traffic waits clear of the whole sweep (the cab swings out across the lanes) rather than
@@ -107,8 +126,8 @@ export class StreetLife implements LifeHook {
     // its last 8 s before the gate, traffic gives way at the junction inside it: the truck's first.)
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
-    if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; }
-    this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp });
+    if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
+    this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear });
     const gi = st.mode === "inbound" ? GATES.indexOf(j.plan.entryGate) : -1, g = gi >= 0 && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[gi] : null;
     const gate = g ? this.truckGate : null;
     if (gate) { gate.node = g!.node; gate.street = g!.street; }
@@ -119,12 +138,104 @@ export class StreetLife implements LifeHook {
     if (landing) { landing.path = j.path!; landing.s0 = Math.max(st.s, rp!.s1 - 15); landing.s1 = rp!.s1 + 25; landing.at = rp!.s1; }
     // (Pulling out of a dock bay, swinging across the street into the kerb lane: likewise, from the
     // truck to 25 m on from where it joins the lane, until it is 10 m into it.)
+    // (Before it moves off, it waits for a gap in the traffic there, as a driver pulling out does,
+    // rather than have everyone stop for it; after 15 s of waiting, it noses out and they do.)
     const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
-    if (!landing && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
-    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing);
+    if (!landing && this.outWait(j) === null && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
+    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers);
     this.ambient.stepBlimp(p, st.simTime);
   }
 
+  // Where the truck (its rear axle, on its path) is to stop, or null: short of whatever its body
+  // would come to first over the next metres ahead (as far as it needs to stop easily and 10 m), with
+  // 1.5 m to spare: someone crossing, or the stretch of crosswalk they have still to cross; a
+  // vehicle (its circles); or where its junction booking has it wait for a car with the junction
+  // before it (traffic.truckZoneStop).
+  truckStop(j: Journey): number | null {
+    const st = j.st, P = j.path;
+    if (st.mode !== "drive" || !P) return null;
+    const ow = this.outWait(j);
+    if (ow !== null) return ow;
+    let E = this.extents.get(st.truck);
+    if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck)));
+    const X = this.crowd.crossers, C = this.traffic.obstacles, reach = st.v * st.v / (2 * 2.2) + 10, pfx = Math.cos(j.pose.h), pfz = -Math.sin(j.pose.h);
+    const fw = SPECS[st.truck].fifthWheel, peds = this.crowd.obstacles;
+    // (Its trailer's axles, stepped on as the cab goes, dragged along the line to the kingpin: as
+    // journey.ts hitchStep and truck.ts draw it.)
+    let ax = 0, az = 0;
+    if (fw !== undefined) { const th0 = j.pose.h + j.hitchYaw, kx0 = j.pose.x + pfx * fw, kz0 = j.pose.z + pfz * fw; ax = kx0 - Math.cos(th0) * KINGPIN_TO_AXLES; az = kz0 + Math.sin(th0) * KINGPIN_TO_AXLES; }
+    let stop = this.traffic.truckZoneStop();
+    for (let s = st.s + 0.5; s <= Math.min(P.length, st.s + reach) && s < (stop ?? Infinity); s += 1) {
+      const q = P.peek(s, this.spare), fx = Math.cos(q.h), fz = -Math.sin(q.h);
+      // (Its body there: nearBody, from rear to nose along its heading, 1.25 m either side.)
+      // (A crosser: where they are and their next 4 m.)
+      // (Its trailer, a tractor's, from the kingpin at its angle: pulling out of a bay or round a
+      // corner it swings across the pavement. Anyone near it there.)
+      let hit = false;
+      if (fw !== undefined) {
+        const kx = q.x + fx * fw, kz = q.z + fz * fw, d = Math.hypot(kx - ax, kz - az) || 1;
+        ax = kx - (kx - ax) / d * KINGPIN_TO_AXLES; az = kz - (kz - az) / d * KINGPIN_TO_AXLES;
+        const tx = (kx - ax) / KINGPIN_TO_AXLES, tz = (kz - az) / KINGPIN_TO_AXLES;
+        for (let k = 0; k < peds.length && !hit; k++) {
+          const ex = peds[k].x - kx, ez = peds[k].z - kz;
+          if (Math.abs(ex) > 20 || Math.abs(ez) > 20) continue;
+          const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
+          hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + peds[k].r + 0.4;
+        }
+        // (And a vehicle standing there, waiting at its line, say, that its trailer would cut in
+        // across; or one ahead of its nose now.)
+        for (let k = 0; k < C.length && !hit; k++) {
+          const ex = C[k].x - kx, ez = C[k].z - kz;
+          if (Math.abs(ex) > 20 || Math.abs(ez) > 20) continue;
+          if (this.traffic.speedOf(C[k].owner) > 0.5 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz <= E.front + 0.5) continue;
+          if (this.traffic.waitsForTruck(C[k].owner)) continue;
+          const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
+          hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + C[k].r + 0.3;
+        }
+      }
+      for (let i = 0; i < X.length && !hit; i += 4) {
+        if (Math.abs(X[i] - q.x) > 30 || Math.abs(X[i + 1] - q.z) > 30) continue;
+        const L = Math.hypot(X[i + 2] - X[i], X[i + 3] - X[i + 1]), tEnd = L > 0 ? Math.min(1, 4 / L) : 0;
+        for (let t = 0; t <= tEnd + 1e-6 && !hit; t += Math.max(0.05, tEnd / 8)) {
+          const x = X[i] + (X[i + 2] - X[i]) * t, z = X[i + 1] + (X[i + 3] - X[i + 1]) * t;
+          // (Ahead of its nose, or where its body would newly come: not beside it already, which
+          // driving on it slides past.)
+          hit = this.nearBody(q, fx, fz, E!.front, E!.rear, x, z, 0.8) && (!this.underTruck(x, z, E!.front, E!.rear, j) || (x - j.pose.x) * pfx + (z - j.pose.z) * pfz > E!.front);
+        }
+      }
+      // (Anyone on foot ahead of its nose now, in the way it goes: crossing a driveway it pulls out
+      // across, say. One beside it already steps back out of its way.)
+      for (let k = 0; k < peds.length && !hit; k++) if (Math.abs(peds[k].x - q.x) < 20 && Math.abs(peds[k].z - q.z) < 20 && (peds[k].x - j.pose.x) * pfx + (peds[k].z - j.pose.z) * pfz > E.front) hit = this.nearBody(q, fx, fz, E!.front, E!.rear, peds[k].x, peds[k].z, peds[k].r + 0.4);
+      // (A vehicle ahead of its nose now: one level with it, beside, drops back out of its way. Not
+      // one stopped short of where its junction booking has it wait for the truck to go through.)
+      for (let k = 0; k < C.length && !hit; k++) if (!this.traffic.waitsForTruck(C[k].owner) && Math.abs(C[k].x - q.x) < 25 && Math.abs(C[k].z - q.z) < 25 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz > E.front + 0.5) hit = this.nearBody(q, fx, fz, E!.front, E!.rear, C[k].x, C[k].z, C[k].r + 0.3);
+      if (hit) { stop = s - 1.5; break; }
+    }
+    return stop;
+  }
+  // Whether (x, z) is within r of the truck's body standing at q (heading fx, fz; 1.25 m either side).
+  private nearBody(q: Pose, fx: number, fz: number, front: number, rear: number, x: number, z: number, r: number): boolean {
+    const dx = x - q.x, dz = z - q.z, a = Math.max(rear, Math.min(front, dx * fx + dz * fz));
+    return Math.hypot(dx - fx * a, dz - fz * a) < 1.25 + r;
+  }
+  // Whether (x, z) is under the truck's body where it stands now (1.25 m either side of its middle line).
+  private underTruck(x: number, z: number, front: number, rear: number, j: Journey): boolean {
+    const p = j.pose, fx = Math.cos(p.h), fz = -Math.sin(p.h), dx = x - p.x, dz = z - p.z, a = Math.max(rear, Math.min(front, dx * fx + dz * fz));
+    return Math.hypot(dx - fx * a, dz - fz * a) < 1.25 + 0.8;
+  }
+  // Someone (a vehicle or a pedestrian, as last stepped) in the way of the truck's next 6 m back
+  // into the bay: within its sweep there, their circles touching (people with room to spare).
+  reverseBlocked(j: Journey): boolean {
+    const st = j.st, W = this.sweep;
+    if (st.mode !== "reverse" || W.path !== j.path) return false;
+    for (let k = 0; k < W.obs.length; k++) {
+      if (W.at[k] > st.s + 1 || W.at[k] < st.s - 6) continue;
+      const o = W.obs[k];
+      for (const c of this.traffic.obstacles) if (Math.hypot(c.x - o.x, c.z - o.z) < c.r + o.r - 0.3) return true;
+      for (const c of this.crowd.obstacles) if (Math.hypot(c.x - o.x, c.z - o.z) < c.r + o.r + 0.5) return true;
+    }
+    return false;
+  }
   save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp() }); }
   load(s: string, j: Journey) {
     const o = JSON.parse(s);

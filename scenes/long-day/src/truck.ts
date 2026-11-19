@@ -84,7 +84,7 @@ export const SPECS: Record<TruckModel, TruckSpec> = {
 };
 
 // 53 ft dry van, in its own frame: origin at the kingpin, extending to -x.
-const TRAILER = { front: 0.9, rear: -15.25, floor: 1.25, top: 4.1, hw: 1.3, axles: [-12.4, -13.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
+export const TRAILER = { front: 0.9, rear: -15.25, floor: 1.25, top: 4.1, hw: 1.3, axles: [-12.4, -13.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
 
 // Shared across every truck: materials, livery textures, the unit wheel geometry.
 export class TruckKit {

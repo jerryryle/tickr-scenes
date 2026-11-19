@@ -42,6 +42,26 @@ static geometry (`parkedCar`). Draw new cars with these rather than building the
 `tools/showroom.ts` is a test scene that lines them up (and a parking garage) for a close look:
 `make tool SCENE=long-day TOOL=showroom SECS=17` renders it to `build/long-day-showroom/showroom.png`.
 
+`src/traffic.ts` drives the cars, and the truck takes part as one more road user. Each vehicle
+books its way through a junction before it crosses the line: its path through as a footprint,
+and a conflict zone with every earlier booking it comes near. Later bookings wait short of a
+zone until the earlier vehicle has left it, so the order of bookings is the order of right of
+way and nobody waits on each other. Who books when follows the rules of the road: with right of
+way (straight or right on a green, on round a roundabout; the truck any way on its green, the
+lights held for it, and at an unmarked junction) a vehicle books on its approach; giving way (a
+left turn on a green, right on red, an all-way stop once stopped, joining a roundabout) it books
+at its line once the bookings ahead leave it a gap.
+The truck's footprint is its body's real sweep (the nose swinging wide, a trailer cutting in),
+and it waits its turn behind a car holding at the line in its lane. Drivers follow with the IDM,
+each with their own following time, gap acceptance and pace. Pedestrians cross in the same
+system: cars give way to anyone on the crosswalk ahead, people wait for a gap in the traffic
+before stepping out (at a light, on their green, for cars turning across), and someone about to
+walk into a vehicle stops. The journey's driving asks street life
+(`src/life.ts`, `truckStop`) where to stop: short of people, vehicles in its body's way ahead
+(its trailer's too), its booking's zones, and, pulling out of a dock, a gap in the traffic it
+joins (after 15 s it noses out and the traffic stops for it). So the journey depends on the
+street life, and scrubbing replays both together.
+
 `src/vignettes.ts` holds the street vignettes (a dog at a "no dogs" sign, a dog walker towed by a
 pack, a wet-paint bench, window washers, a crossing guard, a food truck's queue, snow and night
 scenes and the rest), each chosen for its district, hour, weather and season and placed on real
@@ -80,7 +100,11 @@ make debug SCENE=long-day DEFINE="DEBUG_SKIP_MINUTES=40 DEBUG_STYLE=metro DEBUG_
 `test/journey.ts` fast-forwards the journey (70 minutes, seed 0 by default) and checks its
 invariants: the cargo ledger balances and never exceeds the truck's capacity, seeking forward or
 back reproduces the state, the truck never jumps, halts abruptly or gets stuck, country hand-overs
-match speed and heading, and it never crosses in front of a train. `make check` runs it. To run it with other arguments and see its report:
+match speed and heading, and it never crosses in front of a train. `make check` runs it, and the
+street-life tests: `test/truck.ts` (the truck never drives through a vehicle or anyone on foot,
+and never stands in the street for long), `test/junctions.ts` (traffic alone round busy
+junctions never overlaps or deadlocks) and `test/crossings.ts` (people cross, and nobody runs
+into them). To run it with other arguments and see its report:
 
 ```bash
 make run SCENE=long-day TEST=journey ARGS="30 '{\"seed\":2}'"

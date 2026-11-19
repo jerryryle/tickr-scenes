@@ -10,7 +10,8 @@ import { Rng } from "./rng.ts";
 import { Batch } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
-import { SPECS } from "./truck.ts";
+import { SPECS, TRAILER } from "./truck.ts";
+import { KINGPIN_TO_AXLES } from "./hitch.ts";
 import type { TruckModel } from "./truck.ts";
 import { signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
@@ -33,23 +34,32 @@ interface Car {
   kind: VehicleKind; path: Path; s: number; v: number;
   next: Path | null;                   // the plan after this one, from its end (its move picked already): braked for ahead of time
   dodge: number; dodgeTarget: number; dodgeV: number; holdT: number;   // lateral shift into the inner lane (negative = left), and its rate
-  stillT: number; committed: number; color: number;   // committed: the signal (index on the path) it is going through
+  stillT: number; committed: number; color: number; beyondT?: number;   // beyondT: s held at its line, on its green, by a light just past the junction   // committed: the signal (index on the path) it is going through
   stopFor: number;                     // the signal (index on the path) it is stopping for, -1: none
   blockedBy: number; slowT: number; pedT: number; acc: number;   // acc: current acceleration (eased)
   passId?: number; passT?: number;      // a car it was let through past out of a deadlock, and for how much longer
   held?: boolean;                      // holding at a junction's line last step (for a car with priority, or the way out blocked)
   truckHold?: boolean;                 // holding last step for the truck to go by (giveWay, landingWay)
-  gwNode?: number;                     // the node it is holding at for the truck to go through, or -1
   stopOk?: number;                     // the all-way stop it has stopped at and may now go on from
+  // Its booking through the junction ahead (junction): the node and the approach, its place in the
+  // order, its footprint (x, z every metre from 1 m short of the line), its conflict zones with
+  // earlier bookings (each: that car's id and booking, where this car's middle is as its front
+  // comes to the zone and as its back leaves, the same for the other) and where it is clear of it.
+  bk?: { node: number; from: number; seq: number; pts: number[]; at?: number[]; zones: number[]; end: number; wide?: boolean } | null;   // wide: turning from the next lane over
+  gapT?: number;                       // the gap (s) it wants in the bookings ahead before it goes, giving way
+  waitFor?: number;                    // the car whose booking it is waiting short of a zone for (-1: none)
+  passStill?: boolean;                 // passing something parked in its lane (last step)
+  // Its driver (spawn): the time gap kept to the car ahead (s), the gap left standing behind it
+  // (m), how hard it pulls away and how hard it likes to brake (m/s^2), and its pace (of the
+  // vehicle's top speed). Missing (older saves): the middle of each.
+  dT?: number; dS0?: number; dA?: number; dB?: number; dV?: number;
   lastO?: number; mergeUp?: boolean;   // the path's lane offset last step, and which way it last moved   // pedT: how long a pedestrian has held it up   // the vehicle it is held up close behind (-1: none, or not a vehicle), and how long it has crawled (< 0.5 m/s)
   x: number; z: number; h: number; px: number; pz: number; ph: number;   // pose now and one step ago
   cable: boolean; id: number; model: TruckModel | null;   // model: a Ryder truck's
 }
 
 const TRAFFIC_SPAWN = [70, 150], TRAFFIC_DESPAWN = 175;
-const BRAKE_COMFY = 3.0;   // m/s^2: how hard traffic plans to brake for what's ahead
 const CAR_STOP_PAUSE = 1.0;     // s a car stands at a stop sign's line before going on
-const PULL_IN = STOP_BACK + 2;   // m past its line a left turn waiting for oncoming traffic pulls in to (its line, then 1.5 m in)
 const GIVE_WAY_GAP = 3.4;   // m between centre lines: closer than this, a car and the truck would touch (the truck's rear cuts its turns)
 const CAR_COLORS = [0xb22222, 0x1f4fa0, 0xe8e8e8, 0x222428, 0x7a7f86, 0xd4a017, 0x2e7d4f, 0x8a3fa0, 0xe8e0d0, 0x5a2a1a, 0x3a8ac8];
 
@@ -113,17 +123,17 @@ export class Traffic {
 
   // Remove every vehicle (a new city, or the country).
   clear() {
-    this.cars.length = 0;
+    this.cars.length = 0; this.truckBk = null; this.truckCar = null;
     this.obstacles.length = 0;
   }
   // A new city: no vehicles, and the random stream from the city's seed.
-  reset(seed: number) { this.clear(); this.rng.s = seed >>> 0; this.nextId = 0; }
+  reset(seed: number) { this.clear(); this.rng.s = seed >>> 0; this.nextId = 0; this.bookSeq = 0; }
 
   save() {
-    return { rng: this.rng.s, id: this.nextId, cars: this.cars.map((c) => ({ ...c, kind: c.kind.id, path: c.path.route, next: c.next?.route ?? null })) };
+    return { rng: this.rng.s, id: this.nextId, seq: this.bookSeq, truckBk: this.truckBk, cars: this.cars.map((c) => ({ ...c, kind: c.kind.id, path: c.path.route, next: c.next?.route ?? null })) };
   }
   load(o: ReturnType<Traffic["save"]>, plan: CityPlan) {
-    this.rng.s = o.rng; this.nextId = o.id;
+    this.rng.s = o.rng; this.nextId = o.id; this.bookSeq = o.seq ?? 0; this.truckBk = o.truckBk ?? null; this.truckCar = null;
     this.cars = o.cars.map((c) => ({ ...c, kind: this.kinds.find((k) => k.id === c.kind)!, path: new Path(plan.graph, c.path), next: c.next ? new Path(plan.graph, c.next) : null }));   // (`next` absent in older saves: null)
     for (const c of this.cars) c.path.eval(c.s, this.pose);   // the path remembers its last lane offset
     this.obstacles.length = 0;
@@ -132,18 +142,34 @@ export class Traffic {
   // `truck` is the truck's body as circles; `peds` the pedestrians. `density` scales how many.
   // One fixed step (the journey's), around `focus`; `prs` are the signals the truck has held.
   // The truck's own path and where it is on it (its rear axle), and how far its body reaches
-  // ahead of and behind that: cars give way to it where their ways cross (giveWay).
-  private truckPath: { path: Path; s: number; v: number; front: number; rear: number } | null = null;
+  // ahead of and behind that, its trailer's angle and kingpin (a tractor's): it books junctions on
+  // its way as any car (truckBook), its body's sweep through them.
+  private truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null;
   // The truck arriving at the town's gate: the junction inside it, and the gate street.
   private truckGate: { node: number; street: number } | null = null;
   // The truck's way where it lands off a freeway exit ramp, sampled every 1.5 m (x, z pairs).
   private landing: number[] = [];
-  private landingAt = 0;   // (the sample there the ramp meets the street)
-  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null) {
-    this.truckPath = truckPath; this.truckGate = truckGate;
-    this.landing.length = 0;
-    if (landing) for (let a = landing.s0; a <= Math.min(landing.s1, landing.path.length); a += 1.5) { landing.path.peek(a, this.gw0); this.landing.push(this.gw0.x, this.gw0.z); }
-    this.landingAt = landing ? Math.round((landing.at - landing.s0) / 1.5) : 0;
+  private landingAt = 0;   // (where on the way the ramp meets the street)
+  private landingS: number[] = [];
+  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null, crossers: number[] = []) {
+    this.truckPath = truckPath; this.truckGate = truckGate; this.crossers = crossers;
+    // (Its body at each place on that way, from rear to nose along its heading every 1.5 m: pulling
+    // out of a bay or off a ramp, its nose swings wide of the way its rear wheels take. landingS:
+    // each point's place on the way.)
+    this.landing.length = 0; this.landingS.length = 0;
+    const fr = truckPath ? truckPath.front : 4, rr = truckPath ? truckPath.rear : -4;
+    if (landing) for (let a = landing.s0; a <= Math.min(landing.s1, landing.path.length); a += 1.5) {
+      landing.path.peek(a, this.gw0);
+      const fx = Math.cos(this.gw0.h), fz = -Math.sin(this.gw0.h);
+      for (let b = rr; b <= fr + 0.01; b += 1.5) { this.landing.push(this.gw0.x + fx * b, this.gw0.z + fz * b); this.landingS.push(a); }
+    }
+    this.landingAt = landing ? landing.at : 0;
+    this.sweep.length = 0;
+    for (const o of truck) if (o.sweep) this.sweep.push(o);
+    // (The truck about to turn within 70 m: to the left (1), moving over into the inner lane for
+    // it, or the right (-1), swinging its rear across the kerb lane. The next turn on its way.)
+    this.truckTurn = 0;
+    if (truckPath) for (const tn of truckPath.path.nodes) if (tn.sOut > truckPath.s) { if (tn.sLine - truckPath.s < 70 && tn.move !== "S") this.truckTurn = tn.move === "L" ? 1 : -1; break; }
     const dt = SIM_DT;
     for (const c of this.cars) { c.px = c.x; c.pz = c.z; c.ph = c.h; }
     // Despawn far vehicles; top up near the truck.
@@ -154,7 +180,7 @@ export class Traffic {
     const bx = Math.floor(focus.x / BLOCK), bz = Math.floor(focus.z / BLOCK);
     const d = plan.district(bx, bz);
     const want = d === "downtown" ? 30 : d === "commercial" ? 26 : d === "residential" ? 15 : 12;
-    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck, simTime, prs);
+    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck, simTime, prs, peds);
     // Drive.
     this.obstacles.length = 0;
     for (const c of this.cars) this.carCircles(c, this.obstacles);
@@ -174,10 +200,17 @@ export class Traffic {
       else if ((c.passT ?? 0) > 0) { const o = byId.get(c.passId!); c.passT = o && Math.hypot(o.x - c.x, o.z - c.z) < (c.kind.len + o.kind.len) / 2 + 3 ? c.passT! - dt : 0; }
       ignore[i] = b >= 0 ? b : (c.passT ?? 0) > 0 ? c.passId! : -1;
     }
+    // (The bookings by node, as they stand: in their order.)
+    this.booked.clear();
+    const bks = this.bks; bks.length = 0;
+    for (const c of this.cars) if (c.bk) bks.push(c);
+    bks.sort(Traffic.bySeq);
+    for (const c of bks) { let l = this.booked.get(c.bk!.node); if (!l) this.booked.set(c.bk!.node, (l = [])); l.push(c); }
+    this.truckBook(plan.graph, simTime, plan.seed, prs);
     for (let i = this.cars.length - 1; i >= 0; i--) this.drive(this.cars[i], dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]);
   }
 
-  private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[]) {
+  private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[], peds: Obstacle[]) {
     const r = this.rnd;
     const ang = r() * Math.PI * 2, dist = TRAFFIC_SPAWN[0] + r() * (TRAFFIC_SPAWN[1] - TRAFFIC_SPAWN[0]);
     const px = focus.x + Math.cos(ang) * dist, pz = focus.z + Math.sin(ang) * dist;
@@ -204,12 +237,18 @@ export class Traffic {
     for (const o of truck) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const o of this.obstacles) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const c of this.cars) if (Math.hypot(c.x - this.pose.x, c.z - this.pose.z) < 14) return;
+    // (Nor on anyone in the road, nor just short of someone crossing it.)
+    const fx = Math.cos(this.pose.h), fz = -Math.sin(this.pose.h);
+    for (const o of peds) { const dx = o.x - this.pose.x, dz = o.z - this.pose.z, a = dx * fx + dz * fz; if (a > -8 && a < 14 && Math.abs(dx * fz - dz * fx) < 4) return; }
+    for (let i = 0; i < this.crossers.length; i += 4) if (segDist(this.pose.x, this.pose.z, this.crossers[i], this.crossers[i + 1], this.crossers[i + 2], this.crossers[i + 3]) < 16) return;
     // Short of a light that isn't green: not past its stop line, and stopped there if it is too
     // close to stop from speed.
     let v = kind.vmax * 0.7;
     // (No faster than it can stop from, 6 m short of the first junction's line: it may have to
     // give way there, to a car already crossing.)
+    // (Nor too close to it to stop: never past its line, in the junction, unbooked.)
     const n0 = path.nodes[0];
+    if (n0 && n0.sLine - 0.8 - kind.len / 2 < 6) return;
     if (n0) v = Math.min(v, Math.sqrt(9 * Math.max(0, n0.sLine - 0.8 - kind.len / 2 - 6)));
     const sg = path.signals[0];
     if (sg && signalState(G.nodes[sg.node], sg.phase, simTime, plan.seed, prs) !== "green") {
@@ -219,9 +258,13 @@ export class Traffic {
     }
     const next = this.planOn(G, path, cable, path.endA);
     const color = kind.colors ? pick(r, kind.colors) : 0xffffff;
+    // The driver: one number for how bold, and a little of each on its own.
+    const bold = r(), mix = (a: number, b: number) => a + (b - a) * (0.7 * bold + 0.3 * r());
+    const big = kind.len > 7;   // (a bus or truck: steady, whoever drives it)
+    const dT = mix(1.8, 1.0), dS0 = mix(2.6, 1.6), dA = big ? 1.1 : mix(1.3, 2.4), dB = big ? 1.6 : mix(1.8, 3.0), dV = mix(0.88, 1.08), gapT = mix(3.4, 1.8);
     const model: TruckModel | null = kind.id === "ryder" ? (r() < 0.5 ? "box16" : "box26") : null;
     this.cars.push({ kind, path, next, s: 0, v, dodge: cable ? -3 : 0, dodgeTarget: cable ? -3 : 0, dodgeV: 0, holdT: 0, stillT: 0, committed: -1, stopFor: -1, blockedBy: -1, slowT: 0, pedT: 0, acc: 0,
-      color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model });
+      color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model, dT, dS0, dA, dB, dV, gapT });
   }
   private count(id: string) { let n = 0; for (const c of this.cars) if (c.kind.id === id) n++; return n; }
   private pickKind(plan: CityPlan): VehicleKind | null {
@@ -230,73 +273,53 @@ export class Traffic {
     for (const k of pool) { if ((t -= k.weight) < 0) return k; }
     return pool[0] ?? null;
   }
-  // Where car c is to wait for the truck (an s on its path), or null. The truck's path through a
-  // node c's path goes through next (within 30 m of c), not yet left by the truck's tail: where
-  // the truck turns off into c's street, c waits 6 m short of its line; otherwise, with the truck
-  // within 55 m, if the two ways come within GIVE_WAY_GAP of each other in the junction
-  // (sampled every 1.5 m), at its line. A car on the truck's own approach follows it as any
-  // car ahead.
-  private giveWay(c: Car, G: CityGraph): number | null {
-    const r = this.giveWayAt(c, G);
-    if (r === null) c.gwNode = -1;
-    return r;
-  }
-  private giveWayAt(c: Car, G: CityGraph): number | null {
-    const T = this.truckPath, gate = this.truckGate;
-    if (!T && !gate) return null;
+  // Where car c is to wait for the truck coming in at the town's gate, its way on not yet known (an
+  // s on its path), or null: at the line of the junction inside the gate, on every approach but the
+  // gate street's. (Elsewhere the truck is in the junction bookings, as any car.)
+  private giveWay(c: Car): number | null {
+    const gate = this.truckGate;
+    if (!gate) return null;
     // (The node next on its path, or, past the last, on the next path planned: one coming up fast
     // on a junction just round from where its path ends must see it in time to stop. `off` is
     // where that path starts on this one's s.)
-    let n = this.nextNode(c), p = c.path, off = 0;
-    if (!n && c.next) { const m = c.next.nodes[0]; if (m && c.path.length + m.sLine - c.s <= 30) { n = m; p = c.next; off = c.path.length; } }
+    let n = this.nextNode(c), off = 0;
+    if (!n && c.next) { const m = c.next.nodes[0]; if (m && c.path.length + m.sLine - c.s <= 30) { n = m; off = c.path.length; } }
     if (!n) return null;
-    const line = off + n.sLine;
-    // (The truck about to come in at the gate, its way on not yet known: every approach to the
-    // junction inside the gate but the gate street's waits.)
-    if (gate) return n.node === gate.node && (n.from >> 1) !== gate.street ? line : null;
-    if (!T) return null;
-    for (const tn of T.path.nodes) {
-      if (tn.node !== n.node || tn.from === n.from || T.s + T.rear > tn.sOut) continue;
-      // (The truck turning into c's street: c holds back from as soon as the truck is 120 m off,
-      // so it has not already pulled up to the line, in the way of the truck's swing.)
-      // (Only where the truck turns: going straight on, it leaves by the street oncoming cars come
-      // by, and they meet it below. And only while c is still short of that point.)
-      if ((tn.to >> 1) === (n.from >> 1) && tn.move !== "S" && tn.sLine - T.s < 120 && c.s + c.kind.len / 2 + 0.8 < line - 6 + 0.5) return line - 6;
-      // (Once holding for the truck here, it holds until the truck's tail is through: the truck
-      // coming in and out of range must not let it creep out in front of it.)
-      if (c.gwNode === n.node && (T.v > 0.5 || tn.sLine - T.s < 15)) return line;   // (not for a truck stopped well short, at its own red)
-      // (55 m: 5 s at the truck's town speed, time enough to pull out of the way; or, for a car
-      // that would take longer to get through and clear, as a slow left turn pulling away from
-      // its line does, as far as the truck comes in that time.)
-      const clearT = (off + Math.min(n.sOut, p.length) - c.s + c.kind.len) / Math.max(c.v, 3) + 1;
-      if (tn.sLine - T.s > Math.max(55, T.v * clearT)) continue;
-      if (this.pathsNear(T.path, Math.max(T.s + T.rear, tn.sLine - 4), Math.min(tn.sOut + 6, T.path.length), p, n.sLine, Math.min(n.sOut + 4, p.length), GIVE_WAY_GAP) < GIVE_WAY_GAP) { c.gwNode = n.node; return line; }
-    }
-    return null;
+    return n.node === gate.node && (n.from >> 1) !== gate.street ? off + n.sLine : null;
   }
-  private gw0: Pose = { x: 0, z: 0, h: 0, k: 0 }; private gw1: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  private gw0: Pose = { x: 0, z: 0, h: 0, k: 0 }; private gw1: Pose = { x: 0, z: 0, h: 0, k: 0 }; private gwS: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  // Whether car c's body a little further on along its way (2 m, or 0.8 s at its speed; moved over
+  // as it is) would come closer to obstacle o than it is now and touch it: its tail swinging out
+  // round a turn into something beside it. (That pose kept for the rest of c's scan this step.)
+  private swId = -1; private swS = NaN; private swP: Path | null = null; private swOk = false;
+  private swingsInto(c: Car, o: Obstacle, half: number): boolean {
+    if (this.swId !== c.id || this.swS !== c.s || this.swP !== c.path) {
+      this.swId = c.id; this.swS = c.s; this.swP = c.path;
+      const b = c.s + Math.max(2, c.v * 0.8);
+      this.swOk = true;
+      if (b <= c.path.length) c.path.peek(b, this.gwS);
+      else if (c.next && b - c.path.length <= c.next.length) c.next.peek(b - c.path.length, this.gwS);
+      else this.swOk = false;
+    }
+    if (!this.swOk) return false;
+    // (Its middle line, half its length either way, from o: within its half width and o's.)
+    const q = this.gwS, w = c.kind.width / 2 + Math.min(o.r, 1.3);
+    const qx = q.x + Math.sin(q.h) * c.dodge, qz = q.z + Math.cos(q.h) * c.dodge, qfx = Math.cos(q.h) * half, qfz = -Math.sin(q.h) * half;
+    const cfx = Math.cos(c.h) * half, cfz = -Math.sin(c.h) * half;
+    const dNext = segDist(o.x, o.z, qx - qfx, qz - qfz, qx + qfx, qz + qfz);
+    return dNext < w && dNext < segDist(o.x, o.z, c.x - cfx, c.z - cfz, c.x + cfx, c.z + cfz) - 0.02;
+  }
   // The node car c's path comes to next, within 30 m and its line not yet crossed, or null.
-  // (`past`: how far past its line the car may be and the node still count: junctionPriority
-  // reaches to where a left turn pulls in to wait.)
+  // (`past`: how far past its line the car may be and the node still count.)
   private nextNode(c: Car, past = 0.5) {
     for (const n of c.path.nodes) if (c.s <= n.sLine + past && n.sLine - c.s <= 30) return n;
     return null;
   }
-  // The least distance between path P over [a0, a1] and path Q over [b0, b1], sampled every
-  // 1.5 m along each, giving up once under `enough`.
-  private pathsNear(P: Path, a0: number, a1: number, Q: Path, b0: number, b1: number, enough: number): number {
-    let near = Infinity;
-    for (let a = a0; a <= a1 && near >= enough; a += 1.5) {
-      P.peek(a, this.gw0);
-      for (let b = b0; b <= b1; b += 1.5) { Q.peek(b, this.gw1); near = Math.min(near, Math.hypot(this.gw0.x - this.gw1.x, this.gw0.z - this.gw1.z)); }
-    }
-    return near;
-  }
   // Where car c is to wait for the truck landing off an exit ramp or pulling out of a dock bay (an
   // s, as giveWay's), or null: short of the first point in its next 35 m (on along its next path
-  // too) within GIVE_WAY_GAP + 1.5 of the truck's way there. A car already on that way 3 m past
-  // the landing, going its way (ahead of the truck on it), carries on; one beside the foot, short
-  // of it, waits where it is.
+  // too) within its half width and 1.5 m of the truck's body anywhere on its way there. A car
+  // already on that way 3 m past the landing, going its way (ahead of the truck on it), carries on;
+  // one beside the foot, short of it, waits where it is.
   private landingWay(c: Car, half: number): number | null {
     const P = this.landing;
     if (!P.length) return null;
@@ -304,9 +327,11 @@ export class Traffic {
     // or the next: it carries on. Stopping there would stop it in the truck's way.)
     let best = Infinity, bi = -1;
     for (let i = 0; i < P.length; i += 2) { const d = Math.hypot(P[i] - c.x, P[i + 1] - c.z); if (d < best) { best = d; bi = i / 2; } }
-    // (Past the foot by 3 m at least: one coming up the street to it isn't ahead of the truck yet.)
-    if (best < GIVE_WAY_GAP + 1.5 && bi >= this.landingAt + 2 && P.length >= 4) {
-      const k = Math.min(bi, P.length / 2 - 2) * 2, wx = P[k + 2] - P[k], wz = P[k + 3] - P[k + 1];
+    // (Past the foot by 3 m at least: one coming up the street to it isn't ahead of the truck yet.
+    // Going its way: as the way runs there.)
+    if (best < GIVE_WAY_GAP + 1.5 && this.landingS[bi] >= this.landingAt + 3 && P.length >= 4) {
+      let k2 = bi; while (k2 + 1 < this.landingS.length && this.landingS[k2 + 1] === this.landingS[bi]) k2++;
+      const k = Math.min(k2, P.length / 2 - 2) * 2, wx = P[k + 2] - P[k], wz = P[k + 3] - P[k + 1];
       if (wx * Math.cos(c.h) - wz * Math.sin(c.h) > 0) return null;
     }
     // (Nowhere near it: no point in its next 35 m can come within GIVE_WAY_GAP + 1.5 of the way.)
@@ -317,9 +342,10 @@ export class Traffic {
       else if (c.next && b - c.path.length <= c.next.length) c.next.peek(b - c.path.length, this.gw1);
       else break;
       let near = false;
-      // (With room to spare: a car turning in to run alongside the truck's way meets it at a slant,
-      // and stopped 2 m short along its own way would still be beside it.)
-      for (let i = 0; i < P.length && !near; i += 2) near = Math.hypot(P[i] - this.gw1.x, P[i + 1] - this.gw1.z) < GIVE_WAY_GAP + 1.5;
+      // (Clear of its body by the car's half width and 1.5 m: a car turning in to run alongside its
+      // way meets it at a slant, and stopped 2 m short along its own way would still be beside it.)
+      const w = 1.25 + c.kind.width / 2 + 1.5;
+      for (let i = 0; i < P.length && !near; i += 2) near = Math.hypot(P[i] - this.gw1.x, P[i + 1] - this.gw1.z) < w;
       // (b is where c's middle would be on the truck's way: c is to stop with its front 2 m short
       // of that point, so its "line", as giveWay's, 1.2 m short: the caller stops it 0.8 m and
       // half a length further back.)
@@ -327,45 +353,412 @@ export class Traffic {
     }
     return null;
   }
-  // The stop line of the node car c comes to next (within 30 m, not yet crossed) if another car
-  // has the junction first where their ways cross in it (within 2.6 m: sampled every 1.5 m):
-  // one already in it, or one coming from another approach, not held at a light, within 15 m of
-  // its line or 2.5 s at its speed (a car coming fast is there sooner; 6 s for c going slowly or
-  // starting from a stop, which takes that long to get going and clear), that goes before c:
-  // going straight or right where c turns left, else the one due at its line first (then the
-  // lower id). A car past its line, in the junction, goes before one waiting at its line. Else
-  // null.
-  private junctionPriority(c: Car): number | null {
-    const p = c.path, n = this.nextNode(c, PULL_IN);
-    if (!n) return null;
-    // (When each is due at its line: from where it stops for it, its front 0.8 m short.)
-    const tc = Math.max(0, n.sLine - 0.8 - c.kind.len / 2 - c.s) / Math.max(c.v, 1);
+  // ---- junction bookings -----------------------------------------------------------------------
+  // Each car books its way through a junction before it crosses the line: its path from the line
+  // to past the far mouth, as a footprint (centre-line points every metre and its width). Where
+  // that footprint comes within touching distance of an earlier booking's, the two share a
+  // conflict zone, and the later booking waits short of the zone until the earlier car has left
+  // it. The order of bookings is the order of right of way, so no two cars wait on each other.
+  // Who books when is the rules of the road: a car with right of way (straight or right on a
+  // green, on round a roundabout) books on its approach; one that must give way (a left turn on
+  // a green, at a stop sign once stopped, joining a roundabout, at an unmarked junction) books at
+  // its line once the bookings ahead of it leave it a gap, and waits there until then.
+  // The node ahead of car c it is to book or has booked (not yet cleared): on its path, or on the
+  // next one, planned already (`off`: where that path starts on this one's s); rel is c's middle
+  // from its line.
+  private nodeAhead(c: Car): { n: Path["nodes"][number]; P: Path; off: number; rel: number } | null {
+    const half = c.kind.len / 2;
+    for (const n of c.path.nodes) if (c.s <= n.sOut + half + 3) return n.sLine - c.s <= 45 ? { n, P: c.path, off: 0, rel: c.s - n.sLine } : null;
+    if (c.next) for (const n of c.next.nodes) { const off = c.path.length; return off + n.sLine - c.s <= 45 ? { n, P: c.next, off, rel: c.s - off - n.sLine } : null; }
+    return null;
+  }
+  // Where an owner of a booking is now, from its line (Infinity: gone on past it, onto a later path).
+  private relOf(o: Car): number {
+    const b = o.bk!;
+    for (const n of o.path.nodes) if (n.node === b.node && n.from === b.from) return o.s - n.sLine;
+    if (o.next) for (const n of o.next.nodes) if (n.node === b.node && n.from === b.from) return o.s - o.path.length - n.sLine;
+    return Infinity;
+  }
+  // A footprint: P's centre line from 1 m short of the line to 2 m past the far mouth, every
+  // metre (x, z pairs; the i-th is i - 1 m from the line).
+  // (Moved over out of its lane (dodge, negative to the left), from where it is: easing back over
+  // the first 12 m.)
+  private footprint(P: Path, n: Path["nodes"][number], dodge = 0): number[] {
+    const pts: number[] = [];
+    for (let s = n.sLine - 1, i = 0; s <= Math.min(n.sOut + 2, P.length); s += 1, i++) {
+      P.peek(s, this.gw0);
+      const d = dodge * Math.max(0, 1 - i / 12);
+      pts.push(this.gw0.x + Math.sin(this.gw0.h) * d, this.gw0.z + Math.cos(this.gw0.h) * d);
+    }
+    return pts;
+  }
+  // The conflict zone of two footprints (half lengths and widths), or null: [where A's middle is
+  // when its front comes to the zone, where its back leaves it, the same for B], from each line.
+  // (A body sweep, the truck's (truckSweep), has `at`: where its middle is, from the line, as it
+  // covers each point. Its half width then is its body's; its length is in the points.)
+  private zone(A: number[], ha: number, wa: number, B: number[], hb: number, wb: number, atA?: number[], atB?: number[]): number[] | null {
+    // (With room to spare: a car stopped at the edge of one isn't in the other's way. And more for
+    // a long vehicle, whose back wheels cut inside its front's way round a turn; a sweep has that
+    // in it already, and wants only a little for the gaps between its points.)
+    if (atA) ha = 0;
+    if (atB) hb = 0;
+    const near = (wa + wb) / 2 + 0.8 + 0.08 * Math.max(ha, hb) * 2 + (atA || atB ? 0.3 : 0);
+    let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (let i = 0; i < A.length; i += 2) for (let j = 0; j < B.length; j += 2) {
+      const dx = A[i] - B[j], dz = A[i + 1] - B[j + 1];
+      if (dx > near || dx < -near || dz > near || dz < -near || dx * dx + dz * dz > near * near) continue;
+      const ia = atA ? atA[i / 2] : i / 2 - 1, jb = atB ? atB[j / 2] : j / 2 - 1;
+      if (ia < a0) a0 = ia; if (ia > a1) a1 = ia; if (jb < b0) b0 = jb; if (jb > b1) b1 = jb;
+    }
+    return a0 === Infinity ? null : [a0 - ha, a1 + ha, b0 - hb, b1 + hb];
+  }
+  // Seconds for a car going v to cover d metres, pulling away at 2 m/s^2 up to 7 m/s (or its speed).
+  private static tTravel(d: number, v: number): number {
+    if (d <= 0) return 0;
+    const A = 2, vc = Math.max(v, 7), t1 = (vc - v) / A, d1 = (v + vc) / 2 * t1;
+    return d <= d1 ? (-v + Math.sqrt(v * v + 2 * A * d)) / A : t1 + (d - d1) / vc;
+  }
+  private bookSeq = 0;
+  // The truck as a road user in the bookings: it books each junction on its way as it comes within
+  // 60 m of it, its way through as a footprint like any car's (its length and width), and so comes
+  // in the order: cars booking after it wait for it, and it waits (street life's truckStop) short of
+  // a zone a car that booked before it is still crossing. Kept and saved here (truckBk), as the
+  // truck isn't one of the cars. Its id: -2.
+  private truckCar: Car | null = null;
+  private truckBk: Car["bk"] = null;
+  // (Its turn, by the same rules as any car's: with right of way, on a green (any way: the lights
+  // are held for it, and it doesn't go on the yellow as a car waiting to turn left does), or at an
+  // unmarked junction, as on the main road, it books on its approach; it gives way turning right
+  // on a red, at an all-way stop once stopped, and joining a roundabout, and books at its line
+  // when the bookings ahead leave it a gap. Short of that, it waits at the line: truckZoneStop.)
+  private truckBook(G: CityGraph, simTime: number, seed: number, prs: SignalPreempt[]) {
+    const T = this.truckPath;
+    this.truckLine = null;
+    if (!T) { this.truckCar = null; this.truckBk = null; return; }
+    const len = T.front - T.rear, mid = T.s + (T.front + T.rear) / 2;
+    const tc = this.truckCar ?? ({ kind: { id: "truck", len, width: 2 * TRAILER.hw }, id: -2, dodge: 0, next: null } as unknown as Car);
+    tc.path = T.path; tc.s = mid; tc.v = Math.abs(T.v); tc.kind.len = len;
+    T.path.peek(T.s, this.gw0); tc.x = this.gw0.x; tc.z = this.gw0.z; tc.h = this.gw0.h;
+    this.truckCar = tc;
+    this.byId.set(-2, tc);
+    tc.bk = this.truckBk;
+    // (Gone through its node: off it. Then the next node on its way within 60 m.)
+    if (tc.bk && this.relOf(tc) > tc.bk.end) tc.bk = null;
+    const n = tc.bk ? T.path.nodes.find((x) => x.node === tc.bk!.node && x.from === tc.bk!.from) : T.path.nodes.find((x) => x.sOut + len / 2 + 2 > mid && x.sLine - (T.s + T.front) < 60);
+    if (!n) { this.truckBk = tc.bk = null; return; }
+    const N = G.nodes[n.node], dLine = n.sLine - 0.6 - (T.s + T.front), short = dLine > -0.5, stopped = T.v < 0.3 && dLine < 2.5;
+    let sigOk = true, first = true;
+    if (N.control === "signal") {
+      const sg = T.path.signals.find((x) => x.node === n.node), state = sg ? signalState(N, sg.phase, simTime, seed, prs) : "red";
+      sigOk = state !== "red" || (n.move === "R" && stopped);
+      first = state !== "red";
+    } else if (N.control === "stop") { sigOk = stopped || !!tc.bk; first = false; }
+    else if (T.path.yields.some((y) => y.node === n.node)) first = false;
+    // (Behind a car in its lane holding at the line for its turn: the truck's comes after that
+    // one's, as in any queue. Booked before it, those crossing its way would wait for the truck
+    // as the truck waits behind the car, and the car for them. Nor, short of the line, does it keep
+    // a booking through a red.)
+    const held = this.heldAhead(T, n);
+    if (tc.bk && short && (!sigOk || held)) tc.bk = null;
+    if (!tc.bk && sigOk && !held) {
+      // (Its sweep from where it stands, kept while it waits there at its line for a gap.)
+      const S = this.tSweep;
+      if (S.node !== n.node || S.from !== n.from || Math.abs(S.s - T.s) > 0.05 || S.path !== T.path) { S.node = n.node; S.from = n.from; S.s = T.s; S.path = T.path; S.at = []; S.fp = this.truckSweep(T, n, S.at); }
+      const at = S.at, fp = S.fp;
+      if (first || !short) this.book(tc, n, fp, at);
+      else if (dLine < 2.5 && T.v < 4 && this.gapOk(tc, n, fp, mid - n.sLine, 2.5, at)) this.book(tc, n, fp, at);
+    } else if (tc.bk) { let l = this.booked.get(tc.bk.node); if (!l) this.booked.set(tc.bk.node, (l = [])); if (!l.includes(tc)) l.push(tc); }
+    // (Its turn not come, it waits at the line. At a red, the truck's own driving stops it.)
+    if (!tc.bk && short && !(N.control === "signal" && !sigOk)) this.truckLine = n.sLine - 0.6 - T.front;
+    this.truckBk = tc.bk ?? null;
+  }
+  private truckLine: number | null = null;
+  private tSweep = { node: -1, from: -1, s: 0, path: null as Path | null, fp: [] as number[], at: [] as number[] };   // (where the truck is to wait at its line: its rear axle's s)
+  // Whether a car holding at node n's line for its turn (unbooked) is ahead of the truck in its lane.
+  private heldAhead(T: NonNullable<Traffic["truckPath"]>, n: Path["nodes"][number]): boolean {
     for (const o of this.cars) {
-      if (o === c) continue;
-      // (Its way through the node: on its path, or on the next one, planned already, for a car
-      // whose path ends short of it: os is then its s on that next path.)
-      let m: Path["nodes"][number] | null = null, P = o.path, os = o.s;
-      for (const x of o.path.nodes) if (x.node === n.node) { m = x; break; }
-      if (!m && o.next) for (const x of o.next.nodes) if (x.node === n.node) { m = x; P = o.next; os = o.s - o.path.length; break; }
-      if (!m || m.from === n.from || os > m.sOut) continue;
-      const inside = os > m.sLine + 0.5;
-      // (One held at a light doesn't count; one moving off from it on green does. Nor one stopped
-      // in a queue behind another, nor one waiting for the truck to go by, nor one itself holding
-      // at its line for another, unless it holds for this one and has the lower id: then it goes
-      // first.)
-      if (!inside && (m.sLine - os > Math.max(15, o.v * (c.v < 5 ? 6 : 2.5)) || o.stopFor >= 0 || (o.v < 0.5 && o.blockedBy >= 0) || o.truckHold || (o.held && o.id > c.id))) continue;
-      if (!inside) {
-        // (c already in the junction, past its line, goes first over o waiting at its line, which
-        // holds for it. Not over one coming on: a left turn pulled in to wait still waits for that.)
-        if (c.s > n.sLine + 0.5 && o.v < 2) continue;
-        const cl = n.move === "L", ol = m.move === "L", to = Math.max(0, m.sLine - 0.8 - o.kind.len / 2 - os) / Math.max(o.v, 1);
-        // (c goes first: straight or right against a left turn, else due at its line first. But a
-        // slow car, or one pulling away from a stop, takes some 6 s to get going and clear: not in
-        // front of a faster one coming on that will be there sooner.)
-        const cFirst = cl !== ol ? !cl : tc < to || (tc === to && c.id < o.id);
-        if (cFirst && !(c.v < 5 && o.v > c.v + 2 && to < 6)) continue;
+      if (!o.held || o.bk) continue;
+      const J = this.nodeAhead(o);
+      if (!J || J.n.node !== n.node || J.n.from !== n.from) continue;
+      const s = n.sLine + J.rel;
+      if (s < T.s + T.front || s > n.sLine + 2) continue;
+      T.path.peek(s, this.gw0);
+      if (Math.hypot(this.gw0.x - o.x, this.gw0.z - o.z) < 1.8) return true;
+    }
+    return false;
+  }
+  // The truck's way through node n as its body sweeps it, from where it is now: every metre its
+  // rear axle goes, points every 1.5 m down the middle of each rigid part (cab and body; a
+  // tractor's trailer, dragged on its kingpin as journey.ts hitchStep drags it), from as its nose
+  // comes 3 m short of the line until it has left the far mouth; and in `at` for each, where its
+  // middle then is from the line. So its trailer cutting inside a turn and its nose swinging wide
+  // are in it: where its body really goes, not its rear wheels' way.
+  private truckSweep(T: NonNullable<Traffic["truckPath"]>, n: Path["nodes"][number], at: number[]): number[] {
+    const pts: number[] = [], mid0 = (T.front + T.rear) / 2, len = T.front - T.rear, fw = T.fw, K = KINGPIN_TO_AXLES, q = this.gw0;
+    let ax = 0, az = 0;
+    if (fw !== undefined) {
+      T.path.peek(T.s, q);
+      const th = q.h + (T.yaw ?? 0), kx = q.x + Math.cos(q.h) * fw, kz = q.z - Math.sin(q.h) * fw;
+      ax = kx - Math.cos(th) * K; az = kz + Math.sin(th) * K;
+    }
+    const cabRear = fw !== undefined ? -1.4 : T.rear, sEnd = Math.min(T.path.length, n.sOut + 2 + len / 2 - mid0);
+    for (let s = T.s; s <= sEnd; s += 1) {
+      T.path.peek(s, q);
+      const fx = Math.cos(q.h), fz = -Math.sin(q.h), rel = s + mid0 - n.sLine, rec = s + T.front >= n.sLine - 3;
+      let tx = 0, tz = 0, kx = 0, kz = 0;
+      if (fw !== undefined) {
+        kx = q.x + fx * fw; kz = q.z + fz * fw;
+        const d = Math.hypot(kx - ax, kz - az) || 1;
+        ax = kx - (kx - ax) / d * K; az = kz - (kz - az) / d * K;
+        tx = (kx - ax) / K; tz = (kz - az) / K;
       }
-      if (this.pathsNear(P, Math.max(os, m.sLine), Math.min(m.sOut + 3, P.length), p, n.sLine, Math.min(n.sOut + 3, p.length), 2.6) < 2.6) return n.sLine;
+      if (!rec) continue;
+      for (let b = cabRear; b < T.front + 0.74; b += 1.5) { const u = Math.min(b, T.front); pts.push(q.x + fx * u, q.z + fz * u); at.push(rel); }
+      if (fw !== undefined) for (let b = TRAILER.rear; b < TRAILER.front + 0.74; b += 1.5) { const u = Math.min(b, TRAILER.front); pts.push(kx + tx * u, kz + tz * u); at.push(rel); }
+    }
+    return pts;
+  }
+  private booked = new Map<number, Car[]>();   // (this step's bookings by node)
+  private bks: Car[] = [];   // (the booked cars, in booking order: kept, so a step makes no garbage)
+  private static bySeq = (a: Car, b: Car) => a.bk!.seq - b.bk!.seq;
+  // Book car c through node n (footprint fp): its conflict zones with every earlier booking there.
+  // (`at`: a body sweep's, as zone's.)
+  private book(c: Car, n: Path["nodes"][number], fp: number[], at?: number[]) {
+    const zones: number[] = [];
+    // (Not with one from the same approach, as they follow each other, as on any street; unless one
+    // turns from the next lane over, across the other's.)
+    const wide = n.move !== "S" && c.dodge < -1;
+    for (const o of this.booked.get(n.node) ?? []) {
+      if (o === c || !o.bk || (o.bk.from === n.from && !wide && !o.bk.wide) || this.relOf(o) > o.bk.end) continue;
+      const z = this.zone(fp, c.kind.len / 2, c.kind.width, o.bk.pts, o.kind.len / 2, o.kind.width, at, o.bk.at);
+      if (z) zones.push(o.id, o.bk.seq, z[0], z[1], z[2], z[3]);
+    }
+    c.bk = { node: n.node, from: n.from, seq: this.bookSeq++, pts: fp, at, zones, end: n.sOut - n.sLine + 2 + c.kind.len / 2, wide };
+    let list = this.booked.get(n.node);
+    if (!list) this.booked.set(n.node, (list = []));
+    const i = list.indexOf(c);
+    if (i >= 0) list.splice(i, 1);
+    list.push(c);
+  }
+  // Whether car c, at rel from its line going v, could book footprint fp through n now: every
+  // earlier booking there whose way it would cross has left the zone `gap` s before c gets to it.
+  private gapOk(c: Car, n: Path["nodes"][number], fp: number[], rel: number, gap: number, at?: number[]): boolean {
+    for (const o of this.booked.get(n.node) ?? []) {
+      if (o === c || !o.bk || (o.bk.from === n.from && !(n.move !== "S" && c.dodge < -1) && !o.bk.wide)) continue;
+      const ro = this.relOf(o);
+      if (ro > o.bk.end) continue;
+      const z = this.zone(fp, c.kind.len / 2, c.kind.width, o.bk.pts, o.kind.len / 2, o.kind.width, at, o.bk.at);
+      if (!z || ro > z[3]) continue;   // (clear of it already)
+      const tIn = Traffic.tTravel(z[0] - rel, c.v), tOut = Traffic.tTravel(z[3] - ro, o.v);
+      if (tIn < tOut + gap) return false;
+    }
+    return true;
+  }
+  // Booked car c (rel from its line, which is at `line` on its path): where to stop (as a stop
+  // line) short of any conflict zone an earlier booking is still in or yet to come to, or null.
+  private zoneStop(c: Car, rel: number, line: number): number | null {
+    let stop = Infinity;
+    c.waitFor = -1;
+    const Z = c.bk!.zones;
+    for (let k = 0; k < Z.length; k += 6) {
+      const o = this.byId.get(Z[k]);
+      if (!o || !o.bk || o.bk.seq !== Z[k + 1] || this.relOf(o) > Z[k + 5]) continue;
+      // (Unless that one is stuck behind this one, waiting on it to move: then this one goes on,
+      // out of its way, first. Nor, for the truck, one behind it already, or one holding for it.)
+      if (this.stuckBehind(o, c.id)) continue;
+      if (c.id === -2 && ((o.x - c.x) * Math.cos(c.h) - (o.z - c.z) * Math.sin(c.h) < 0 || o.truckHold)) continue;
+      if (rel < Z[k + 2] && Z[k + 2] - 1 < stop) { stop = Z[k + 2] - 1; c.waitFor = o.id; }
+    }
+    return stop === Infinity ? null : line + stop + 0.8 + c.kind.len / 2;
+  }
+  // Car c's way through the junction on its path, replanned straight on (and the plan after it),
+  // if there is one: whether it was.
+  private straightOn(c: Car, G: CityGraph): boolean {
+    const r = c.path.route, d = r.edges.length ? r.d : -1;
+    if (d < 0) return false;
+    const mv = G.movesFrom(d).find((x) => x.move === "S" && G.streets[x.to >> 1].inCity && (!c.cable || !!G.streets[x.to >> 1].tags.cable));
+    if (!mv) return false;
+    const path = new Path(G, { ...r, edges: [mv.to], after: Math.min(30, G.faceLen(mv.to) / 2) });
+    if (Math.abs(path.length - c.path.length) > 200) return false;
+    // (Its light judged anew for the new way through: a right on red it had begun is no straight on.)
+    // (From where it is: moved over as far from the new way's lane as it is now, which must be no
+    // further than the next lane over. Else it would jump across.)
+    const o = c.path.peek(c.s, this.gw0), ox = o.x, oz = o.z, q = path.peek(c.s, this.gw1);
+    const dodge = c.dodge + (ox - q.x) * Math.sin(q.h) + (oz - q.z) * Math.cos(q.h);
+    if (dodge < -3.05 || dodge > 0.05) return false;
+    c.path = path; c.next = this.planOn(G, path, c.cable, path.endA); c.bk = null; c.committed = -1; c.stopFor = -1;
+    c.dodge = c.dodgeTarget = Math.min(0, Math.max(-3, dodge)); c.dodgeV = 0;
+    c.path.eval(c.s, this.pose);
+    return true;
+  }
+  // Where the truck is to wait (its rear axle's s on its path) short of a junction zone a car that
+  // booked before it is still crossing, or null. (Its booking: truckBook.)
+  truckZoneStop(): number | null {
+    const tc = this.truckCar, T = this.truckPath;
+    if (!tc || !T) return null;
+    if (!tc.bk) return this.truckLine;
+    const n = T.path.nodes.find((x) => x.node === tc.bk!.node && x.from === tc.bk!.from);
+    if (!n) return null;
+    const stop = this.zoneStop(tc, this.relOf(tc), n.sLine);
+    // (zoneStop's line: where the truck's front stops 0.8 m short; its rear axle's s then.)
+    return stop === null ? null : stop - 0.8 - T.front;
+  }
+  // Whether there is a gap in the traffic at (x, z) for secs: no vehicle within 8 m of it, nor one
+  // coming towards it that would be there sooner.
+  gapAt(x: number, z: number, secs: number): boolean {
+    for (const c of this.cars) {
+      // (Not one holding for the truck already: it has the way.)
+      if (c.truckHold) continue;
+      const dx = x - c.x, dz = z - c.z;
+      if (dx > 70 || dx < -70 || dz > 70 || dz < -70) continue;
+      const d = Math.hypot(dx, dz);
+      if (d < 8) return false;
+      if (d > 70 || c.v < 1) continue;
+      if ((dx * Math.cos(c.h) - dz * Math.sin(c.h)) / d > 0.5 && d / c.v < secs) return false;
+    }
+    return true;
+  }
+  // Car `id`'s speed (0 for none).
+  speedOf(id: number | undefined): number { return id === undefined ? 0 : this.byId.get(id)?.v ?? 0; }
+  // Whether car `id` stands waiting, where its junction booking has it, for the truck to go through.
+  waitsForTruck(id: number | undefined): boolean {
+    const c = id === undefined ? undefined : this.byId.get(id);
+    return !!c && c.waitFor === -2 && c.v < 0.5;
+  }
+  // Whether car o is held up, through a short chain of cars each stopped behind the next, by car `id`.
+  private stuckBehind(o: Car, id: number): boolean {
+    for (let k = 0, x: Car | undefined = o; k < 4 && x && x.v < 1 && x.blockedBy >= 0; k++) {
+      if (x.blockedBy === id) return true;
+      x = this.byId.get(x.blockedBy);
+    }
+    return false;
+  }
+  // The junction ahead of car c: book it when its turn comes, and where to stop short of it (as a
+  // stop line, the caller stops the car's front 0.8 m short), or null to go on. sigOk: whether the
+  // light (if any) lets it go; first: whether it has right of way (books on its approach).
+  private junction(c: Car, G: CityGraph, simTime: number, seed: number, prs: SignalPreempt[]): number | null {
+    const J = this.nodeAhead(c), half = c.kind.len / 2;
+    c.waitFor = -1;
+    if (!J) { c.bk = null; return null; }
+    const { n, P, off, rel } = J, line = off + n.sLine;
+    if (c.bk && (c.bk.node !== n.node || c.bk.from !== n.from)) c.bk = null;   // (an old one, gone past)
+    // The rules: a light must be green (or it was too close to stop on the change: committed); a
+    // stop sign stopped at first; a roundabout entered with a gap.
+    const N = G.nodes[n.node], dLine = line - 0.8 - half - c.s;
+    let sigOk = true, first = false;
+    if (N.control === "signal") {
+      const k = P.signals.findIndex((x) => x.node === n.node), sg = P.signals[k];
+      const key = P === c.path ? k : c.path.signals.length;
+      const state = sg ? signalState(N, sg.phase, simTime, seed, prs) : "red";
+      sigOk = state === "green" || c.committed === key;
+      first = sigOk && n.move !== "L" && c.committed !== key;   // (on a green; right on red gives way)
+      // (A left turn waiting at its line through the green, with the oncoming stream that never
+      // left it a gap: on the yellow, as that stops, it goes, as drivers do.)
+      if (state === "yellow" && n.move === "L" && dLine < 2.5 && c.v < 1) sigOk = true;
+    } else if (N.control === "stop") sigOk = c.stopOk === n.node || c.bk != null;
+    else first = P.yields.length === 0 && G.streets[n.from >> 1].oneway && G.streets[n.to >> 1].oneway;   // (on round a roundabout)
+    // (A booking lapses while the car is still short of its line if the light turns against it,
+    // or it stands stuck in a queue: else those booked after it, crossing on the next green, wait
+    // for it all that time.)
+    // (Nor does it book while it stands queued behind another: its turn comes when it gets there.)
+    const queued = c.blockedBy >= 0 && c.v < 1;
+    // (Or the way out of the junction has filled up since it booked: it waits at its line, out of
+    // the junction, rather than stop in it in others' way.)
+    // (A light just past the junction, closer than the car's length beyond its far mouth, that isn't
+    // green: it would stop in the junction for it.)
+    let redBeyond = false;
+    for (const [Q, o] of [[c.path, 0], [c.next, c.path.length]] as [Path | null, number][]) if (Q) for (const sg of Q.signals) {
+      const at = o + sg.sLine - (off + n.sOut);
+      if (sg.node !== n.node && at > -2 && at < c.kind.len + 3 && signalState(G.nodes[sg.node], sg.phase, simTime, seed, prs) !== "green") redBeyond = true;
+    }
+    // (Kept from going a good while by that light on its own greens, theirs never coming together:
+    // it goes anyway, as drivers do, and waits at it with its tail in the junction.)
+    if (c.v > 0.5) c.beyondT = 0;
+    else if (redBeyond && sigOk) c.beyondT = (c.beyondT ?? 0) + SIM_DT;
+    if ((c.beyondT ?? 0) > 15) redBeyond = false;
+    const exitBlocked = redBeyond || this.boxBlocked(c) !== null;
+    // (Nor while it holds at its line for the truck to go by: its turn comes after the truck's.)
+    if (c.bk && rel + half < 0 && (!sigOk || (c.stillT > 2 && queued) || exitBlocked || c.truckHold)) c.bk = null;
+    // (Turning, but still moved over out of its lane to pass something: not from there, across the
+    // next lane; it waits at the line until it is back in it. Unless what it passes is parked at
+    // the corner: then it swings wide round it, as drivers do.)
+    // (Kept from its lane a while, it gives the turn up and goes straight on instead, where it can.)
+    // (No way straight on, and still kept out after 4 s: it turns from where it is after all, its
+    // booking starting from there, across the lane beside it.)
+    const wide = n.move !== "S" && c.dodge < -1 && !c.passStill;
+    if (wide && rel + half < 0 && !c.bk && c.stillT <= 4) {
+      if (c.stillT > 1.5 && P === c.path && this.straightOn(c, G)) return this.junction(c, G, simTime, seed, prs);
+      return line;
+    }
+    if (c.bk) return this.zoneStop(c, rel, line);
+    const tooClose = dLine < c.v * c.v / 9 - 0.5;
+    const fp = () => this.footprint(P, n, wide ? c.dodge : 0);
+    if (sigOk && !exitBlocked && !queued && first && dLine < Math.max(30, c.v * 4)) { this.book(c, n, fp()); return this.zoneStop(c, rel, line); }
+    if (sigOk && !exitBlocked && !queued && dLine < 2.5 && c.v < 4) { const f = fp(); if (this.gapOk(c, n, f, rel, c.gapT ?? 2)) { this.book(c, n, f); return this.zoneStop(c, rel, line); } }
+    // (Too close to stop and not booked, as on a light changing: in it goes, last in line.)
+    if (tooClose && sigOk) { this.book(c, n, fp()); return this.zoneStop(c, rel, line); }
+    return line;
+  }
+  // Where car c is to wait (an s, as giveWay's) short of where the truck reversing into a bay will
+  // swing (its sweep: still obstacles marked sweep), or null: the first point in its next 30 m (on
+  // along its next path too) that comes within the sweep, by the car's half width and 0.5 m, where
+  // the car is across the road (moved over to pass or not). One already in it drives on out.
+  private sweep: Obstacle[] = [];
+  // People crossing the road (crowd.ts crossers): where each is and where their crossing ends.
+  private crossers: number[] = [];
+  // Where car c is to wait (an s, as giveWay's) for someone crossing ahead of it, or null: short
+  // of the first point in its next 30 m (on along its next path too) on the stretch of crosswalk
+  // they have still to cross, or close by them. Once they are past its lane, it goes on behind
+  // them. A car already on the crosswalk goes on off it.
+  private crosserWay(c: Car, half: number): number | null {
+    const X = this.crossers;
+    if (!X.length) return null;
+    const w = c.kind.width / 2 + 0.7;
+    for (let b = c.s + half; b <= c.s + 30; b += 1.5) {
+      if (b <= c.path.length) c.path.peek(b, this.gw1);
+      else if (c.next && b - c.path.length <= c.next.length) c.next.peek(b - c.path.length, this.gw1);
+      else break;
+      const x = this.gw1.x + Math.sin(this.gw1.h) * c.dodge, z = this.gw1.z + Math.cos(this.gw1.h) * c.dodge;
+      for (let i = 0; i < X.length; i += 4) {
+        if (Math.abs(X[i] - x) > 30 || Math.abs(X[i + 1] - z) > 30) continue;
+        if (segDist(x, z, X[i], X[i + 1], X[i + 2], X[i + 3]) < w || Math.hypot(X[i] - x, X[i + 1] - z) < w + 0.8) return b === c.s + half ? null : b - 1.2;
+      }
+    }
+    return null;
+  }
+  // Whether no vehicle would come over the crossing from (x0, z0) to (x1, z1) within secs s: its
+  // way in its next 30 m comes within its half width and 1 m of the crossing, and it would get
+  // there (at its speed, no less than 3 m/s) in time; or it is on it now.
+  crossingClear(x0: number, z0: number, x1: number, z1: number, secs: number): boolean {
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2, R = Math.hypot(x1 - x0, z1 - z0) / 2 + 45;
+    for (const c of this.cars) {
+      if (Math.abs(c.x - mx) > R || Math.abs(c.z - mz) > R) continue;
+      const w = c.kind.width / 2 + 1, half = c.kind.len / 2;
+      const dc = segDist(c.x, c.z, x0, z0, x1, z1);
+      if (dc < w + half) return false;   // (on it, or its body over it)
+      // (Standing short of it, waiting at a red or for someone crossing: it won't come, and giving
+      // way to anyone out on the crossing, it waits for them if it does.)
+      if (c.v < 0.5) continue;
+      for (let b = c.s + half; b <= c.s + 30; b += 1.5) {
+        if (b <= c.path.length) c.path.peek(b, this.gw0);
+        else if (c.next && b - c.path.length <= c.next.length) c.next.peek(b - c.path.length, this.gw0);
+        else break;
+        if (segDist(this.gw0.x, this.gw0.z, x0, z0, x1, z1) < w) { if ((b - c.s - half) / Math.max(c.v, 3) < secs) return false; break; }
+      }
+    }
+    return true;
+  }
+  private truckTurn = 0;
+  private sweepWay(c: Car, half: number): number | null {
+    if (!this.sweep.length) return null;
+    const w = c.kind.width / 2 + 0.5;
+    for (let b = c.s + half; b <= c.s + 30; b += 1.5) {
+      if (b <= c.path.length) c.path.peek(b, this.gw1);
+      else if (c.next && b - c.path.length <= c.next.length) c.next.peek(b - c.path.length, this.gw1);
+      else break;
+      // (Where the car will be across the road there: moved over to pass, it is out of its lane.)
+      const x = this.gw1.x + Math.sin(this.gw1.h) * c.dodge, z = this.gw1.z + Math.cos(this.gw1.h) * c.dodge;
+      for (const o of this.sweep) if (Math.hypot(o.x - x, o.z - z) < o.r + w) return b === c.s + half ? null : b - 1.2;
     }
     return null;
   }
@@ -379,8 +772,7 @@ export class Traffic {
     for (let b = n.sLine + 3; b <= n.sOut + c.kind.len + 2; b += 2) {
       const pp = b <= p.length ? p.peek(b, this.gw1) : c.next ? c.next.peek(b - p.length, this.gw1) : null;
       if (!pp) break;
-      // (Not one that is itself holding, waiting its turn in the junction: junctionPriority settles
-      // that, and counting it here would have every car round a junction hold for the others.)
+      // (Not one that is itself waiting its turn at its line, in the junction's mouth.)
       for (const o of this.cars) if (o !== c && o.v < 1.5 && !(o.held && b < n.sOut) && Math.hypot(o.x - pp.x, o.z - pp.z) < 1.8) return n.sLine;
     }
     return null;
@@ -397,15 +789,6 @@ export class Traffic {
       return target;
     }
     return null;
-  }
-  // Whether the truck's way goes through node `node`, its tail not yet out of it, the truck within
-  // 120 m of it (or the truck about to come in at the gate there).
-  private truckDue(node: number): boolean {
-    const T = this.truckPath;
-    if (this.truckGate?.node === node) return true;
-    if (!T) return false;
-    for (const tn of T.path.nodes) if (tn.node === node && T.s + T.rear <= tn.sOut && tn.sLine - T.s < 120) return true;
-    return false;
   }
   // The plan on from the end of path p (`a` along its last street): through the next node by a
   // move picked now, half the street after it at most; null where there is no way on.
@@ -463,7 +846,7 @@ export class Traffic {
     // from where the car will be in 0.6 s too, as its speed follows the limit that far behind; and
     // from where it is, so a turn it is in still holds it to the end.)
     const sa = c.s + c.v * 0.6;
-    let limit = Math.min(c.kind.vmax, p.speedLimit(c.s, 2.5), p.speedLimit(sa, 2.5), c.next ? c.next.speedLimit(sa - p.length, 2.5) : Infinity);
+    let limit = Math.min(c.kind.vmax * (c.dV ?? 1), p.speedLimit(c.s, 2.5), p.speedLimit(sa, 2.5), c.next ? c.next.speedLimit(sa - p.length, 2.5) : Infinity);
     let hardStop = Infinity, signalBrake = 0;
     // Signals (the same rule as the truck: right on red after a pause). The next one ahead on this
     // path, or past its end the next node's: a path ends 30 m beyond its last node, so the next
@@ -473,14 +856,15 @@ export class Traffic {
     let sg: { node: number; phase: number; sLine: number; move: string } | null = null, key = 0;
     for (; key < p.signals.length; key++) if (c.s <= p.signals[key].sLine - 0.8 - half + 0.5) { sg = p.signals[key]; break; }
     if (!sg) {
-      const e = p.endEdge, N = G.nodes[G.dedgeTo(e)], ai = G.armIndexIn(e);
-      if (N.control === "signal") sg = { node: N.id, phase: N.phaseOf[ai], sLine: p.length + G.faceLen(e) - p.endA - N.arms[ai].mouth - STOP_BACK, move: "?" };
+      // (From the next path, planned already, where it has one: its own line; else reckoned from the
+      // street.)
+      const e = p.endEdge, N = G.nodes[G.dedgeTo(e)], ai = G.armIndexIn(e), ns = c.next?.signals[0];
+      if (ns && ns.node === N.id) sg = { node: ns.node, phase: ns.phase, sLine: p.length + ns.sLine, move: ns.move };
+      else if (N.control === "signal") sg = { node: N.id, phase: N.phaseOf[ai], sLine: p.length + G.faceLen(e) - p.endA - N.arms[ai].mouth - STOP_BACK, move: "?" };
     }
-    let greenLeft = -1;   // (the node whose light is green for this car's left turn, or -1)
     if (sg) {
       const target = sg.sLine - 0.8 - half, dist = target - c.s;
       const state = signalState(G.nodes[sg.node], sg.phase, simTime, plan.seed, prs);
-      if (state === "green" && sg.move === "L") greenLeft = sg.node;
       if (state === "green") { if (c.stopFor === key) c.stopFor = -1; }
       else if (c.committed !== key) {
         if (state === "red" && sg.move === "R" && !c.cable && c.stillT > 1.2 && dist < 1.2) c.committed = key;
@@ -493,28 +877,21 @@ export class Traffic {
         } else c.committed = key;   // too close to stop: go through
       }
     }
-    // Never into a junction it can't get out of: with a slow car queued just past it on the way
-    // out, it waits at the line rather than stop in the middle and block the crossing traffic; nor
-    // ahead of a car that has the junction first (junctionPriority).
-    // (A left turn on a green, held by oncoming traffic, pulls into the junction to wait, as drivers
-    // do: past its line, it turns as soon as the way is clear, the light changed or not.)
-    const bb = this.boxBlocked(c), jp = bb === null ? this.junctionPriority(c) : null;
-    // (Not with the truck due through the junction: it waits at its line, where giveWay holds it.)
-    // (Any other already past its line when it must give way waits there too, short of the other's
-    // way; but creeping away from a stop it stops where it is: creeping on to where a left turn
-    // waits could take it across the other's way.)
-    const pastLine = jp !== null && c.s > jp - 0.8 - half + 0.5;
-    const pullIn = jp !== null && (pastLine || (greenLeft >= 0 && greenLeft === this.nextNode(c)?.node && !this.truckDue(greenLeft)));
-    const box = bb ?? (jp === null ? null : pastLine && c.v < 2 && c.stopOk === this.nextNode(c, PULL_IN)?.node ? c.s + 0.8 + half : pullIn ? jp + PULL_IN - 0.5 : jp);
-    c.held = box !== null;
+    // The junction ahead: booked through it (or waiting at the line for its turn to book), and
+    // short of where an earlier booking is still crossing its way.
+    const box = this.junction(c, G, simTime, plan.seed, prs);
+    c.held = box !== null && !c.bk;
     if (box !== null) {
       const target = box - 0.8 - half, dist = target - c.s;
-      if (dist >= c.v * c.v / 9 - 0.5) { limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = Math.min(hardStop, target); }
+      if (dist >= c.v * c.v / 9 - 0.5) { limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = Math.min(hardStop, target); signalBrake = Math.max(signalBrake, c.v * c.v / (2 * Math.max(dist, 0.1))); }
+      // (Booked and in the junction, short of a car still crossing its way: it stops, hard if it
+      // must; rolling on would take it into the other.)
+      else if (c.bk && dist > -1) { limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = Math.min(hardStop, Math.max(target, c.s)); signalBrake = Math.max(signalBrake, Math.min(7, c.v * c.v / (2 * Math.max(dist, 0.1)))); }
     }
-    // The truck about to go through a node ahead whose way crosses this car's there (or landing
-    // off an exit ramp across it): wait at the line (further back where the truck turns into this
-    // street: its rear swings in), unless too close to stop.
-    const gw = this.giveWay(c, G) ?? this.landingWay(c, half);
+    // The truck coming in at the gate, landing off an exit ramp or pulling out of a bay across this
+    // car's way, or reversing into one, or someone crossing ahead: wait short of it, unless too
+    // close to stop. (At junctions the truck is in the bookings.)
+    const gw = this.giveWay(c) ?? this.landingWay(c, half) ?? this.sweepWay(c, half) ?? this.crosserWay(c, half);
     c.truckHold = gw !== null;
     if (gw !== null) {
       // (Creeping at the line, it can still stop there.)
@@ -523,8 +900,8 @@ export class Traffic {
       if (dist >= c.v * c.v / 9 - 0.5 || (c.v < 2 && dist > -1.5)) { limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = Math.min(hardStop, Math.max(target, c.s)); signalBrake = Math.max(signalBrake, c.v * c.v / (2 * Math.max(dist, 0.1))); }
     }
     // An all-way stop ahead (on this path, or past its end on the next): a full stop at the line,
-    // a second's pause, then on when nothing with the junction first is crossing (junctionPriority,
-    // above, keeps it there). Too close to stop: it rolls on through.
+    // a second's pause, then on when its turn to book the junction comes (junction, above, keeps it
+    // there). Too close to stop: it rolls on through.
     const sgn = this.stopSign(c, p, 0, half) ?? (c.next ? this.stopSign(c, c.next, p.length, half) : null);
     // (Braking as for a red light: at least what ends at the line, or the eased limit trails it.)
     if (sgn !== null) { limit = Math.min(limit, Math.sqrt(5 * Math.max(0, sgn - c.s))); hardStop = Math.min(hardStop, sgn); signalBrake = Math.max(signalBrake, c.v * c.v / (2 * Math.max(sgn - c.s, 0.1))); }
@@ -554,7 +931,7 @@ export class Traffic {
     // points at the kerb, and a truck parked in the kerb lane would seem to be dead ahead.)
     const turningNow = Number.isNaN(p.lastOffset), hr = turningNow ? c.h : p.lastLineH;
     const fx = Math.cos(hr), fz = -Math.sin(hr), lx = -fz, lz = fx;   // forward, right
-    let gap = Infinity, truckBehind = Infinity, otherLaneBlocked = false, stillAhead = Infinity, gapOwner = -1, gapPed = false, truckAhead = Infinity;
+    let gap = Infinity, truckBehind = Infinity, otherLaneBlocked = false, stillAhead = Infinity, gapOwner = -1, gapPed = false, truckAhead = Infinity, gapV = 0;
     const look = 10 + c.v * 2.4;   // far enough to stop comfortably from city speed
     // The lane we'd move into: the inner lane 3 m to the left, or back to the kerb lane. (`side`
     // below is measured to the right: (lx, lz) points right of the heading.)
@@ -563,14 +940,26 @@ export class Traffic {
     // (Where the path takes the car sideways over the next dAhead m, as a lane change for a turn
     // ahead does: the truck in the lane it is moving into is ahead of it too.)
     const dAhead = Math.max(8, c.v * 1.6), pe = turningNow ? null : p.peek(Math.min(c.s + dAhead, p.length), this.gw1);
-    const latAhead = pe ? (pe.x - c.x) * lx + (pe.z - c.z) * lz : 0;
+    // (Its path's lane, not where it has moved over to: kept over, it stays there.)
+    const latAhead = pe ? (pe.x - c.x) * lx + (pe.z - c.z) * lz + c.dodgeTarget : 0;
+    const sameDirT = Math.cos(truckHeading - c.h) > 0.7;
+    // (Caught inside where the truck will reverse already: none of that sweep holds it, ahead or
+    // not; it drives on out, and the truck waits for it.)
+    let inSweep = false;
+    // (Any of its body, as the truck reversing sees it: street life's reverseBlocked.)
+    const hx = fx * half, hz = fz * half;
+    for (const o of this.sweep) if (segDist(o.x, o.z, c.x - hx, c.z - hz, c.x + hx, c.z + hz) < o.r + c.kind.width / 2 + 0.2) { inSweep = true; break; }
     const scan = (o: Obstacle, isTruck: boolean, ped = false) => {
+      // (Not a car waiting short of a junction zone for this one to go by: by its booking, it is
+      // clear of this one's way.)
+      if (!isTruck && !ped && o.owner !== undefined && this.byId.get(o.owner)?.waitFor === c.id) return;
       const rx = o.x - c.x, rz = o.z - c.z;
       if (rx > reach || rx < -reach || rz > reach || rz < -reach) return;
       const along = rx * fx + rz * fz, side = rx * lx + rz * lz;
+      const standingO = !isTruck && !ped && (this.byId.get(o.owner ?? -1)?.v ?? 9) < 1;
       // (Where the truck reversing into a bay will be: ahead, kept clear of; level with or over
       // the car already, driven on out of before it comes.)
-      if (o.sweep && along <= half + o.r) return;
+      if (o.sweep && (inSweep || along <= half + o.r)) return;
       // Pulling out round a parked truck: judged from where the car will be by the time it gets
       // there (easing over at 0.6 m/s on average: it starts slowly), so it keeps rolling as it
       // eases out instead of stopping and sliding sideways, but doesn't reach the truck still
@@ -581,22 +970,41 @@ export class Traffic {
       // real half-width counts.)
       // (A parked truck is passed with a little room to spare.)
       const rLat = isTruck ? Math.min(o.r, 1.3) + (o.still ? 0.25 : 0) : o.r + 0.2;
+      // (The truck about to turn, a car beside it on the side it turns to (into the inner lane for
+      // a left, its rear across the kerb lane for a right), the truck's nose ahead of the car's
+      // middle: it treats it as in its lane and drops back behind it. Further ahead than that, it
+      // goes on, and the truck waits for it: street life's truckStop.)
+      if (isTruck && !o.still && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (A parked truck alongside, not yet clear of it sideways: held there while it eases out.)
       if (o.still && Math.abs(along) <= half && Math.abs(side) < rLat + c.kind.width * 0.5) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
-      const sideLane = isTruck && Math.abs(latAhead) > 0.5 ? side - latAhead * Math.min(1, Math.max(0, along) / dAhead) : sideEff;
+      // (Something standing beside it, a parked truck or a car, that its body would swing into as
+      // it turns on: a long vehicle's tail swings out round a turn. It waits rather than clip it.)
+      // (Not a car itself waiting on this one: one of the two goes first.)
+      if (!ped && !o.sweep && (o.still || (standingO && this.byId.get(o.owner ?? -1)?.blockedBy !== c.id)) && Math.abs(along) <= half + o.r + 1 && Math.abs(side) < c.kind.width / 2 + o.r + 3 && this.swingsInto(c, o, half)) { gap = Math.min(gap, 0.5); if (isTruck) truckAhead = Math.min(truckAhead, 0.5); else gapOwner = o.owner ?? -1; }
+      // (Moving over into another lane: what's in it ahead counts where the car is going, a truck,
+      // or a car standing there.)
+      const standing = standingO;
+      const sideLane = (isTruck || standing) && Math.abs(latAhead) > 0.5 ? side - latAhead * Math.min(1, Math.max(0, along) / dAhead) : sideEff;
       // (Turning, judged along the car's own way round, not its heading: a car stopped further
       // round the curve sits off to the side of the heading, but on the way.)
       let onWay = false;
       if (turningNow && !ped && along > half && along < look + o.r) { const q = p.peek(Math.min(c.s + along, p.length), this.gw1); onWay = Math.hypot(o.x - q.x, o.z - q.z) < rLat + c.kind.width * 0.5; }
-      // (A car alongside, level or ahead, in the lane this one's path is moving it into: it waits,
-      // so the other goes on by, and then moves over behind it.)
-      if (!isTruck && !ped && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
-      if (along > half && along < look + o.r && (onWay || Math.abs(sideEff) < rLat + c.kind.width * 0.5 || Math.abs(sideLane) < rLat + c.kind.width * 0.5) && o.owner !== ignoreId) {
+      // (A car alongside, or the truck, level or ahead, in the lane this one's path is moving it
+      // into: it waits, so the other goes on by, and then moves over behind it.)
+      if (!ped && !o.sweep && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
+      // (Turning, straight ahead of its heading is off its way but for just in front of it.)
+      const inLine = (Math.abs(sideEff) < rLat + c.kind.width * 0.5 || Math.abs(sideLane) < rLat + c.kind.width * 0.5) && (!turningNow || ped || along < half + o.r + 1.5);
+      if (along > half && along < look + o.r && (onWay || inLine) && o.owner !== ignoreId) {
         const g = along - half - o.r;
-        if (g < gap) { gap = g; gapOwner = o.owner ?? -1; gapPed = ped; }
+        if (g < gap) { gap = g; gapOwner = o.owner ?? -1; gapPed = ped; gapV = ped || o.still ? 0 : isTruck ? Math.abs(this.truckPath?.v ?? 0) : (this.byId.get(o.owner ?? -1)?.v ?? 0); }
         if (isTruck) truckAhead = Math.min(truckAhead, g);
       }
-      if (Math.abs(along) < half + 8 && Math.abs(side - otherLane) < 1.5 + o.r * 0.5) otherLaneBlocked = true;
+      // (Or coming up behind in it, faster: in the mirror, 3 s off at most. Or coming the other way
+      // in it, as in the oncoming lane: 3 s off at their speed and this one's.)
+      const oc = ped || o.still ? undefined : isTruck ? null : this.byId.get(o.owner ?? -1);
+      const ov = oc === undefined ? 0 : oc === null ? Math.abs(this.truckPath?.v ?? 0) : oc.v;
+      const oncoming = oc === null ? Math.cos(truckHeading - c.h) < -0.5 : !!oc && Math.cos(oc.h - c.h) < -0.5;
+      if (along < half + 8 + (oncoming ? (ov + c.v) * 3 : 0) && along > -(half + 8 + (oncoming ? 0 : Math.max(0, ov - c.v) * 3)) && Math.abs(side - otherLane) < 1.5 + o.r * 0.5) otherLaneBlocked = true;
       // (The truck behind: the gap from its front to this car's back.)
       if (isTruck && along < -half && along > -45 && Math.abs(side) < 2) truckBehind = Math.min(truckBehind, -along - half - o.r);
       // A truck parked in this lane (double-parked at a stop): seen well before reaching it.
@@ -610,17 +1018,20 @@ export class Traffic {
     if (c.pedT < 5) for (const o of peds) scan(o, false, true);
     // The truck behind, heading our way: move over if we can.
     const sameDir = Math.cos(truckHeading - c.h) > 0.7;
-    const turning = Number.isNaN(p.lastOffset), laneChanging = !turning && Math.abs(p.lastOffset - LANE_KERB) > 0.1;
+    // (Through a junction straight on, the path has no lane offset either, but the car keeps to its
+    // lane: only a turn takes it back to the path.)
+    const inNode = p.nodes.find((x) => c.s >= x.sLine && c.s <= x.sOut);
+    const turning = Number.isNaN(p.lastOffset) && (!inNode || inNode.move !== "S"), laneChanging = !Number.isNaN(p.lastOffset) && Math.abs(p.lastOffset - LANE_KERB) > 0.1;
     let rightSoon = false;
     for (const t of p.turns) if (t.dir === 1 && t.s - c.s < 30 && t.s > c.s) rightSoon = true;
     // Which way the path's lane offset last moved: up means easing from the inner lane back to
     // the kerb lane (after a turn), which is the wrong way with a truck parked ahead.
-    const off = turning ? LANE_INNER : p.lastOffset;
+    const off = turning ? LANE_INNER : Number.isNaN(p.lastOffset) ? (c.lastO ?? LANE_KERB) : p.lastOffset;
     if (Math.abs(off - (c.lastO ?? off)) > 1e-4) c.mergeUp = off > (c.lastO ?? off);
     c.lastO = off;
     const merging = laneChanging && !!c.mergeUp;
     // The truck in this lane close ahead (moving slowly or stopped): pass it now rather than queue.
-    const truckClose = truckAhead < 14;
+    const truckClose = truckAhead < 14 && sameDirT;   // (not one coming the other way)
     if (!c.cable && merging && (stillAhead < 40 || truckClose)) {
       // Coming out of a turn in the inner lane with a parked truck
       // ahead in the kerb lane: stay in the inner lane rather than merge in behind it, then pass.
@@ -636,22 +1047,29 @@ export class Traffic {
       // lane, until there is a gap.)
       if ((laneChanging || turning || (rightSoon && !passTruck)) && c.dodge < -1.5 && otherLaneBlocked && !turning) c.dodgeTarget = c.dodge;
       else if (laneChanging || turning || (rightSoon && !passTruck)) c.dodgeTarget = 0;
-      else if ((sameDir && truckBehind < 40) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } }
+      else if ((sameDir && truckBehind < 40 && this.truckTurn !== 1) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } }
       else if ((c.holdT -= dt) <= 0 && (c.dodge > -1.5 || !otherLaneBlocked)) c.dodgeTarget = 0;
     }
     if ((globalThis as any).TRAFFIC_DEBUG && gap < 4 && gapOwner < 0 && !gapPed && c.stillT > 4 && Math.floor(c.stillT * 10) % 20 === 0) (globalThis as any).TRAFFIC_DEBUG({ id: c.id, stillT: c.stillT, stillAhead, rightSoon, laneChanging, turning, merging, otherLaneBlocked, dodge: c.dodge, dodgeTarget: c.dodgeTarget, cable: c.cable, signal: hardStop < Infinity, gap, cx: c.x, cz: c.z, ch: c.h, v: c.v, s: c.s, plen: p.length });
-    // Something ahead: the speed from which a comfortable stop still ends 2 m short of it. Only an
-    // overlap stops a car dead.
-    if (gap < Infinity) { limit = Math.min(limit, Math.sqrt(2 * BRAKE_COMFY * Math.max(0, gap - 2))); if (gap < -1) hardStop = Math.min(hardStop, c.s); }   // only a real overlap stops a car dead
-    // Speed follows the limit through an eased acceleration (no instant changes in braking), up
-    // to 2.2 m/s^2 speeding up and 5 m/s^2 braking.
+    // Speed, as a driver keeps it (the Intelligent Driver Model): towards the limit (the road's, a
+    // turn's, a stop ahead's), easing off as it nears it, and behind whatever is ahead keeping its
+    // own time gap and standing gap, closing slower on one going slower. Each driver has their own
+    // (spawn). Only an overlap stops a car dead.
     {
-      const want = THREE.MathUtils.clamp((limit - c.v) / 0.6, -5, 2.2);
-      c.acc += THREE.MathUtils.clamp(want - c.acc, -9 * dt, 9 * dt);
-      if (c.acc < 0 && c.v + c.acc * dt < limit && limit < c.v) c.acc = Math.max(c.acc, (limit - c.v) / dt);   // don't brake below the limit
+      const A = c.dA ?? 1.8, B = c.dB ?? 2.4, v0 = Math.max(0.1, limit);
+      let want = A * (1 - (c.v / v0) ** 4);
+      if (gap < Infinity) {
+        if (gap < -1) hardStop = Math.min(hardStop, c.s);
+        const sStar = (c.dS0 ?? 2) + Math.max(0, c.v * (c.dT ?? 1.4) + c.v * (c.v - gapV) / (2 * Math.sqrt(A * B)));
+        want -= A * (sStar / Math.max(gap, 0.2)) ** 2;
+      }
+      want = THREE.MathUtils.clamp(want, -8, A);
+      // (No instant changes in braking: the pedal moves at up to 9 m/s^3; stamped on, faster, when
+      // something cuts in close ahead.)
+      const stamp = want < c.acc - 3 && gap < c.v * 1.2 + 3 ? 30 : 9;
+      c.acc += THREE.MathUtils.clamp(want - c.acc, -stamp * dt, 9 * dt);
       if (gap < 0.4 && c.v > 0) c.acc = Math.min(c.acc, -8);   // cut in on: a hard stop, but not a dead one
-      if (c.acc > 0 && c.v + c.acc * dt > limit) c.acc = Math.max(0, (limit - c.v) / dt);   // nor speed up past it
-      // Stopping for a light: at least the braking that ends at the line (the eased limit above
+      // Stopping for a light: at least the braking that ends at the line (the eased pedal above
       // trails the stop and would reach it still rolling).
       if (signalBrake > 1.5) c.acc = Math.min(c.acc, -Math.min(signalBrake, 7));
       c.v = Math.max(0, c.v + c.acc * dt);
@@ -664,6 +1082,7 @@ export class Traffic {
     c.slowT = c.v < 0.5 ? c.slowT + dt : 0;
     c.blockedBy = gap < 3 ? gapOwner : -1;
     c.pedT = gap < 3 && gapPed ? c.pedT + dt : c.v > 2 ? 0 : c.pedT;
+    c.passStill = stillAhead < 35;
     // Ease across: the sideways rate builds and fades gently and is tied to forward speed, so a
     // lane change takes 12-15 m of road at speed, and a stopped car eases out more slowly.
     {
@@ -673,10 +1092,6 @@ export class Traffic {
       c.dodge += c.dodgeV * dt;
       if (c.dodge <= -3 || c.dodge >= 0) { c.dodge = THREE.MathUtils.clamp(c.dodge, -3, 0); c.dodgeV = 0; }   // in a lane: settled
     }
-    // The truck is about to run into a vehicle that couldn't move over: it slips away.
-    // (truckBehind counts only a truck overlapping it sideways: moved over or not, it would be hit.
-    // It is measured to the truck's circles, whose front one sits short of its nose: 1.6 m.)
-    if (truckBehind < 1.6) { this.cars.splice(index, 1); return; }
     // Next intersection: plan on from the end of this path.
     if (c.s >= p.length - 0.5) {
       // (From where the car is, by the move already picked for the next plan; then the one after.)
@@ -842,6 +1257,11 @@ export function truckObstacles(model: TruckModel, x0: number, z0: number, h: num
 
 // The street nearest (x, z) by its centre line (with tracks, for a cable car), round the point's
 // tile, or -1.
+// The distance from (x, z) to the segment (x0, z0)-(x1, z1).
+function segDist(x: number, z: number, x0: number, z0: number, x1: number, z1: number): number {
+  const dx = x1 - x0, dz = z1 - z0, l2 = dx * dx + dz * dz, t = l2 > 0 ? Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / l2)) : 0;
+  return Math.hypot(x - x0 - dx * t, z - z0 - dz * t);
+}
 function nearestStreet(G: CityGraph, x: number, z: number, cable: boolean): number {
   let best = -1, bd = Infinity;
   const gx = Math.floor(x / BLOCK), gz = Math.floor(z / BLOCK);

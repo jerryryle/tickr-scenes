@@ -63,7 +63,12 @@ import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from 
 import { bedRearX, handTrips, maxHandUnits, planChores, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
-export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void }
+// Street life is stepped and saved with the journey (keyframes), so the truck may answer to it and a
+// scrub still replays the same: truckStop, where on its path the truck (its rear axle) is to stop
+// short of someone or something in its way (a crosser, a car ahead, a car with the junction before
+// it), or null; reverseBlocked, whether someone is in the way of its next metres back into a bay.
+// Without street life (tests of the bare journey) the way is always clear.
+export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; reverseBlocked?(j: Journey): boolean }
 type StopKind = "pickup" | "drop" | "swap" | "depart";
 interface Site { bx: number; bz: number; fac: FacilityId; name: string }
 export interface Stop { kind: StopKind; site: Site | null; job: number; cargo: string; units: number; truck?: TruckModel; slot?: number }   // slot: where its loads go in the bed (set when the stop begins)
@@ -120,7 +125,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[];   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
+  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number;   // hold: where street life last had it stop, for how much longer   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -597,7 +602,7 @@ export class Journey {
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
     if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
     this.path = new Path(this.plan.graph, st.route);
-    st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0;
+    st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0; st.holdT = 0;
     st.stopS = this.path.length;
     if (stop.kind === "swap") {
       const spare = truckExtents(stop.truck!);
@@ -841,7 +846,35 @@ export class Journey {
 
   // ---- simulation -----------------------------------------------------------------------------
   // One fixed step of the simulation, then street life.
-  step() { this.stepJourney(); this.life?.step(this); this.prefetch(); }
+  step() {
+    const x0 = this.pose.x, z0 = this.pose.z, h0 = this.pose.h, city = this.st.city;
+    this.stepJourney(); this.hitchStep(x0, z0, h0, city); this.life?.step(this); this.prefetch();
+  }
+  // A tractor's trailer, as it swings behind on a turn (the same tractrix truck.ts draws: its
+  // axles dragged along the line to the kingpin), stepped with the journey so that street life
+  // and the tests know where it is: its yaw off the tractor's heading. Reversing into a bay, the
+  // bay path's (blended in over the first 4 m back from however it was, as main.ts draws it); anew
+  // (straight) on a jump, as into a new city.
+  private hitchStep(x0: number, z0: number, h0: number, city: number) {
+    const st = this.st;
+    if (st.truck !== "tractor") { st.hitchYaw = 0; st.hitchFrom = undefined; return; }
+    if (st.mode === "reverse" && this.path) {
+      if (st.hitchFrom === undefined) st.hitchFrom = st.hitchYaw ?? 0;
+      const ty = this.reversePose(st.s, this.revB, true);
+      st.hitchYaw = st.hitchFrom + (ty - st.hitchFrom) * THREE.MathUtils.smoothstep(this.path.length - st.s, 0, 4);
+      return;
+    }
+    st.hitchFrom = undefined;
+    if (st.city !== city || Math.hypot(this.pose.x - x0, this.pose.z - z0) > 20) { st.hitchYaw = 0; return; }
+    const th0 = h0 + (st.hitchYaw ?? 0);
+    const kx0 = x0 + Math.cos(h0) * FIFTH_WHEEL, kz0 = z0 - Math.sin(h0) * FIFTH_WHEEL;
+    const ax = kx0 - Math.cos(th0) * KINGPIN_TO_AXLES, az = kz0 + Math.sin(th0) * KINGPIN_TO_AXLES;
+    const kx = this.pose.x + Math.cos(this.pose.h) * FIFTH_WHEEL, kz = this.pose.z - Math.sin(this.pose.h) * FIFTH_WHEEL;
+    const th = Math.atan2(-(kz - az), kx - ax);
+    st.hitchYaw = THREE.MathUtils.clamp(Math.atan2(Math.sin(th - this.pose.h), Math.cos(th - this.pose.h)), -1.4, 1.4);
+  }
+  // The trailer's yaw off the tractor's heading as the journey steps it (hitchStep); 0 for others.
+  get hitchYaw(): number { return this.st.hitchYaw ?? 0; }
 
   // On the way to a stop, look up its block's front doors and pavement (cached by the city), so
   // the work isn't all on the step the driver gets out. They are pure functions of the city, so
@@ -953,6 +986,18 @@ export class Journey {
         break;
       }
     }
+    // Someone or something in its way (street life: truckStop): it stops short of them, as a driver
+    // does. Stopped or crawling, held a second after the way is clear, so it doesn't creep on and
+    // off; moving, it goes on as soon as it is.
+    if (st.mode === "drive") {
+      let ys = this.life?.truckStop?.(this) ?? null;
+      if (ys !== null) { st.holdS = ys; st.holdT = 1; }
+      else if ((st.holdT ?? 0) > 0 && st.v < 1) { st.holdT! -= dt; ys = st.holdS!; }
+      else st.holdT = 0;
+      // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
+      if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));
+      if (ys !== null && (ys - st.s >= st.v * st.v / (2 * FIRM_BRAKE) - 0.5 || st.v < 3)) hardStop = Math.min(hardStop, Math.max(ys, st.s));
+    }
     // The stop at the end of the path.
     if (st.mode === "drive" && st.stopS < THROUGH) {
       const dist = st.stopS - st.s;
@@ -1012,8 +1057,10 @@ export class Journey {
   private reverse(dt: number) {
     const st = this.st, p = this.path!;
     const dist = st.s - st.backS;
-    // (A tractor swinging round ahead of its trailer goes faster than the trailer: slower then.)
-    const limit = Math.min(2.2, Math.sqrt(2 * 0.8 * Math.max(0, dist))) * Math.cos(this.reversePose(st.s, this.revB, true));
+    // (A tractor swinging round ahead of its trailer goes faster than the trailer: slower then. And
+    // someone in the way of its next metres back: it stops and waits for them to go by.)
+    const blocked = this.life?.reverseBlocked?.(this) ?? false;
+    const limit = blocked ? 0 : Math.min(2.2, Math.sqrt(2 * 0.8 * Math.max(0, dist))) * Math.cos(this.reversePose(st.s, this.revB, true));
     const speed = -st.v;
     const next = speed < limit ? Math.min(limit, speed + 0.9 * dt) : Math.max(limit, speed - 3 * dt);
     let ds = next * dt;
