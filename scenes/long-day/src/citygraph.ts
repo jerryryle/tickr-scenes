@@ -272,6 +272,8 @@ export class CityGraph {
   node(kx: number, kz: number): CNode | null { const i = this.nodeKey.get(`${kx},${kz}`); return i === undefined ? null : this.nodes[i]; }
   block(kx: number, kz: number): CBlock | null { const i = this.blockKey.get(`${kx},${kz}`); return i === undefined ? null : this.blocks[i]; }
   tile(cx: number, cz: number) { return this.tiles.get(tileKey(cx, cz)) ?? EMPTY_TILE; }
+  // The blocks whose bounds overlap tile (cx, cz) (a big block's, or a river's, are in several).
+  blocksOver(cx: number, cz: number): readonly number[] { return this.blockGrid.get(tileKey(cx, cz)) ?? []; }
   // The block whose edge encloses (x, z), if any.
   blockAt(x: number, z: number): CBlock | null {
     for (const id of this.blockGrid.get(tileKey(Math.floor(x / TILE), Math.floor(z / TILE))) ?? []) if (inPoly(this.blocks[id].poly, x, z)) return this.blocks[id];

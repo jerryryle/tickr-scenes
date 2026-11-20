@@ -311,8 +311,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       cx = q.x; cz = q.z;
     } else if (DEBUG_VIEW === "aerial") {
       // High over the downtown nearest the middle of town, circling slowly, looking down at the layout.
-      // (Over the river if the city has one, else the residential block nearest the middle.)
-      const G = plan.graph, pickB = G.blocks.find((b) => b.water) ?? G.blocks.filter((b) => plan.district(b.kx, b.kz) === "residential").sort((p, q) => Math.hypot(p.cx, p.cz) - Math.hypot(q.cx, q.cz))[0];
+      // (Over the river if the city has one, else a roundabout's park, else the residential block
+      // nearest the middle.)
+      const G = plan.graph, ring = G.streets.find((st) => st.ring), pickB = G.blocks.find((b) => b.water) ?? (ring ? [G.faceBlock[ring.id * 2], G.faceBlock[ring.id * 2 + 1]].map((b) => G.blocks[b]).find((b) => b?.park) : undefined) ?? G.blocks.filter((b) => plan.district(b.kx, b.kz) === "residential").sort((p, q) => Math.hypot(p.cx, p.cz) - Math.hypot(q.cx, q.cz))[0];
       if (pickB) { cx = pickB.cx; cz = pickB.cz; }
       const a = tourT * 0.05;
       cam.position.set(cx + Math.cos(a) * 70, 95, cz + Math.sin(a) * 70); cam.lookAt(cx, 0, cz);

@@ -25,6 +25,8 @@ import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
 import type { Climate } from "./climate.ts";
 import { PlateSet } from "./signs.ts";
 import { carKindAt, carPaintAt, parkedCar } from "./cars.ts";
+import { boatAt, boatExtent, BOAT_PAINTS, boatSize } from "./boats.ts";
+import type { BoatKind } from "./boats.ts";
 import type { CarKind } from "./cars.ts";
 import { buildGarage, GARAGE_DOOR, GARAGE_DRIVE } from "./garage.ts";
 import { buildInterchange, interchangeClear, interchangeDrive, interchangeFace, interchangeOpen } from "./interchange.ts";
@@ -59,6 +61,7 @@ const CORE_CELL = 14; // blocks between downtown cores
 export let CITY_LO = -12, CITY_HI = 11;
 export interface Gate { ix: number; iz: number; dir: number }   // the perimeter node, and the way out of town
 export const GATES: Gate[] = [];
+const ROUND_NAMES = ["Market Roundabout", "Town Roundabout", "Elm Roundabout", "Mill Roundabout"];   // (a roundabout's, warped or organic)
 // The city's size follows how long the truck spends in it (a short stay can't cross a big town):
 // 24 blocks square for 20 minutes or more, 18 from 10, 12 below that.
 export function setCityLimits(cityMinutes: number) {
@@ -134,12 +137,22 @@ export class CityPlan {
       oneway: (ix: number, iz: number, ew: boolean) => this.oneWayDir(ix, iz, ew, river) };
     // (An organic town that could not put a junction at every gate is laid out warped instead:
     // gates are found by their index.)
-    if (this.layout === "organic") { const og = organicGraph(opts, this.seed); if (og.gates.length === GATES.length) return this.g = og; this.organicFailed = true; }
+    if (this.layout === "organic") {
+      // (A river through town in the same styles and odds as a warped one's, and roundabouts as
+      // often as a warped town has circuses.)
+      const h = (salt: number) => hash2(this.seed, 0x1a7, 0, salt), f = (k: number) => hash2(this.seed, 0xf10, 0, k);
+      const river = DEBUG_LAYOUT === "organicRiver" || (DEBUG_LAYOUT !== "organicRound" && this.riverStyle && h(3) < 0.5);
+      const nr = DEBUG_LAYOUT === "organicRound" ? 2 : f(11) < 0.6 ? (f(12) < 0.4 ? 2 : 1) : 0, names = ROUND_NAMES;
+      const r0 = Math.floor(f(13) * names.length), rounds = Array.from({ length: nr }, (_, i) => names[(r0 + i) % names.length]);
+      const og = organicGraph(opts, this.seed, { river, rounds });
+      if (og.gates.length === GATES.length) return this.g = og;
+      this.organicFailed = true;
+    }
     const cuts = this.slipCuts();
     if (this.layout === "grid") return this.g = gridGraph(opts, cuts.length ? { seed: this.seed, jitter: 0, drop: 0, fixed: () => true, keep: () => true, cuts } : null);
     // A river across town, in some styles: a row of blocks clear of the freeway's line, elevated
     // lines and gate rows.
-    if (this.style.id === "port" || this.style.id === "brick" || this.style.id === "coastal" || DEBUG_LAYOUT === "river") {
+    if (this.riverStyle || DEBUG_LAYOUT === "river") {
       const rows = [];
       for (let iz = CITY_LO + 2; iz <= CITY_HI - 2; iz++) if (![iz, iz + 1].some((r) => opts.elevatedRow(r) || GATES.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === r) || (this.freeway && (this.freeway.dir === 0 || this.freeway.dir === 2) && Math.abs(this.freeway.iz - r) <= 1))) rows.push(iz);
       if (rows.length && (DEBUG_LAYOUT === "river" || hash2(this.seed, 0x1a7, 0, 3) < 0.5)) river = rows[Math.floor(hash2(this.seed, 0x1a7, 0, 4) * rows.length)];
@@ -157,6 +170,8 @@ export class CityPlan {
       dropMore: (ix, iz, ew) => (ew ? [[ix, iz - 1], [ix, iz]] : [[ix - 1, iz], [ix, iz]]).every(([bx, bz]) => this.district(bx, bz) === "industrial") ? 0.45 : 0, parks: this.superParks(straight, river, fl.circuses),
       keep: (ix, iz, ew) => !(ew ? straight(ix, iz) && (opts.elevatedRow(iz) || onFw(ix, iz)) : straight(ix, iz) && (opts.cableColumn(ix) || onFw(ix, iz))) && !onFw(ix, iz) && !onFw(ew ? ix + 1 : ix, ew ? iz : iz + 1) });
   }
+  // Whether the town's style may have a river through it (in half its towns, warped or organic).
+  private get riverStyle(): boolean { return this.style.id === "port" || this.style.id === "brick" || this.style.id === "coastal"; }
   // One-way streets downtown, in about two cities in three: between two downtown blocks, each
   // lattice line one way, the next the other (as downtown grids are), clear of the gate streets'
   // lines, the elevated and cable-car lines, the freeway's line and the river's quays. +1: driven
@@ -237,7 +252,7 @@ export class CityPlan {
       if (!ok) continue;
       const round = DEBUG_LAYOUT === "round" || hash2(ix, iz, this.seed, 0x70d) < 0.5;
       // (Its name by hash, or the next one no other circus in town has.)
-      const list = round ? ["Market Roundabout", "Town Roundabout", "Elm Roundabout", "Mill Roundabout"] : ["Columbus Circle", "Union Circle", "Dupont Circle", "Logan Circle", "Grand Circle"];
+      const list = round ? ROUND_NAMES : ["Columbus Circle", "Union Circle", "Dupont Circle", "Logan Circle", "Grand Circle"];
       let ni = Math.floor(h(380 + t) * list.length);
       while (circuses.some((c) => c.name === list[ni % list.length])) ni++;
       circuses.push({ ix, iz, round, name: list[ni % list.length] });
@@ -301,7 +316,7 @@ export class CityPlan {
   get layout(): "grid" | "warp" | "organic" {
     const organicOk = !this.freeway && !this.style.elevated && !this.style.cableCar && !this.organicFailed;
     if (DEBUG_LAYOUT === "grid" || DEBUG_LAYOUT === "warp") return DEBUG_LAYOUT;
-    if (DEBUG_LAYOUT === "organic") return organicOk ? "organic" : "warp";
+    if (DEBUG_LAYOUT.startsWith("organic")) return organicOk ? "organic" : "warp";
     if (DEBUG_LAYOUT === "river" || DEBUG_LAYOUT === "round") return "warp";
     // (By the style's odds: STYLES' layouts.)
     const L = this.style.layouts, o = organicOk ? L.organic : 0, r = hash2(this.seed, 0x1a7, 0, 0) * (L.grid + L.warp + o);
@@ -473,7 +488,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   for (const sid of T.streets) buildStreetPart(ground, solid, plan, G.streets[sid], ox, oz, city.length ? district : "residential", rnd);
   let stalls: StallPose[] = [], site: SiteLayout = { kind: "kerb" } as SiteLayout;
   for (const b of city) ({ stalls, site } = buildBlockPart(ground, solid, plan, b, ox, oz, rnd, takeSlot));
-  for (const b of water) { buildRiver(ground, b, ox, oz); buildBoats(solid, b, ox, oz, plan.seed); }
+  for (const id of G.blocksOver(cx, cz)) { const b = G.blocks[id]; if (b.water) { buildRiver(ground, b, ox, oz); buildBoats(solid, b, ox, oz, plan.seed, G); } }
   // (Not inside the city's limits, nor where the tile lies inside a block anchored in another
   // tile: a big block, or a river's stretch, drawn whole from there.)
   if (!city.length && !water.length && !insideCity(cx, cz) && !underBlock(G, ox + BLOCK / 2, oz + BLOCK / 2)) buildOutskirts(ground, solid, plan, cx, cz, rnd);
@@ -973,41 +988,73 @@ function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [num
 const CONTAINER_COLORS = [0x9b2f24, 0x2f5d8a, 0x3f7a4a, 0xc78a2c, 0x6d6f73, 0x8a4f2a];
 const PARKED_COLORS = [0xb8bcc2, 0x2a2c30, 0xe8e6e0, 0x8a1e22, 0x24426e, 0x5a6066, 0x6e5a3a];
 
-// A river's stretch of water between its quays (tile-local): the water a metre and a half down,
-// and the quay walls round it, faced in stone.
+// A river's stretch of water between its quays, the part of it in this tile (tile-local: a
+// winding stretch is drawn by every tile it covers, so whichever of them has streamed in shows
+// its part): the water a metre and a half down, and the quay walls round it, faced in stone.
 const RIVER = 0x2f6f9a, QUAY = 0x8f8a7e;
+const inTile = (x: number, z: number) => x >= 0 && x < BLOCK && z >= 0 && z < BLOCK;
+// (Its triangles, in world coordinates, worked out once per block: each tile clips them.)
+const riverTris = new WeakMap<CBlock, [number, number][][]>();
 function buildRiver(g: Batch, blk: CBlock, ox: number, oz: number) {
   const poly = blk.poly.map(([x, z]) => [x - ox, z - oz] as [number, number]), y = -1.5;
-  slab(g, poly, y, y, RIVER);
-  let cx = 0, cz = 0; for (const [x, z] of poly) { cx += x; cz += z; } cx /= poly.length; cz /= poly.length;
+  const w = winding(poly);
+  let tris = riverTris.get(blk);
+  if (!tris) riverTris.set(blk, tris = THREE.ShapeUtils.triangulateShape(blk.poly.map(([x, z]) => new THREE.Vector2(x, z)), []).map((ix) => ix.map((i) => blk.poly[i])));
+  for (const tri of tris) {
+    let t = tri.map(([x, z]) => [x - ox, z - oz] as [number, number]);
+    for (const [nx, nz, c] of [[1, 0, BLOCK], [-1, 0, 0], [0, 1, BLOCK], [0, -1, 0]]) t = clipHalf(t, nx, nz, c);
+    // (Each triangle wound as the polygon is, as slab does.)
+    for (let m = 1; m + 1 < t.length; m++) {
+      const [p, q, r] = [t[0], t[m], t[m + 1]], cr = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+      if (cr * w >= 0) g.tri(p[0], y, p[1], q[0], y, q[1], r[0], y, r[1], RIVER); else g.tri(p[0], y, p[1], r[0], y, r[1], q[0], y, q[1], RIVER);
+    }
+  }
   for (let i = 0; i < poly.length; i++) {
-    const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length];
-    let nx = bz - az, nz = -(bx - ax); if (nx * (cx - ax) + nz * (cz - az) < 0) { nx = -nx; nz = -nz; }   // (facing the water)
+    const [px, pz] = poly[i], [qx, qz] = poly[(i + 1) % poly.length];
+    // (Each wall clipped to this tile, as the water is: the part of it from t0 to t1. One lying
+    // along a tile's edge belongs to the tile on its far side, as inTile has it: x < BLOCK.)
+    let t0 = 0, t1 = 1;
+    for (const [d, v] of [[qx - px, px], [qz - pz, pz]]) for (const [lim, sgn] of [[0, -1], [BLOCK, 1]]) {
+      const num = sgn * (lim - v), den = sgn * d;
+      if (Math.abs(den) < 1e-9) { if (num < 0 || (sgn > 0 && num < 1e-6)) t1 = -1; continue; }
+      const t = num / den;
+      if (den > 0) t1 = Math.min(t1, t); else t0 = Math.max(t0, t);
+    }
+    if (t1 <= t0) continue;
+    const ax = px + (qx - px) * t0, az = pz + (qz - pz) * t0, bx = px + (qx - px) * t1, bz = pz + (qz - pz) * t1;
+    const nx = -(qz - pz) * w, nz = (qx - px) * w;   // (facing the water)
     g.tri(ax, y, az, bx, y, bz, bx, CURB_H, bz, QUAY, [nx, 0, nz]); g.tri(ax, y, az, bx, CURB_H, bz, ax, CURB_H, az, QUAY, [nx, 0, nz]);
   }
 }
-// Boats moored along a river stretch's long quays (s: the solid batch): now and then a small
-// cruiser or a narrowboat lying alongside, a metre off the wall, along it.
-const BOAT_HULLS = [0xf2f0ea, 0x1f3f6a, 0x8a2a22, 0x2f5a3a];
-function buildBoats(s: Batch, blk: CBlock, ox: number, oz: number, seed: number) {
-  const poly = blk.poly.map(([x, z]) => [x - ox, z - oz] as [number, number]), y = -1.5;
-  let cx = 0, cz = 0; for (const [x, z] of poly) { cx += x; cz += z; } cx /= poly.length; cz /= poly.length;
+// Which way a polygon winds: +1 if its inside is on the left of each edge, (-z, x) from its
+// direction (a positive shoelace sum in x, z), else -1. (A winding river's middle can lie outside
+// it: this says which side of each edge is the water.)
+function winding(poly: [number, number][]) {
+  let A = 0;
+  for (let i = 0; i < poly.length; i++) { const [x0, z0] = poly[i], [x1, z1] = poly[(i + 1) % poly.length]; A += x0 * z1 - x1 * z0; }
+  return A >= 0 ? 1 : -1;
+}
+// Boats moored along a river stretch's long quays (s: the solid batch, boats.ts models): now and
+// then a cruiser, a narrowboat, a yacht or a rowing boat lying alongside, a metre off the wall.
+// (None along a bridge's side: water across the street there, or no block at all where the
+// town's edge street crosses the river.)
+function buildBoats(s: Batch, blk: CBlock, ox: number, oz: number, seed: number, G: CityGraph) {
+  const poly = blk.poly.map(([x, z]) => [x - ox, z - oz] as [number, number]), y = -1.5, wd = winding(poly);
   for (let i = 0; i < poly.length; i++) {
     const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length], L = Math.hypot(bx - ax, bz - az);
-    if (L < 30) continue;
+    // (Not an edge whose boats can't reach this tile: they lie within its bounds and a beam of it.)
+    if (L < 30 || Math.max(ax, bx) < -8 || Math.min(ax, bx) > BLOCK + 8 || Math.max(az, bz) < -8 || Math.min(az, bz) > BLOCK + 8) continue;
+    const across = G.blockAt(ox + (ax + bx) / 2 + (bz - az) / L * wd * 24, oz + (az + bz) / 2 - (bx - ax) / L * wd * 24);
+    if (!across || across.water) continue;
     for (let k = 0; k < Math.floor(L / 25); k++) {
       const r = hash2(blk.id * 31 + i, k, seed, 0xb0a7);
       if (r > 0.45) continue;
       const t = (k + 0.5) / Math.floor(L / 25), ex = (bx - ax) / L, ez = (bz - az) / L;
-      let nx = -ez, nz = ex; if (nx * (cx - ax) + nz * (cz - az) < 0) { nx = -nx; nz = -nz; }
-      const long = r < 0.2, len = long ? 14 : 8, w = long ? 2.1 : 2.8, px = ax + (bx - ax) * t + nx * (1 + w / 2), pz = az + (bz - az) * t + nz * (1 + w / 2);
-      const yaw = Math.atan2(-ez, ex), hull = BOAT_HULLS[Math.floor(r * 97) % BOAT_HULLS.length];
-      const at = (u: number, v: number): [number, number] => [px + ex * u + nx * v, pz + ez * u + nz * v];
-      // (Hull, deck house, and a darker band at the waterline.)
-      s.box(px, y + 0.45, pz, len, 0.9, w, hull, yaw);
-      s.box(px, y + 0.06, pz, len + 0.05, 0.12, w + 0.05, shade(hull, 0.6), yaw);
-      const [hx, hz] = at(long ? 0 : -len * 0.12, 0);
-      s.box(hx, y + 1.25, hz, len * (long ? 0.7 : 0.4), 0.8, w * 0.7, long ? 0x8a2a22 : 0xe8e4da, yaw);
+      const nx = -ez * wd, nz = ex * wd;
+      const kind: BoatKind = r < 0.1 ? "narrowboat" : r < 0.25 ? "cruiser" : r < 0.37 ? "sailboat" : "rowboat", { beam } = boatSize(kind);
+      const px = ax + (bx - ax) * t + nx * (1 + beam / 2), pz = az + (bz - az) * t + nz * (1 + beam / 2);
+      if (!inTile(px, pz)) continue;   // (each boat by the tile it lies in)
+      boatAt(s, kind, px, y, pz, Math.atan2(-ez, ex) + (hash2(blk.id, i * 7 + k, seed, 0xb0a8) < 0.5 ? Math.PI : 0), BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length]);
     }
   }
 }
@@ -2317,8 +2364,8 @@ function buildStand(g: Batch, s: Batch, L: StandLayout, rnd: Rand) {
       if (L.a - dHalf - 0.1 - (a0 + 0.12) > 0.75) { const [x, z] = at((a0 + 0.12 + L.a - dHalf - 0.1) / 2, n0 - 0.04), rx = RIGHT[d][0] !== 0;
         s.cyl(x, y0 + 1.7, z, 0.34, 0.07, 0xe0601e, 10, rx ? 0 : Math.PI / 2, rx ? Math.PI / 2 : 0);
         s.cyl(x, y0 + 1.7, z, 0.17, 0.09, look.wall, 10, rx ? 0 : Math.PI / 2, rx ? Math.PI / 2 : 0); }
-      fspan(s, side, a0 - 2.4, a0 - 0.2, y0, y0 + 0.45, n0 + 0.4, n0 + 1.3, 0x2d5f9a);
-      fspan(s, side, a0 - 2.3, a0 - 0.3, y0 + 0.45, y0 + 0.55, n0 + 0.5, n0 + 1.2, 0xf2efe8);
+      { const [x, z] = at(a0 - 1.3, n0 + 0.85), [fx, fz] = at(a0 - 0.2, n0 + 0.85), o = { scale: 0.62, upturned: true };   // (along the wall, its bow towards the door)
+        boatAt(s, "rowboat", x, y0 - boatExtent("rowboat", o).lo, z, Math.atan2(-(fz - z), fx - x), 0x2d5f9a, o); }
       { const [x, z] = at(a0 - 2.9, n0 + 0.6); s.cyl(x, y0 + 0.9, z, 0.08, 1.8, 0x7a5232, 5); }   // a mooring post
       break;
     }

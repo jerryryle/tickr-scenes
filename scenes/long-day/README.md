@@ -16,7 +16,9 @@ where everything along a street is placed). `src/citygen.ts` makes it from the c
 square grid; one bent out of square, with dropped streets, rivers, superblock parks, diagonal
 avenues, old towns, sweeping avenues, radial circuses and one-way roundabouts (where traffic
 yields on entry); or, in towns without a freeway, an organic town with no grid at all (a relaxed
-Voronoi of streets). Each style has its own odds for the three (`layouts` in `src/styles.ts`).
+Voronoi of streets), which may have a river winding through it (a chain of its cells turned to
+water, bridged every third crossing or so) and a roundabout or two (the cells round each laid out
+so its streets in run long enough). Each style has its own odds for the three (`layouts` in `src/styles.ts`).
 Outside the grid's own cities, most junctions among houses and parks are all-way stops: the
 truck and traffic stop at the line, wait a moment, then go in turn. Sites (docks, garages,
 rental lots, stands) are drawn on any block with room for their 42 m layout, anchored to one face
@@ -48,7 +50,7 @@ cycle, which is fine for code inside functions but not for top-level initializer
 in the scene uses: traffic, oncoming and freeway cars (`CarFleet`), and parked cars baked into
 static geometry (`parkedCar`). Draw new cars with these rather than building them in place.
 `tools/showroom.ts` is a test scene that lines them up (and a parking garage) for a close look:
-`make tool SCENE=long-day TOOL=showroom SECS=17` renders it to `build/long-day-showroom/showroom.png`.
+`make tool SCENE=long-day TOOL=showroom SECS=28` renders it to `build/long-day-showroom/showroom.png`.
 
 `src/traffic.ts` drives the cars, and the truck takes part as one more road user. Each vehicle
 books its way through a junction before it crosses the line: its path through as a footprint,
@@ -71,6 +73,12 @@ walk into a vehicle stops. The journey's driving asks street life
 (its trailer's too), its booking's zones, and, pulling out of a dock, a gap in the traffic it
 joins (after 15 s it noses out and the traffic stops for it). So the journey depends on the
 street life, and scrubbing replays both together.
+
+`src/boats.ts` holds the boat models in the same way (a motor cruiser, a narrowboat, a sailing
+yacht, a rowing boat, a canoe, a kayak and a jet ski, their hulls lofted through stations): the
+boats moored along a river town's quays, the upturned rowboat by a bait shack, and the boats
+carried as cargo; the car ferry (`ferryModel` in `src/countryworld.ts`) lofts its hull with the
+same code. The showroom's last frames line the boats up afloat and ashore, then show the ferry.
 
 `src/vignettes.ts` holds the street vignettes (a dog at a "no dogs" sign, a dog walker towed by a
 pack, a wet-paint bench, window washers, a crossing guard, a food truck's queue, snow and night

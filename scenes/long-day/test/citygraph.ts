@@ -88,8 +88,37 @@ import { BLOCK } from "../src/grid.ts";
   // Organic towns: no two streets cross (the graph stays planar after short edges close up), every
   // block is sound, every gate has its street, and the streets are all reachable from gate 0.
   // (Twenty towns: gate snapping moves a corner up to 30 m, which could cross streets in any one.)
+  // Odd towns have a river, and half of them roundabouts: the river's water reaches both edges,
+  // with a bridge or more over it, and a roundabout is a one-way ring round a park, every side of
+  // it reachable.
+  let rivers = 0, bridges = 0, rings = 0;
   for (let seed = 1; seed <= 20; seed++) {
-    const O = organicGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, seed);
+    const opts = { river: seed % 2 === 1, rounds: seed % 4 < 2 ? ["R1", "R2"] : [] };
+    const O = organicGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, seed, opts);
+    const wet = O.blocks.filter((b) => b.water);
+    if (opts.river) {
+      if (!wet.length) err(`organic ${seed}: no river`); else rivers++;
+      const xs = wet.flatMap((b) => b.poly.map((p) => p[0]));
+      if (wet.length && (Math.min(...xs) > lo * BLOCK + 40 || Math.max(...xs) < (hi + 1) * BLOCK - 20)) err(`organic ${seed}: the river doesn't cross town`);
+      const br = O.streets.filter((st) => [0, 1].every((s) => { const b = O.faceBlock[st.id * 2 + s]; return b >= 0 && O.blocks[b].water; })).length;
+      if (wet.length && !br) err(`organic ${seed}: no bridge`);
+      bridges += br;
+    } else if (wet.length) err(`organic ${seed}: water without a river`);
+    for (const st of O.streets) if (st.inCity && O.faceBlock[st.id * 2] < 0 && O.faceBlock[st.id * 2 + 1] < 0) err(`organic ${seed}: street ${st.id} borders no block`);
+    for (const name of opts.rounds) {
+      const ring = O.streets.filter((st) => st.name === name);
+      if (!ring.length) continue;
+      rings++;
+      if (!ring.every((st) => st.ring && st.oneway)) err(`organic ${seed}: ${name} not one-way`);
+      if (ring.some((st) => O.nodes[st.n0].control !== "none")) err(`organic ${seed}: ${name} has signals`);
+      const from = O.streets[O.gates[0].street].id * 2 + 1;
+      for (const st of ring) if (!planRoute(O, from, 20, [{ d: st.id * 2, after: st.len / 2 }], 30000, (e) => O.streets[e >> 1].inCity)) err(`organic ${seed}: no route round ${name}`);
+      const N = O.nodes[ring[0].n0], mid = ring.reduce((m, st) => [m[0] + O.nodes[st.n0].x / ring.length, m[1] + O.nodes[st.n0].z / ring.length], [0, 0]);
+      const isl = O.blockAt(mid[0], mid[1]);
+      if (!isl?.park) err(`organic ${seed}: ${name} has no park in the middle (${N.x.toFixed(0)},${N.z.toFixed(0)})`);
+      // (Its island's kerbs are all on the ring's far side: no stop there, journey.ts skips it.)
+      else if (isl.faces.some((f) => O.drivable(f))) err(`organic ${seed}: ${name}'s island has a kerb the truck can stop at`);
+    }
     const segs = O.streets.map((st) => { const a = O.nodes[st.n0], b = O.nodes[st.n1]; return [a.x, a.z, b.x, b.z, st.n0, st.n1]; });
     let crossings = 0;
     for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
@@ -103,12 +132,14 @@ import { BLOCK } from "../src/grid.ts";
     if (O.blocks.some((b) => b.area < 150)) err(`organic ${seed}: a block of ${Math.min(...O.blocks.map((b) => b.area)).toFixed(0)} m2`);
     const from = O.streets[O.gates[0].street].id * 2 + 1;
     for (let k = 0; k < 10; k++) {
-      const s = Math.floor(hash2(k, seed, 0, 2) * O.streets.length), d = s * 2 + (k % 2);
+      const s = Math.floor(hash2(k, seed, 0, 2) * O.streets.length), d = s * 2 + (O.streets[s].oneway ? 0 : k % 2);   // (a ring's sides, driven their own way)
       if (!O.streets[s].inCity) continue;
       if (!planRoute(O, from, 20, [{ d, after: O.faceLen(d) / 2 }], 30000, (e) => O.streets[e >> 1].inCity)) err(`organic ${seed}: no route to street ${s}`);
     }
     if (seed === 1) console.log(`organic: ${O.nodes.length} nodes, ${O.streets.length} streets, ${O.blocks.length} blocks, shortest street ${Math.min(...O.streets.map((s) => s.len)).toFixed(1)} m`);
   }
+  console.log(`organic: ${rivers} of 10 rivers (${bridges} bridges), ${rings} of 20 roundabouts`);
+  if (rings < 10) err(`organic: only ${rings} of 20 roundabouts fit`);
   console.log(`citygraph: ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks, ${errs.length} errors`);
   if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
 }

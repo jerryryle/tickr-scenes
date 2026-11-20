@@ -22,7 +22,7 @@ import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, PlateSet, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
-  WEIGH_BACK, WEIGH_GREEN, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W } from "./country.ts";
+  WEIGH_BACK, WEIGH_GREEN, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W, WATER_DROP } from "./country.ts";
 import type { FerryPlan } from "./country.ts";
 import { COW_GATE, herdDist, TRACTOR_B, TRACTOR_R } from "./country.ts";
 import type { CattlePlan, HerdMember } from "./country.ts";
@@ -32,6 +32,8 @@ import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
 import { CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
+import { boatAt, deckW, hull, wedge } from "./boats.ts";
+import type { Station } from "./boats.ts";
 
 const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
@@ -59,6 +61,78 @@ export const BIOMES: Record<BiomeId, BiomeLook> = {
 };
 const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf2c200, pole: 0x6b5a44, metal: 0x8d9296, dark: 0x1e2124,
   water: 0x2f78b8, sand: 0xd9c89a, rock: 0x8a8070, concrete: 0xa8a49a, green: 0x1e6b3a, red: 0xc0392b, ryder: 0xce1126, orange: 0xe8701a, wood: 0x8a5a34, trunk: 0x5a4030 };
+
+// A double-ended car ferry, its car deck at the origin's height, facing +x (along the road),
+// +z to the road's right (boats.ts lofts its hull): a navy hull, flared at its bluff ends, with a
+// black fender belt at the deck and red below the water; white bulwarks along the sides, open
+// at both ends for the ramps; a two-deck passenger cabin up the left side, its rows of windows
+// lit after dark, a sun deck on it with twin funnels and a rescue boat on davits; the
+// wheelhouse across the deck on two stair towers on the right, with bridge wings, a mast and
+// radar; two lanes (cars waiting in the left one). `b` the hull, deck and cars (never thinned),
+// `u` the superstructure (thinned by the cutaway), `glow` the navigation lights.
+export function ferryModel(b: Batch, u: Batch, glow: Batch) {
+  const L = BOAT_L, W = BOAT_W, NAVY = 0x1d3a6b, WHITE = 0xf2f2ee, RED = 0xc0392b, WIN = 0x1e2a38;
+  const wl = -WATER_DROP + 0.03, e = L / 2 - 1.2;
+  const st: Station[] = [
+    { x: -e, wd: 5.4, yd: 0, wc: 4.8, yc: -1.9, wk: 2.6, yk: -3.0, rake: -1.2 },
+    { x: -22, wd: 6.75, yd: 0, wc: 6.4, yc: -2.6, wk: 3.8, yk: -3.3 },
+    { x: -12, wd: W / 2, yd: 0, wc: W / 2 - 0.3, yc: -2.7, wk: 4.0, yk: -3.4 },
+    { x: 12, wd: W / 2, yd: 0, wc: W / 2 - 0.3, yc: -2.7, wk: 4.0, yk: -3.4 },
+    { x: 22, wd: 6.75, yd: 0, wc: 6.4, yc: -2.6, wk: 3.8, yk: -3.3 },
+    { x: e, wd: 5.4, yd: 0, wc: 4.8, yc: -1.9, wk: 2.6, yk: -3.0, rake: 1.2 },
+  ];
+  hull(b, st, { top: NAVY, stripe: WHITE, s0: -0.85, s1: -0.45, rail: 0x1a1b1d, bottom: 0x8a2a22, deck: 0x5d6166, wl });
+  b.box(0, 0.006, -0.2, L - 6, 0.012, 0.14, 0xe8e8e0);   // the line between the lanes
+  for (const x of [-L / 2 + 1.6, L / 2 - 1.6]) b.box(x, 0.006, 0, 0.3, 0.012, 9, 0xe0c020);   // yellow lines at each end
+  // Bulwarks, white with a red cap, along each side between the ends' openings; bollards at the ends.
+  for (const k of [-1, 1]) {
+    for (let x = -23; x < 23; x += 2) {
+      const z0 = k * (deckW(st, x) - 0.2), z1 = k * (deckW(st, x + 2) - 0.2), yaw = Math.atan2(-(z1 - z0), 2);
+      b.box(x + 1, 0.55, (z0 + z1) / 2, Math.hypot(2, z1 - z0) + 0.02, 1.1, 0.3, WHITE, yaw);
+      b.box(x + 1, 1.14, (z0 + z1) / 2, Math.hypot(2, z1 - z0) + 0.04, 0.1, 0.38, RED, yaw);
+    }
+    b.aux.set(0, 0, -3);   // (deck lamps along the bulwarks clear of the cabin: lit after dark)
+    for (const x of [-22, -18.5, 18.5, 22]) b.box(x, 0.85, k * (deckW(st, x) - 0.37), 1.0, 0.25, 0.04, 0xd8d4c8);
+    b.aux.set(0, 0, -1);
+    for (const x of [-25.2, 25.2]) { b.cyl(x, 0.25, k * (deckW(st, x) - 0.6), 0.22, 0.5, 0x1c1d20, 8); b.cyl(x, 0.52, k * (deckW(st, x) - 0.6), 0.3, 0.06, 0x1c1d20, 8); }
+  }
+  // The passenger cabin up the left side: two decks, raked ends, windows (lit after dark), a sun deck.
+  const cz = -(W / 2 - 1.6), cw = 2.6, X1 = 15, X2 = 12.5;
+  u.box(0, 1.5, cz, 2 * X1, 3.0, cw, WHITE);
+  u.box(0, 4.3, cz, 2 * X2, 2.6, cw, WHITE);
+  for (const d of [-1, 1]) { wedge(u, d * X1, d * (X1 + 1.6), 0, 3.0, cw, WHITE, WHITE); wedge(u, d * X2, d * (X2 + 1.4), 3.0, 5.6, cw, WIN, WHITE); }
+  u.box(0, 3.02, cz, 2 * X1 + 0.3, 0.08, cw + 0.3, 0xdedbd0); u.box(0, 5.64, cz, 2 * X2 + 0.3, 0.08, cw + 0.3, 0xdedbd0);
+  u.aux.set(0, 0, -3);
+  for (const zz of [cz - cw / 2 - 0.01, cz + cw / 2 + 0.01]) {
+    for (let x = -13.5; x <= 13.6; x += 1.5) u.box(x, 1.9, zz, 1.0, 0.75, 0.02, WIN);
+    for (let x = -11.2; x <= 11.3; x += 2.0) u.box(x, 4.4, zz, 1.6, 1.1, 0.02, WIN);
+  }
+  u.aux.set(0, 0, -1);
+  for (const zz of [cz - cw / 2 - 0.02, cz + cw / 2 + 0.02]) u.box(0, 0.7, zz, 2 * X1 - 1, 0.12, 0.02, NAVY);   // a navy band along its foot
+  for (const zz of [cz - cw / 2 + 0.06, cz + cw / 2 - 0.06]) for (let x = -12; x <= 12; x += 2) u.box(x, 6.15, zz, 0.04, 0.9, 0.04, 0x8d9296);
+  for (const zz of [cz - cw / 2 + 0.06, cz + cw / 2 - 0.06]) u.box(0, 6.6, zz, 24, 0.05, 0.05, 0x8d9296);   // the sun deck's rail
+  for (const x of [-7.5, 7.5]) { u.cyl(x, 7.4, cz, 0.85, 3.4, RED, 10); u.cyl(x, 9.2, cz, 0.88, 0.35, 0x1e1e1e, 10); }   // twin funnels
+  // A rescue boat (boats.ts) on davits off the sun deck's outer edge.
+  boatAt(u, "rowboat", -10.5, 6.4, -(W / 2 + 0.25), 0, 0xe86a1a, { scale: 1.2 });
+  for (const x of [-12.1, -8.9]) { u.box(x, 6.9, -(W / 2 - 0.4), 0.12, 1.6, 0.12, 0x8d9296); u.box(x, 7.65, -(W / 2 + 0.1), 0.12, 0.12, 1.1, 0x8d9296); }
+  // The wheelhouse across the deck, on the cabin and two stair towers on the right; bridge wings.
+  for (const x of [-3, 3]) { u.box(x, 3.2, W / 2 - 0.9, 1.3, 6.4, 1.3, WHITE); u.box(x + (x < 0 ? 0.66 : -0.66), 1.0, W / 2 - 0.9, 0.02, 2.0, 0.8, 0x6b7076); }
+  u.box(0, 7.6, 0, 7, 2.4, W - 1.0, WHITE); u.box(0, 6.0, cz, 7, 0.8, cw, WHITE);   // (on the cabin's roof on the left)
+  u.aux.set(0, 0, -3);
+  for (const d of [-1, 1]) u.box(d * 3.51, 7.95, 0, 0.02, 1.0, W - 1.6, WIN);
+  for (const zz of [-(W - 1) / 2 - 0.01, (W - 1) / 2 + 0.01]) u.box(0, 7.95, zz, 6.2, 1.0, 0.02, WIN);
+  u.aux.set(0, 0, -1);
+  u.box(0, 8.86, 0, 7.8, 0.14, W + 1.6, 0xdedbd0);                                        // its roof, out over the wings
+  for (const k of [-1, 1]) u.box(0, 6.45, k * (W / 2 + 0.3), 3.4, 0.12, 1.6, WHITE);       // the wings
+  u.box(0, 10.3, 0, 0.2, 2.8, 0.2, 0x8d9296); u.box(0, 10.0, 0, 0.12, 0.12, 2.6, 0x8d9296); u.box(0.3, 9.25, 0, 0.12, 0.18, 2.0, 0x2b2d31);   // mast, yard, radar
+  for (const x of [-2.2, 2.2]) u.cyl(x, 9.3, -2.5, 0.12, 0.6, WHITE, 6);                    // aerials
+  // Cars in the left lane.
+  const deck: [number, CarKind, number][] = [[-22.5, "sedan", 0xb22222], [-16.5, "suv", 0xc8ccd0], [-10.2, "van", 0xe8e8e8], [11.8, "hatch", 0xd4a017], [17.6, "wagon", 0x2e7d4f], [23.2, "pickup", 0x222428]];
+  for (const [x, kind, paint] of deck) parkedCar(b, kind, x, 0, -2.6, 0, paint);
+  // Navigation lights (port red, starboard green) at the wings' ends and the masthead light.
+  glow.box(0, 6.75, -(W / 2 + 1.12), 0.3, 0.3, 0.1, 0xff3020); glow.box(0, 6.75, W / 2 + 1.12, 0.3, 0.3, 0.1, 0x30ff70);
+  glow.box(0, 11.8, 0, 0.25, 0.25, 0.25, 0xfff6e0);
+}
 
 export class CountryWorld {
   readonly group = new THREE.Group();
@@ -331,43 +405,16 @@ export class CountryWorld {
     const v = road.aboardAt(u) ? road.vAt(u) : 0;
     if (this.foam) { this.foam.visible = v > 0.4; this.foam.scale.x = Math.max(0.05, v / 7); }
   }
-  // A double-ended car ferry, its car deck at the origin's height, facing +x (along the road),
-  // +z to the road's right: a navy and white hull, an open deck with two lanes (cars waiting in
-  // the left one), a tower up the left side carrying the wheelhouse across the deck, a funnel.
+  // The car ferry (ferryModel), its materials, and its wake.
   private buildBoat(): THREE.Group {
-    const L = BOAT_L, W = BOAT_W, NAVY = 0x1d3a6b, WHITE = 0xf2f2ee, b = new Batch(), glow = new Batch();
+    const b = new Batch(), glow = new Batch();
     const u = new Batch();   // the superstructure (it may thin out between the camera and the truck)
-    b.box(0, -1.925, 0, L, 3.35, W, NAVY);   // (its top under the white band's: shared planes flicker)
-    b.box(0, -0.6, 0, L + 0.1, 0.8, W + 0.1, WHITE);
-    b.box(0, -0.1, 0, L - 0.2, 0.2, W - 0.8, 0x5d6166);
-    b.box(0, 0.006, -0.2, L - 6, 0.012, 0.14, 0xe8e8e0);
-    for (const k of [-1, 1]) { b.box(0, 0.55, k * (W / 2 - 0.2), L, 1.1, 0.4, WHITE); b.box(0, 0.95, k * (W / 2 - 0.2), L + 0.02, 0.18, 0.42, 0xc0392b); }
-    // The tower and the wheelhouse over the deck, on two pillars on the right.
-    u.box(0, 3.25, -(W / 2 - 1.3), 26, 6.5, 2.2, WHITE);
-    u.aux.set(0, 0, -3);   // (windows: lit after dark)
-    u.box(0, 4.6, -(W / 2 - 2.42), 22, 0.7, 0.04, 0x1e2a38);
-    u.aux.set(0, 0, -1);
-    for (const x of [-3, 3]) u.box(x, 3.25, W / 2 - 0.7, 0.5, 6.5, 0.5, WHITE);
-    u.box(0, 7.8, 0, 8, 2.6, W + 0.4, WHITE);
-    u.aux.set(0, 0, -3); u.box(0, 8.1, 0, 8.1, 0.9, W + 0.5, 0x1e2a38); u.aux.set(0, 0, -1);
-    b.aux.set(0, 0, -3);
-    for (const x of [-24, -18, 18, 24]) b.box(x, 0.85, -(W / 2 - 0.42), 1.2, 0.3, 0.04, 0xd8d4c8);   // deck lamps along the left bulwark
-    b.aux.set(0, 0, -1);
-    u.box(0, 9.2, 0, 8.6, 0.2, W + 0.8, 0xdedbd0);
-    u.box(-9, 8.1, -(W / 2 - 1.3), 2.4, 3.2, 2.0, 0xc0392b); u.box(-9, 9.9, -(W / 2 - 1.3), 2.5, 0.4, 2.1, 0x1e1e1e);
-    u.box(0, 10.4, 0, 0.18, 2.2, 0.18, 0x8d9296);
-    for (const x of [7, 10]) u.cyl(x, 7.0, -(W / 2 - 1.3), 0.5, 1.6, 0xf2f2ee, 8, Math.PI / 2);
-    // Cars in the left lane.
-    const deck: [number, CarKind, number][] = [[-22.5, "sedan", 0xb22222], [-16.5, "suv", 0xc8ccd0], [-10.2, "van", 0xe8e8e8], [11.8, "hatch", 0xd4a017], [17.6, "wagon", 0x2e7d4f], [23.2, "pickup", 0x222428]];
-    for (const [x, kind, paint] of deck) parkedCar(b, kind, x, 0, -2.6, 0, paint);
-    // Navigation lights (port red, starboard green) and the masthead light.
-    glow.box(0, 8.6, -(W / 2 + 0.3), 0.3, 0.3, 0.1, 0xff3020); glow.box(0, 8.6, W / 2 + 0.3, 0.3, 0.3, 0.1, 0x30ff70);
-    glow.box(0, 11.6, 0, 0.25, 0.25, 0.25, 0xfff6e0);
+    ferryModel(b, u, glow);
     const g = new THREE.Group();
     g.add(b.build(this.boatMat)!); g.add(u.build(this.boatTopMat)!); g.add(glow.build(this.lightMat)!);
     // The wake astern, just over the water.
-    const fb = new Batch(); fb.box(-4, 0, 0, 8, 0.04, W - 2, 0xeef4f8); fb.box(-9.25, 0.02, 0, 2.5, 0.04, W - 5, 0xd8e6ee);
-    const foam = fb.build(this.mats.ground)!; foam.position.set(-L / 2, -1.57, 0); foam.visible = false;
+    const fb = new Batch(); fb.box(-4, 0, 0, 8, 0.04, BOAT_W - 2, 0xeef4f8); fb.box(-9.25, 0.02, 0, 2.5, 0.04, BOAT_W - 5, 0xd8e6ee);
+    const foam = fb.build(this.mats.ground)!; foam.position.set(-BOAT_L / 2, -1.57, 0); foam.visible = false;
     g.add(foam); this.foam = foam;
     return g;
   }

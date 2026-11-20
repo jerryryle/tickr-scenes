@@ -5,6 +5,7 @@
 // forward. `variant` varies colours between units.
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
+import { boatAt, boatExtent } from "./boats.ts";
 
 interface CargoModel {
   size: [number, number, number];     // length (x), height (y), width (z)
@@ -20,6 +21,7 @@ const CK = {
   card: 0xb07a45, tape: 0xd8c08a, white: 0xeeeee8, black: 0x1c1c1e, steel: 0x9aa0a6, wood: 0xa47a4a, darkWood: 0x6b4a2c,
   red: 0xc0392b, blue: 0x1f5fb0, yellow: 0xf2c200, green: 0x2e8b57, orange: 0xe67e22, pink: 0xf08bb4, gold: 0xd4af37,
 };
+const TRAILER_SAILER = { scale: 0.5, mastDown: true }, JETSKI = { scale: 0.8 };
 const vpick = <T,>(a: T[], i: number) => a[((i % a.length) + a.length) % a.length];
 
 function carton(b: Batch, x: number, y: number, z: number, l: number, h: number, w: number, tape = CK.tape, color = CK.card) {
@@ -173,10 +175,9 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.box(x, y + 0.18, z, 0.55, 0.36, 0.4, CK.white);
     b.box(x + 0.276, y + 0.2, z, 0.01, 0.16, 0.05, CK.red); b.box(x + 0.276, y + 0.2, z, 0.01, 0.05, 0.16, CK.red);
   } },
-  canoes: { size: [4.2, 0.45, 0.8], build: (b, x, y, z, i) => {
-    const c = vpick([0x27ae60, 0xd35400, 0xc0392b], i);
-    b.box(x, y + 0.22, z, 3.2, 0.42, 0.8, c);
-    for (const sx of [-1, 1]) b.prism(x + sx * 1.85, y + 0.22, z, 0.42, 0.5, 0.8, c, sx > 0 ? Math.PI / 2 : -Math.PI / 2);
+  canoes: { size: [4.2, 0.45, 0.8], build: (b, x, y, z, i) => {   // (boats.ts: a canoe, every third a kayak)
+    const kind = i % 3 === 2 ? "kayak" : "canoe";
+    boatAt(b, kind, x, y - boatExtent(kind).lo, z, 0, vpick([0x27ae60, 0xd35400, 0xc0392b, 0x1f6fb0], i));
   } },
   vending: { size: [0.9, 1.85, 0.8], build: (b, x, y, z, i) => {
     b.box(x, y + 0.92, z, 0.9, 1.85, 0.8, vpick([CK.red, CK.blue], i));
@@ -204,9 +205,8 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.box(x, y + 0.6, z, 2.0, 0.9, 2.0, 0x7a6a5a); b.box(x, y + 1.06, z, 1.9, 0.04, 1.9, 0x3a3a3a);
   } },
   jetSki: { size: [3.0, 1.1, 1.1], build: (b, x, y, z) => {
-    b.box(x, y + 0.25, z, 2.6, 0.12, 0.9, 0x555555);                              // stand
-    b.box(x - 0.1, y + 0.62, z, 2.4, 0.5, 1.0, CK.yellow); b.prism(x + 1.25, y + 0.62, z, 0.5, 0.5, 1.0, CK.yellow, Math.PI / 2);
-    b.box(x - 0.4, y + 0.95, z, 0.9, 0.16, 0.4, CK.black);
+    b.box(x, y + 0.06, z, 2.6, 0.12, 0.9, 0x555555);                              // stand
+    boatAt(b, "jetski", x - 0.05, y + 0.12 - boatExtent("jetski", JETSKI).lo, z, 0, CK.yellow, JETSKI);   // (boats.ts: within its size)
   } },
   cheese: { size: [0.9, 0.9, 0.36], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.45, z, 0.45, 0.36, 0xf4c430, 14, Math.PI / 2); b.cyl(x, y + 0.45, z, 0.46, 0.04, 0xc8961e, 14, Math.PI / 2);
@@ -280,11 +280,8 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   envelope: { size: [0.24, 0.02, 0.11], build: (b, x, y, z) => { b.box(x, y + 0.01, z, 0.24, 0.02, 0.11, CK.white); b.box(x + 0.06, y + 0.021, z, 0.04, 0.002, 0.03, CK.red); } },
   sailboat: { size: [5.0, 6.5, 1.6], build: (b, x, y, z) => {
     b.box(x, y + 0.2, z, 4.2, 0.2, 1.0, 0x555555);                                                                    // boat trailer
-    b.box(x - 0.2, y + 0.75, z, 3.8, 0.8, 1.5, CK.white); b.prism(x + 2.25, y + 0.75, z, 0.8, 0.8, 1.5, CK.white, Math.PI / 2);
-    b.box(x - 0.2, y + 1.18, z, 3.6, 0.06, 1.3, 0x2a5fb0);
-    b.box(x + 0.4, y + 3.8, z, 0.09, 5.4, 0.09, 0xcccccc);                                                             // mast
-    b.box(x - 0.6, y + 1.6, z, 2.0, 0.06, 0.06, 0xcccccc);                                                             // boom, sail furled
-    b.box(x - 0.6, y + 1.7, z, 1.9, 0.12, 0.14, CK.white);
+    for (const sz of [-0.45, 0.45]) b.box(x, y + 0.42, z + sz, 3.2, 0.24, 0.12, 0x3a3a3a);                            // its bunks
+    boatAt(b, "sailboat", x - 0.1, y + 0.54 - boatExtent("sailboat", TRAILER_SAILER).lo, z, 0, 0x2a5fb0, TRAILER_SAILER);   // (boats.ts: mast down for the road)
   } },
   toilet: { size: [1.1, 2.3, 1.1], build: (b, x, y, z) => {
     b.box(x, y + 1.1, z, 1.1, 2.2, 1.1, 0x2a7fd4); b.box(x, y + 2.25, z, 1.15, 0.1, 1.15, CK.white);
