@@ -375,10 +375,20 @@ export class Crowd {
   private updateFlocks(dt: number, plan: CityPlan, focus: { x: number; z: number }) {
     const gull = plan.style.id === "port" || plan.style.id === "coastal";
     this.flocks = this.flocks.filter((f) => Math.hypot(f.cx - focus.x, f.cz - focus.z) < 110);
+    // (Gulls gather over the water when the shore is near: over the stretch of it nearest, a
+    // little out to sea, lower, and wheeling tighter.)
+    let shore: ReturnType<typeof nearestShore> | undefined;
     while (this.flocks.length < 3) {
+      if (shore === undefined) shore = gull ? nearestShore(plan, focus, 130) : null;   // (only when one is wanted)
       const r = this.rnd, a = r() * Math.PI * 2, d = 25 + r() * 55;
       this.flocks.push({ cx: focus.x + Math.cos(a) * d, cz: focus.z + Math.sin(a) * d, y: 14 + r() * 10, r: 5 + r() * 7, w: (0.35 + r() * 0.3) * (r() < 0.5 ? 1 : -1), a: r() * 6, pa: 0, gull, n: 4 + Math.floor(r() * 4) });
       const f = this.flocks[this.flocks.length - 1]; f.pa = f.a;
+      if (shore && r() < 0.7) {
+        // (Only where it stays in range, or the next update drops it and another is drawn: flocks
+        // jumping about every tick.)
+        const out = 6 + r() * 26, along = (r() - 0.5) * 50, x = shore.x + shore.nx * out + shore.ex * along, z = shore.z + shore.nz * out + shore.ez * along;
+        if (Math.hypot(x - focus.x, z - focus.z) < 100) { f.cx = x; f.cz = z; f.y = 8 + r() * 8; f.n += 2; }
+      }
     }
     for (const f of this.flocks) f.a += f.w * dt;
   }
@@ -465,4 +475,16 @@ export class Crowd {
 function pedObstacle(p: { x: number; z: number; px: number; pz: number }): Obstacle {
   const vx = (p.x - p.px) / SIM_DT, vz = (p.z - p.pz) / SIM_DT, fast = Math.hypot(vx, vz) > 5;
   return { x: p.x, z: p.z, r: 0.4, vx: fast ? 0 : vx, vz: fast ? 0 : vz };
+}
+// The point of the town's shore (city.ts CityPlan.shore) nearest (x, z) within `reach`, with the way
+// out to sea and the way along it; or null.
+function nearestShore(plan: CityPlan, p: { x: number; z: number }, reach: number) {
+  let best: { x: number; z: number; nx: number; nz: number; ex: number; ez: number } | null = null, bd = reach;
+  for (const e of plan.shore) {
+    const dx = e.bx - e.ax, dz = e.bz - e.az, L2 = dx * dx + dz * dz;
+    if (L2 < 1) continue;
+    const t = Math.max(0, Math.min(1, ((p.x - e.ax) * dx + (p.z - e.az) * dz) / L2)), x = e.ax + dx * t, z = e.az + dz * t, d = Math.hypot(p.x - x, p.z - z);
+    if (d < bd) { bd = d; const L = Math.sqrt(L2); best = { x, z, nx: e.nx, nz: e.nz, ex: dx / L, ez: dz / L }; }
+  }
+  return best;
 }

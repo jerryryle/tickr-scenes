@@ -160,7 +160,8 @@ export class CityPlan {
       const river = DEBUG_LAYOUT === "organicRiver" || (DEBUG_LAYOUT !== "organicRound" && this.riverStyle && h(3) < 0.5);
       const nr = DEBUG_LAYOUT === "organicRound" ? 2 : f(11) < 0.6 ? (f(12) < 0.4 ? 2 : 1) : 0, names = ROUND_NAMES;
       const r0 = Math.floor(f(13) * names.length), rounds = Array.from({ length: nr }, (_, i) => names[(r0 + i) % names.length]);
-      const og = organicGraph(opts, this.seed, { river, rounds });
+      const SL = this.shoreLine, sea = SL.sea === null ? undefined : { side: SL.sea, inSea: (x: number, z: number) => SL.inSea(x, z) };
+      const og = organicGraph(opts, this.seed, { river, rounds, sea });
       if (og.gates.length === GATES.length) return og;
       this.organicFailed = true;
     }
@@ -170,7 +171,10 @@ export class CityPlan {
     // lines and gate rows.
     if (this.riverStyle || DEBUG_LAYOUT === "river") {
       const rows = [];
-      for (let iz = CITY_LO + 2; iz <= CITY_HI - 2; iz++) if (![iz, iz + 1].some((r) => opts.elevatedRow(r) || GATES.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === r) || (this.freeway && (this.freeway.dir === 0 || this.freeway.dir === 2) && Math.abs(this.freeway.iz - r) <= 1))) rows.push(iz);
+      // (Nor along the shore of a sea to the north or south, which it would run beside: a couple of
+      // blocks clear of it. One to the east or west it runs out into: its mouth, below.)
+      const SL = this.shoreLine, alongShore = (iz: number) => (SL.sea === 1 || SL.sea === 3) && Array.from({ length: CITY_HI - CITY_LO + 1 }, (_, k) => CITY_LO + k).some((bx) => SL.nearShore(bx, iz, 2.5));
+      for (let iz = CITY_LO + 2; iz <= CITY_HI - 2; iz++) if (!alongShore(iz) && ![iz, iz + 1].some((r) => opts.elevatedRow(r) || GATES.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === r) || (this.freeway && (this.freeway.dir === 0 || this.freeway.dir === 2) && Math.abs(this.freeway.iz - r) <= 1))) rows.push(iz);
       if (rows.length && (DEBUG_LAYOUT === "river" || hash2(this.seed, 0x1a7, 0, 3) < 0.5)) river = rows[Math.floor(hash2(this.seed, 0x1a7, 0, 4) * rows.length)];
     }
     // Kept straight: the freeway's line and the blocks either side of it (its off-ramp's), and the
@@ -179,7 +183,13 @@ export class CityPlan {
     const straight = (ix: number, iz: number) => onFw(ix, iz) || opts.elevatedRow(iz) || opts.cableColumn(ix);
     const h = (salt: number) => hash2(this.seed, 0x1a7, 0, salt);
     const fl = this.flourishes(straight, river);
-    return gridGraph(opts, { seed: this.seed, jitter: 5 + 5 * h(1), drop: 0.05 + 0.1 * h(2), fixed: straight, river, ...fl, cuts,
+    // (A river out into the sea to the east or west: the street across it at the last block short
+    // of the sea kept as a bridge, its mouth: citygen.ts.)
+    let mouth: number | undefined;
+    const SL = this.shoreLine, rz = river === undefined ? 0 : river * BLOCK + 39;
+    if (river !== undefined && SL.sea === 0) { for (let bx = CITY_LO; bx <= CITY_HI; bx++) if (SL.inSea(bx * BLOCK + 39, rz)) { mouth = bx; break; } }
+    else if (river !== undefined && SL.sea === 2) for (let bx = CITY_HI; bx >= CITY_LO; bx--) if (SL.inSea(bx * BLOCK + 39, rz)) { mouth = bx + 1; break; }
+    return gridGraph(opts, { seed: this.seed, jitter: 5 + 5 * h(1), drop: 0.05 + 0.1 * h(2), fixed: straight, river, mouth, ...fl, cuts,
       // (Industry's plots are big: between two of its blocks, a street is left out half the time.)
       // (Its streets bend gently: deep enough plots for its yards and loading docks.)
       bend: (ix, iz) => [[ix - 1, iz - 1], [ix, iz - 1], [ix - 1, iz], [ix, iz]].some(([bx, bz]) => this.district(bx, bz) === "industrial") ? 0.3 : 1,
@@ -1069,7 +1079,9 @@ function clipToTile(px: number, pz: number, qx: number, qz: number): [number, nu
 // out into the sea on piles with boats along both sides. A coastal town's: a sandy beach sloping
 // from the promenade's kerb down under the water, lifeguard towers along it, and in summer (not in
 // rain) umbrellas and towels. The sea itself is one plane under the whole town (main.ts).
-const SAND = 0xe2cf9a, SAND_WET = 0xc9b27a, PIER = 0x8a6a48, PILE = 0x4a3a2c, BEACH_W = 18, SEA_Y = -1.5;
+const SAND = 0xe2cf9a, SAND_WET = 0xc9b27a, PIER = 0x8a6a48, PILE = 0x4a3a2c;
+export const BEACH_W = 18, SEA_Y = -1.5;   // (sealife.ts: its surf runs up this beach)
+export const SEA_COLOR = 0x2f78b8;          // the sea (main.ts buildSea), as the country road's (countryworld.ts CW.water)
 function buildShore(g: Batch, s: Batch, plan: CityPlan, ox: number, oz: number) {
   const port = plan.style.id === "port", c = plan.climate, sunny = !!c && c.season === "summer" && !/rain|storm|snow|fog/.test(c.weather);
   const E = plan.shore;
@@ -1081,17 +1093,9 @@ function buildShore(g: Batch, s: Batch, plan: CityPlan, ox: number, oz: number) 
     const ex = (bx - ax) / L, ez = (bz - az) / L, cl = clipToTile(ax, az, bx, bz);
     if (port) {
       if (cl) { const [px, pz, qx, qz] = cl; g.tri(px, SEA_Y, pz, qx, SEA_Y, qz, qx, CURB_H, qz, QUAY, [nx, 0, nz]); g.tri(px, SEA_Y, pz, qx, CURB_H, qz, px, CURB_H, pz, QUAY, [nx, 0, nz]); }
-      // Piers (by the tile their root is in), and boats along the quay between them.
-      const yaw = Math.atan2(-ez, ex);
-      for (let k = 0; k < Math.floor(L / 30); k++) {
-        const t = (k + 0.5) / Math.floor(L / 30), rx = ax + (bx - ax) * t, rz = az + (bz - az) * t, r = hash2(i, k, plan.seed, 0x91e7);
-        if (!inTile(rx, rz)) continue;
-        if (L >= 45 && r < 0.33) pier(s, rx, rz, nx, nz, ex, ez, plan.seed + i * 31 + k);
-        else if (r < 0.75) {
-          const kind: BoatKind = r < 0.45 ? "cruiser" : r < 0.6 ? "sailboat" : "rowboat", { beam } = boatSize(kind);
-          boatAt(s, kind, rx + nx * (1 + beam / 2), SEA_Y, rz + nz * (1 + beam / 2), yaw + (r < 0.55 ? Math.PI : 0), BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length]);
-        }
-      }
+      // Its piers, by the tile their root is in (shoreMoorings: the boats moored along the quay and
+      // the piers ride the swell, sealife.ts).
+      for (const p of shoreMoorings(plan).piers) if (p.edge === i && inTile(p.x - ox, p.z - oz)) pier(s, p.x - ox, p.z - oz, nx, nz, ex, ez);
       return;
     }
     // The beach: from the sidewalk's back down to under the water, BEACH_W out.
@@ -1124,21 +1128,63 @@ function quadTri(g: Batch, p: number[], q: number[], r: number[], t: number[], c
 }
 // A pier from the quay at (x, z) out to sea along (nx, nz), across (ex, ez): a plank deck on piles,
 // bollards along it, boats lying alongside.
-function pier(s: Batch, x: number, z: number, nx: number, nz: number, ex: number, ez: number, seed: number) {
-  const len = 34, w = 5, yaw = Math.atan2(-nz, nx), top = CURB_H - 0.02;
+function pier(s: Batch, x: number, z: number, nx: number, nz: number, ex: number, ez: number) {
+  const len = PIER_LEN, w = PIER_W, yaw = Math.atan2(-nz, nx), top = CURB_H - 0.02;
   s.box(x + nx * len / 2, top - 0.15, z + nz * len / 2, len, 0.3, w, PIER, yaw);
   for (let d = 4; d <= len; d += 6) for (const sd of [-1, 1]) {
     const px = x + nx * d + ex * sd * (w / 2 - 0.3), pz = z + nz * d + ez * sd * (w / 2 - 0.3);
     s.cyl(px, (SEA_Y - 0.2 + top - 0.3) / 2, pz, 0.18, top - 0.3 - SEA_Y + 0.2, PILE, 6);
     if (d % 12 === 4) s.cyl(px, top + 0.2, pz, 0.12, 0.4, 0x2b2d31, 6);
   }
-  for (const sd of [-1, 1]) for (let k = 0; k < 2; k++) {
-    const r = hash2(seed, k * 2 + (sd > 0 ? 1 : 0), 0, 0x9e1);
-    if (r > 0.7) continue;
-    const kind: BoatKind = r < 0.3 ? "cruiser" : r < 0.5 ? "sailboat" : "rowboat", { beam, len: bl } = boatSize(kind), d = 9 + k * 15;
-    if (d + bl / 2 > len + 2) continue;
-    boatAt(s, kind, x + nx * d + ex * sd * (w / 2 + 0.8 + beam / 2), SEA_Y, z + nz * d + ez * sd * (w / 2 + 0.8 + beam / 2), yaw + (r < 0.4 ? Math.PI : 0), BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length]);
+}
+// A port's harbour along its shore (CityPlan.shore), in world coordinates: a container wharf on its
+// longest stretch, where a crane works a ship (sealife.ts), then every 30 m or so along the quay a
+// pier (buildShore) or a boat moored alongside, and boats along both sides of each pier (sealife.ts
+// floats them). The same for every tile and for the sea's life: hashed from the city.
+export interface Mooring { kind: BoatKind; x: number; z: number; yaw: number; paint: number }
+export interface Wharf { x: number; z: number; nx: number; nz: number; ex: number; ez: number; len: number }
+const PIER_LEN = 34, PIER_W = 5, WHARF_LEN = 36;   // (a wharf fits a stretch of quay between two streets' corners)
+export const WHARF_SHIP_L = 84;   // the ship moored at it (sealife.ts), overhanging the wharf's stretch both ways
+const harbours = new WeakMap<CityPlan, { piers: { edge: number; x: number; z: number }[]; boats: Mooring[]; wharf: Wharf | null }>();
+export function shoreMoorings(plan: CityPlan) {
+  let H = harbours.get(plan);
+  if (H) return H;
+  H = { piers: [], boats: [], wharf: null };
+  harbours.set(plan, H);
+  if (plan.style.id !== "port") return H;
+  const E = plan.shore;
+  let wi = -1, wl = WHARF_LEN + 4;
+  E.forEach((e, i) => { const L = Math.hypot(e.bx - e.ax, e.bz - e.az); if (L > wl) { wl = L; wi = i; } });
+  if (wi >= 0) {
+    const e = E[wi], L = Math.hypot(e.bx - e.ax, e.bz - e.az);
+    H.wharf = { x: (e.ax + e.bx) / 2, z: (e.az + e.bz) / 2, nx: e.nx, nz: e.nz, ex: (e.bx - e.ax) / L, ez: (e.bz - e.az) / L, len: WHARF_LEN };
   }
+  const W = H.wharf;
+  // (No pier out across the wharf's ship, where it overhangs the stretches either side.)
+  const byShip = (x: number, z: number) => !!W && Math.abs((x - W.x) * W.ex + (z - W.z) * W.ez) < WHARF_SHIP_L / 2 + PIER_W + 4 && (x - W.x) * W.nx + (z - W.z) * W.nz > -PIER_LEN;
+  E.forEach((e, i) => {
+    if (i === wi) return;   // (the wharf's stretch: nothing else moored there)
+    const L = Math.hypot(e.bx - e.ax, e.bz - e.az), ex = (e.bx - e.ax) / L, ez = (e.bz - e.az) / L, { nx, nz } = e, yaw = Math.atan2(-ez, ex);
+    const paint = (r: number) => BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length];
+    for (let k = 0; k < Math.floor(L / 30); k++) {
+      const t = (k + 0.5) / Math.floor(L / 30), rx = e.ax + (e.bx - e.ax) * t, rz = e.az + (e.bz - e.az) * t, r = hash2(i, k, plan.seed, 0x91e7);
+      if (L >= 45 && r < 0.33 && !byShip(rx, rz)) {
+        H!.piers.push({ edge: i, x: rx, z: rz });
+        const seed = plan.seed + i * 31 + k, py = Math.atan2(-nz, nx);
+        for (const sd of [-1, 1]) for (let k2 = 0; k2 < 2; k2++) {
+          const r2 = hash2(seed, k2 * 2 + (sd > 0 ? 1 : 0), 0, 0x9e1);
+          if (r2 > 0.7) continue;
+          const kind: BoatKind = r2 < 0.3 ? "cruiser" : r2 < 0.5 ? "sailboat" : "rowboat", { beam, len: bl } = boatSize(kind), d = 9 + k2 * 15, off = PIER_W / 2 + 0.8 + beam / 2;
+          if (d + bl / 2 > PIER_LEN + 2) continue;
+          H!.boats.push({ kind, x: rx + nx * d + ex * sd * off, z: rz + nz * d + ez * sd * off, yaw: py + (r2 < 0.4 ? Math.PI : 0), paint: paint(r2) });
+        }
+      } else if (r < 0.75) {
+        const kind: BoatKind = r < 0.45 ? "cruiser" : r < 0.6 ? "sailboat" : "rowboat", { beam } = boatSize(kind);
+        H!.boats.push({ kind, x: rx + nx * (1 + beam / 2), z: rz + nz * (1 + beam / 2), yaw: yaw + (r < 0.55 ? Math.PI : 0), paint: paint(r) });
+      }
+    }
+  });
+  return H;
 }
 // A lifeguard tower on the sand, facing the sea (yaw): legs, a hut with a red roof, a ramp.
 function lifeguardTower(s: Batch, x: number, y: number, z: number, yaw: number) {
@@ -1921,7 +1967,8 @@ function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number,
     const col = fields ? fields[Math.floor(hash2(Math.floor(wx / 48), Math.floor(wz / 36), plan.seed, 0xf1e) * fields.length)]
       : hash2(Math.floor(wx / 36), Math.floor(wz / 36), plan.seed, 0x6a) < 0.6 ? g0 : g1;
     const coast = O.sea !== null && [[12, 0], [-12, 0], [0, 12], [0, -12]].some(([dx, dz]) => O.seaward(wx + dx, wz + dz));
-    if (coast) ground.box(x + 6, (-0.11 + SEA_Y - 0.1) / 2, z + 6, 12, -0.11 - SEA_Y + 0.1, 12, col);
+    // (A coastal town's coast is sand, as the country road's is: countryworld.ts.)
+    if (coast) ground.box(x + 6, (-0.11 + SEA_Y - 0.1) / 2, z + 6, 12, -0.11 - SEA_Y + 0.1, 12, plan.style.id === "coastal" ? SAND : col);
     else ground.box(x + 6, -0.16, z + 6, 12, 0.1, 12, col);
   }
   if (!land) return;

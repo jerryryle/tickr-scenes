@@ -28,7 +28,9 @@ const GEN_DX = [1, 0, -1, 0], GEN_DZ = [0, -1, 0, 1];
 // and cable-car lines); a segment is only dropped where the network stays connected and every
 // intersection keeps three streets or none.
 // `river`: the row of blocks (iz) that is a river instead, its streets either side its quays, and
-// about one in three of the streets across it bridges (the rest left out).
+// about one in three of the streets across it bridges (the rest left out). `mouth`: the column (ix)
+// of the street across it at its mouth, in a town on the sea to the east or west: always a bridge,
+// the river ending there (the blocks beyond are the sea's: trimToOutline).
 // `parks`: superblock parks, each four blocks (ix..ix+1, iz..iz+1) with the streets between them
 // left out.
 // `diagonals`: avenues cutting corner to corner across blocks, each from lattice node (ix, iz) by
@@ -37,7 +39,7 @@ const GEN_DX = [1, 0, -1, 0], GEN_DZ = [0, -1, 0, 1];
 // `sweep`: long avenues bowed into gentle curves (metres of bow, and the wavelength in blocks).
 export interface WarpOpts {
   seed: number; jitter: number; drop: number; fixed: (ix: number, iz: number) => boolean; keep: (ix: number, iz: number, ew: boolean) => boolean;
-  river?: number; parks?: [number, number][]; diagonals?: { ix: number; iz: number; dx: number; dz: number; n: number; name: string }[];
+  river?: number; mouth?: number; parks?: [number, number][]; diagonals?: { ix: number; iz: number; dx: number; dz: number; n: number; name: string }[];
   oldTown?: { ix: number; iz: number; r: number }; sweep?: { bow: number; wave: number };
   circuses?: { ix: number; iz: number; name: string; round?: boolean }[];   // round: a one-way roundabout (smaller, four streets in, no signals)
   cuts?: { ix: number; iz: number; ew: boolean }[];   // segments left out whatever else (a slip ramp's superblock)
@@ -103,6 +105,7 @@ export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph 
     let since = 0;
     segs.forEach((sg) => {
       if (sg.ew || sg.iz !== warp.river || sg.ix <= o.lo || sg.ix >= o.hi + 1 || !warp.keep(sg.ix, sg.iz, false)) { if (!sg.ew && sg.iz === warp.river) since = 0; return; }
+      if (sg.ix === warp.mouth) { since = 0; return; }
       if (since < 2 && hash2(sg.ix, 0x81d, warp.seed, 0xb71) < 0.7) { sg.on = false; since++; } else since = 0;
     });
   }
@@ -188,10 +191,16 @@ const MERGE_EDGE = 24;
 // between gates: a chain of cells, each sharing a street with the next, that are water instead
 // (their streets along it its quays). Of the streets across it, between one cell and the next,
 // about one in three is a bridge (never three missing in a row); the rest are left out.
+// `sea`: in a town on the sea (outline.ts), which side it is on and where: the river runs out into
+// it instead, from the land's far edge (or, with the sea to the north or south, from the west or
+// east edge, bending round to it), ending at the last cell short of the sea. The street between
+// that cell and the sea's is its mouth: kept as the town's shore street, water both sides, a
+// bridge (trimToOutline drops the sea's cells beyond).
 // `rounds`: a roundabout each (its name), where it fits: a junction well inside town, away from
-// the river, its cells laid out round it so its streets in are long enough; the junction gives
-// way to a one-way ring (ORG_ROUND_R metres out) round a round park, with the streets running in.
-export interface OrganicOpts { river?: boolean; rounds?: string[] }
+// the river and the sea, its cells laid out round it so its streets in are long enough; the
+// junction gives way to a one-way ring (ORG_ROUND_R metres out) round a round park, with the
+// streets running in.
+export interface OrganicOpts { river?: boolean; rounds?: string[]; sea?: { side: number; inSea: (x: number, z: number) => boolean } }
 const ORG_ROUND_R = 26;
 type FE = { a: number; b: number; name?: string; ring?: boolean; wet?: [number, number][] };   // wet: a water cell's point on each side that is river
 export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): CityGraph {
@@ -231,13 +240,27 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
     const z = zIn + (zOut - zIn) * t + amp * Math.sin(Math.PI * t) * Math.sin(Math.PI * waves * t + phase);
     return Math.max(Z0 + 2.5 * SP, Math.min(Z1 - 2.5 * SP, z));
   };
+  // (Out to a sea to the north or south: from the west or east edge at zIn, bending round to run
+  // down to the sea's edge at xOut, between two gates on it: a curve, sampled.)
+  const sea = x.sea, northSouth = !!sea && (sea.side === 1 || sea.side === 3);
+  const gx = [...new Set(o.gates.filter((g) => g.dir === 1 || g.dir === 3).map((g) => at(g.ix)))].sort((p, q) => p - q);
+  const gapsX = gx.slice(1).map((v, i) => (v + gx[i]) / 2);
+  const fromEast = h(6) < 0.5, xOut = gapsX[Math.floor(h(7) * gapsX.length)] ?? (X0 + X1) / 2, zSea = sea?.side === 1 ? Z0 : Z1;
+  const curve: [number, number][] = [];
+  if (northSouth) for (let k = 0; k <= 32; k++) {
+    const t = k / 32, ax = fromEast ? X1 : X0, u = 1 - t;
+    curve.push([u * u * ax + 2 * u * t * xOut + t * t * xOut, u * u * zIn + 2 * u * t * zIn + t * t * zSea]);
+  }
+  // How far (x, z) lies off the river's line.
+  const riverOff = (px: number, pz: number) => northSouth ? Math.min(...curve.map(([cx, cz]) => Math.hypot(px - cx, pz - cz))) : Math.abs(pz - riverZ(px));
   // The roundabouts' places: well inside town, clear of the river and of each other. The points
   // near each give way to four (or three, or five) round it, so the cells' corner there is a
   // junction of that many streets, each running well out.
   const sites: { x: number; z: number; name: string }[] = [];
   for (let t = 0; t < 40 && sites.length < (x.rounds?.length ?? 0); t++) {
     const sx = X0 + 160 + h(100 + t) * (X1 - X0 - 320), sz = Z0 + 160 + h(140 + t) * (Z1 - Z0 - 320);
-    if (river && Math.abs(sz - riverZ(sx)) < 150) continue;
+    if (river && riverOff(sx, sz) < 150) continue;
+    if (sea && [[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]].some(([dx, dz]) => sea.inSea(sx + dx, sz + dz))) continue;   // (nor by the sea)
     if (sites.some((s) => Math.hypot(s.x - sx, s.z - sz) < 340)) continue;
     sites.push({ x: sx, z: sz, name: x.rounds![sites.length] });
   }
@@ -305,9 +328,13 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
     const adj = cells.map(() => new Set<number>());
     for (const s of sidesOf.values()) for (const i of s) for (const j of s) if (i !== j) adj[i].add(j);
     const along = (ci: number, v: number, ax: 0 | 1) => cells[ci].filter((p) => Math.abs(p[ax] - v) < 0.5).length >= 2;
-    const banned = (ci: number) => along(ci, Z0, 1) || along(ci, Z1, 1);
+    const wet = (ci: number) => !!sea && sea.inSea(pts[ci][0], pts[ci][1]);
+    const banned = (ci: number) => along(ci, Z0, 1) || along(ci, Z1, 1) || wet(ci);
     const ends = (v: number, z: number) => { let best = -1, bd = Infinity; cells.forEach((_, ci) => { if (along(ci, v, 0) && !banned(ci) && Math.abs(pts[ci][1] - z) < bd) { bd = Math.abs(pts[ci][1] - z); best = ci; } }); return best; };
-    const s0 = ends(X0, zIn), s1 = ends(X1, zOut);
+    // (Out into the sea: the land cell beside one of the sea's nearest where the river's line meets it.)
+    const mouth = (px: number, pz: number) => { let best = -1, bd = Infinity; cells.forEach((_, ci) => { if (!banned(ci) && [...adj[ci]].some(wet)) { const d = Math.hypot(pts[ci][0] - px, pts[ci][1] - pz); if (d < bd) { bd = d; best = ci; } } }); return best; };
+    const s0 = !sea || sea.side === 0 ? ends(X0, zIn) : sea.side === 2 ? ends(X1, zOut) : ends(fromEast ? X1 : X0, zIn);
+    const s1 = !sea ? ends(X1, zOut) : sea.side === 0 ? mouth(X1, zOut) : sea.side === 2 ? mouth(X0, zIn) : mouth(xOut, zSea);
     if (s0 >= 0 && s1 >= 0) {
       const dist = cells.map(() => Infinity), prev = cells.map(() => -1), done = cells.map(() => false);
       dist[s0] = 0;
@@ -318,7 +345,7 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
         done[u] = true;
         for (const v of adj[u]) {
           if (done[v] || banned(v)) continue;
-          const off = (pts[v][1] - riverZ(pts[v][0])) / 14, c = dist[u] + Math.hypot(pts[v][0] - pts[u][0], pts[v][1] - pts[u][1]) * (1 + off * off);
+          const off = riverOff(pts[v][0], pts[v][1]) / 14, c = dist[u] + Math.hypot(pts[v][0] - pts[u][0], pts[v][1] - pts[u][1]) * (1 + off * off);
           if (c < dist[v]) { dist[v] = c; prev[v] = u; }
         }
       }

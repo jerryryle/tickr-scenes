@@ -29,7 +29,8 @@ import { realSeason, weatherMix } from "./climate.ts";
 import { CITY_HI, CITY_LO, cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, parkedObstacles, pavementObstacles } from "./city.ts";
 import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
-import type { CityMaterials } from "./city.ts";
+import type { CityMaterials, CityPlan } from "./city.ts";
+import { SEA_COLOR, SEA_Y, shoreMoorings } from "./city.ts";
 import { facilityAt, facilityName } from "./facilities.ts";
 import { ATLAS_UPLOAD, marquee, plateAtlas, signAtlas } from "./signs.ts";
 import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
@@ -51,6 +52,7 @@ import { Crowd } from "./crowd.ts";
 import { CLOCK, VIG_LOG } from "./vignettes.ts";
 import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
+import { SEA_ALONG, SeaLife } from "./sealife.ts";
 import { StreetLife } from "./life.ts";
 
 const STREAM_RADIUS = 3;
@@ -72,7 +74,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let other: Truck | null = null;
   const backdrop = new Backdrop();
   let seekMs = 0;   // the last seek's cost (debug HUD)
-  let traffic: Traffic, crowd: Crowd, ambient: Ambient, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
+  let traffic: Traffic, crowd: Crowd, ambient: Ambient, seaLife: SeaLife, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
   let freewayReach: FreewayReach, cityCars: FreewayTraffic, roadCars: FreewayTraffic;
   let roadFrame: { road: CountryRoad; F: Frame } | null = null;
   let atmosphere: Atmosphere;
@@ -92,22 +94,52 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return { v: STATE_VERSION, seed: cfg.seed, random: randomSeed, season: journey.startSeason, simTime: journey.st.simTime, period: journey.period, journey: null };
   }
 
-  // The sea off a coastal or port town (outline.ts): one plane under the whole town at the water's
-  // level, from the shore's deepest bay out to the horizon; the land and the beach lie over it.
+  // The sea off a coastal or port town (outline.ts): one surface under the whole town at the
+  // water's level, from the shore's deepest bay out; the land and the beach lie over it. It reaches
+  // as far as anyone sees, out past the fog (a few hundred metres) and along the coast a good way
+  // past the town, by the country road's last stretch in (country.ts coastShift).
+  // (In 30 m tiles: the fog is by distance from each vertex (engine.ts), blended across each
+  // triangle, so one with corners kilometres off would be fog all over.)
+  const SEA_TILE = 30, SEA_OUT = 720, SEA_FAR = 650;
   let seaMesh: THREE.Mesh | null = null;
   function buildSea() {
     if (seaMesh) { engine.world.remove(seaMesh); seaMesh.geometry.dispose(); seaMesh = null; }
     const O = journey.plan.outline, d0 = O.shoreDeepest, deep = d0 === null ? null : d0 + SEA_REACH + 10;   // (under the land the sea reaches round: outline.ts seaward)
     if (O.sea === null || deep === null) return;
-    const FAR = 7000, s = O.sea, b = new Batch();
-    const x0 = s === 0 ? O.X1 - deep : s === 2 ? O.X0 - FAR : O.X0 - FAR, x1 = s === 0 ? O.X1 + FAR : s === 2 ? O.X0 + deep : O.X1 + FAR;
-    const z0 = s === 1 ? O.Z0 - FAR : s === 3 ? O.Z1 - deep : O.Z0 - FAR, z1 = s === 1 ? O.Z0 + deep : s === 3 ? O.Z1 + FAR : O.Z1 + FAR;
-    b.box((x0 + x1) / 2, -1.55, (z0 + z1) / 2, x1 - x0, 0.1, z1 - z0, 0x2f6f9a);
-    const m = b.build(mats.ground)!; seaMesh = m; engine.world.add(m);
+    const s = O.sea, b = new Batch(), y = SEA_Y;
+    const x0 = s === 0 ? O.X1 - deep : s === 2 ? O.X0 - SEA_OUT : O.X0 - SEA_ALONG, x1 = s === 0 ? O.X1 + SEA_OUT : s === 2 ? O.X0 + deep : O.X1 + SEA_ALONG;
+    const z0 = s === 1 ? O.Z0 - SEA_OUT : s === 3 ? O.Z1 - deep : O.Z0 - SEA_ALONG, z1 = s === 1 ? O.Z0 + deep : s === 3 ? O.Z1 + SEA_OUT : O.Z1 + SEA_ALONG;
+    // (Only tiles with sea in them: under the land, where the town isn't built out past the fog,
+    // the sea seen on through it (sealife.ts farFog) would show inland.)
+    // (On one grid, each tile once where the two regions overlap.)
+    const done = new Set<string>();
+    const tiles = (x0: number, x1: number, z0: number, z1: number) => {
+      for (let x = Math.floor(x0 / SEA_TILE) * SEA_TILE; x < x1; x += SEA_TILE) for (let z = Math.floor(z0 / SEA_TILE) * SEA_TILE; z < z1; z += SEA_TILE) {
+        const xe = x + SEA_TILE, ze = z + SEA_TILE, key = `${x},${z}`;
+        if (done.has(key)) continue;
+        done.add(key);
+        if (![[x, z], [xe, z], [x, ze], [xe, ze], [(x + xe) / 2, (z + ze) / 2]].some(([px, pz]) => O.seaward(px, pz))) continue;
+        b.tri(x, y, z, xe, y, z, xe, y, ze, SEA_COLOR); b.tri(x, y, z, xe, y, ze, x, y, ze, SEA_COLOR);
+      }
+    };
+    tiles(x0, x1, z0, z1);
+    // (And round the shore's bend in towards the road in, outside the town: outline.ts.)
+    const bend = O.bendSea(SEA_ALONG);
+    if (bend) tiles(...bend);
+    const m = b.build(seaLife.surface)!; seaMesh = m; engine.world.add(m);
+  }
+  // (Test renders: the stretch of shore nearest the middle of the town's sea side.)
+  function midShore(plan: CityPlan) {
+    const O = plan.outline, mx = (O.X0 + O.X1) / 2, mz = (O.Z0 + O.Z1) / 2;
+    let best = null as CityPlan["shore"][number] | null, bd = Infinity;
+    for (const e of plan.shore) { const d = Math.hypot((e.ax + e.bx) / 2 - mx, (e.az + e.bz) / 2 - mz); if (d < bd) { bd = d; best = e; } }
+    return best;
   }
   function buildCity() {
     streamer?.clear();
     buildSea();
+    seaLife.build(journey.plan);
+    engine.seaFar = journey.plan.outline.sea === null ? 0 : SEA_FAR;
     engine.setSky(journey.plan.style.sky);
     backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
@@ -332,10 +364,22 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const G = plan.graph, ring = G.streets.find((st) => st.ring), pickB = G.blocks.find((b) => b.water) ?? (ring ? [G.faceBlock[ring.id * 2], G.faceBlock[ring.id * 2 + 1]].map((b) => G.blocks[b]).find((b) => b?.park) : undefined) ?? G.blocks.filter((b) => plan.district(b.kx, b.kz) === "residential").sort((p, q) => Math.hypot(p.cx, p.cz) - Math.hypot(q.cx, q.cz))[0];
       if (pickB) { cx = pickB.cx; cz = pickB.cz; }
       // (Over the shore first, in a town on the sea: outline.ts.)
-      const sh = plan.shore[Math.floor(plan.shore.length / 2)];
+      const sh = midShore(plan);
       if (sh) { cx = (sh.ax + sh.bx) / 2 + sh.nx * 10; cz = (sh.az + sh.bz) / 2 + sh.nz * 10; }
       const a = tourT * 0.05;
       cam.position.set(cx + Math.cos(a) * 70, 95, cz + Math.sin(a) * 70); cam.lookAt(cx, 0, cz);
+    } else if (DEBUG_VIEW === "wharf" && shoreMoorings(plan).wharf) {
+      // From the quay beside a port's container wharf, watching its cranes work (sealife.ts).
+      const W = shoreMoorings(plan).wharf!, sw = Math.sin(tourT * 0.05) * 25;
+      cx = W.x; cz = W.z;
+      cam.position.set(W.x - W.nx * 4 + W.ex * (48 + sw), 14, W.z - W.nz * 4 + W.ez * (48 + sw)); cam.lookAt(W.x + W.nx * 14, 10, W.z + W.nz * 14);
+    } else if (DEBUG_VIEW === "sea" && midShore(plan)) {
+      // Low on the shore nearest the middle of a town on the sea, looking out over the water and
+      // turning slowly from along the coast one way to the other (sealife.ts).
+      const sh = midShore(plan)!, mx = (sh.ax + sh.bx) / 2, mz = (sh.az + sh.bz) / 2, L = Math.hypot(sh.bx - sh.ax, sh.bz - sh.az);
+      const ex = (sh.bx - sh.ax) / L, ez = (sh.bz - sh.az) / L, sw = Math.sin(tourT * 0.06) * 160;
+      cx = mx; cz = mz;
+      cam.position.set(mx - sh.nx * 22, 13, mz - sh.nz * 22); cam.lookAt(mx + sh.nx * 140 + ex * sw, -1, mz + sh.nz * 140 + ez * sw);
     } else if (DEBUG_BLOCK) {
       // Circling low over one block (its key after the colon: "block:kx,kz"), to see its ground.
       const B = plan.graph.block(DEBUG_BLOCK[0], DEBUG_BLOCK[1]);
@@ -807,6 +851,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       crowd = new Crowd(engine.scene, people, movers);
       cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);
+      seaLife = new SeaLife(engine.world, engine.mats.ground);
       // The clock first: attaching street life replays the city so far, and its vignettes and
       // pedestrians keep the hours.
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
@@ -817,7 +862,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
 
       const facadeMat = makeFacadeMaterial(atlas);
       applyCutaway(facadeMat); applyDriverSpot(facadeMat);
-      for (const m of [facadeMat, engine.mats.ground, engine.mats.solid]) applyLampLight(m);   // streetlights and headlights light the world
+      for (const m of [facadeMat, engine.mats.ground, engine.mats.solid, seaLife.surface]) applyLampLight(m);   // streetlights and headlights light the world (the sea and the harbour too: their material is the ground's clone, made before this)
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
@@ -874,6 +919,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       traffic.time = shown; traffic.draw(alpha);
       crowd.draw(alpha, shown);
       ambient.update(shown, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
+      seaLife.update(shown);
       if (!TOUR_VIEW) streamRound(true);
       {
         const bd = backdropState(pr);

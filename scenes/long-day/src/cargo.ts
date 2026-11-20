@@ -1,4 +1,4 @@
-// The goods catalog (concept doc, "Goods catalog"): 49 cargo types in four rarity tiers. Each
+// The goods catalog (concept doc, "Goods catalog"): 57 cargo types in four rarity tiers. Each
 // type says where it comes from, where it may go, which truck carries it, how many units a
 // consignment has and how many pallet slots one unit takes. Phase 7 adds the 3D shapes and the
 // driver's handling animation; `handling` is recorded here for it.
@@ -50,6 +50,11 @@ export const CARGO: CargoType[] = [
   cargoType("frozen", "Frozen goods", "uncommon", "handTruck", ["coldStorage"], ["grocery", "iceCream"], "reefer", [6, 14], 0.5),
   cargoType("medical", "Medical supplies", "uncommon", "handTruck", ["medicalDC"], ["hospital", "pharmacy"], "box16", [4, 10], 0.5),
   cargoType("canoes", "Canoes & kayaks", "uncommon", "teamLift", ["outfitterDC"], ["outfitter", "marina"], "box26", [2, 5], 1),
+  // (By the sea: facilities.ts waterfrontAt. SEA_CARGO.)
+  cargoType("seafood", "Fresh seafood", "uncommon", "handTruck", ["fishMarket", "coldStorage"], ["restaurant", "grocery", "seafood"], "reefer", [6, 14], 0.5),
+  cargoType("shipStores", "Ship's stores", "uncommon", "palletJack", ["foodServiceWh", "dc"], ["shipChandler"], "box26", [2, 5], 1),
+  cargoType("surfboards", "Surfboards", "uncommon", "carry", ["outfitterDC", "dc"], ["surfShop"], "box16", [3, 8], 0.25),
+  cargoType("nets", "Nets & rope", "uncommon", "handTruck", ["shipChandler"], ["fishMarket", "marina", "boatyard"], "box16", [3, 8], 0.5),
   cargoType("vending", "Vending machines", "uncommon", "push", ["vendingDepot"], ["office", "school"], "box26", [1, 3], 1),
   // Rare (8%).
   cargoType("grandPiano", "Grand piano", "rare", "push", ["pianoMaker"], ["concertHall"], "box26", [1, 1], 3),
@@ -129,6 +134,8 @@ const TIER_WEIGHT: Record<Tier, number> = { common: 0.70, uncommon: 0.20, rare: 
 // type within it. `r1`, `r2` are uniform randoms; seasonal types are skipped out of season, and
 // types `allow` (when given) refuses are skipped too, as are tiers left with none. Null when
 // nothing is left.
+// The waterfront's cargo (facilities.ts waterfrontAt), which a town on the sea favours (journey.ts makeJob).
+export const SEA_CARGO = new Set(["seafood", "shipStores", "surfboards", "nets"]);
 export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean): CargoType | null {
   const ok = (c: CargoType) => (!c.season || c.season === season) && (!allow || allow(c));
   const tiers = (["common", "uncommon", "rare", "humorous"] as Tier[]).filter((t) => CARGO.some((c) => c.tier === t && ok(c)));

@@ -234,7 +234,7 @@ export class StreetLife implements LifeHook {
       if (W.at[k] > st.s + 1 || W.at[k] < st.s - 6) continue;
       const o = W.obs[k];
       for (const c of this.traffic.obstacles) if (Math.hypot(c.x - o.x, c.z - o.z) < c.r + o.r - 0.3) return true;
-      for (const c of this.crowd.obstacles) for (let t = 0; t <= 1.5; t += 0.5) if (Math.hypot(c.x + (c.vx ?? 0) * t - o.x, c.z + (c.vz ?? 0) * t - o.z) < c.r + o.r + 0.5) return true;
+      if (walksInto(this.crowd.obstacles, o)) return true;
     }
     return false;
   }
@@ -243,4 +243,12 @@ export class StreetLife implements LifeHook {
     const o = JSON.parse(s);
     this.traffic.load(o.t, j.plan); this.crowd.load(o.c); this.ambient.loadBlimp(o.b);
   }
+}
+
+// Whether anyone on foot (`people`, as the crowd's obstacles: each moving as it says) is in circle
+// o, or walking into it in the next 1.5 s, with room to spare (StreetLife.reverseBlocked: someone
+// walking along the pavement into the cab's swing).
+export function walksInto(people: Obstacle[], o: Obstacle): boolean {
+  for (const c of people) for (let t = 0; t <= 1.5; t += 0.5) if (Math.hypot(c.x + (c.vx ?? 0) * t - o.x, c.z + (c.vz ?? 0) * t - o.z) < c.r + o.r + 0.5) return true;
+  return false;
 }

@@ -37,6 +37,7 @@ import type { TruckModel } from "./truck.ts";
 import { PREEMPT_CHANCE, PREEMPT_MAX, signalCycleIndex, signalGreenLeft, signalState, signalWait, PREEMPT_CLEAR } from "./signals.ts";
 import type { SignalColor, SignalPreempt } from "./signals.ts";
 import { cityName, journeyStyle } from "./styles.ts";
+import { seaSide } from "./outline.ts";
 import { cargoSeason, cityClimate, seasonalStyle } from "./climate.ts";
 import type { Climate, Season } from "./climate.ts";
 import { CITY_HI, CITY_LO, CityPlan, entryGateOf, gateEnd, GATES, setCityLimits } from "./city.ts";
@@ -45,7 +46,7 @@ import type { Gate, KerbDoor } from "./city.ts";
 import type { CityGraph, CNode } from "./citygraph.ts";
 import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
-import { CARGO, CARGO_BY_ID, pickCargo, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
+import { CARGO, CARGO_BY_ID, pickCargo, SEA_CARGO, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
 import { blockGoals, LANE_KERB, Path, planRoute } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
@@ -202,7 +203,7 @@ export class Journey {
   private entryState(N: number): JourneyState {
     const citySeed = citySeedOf(this.cfg.seed, N);
     this.climate = this.climateOf(N);
-    this.plan = new CityPlan(citySeed, seasonalStyle(journeyStyle(this.cfg.seed, N), this.climate));
+    this.plan = this.planOf(N);
     this.plan.climate = this.climate;
     this.facCache.clear(); this.dockCache = null;
     for (const c of [...this.frames.keys()]) if (this.keepNeighbours ? Math.abs(c - N) > 1 : c !== N) this.frames.delete(c);
@@ -505,11 +506,19 @@ export class Journey {
     const pool = swapDue && !freight && !DEBUG_CARGO
       ? new Set(CARGO.filter((c) => c.truck !== st.truck && this.findNear(c.from, bx, bz, SWAP_SEARCH, here, 2).length).map((c) => c.id))
       : null;
+    // (The waterfront's cargo with a source near, looked for once: makeJob's shore pick.)
+    let seaNear: Set<string> | null = null;
+    const seaHas = (k: { id: string }) => (seaNear ??= new Set([...SEA_CARGO].filter((id) => this.findNear(CARGO_BY_ID.get(id)!.from, bx, bz, SEARCH, here, 1).length > 0))).has(k.id);
     for (let attempt = 0; attempt < 24; attempt++) {
       st.jobCounter++;
       // When a swap is due, the first attempts draw from that pool, so the truck really changes.
       const change = !!pool?.size && attempt < 16;
-      const c = freight ? CARGO_BY_ID.get(freight.cargo)! : (DEBUG_CARGO && CARGO_BY_ID.get(DEBUG_CARGO)) ||
+      // (In a town on the sea, half the first attempts try the waterfront's cargo, where it has a
+      // source near and this truck can carry it (or a swap is due): its fish markets, chandlers and
+      // surf shops, facilities.ts waterfrontAt. About one job in ten comes out the waterfront's.)
+      const shore = !freight && !DEBUG_CARGO && !change && attempt < 12 && this.plan.outline.sea !== null && this.rand(9) < 0.5
+        ? pickCargo(this.rand(1), this.rand(2), 0, season, (k) => SEA_CARGO.has(k.id) && (swapDue || truckCarries(st.truck, k.truck)) && seaHas(k)) : null;
+      const c = freight ? CARGO_BY_ID.get(freight.cargo)! : (DEBUG_CARGO && CARGO_BY_ID.get(DEBUG_CARGO)) || shore ||
         (change && pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season, (k) => pool!.has(k.id))) ||
         pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season)!;
       // The final pickup goes in any truck that can carry all of the next city's freight (it
@@ -526,7 +535,7 @@ export class Journey {
       // widening the search only after a few attempts.
       // Rare and humorous cargo comes from rare facilities, so it may look further afield. A
       // swap's cargo looks as far as its pool did.
-      const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous";
+      const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous" || SEA_CARGO.has(c.id);   // (the waterfront's: few places take it)
       const sources = this.findNear(c.from, bx, bz, reach || (change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2);
       if (!sources.length) continue;
       const src = sources[Math.min(sources.length - 1, Math.floor(this.rand(4) * Math.min(3, sources.length)))];
@@ -1320,10 +1329,10 @@ export class Journey {
   // City N's road out by gate `gate` (a pure function of the seed and these).
   private makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel): CountryRoad {
     const e = gateEnd(GATES[gate]), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
-    const toStyle = seasonalStyle(journeyStyle(this.cfg.seed, N1), toClimate), fromStyle = seasonalStyle(journeyStyle(this.cfg.seed, N), fromClimate);
+    const toStyle = this.styleOf(N1), fromStyle = this.styleOf(N);
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
     const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && this.takesFreeway(N1);
-    return new CountryRoad({ toFreeway, toFreewayMerge,
+    return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1),
       seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
@@ -1345,6 +1354,21 @@ export class Journey {
     }
     return this.prevCache.road;
   }
+  // City N's plan: this city's, or the next's as its road out needs it (whether it has its sea:
+  // CityPlan falls back to none), kept to be this city's when the journey gets there. (The last
+  // few, so a scrub back and forth over a hand-over doesn't build them again and again.)
+  private plans = new Map<number, CityPlan>();
+  private styleOf(N: number) { return seasonalStyle(journeyStyle(this.cfg.seed, N), this.climateOf(N)); }
+  private planOf(N: number): CityPlan {
+    const seed = citySeedOf(this.cfg.seed, N), have = this.plans.get(N);
+    if (have && have.seed === seed) { this.plans.delete(N); this.plans.set(N, have); return have; }
+    const plan = new CityPlan(seed, this.styleOf(N));
+    this.plans.set(N, plan);
+    if (this.plans.size > 3) this.plans.delete(this.plans.keys().next().value!);
+    return plan;
+  }
+  // Whether city N is on the sea: only built out to see when it could be (seaSide).
+  private onSea(N: number) { return seaSide(citySeedOf(this.cfg.seed, N), this.styleOf(N)) !== null && this.planOf(N).outline.sea !== null; }
   // The arrival straight into this city (pure: from the seed alone).
   private arrivalCache: CountryRoad | null = null;
   get arrivalRoad(): CountryRoad {
@@ -1353,7 +1377,7 @@ export class Journey {
       const g = this.plan.entryGate, e = gateEnd(g), h = e.h + Math.PI;
       const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival", toFreeway: !!this.plan.freeway, toFreewayMerge: !!this.plan.freeway && this.takesFreeway(st.city),
+        seed: this.cfg.seed, city: st.city, kind: "arrival", toSea: this.plan.outline.sea !== null, toFreeway: !!this.plan.freeway, toFreewayMerge: !!this.plan.freeway && this.takesFreeway(st.city),
         frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
         fromTruck: st.truck, toTruck: st.truck,
         fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,

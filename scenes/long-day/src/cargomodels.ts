@@ -175,6 +175,33 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.box(x, y + 0.18, z, 0.55, 0.36, 0.4, CK.white);
     b.box(x + 0.276, y + 0.2, z, 0.01, 0.16, 0.05, CK.red); b.box(x + 0.276, y + 0.2, z, 0.01, 0.05, 0.16, CK.red);
   } },
+  // A fish tote: blue, iced, a fish or two showing.
+  seafood: { size: [0.6, 0.34, 0.42], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.15, z, 0.6, 0.3, 0.42, vpick([0x2a6fb8, 0x2a8fa8], i)); b.box(x, y + 0.305, z, 0.54, 0.02, 0.36, 0xe8f2f6);
+    b.box(x - 0.08, y + 0.32, z + 0.05, 0.34, 0.04, 0.09, 0xa8b4bc); b.box(x + 0.1, y + 0.32, z - 0.08, 0.3, 0.035, 0.08, 0x8f9ca6);
+  } },
+  // Ship's stores on a pallet: cartons, sacks and a coil of rope, wrapped.
+  shipStores: { size: [1.2, 1.15, 1.0], palletized: true, build: (b, x, y, z) => {
+    pallet(b, x, y, z);
+    carton(b, x - 0.28, y + 0.16, z - 0.24, 0.55, 0.42, 0.45); carton(b, x + 0.28, y + 0.16, z - 0.24, 0.55, 0.42, 0.45);
+    b.box(x, y + 0.36, z + 0.25, 1.1, 0.4, 0.45, 0xd9cfae);
+    carton(b, x - 0.2, y + 0.58, z, 0.6, 0.38, 0.8);
+    b.cyl(x + 0.32, y + 0.7, z, 0.26, 0.2, 0xc8a85a, 10); b.cyl(x + 0.32, y + 0.81, z, 0.1, 0.02, 0x8a6a3a, 8);
+  } },
+  // Nets and rope: a bundle of green net, tied, a coil of rope on top.
+  nets: { size: [0.7, 0.45, 0.5], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.17, z, 0.7, 0.34, 0.5, vpick([0x3f6f4a, 0x2f5a6a, 0x6a5a2a], i)); b.box(x, y + 0.18, z, 0.06, 0.35, 0.51, 0xc8a85a);
+    b.cyl(x + 0.05, y + 0.39, z, 0.2, 0.1, 0xd8c08a, 10); b.cyl(x + 0.05, y + 0.445, z, 0.08, 0.01, 0x8a6a3a, 8);
+  } },
+  // A surfboard: long, thin, narrower at its nose and tail, a stripe down it (lying flat: no fin
+  // under it, which would stand it off the floor).
+  surfboards: { size: [2.1, 0.12, 0.55], build: (b, x, y, z, i) => {
+    const c = vpick([0xf2f0ea, 0x2aa8c8, 0xf2c200, 0xe86a4a], i);
+    b.box(x, y + 0.05, z, 2.0, 0.07, 0.52, c);
+    b.box(x + 1.02, y + 0.05, z, 0.08, 0.06, 0.34, c);
+    b.box(x - 1.02, y + 0.05, z, 0.06, 0.06, 0.3, c);
+    b.box(x, y + 0.087, z, 1.9, 0.004, 0.06, vpick([0xc0392b, 0x1f3a93, 0x2e8b57], i));
+  } },
   canoes: { size: [4.2, 0.45, 0.8], build: (b, x, y, z, i) => {   // (boats.ts: a canoe, every third a kayak)
     const kind = i % 3 === 2 ? "kayak" : "canoe";
     boatAt(b, kind, x, y - boatExtent(kind).lo, z, 0, vpick([0x27ae60, 0xd35400, 0xc0392b, 0x1f6fb0], i));

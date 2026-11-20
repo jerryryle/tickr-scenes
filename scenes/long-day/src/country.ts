@@ -170,6 +170,7 @@ interface CountryInput {
   fromClimate: Climate; toClimate: Climate;
   toFreeway?: boolean;   // the next city has a freeway: the road comes up onto a flyover beside it
   toFreewayMerge?: boolean;   // and joins it, for a stretch (freeway.ts freewayMerge)
+  toSea: boolean;   // the next city (or, arriving, this one) is on the sea, as its plan is built (CityPlan.outline)
 }
 
 export class CountryRoad {
@@ -446,6 +447,8 @@ export class CountryRoad {
       this.SM[i] *= hilly * (HILLS[this.fromBiome] + (HILLS[this.toBiome] - HILLS[this.fromBiome]) * b);
     }
     this.coastFrom = this.fromBiome === "coastal" ? 1 : 0; this.coastTo = this.toBiome === "coastal" ? 1 : 0;
+    this.toSea = inp.toSea;
+    this.toPort = this.toSea && inp.toStyle.id === "port";
     if (arrival) this.D = 0;
     else this.computeMeetings();
   }
@@ -689,11 +692,17 @@ export class CountryRoad {
   }
   // How much of the land at s is coast (the sea on the left), easing from one land to the next.
   private coastFrom = 0; private coastTo = 0;
-  // (Fading out over the last COAST_FADE metres to a city's gate at either end: a coastal city has
-  // its own sea, on its own side (outline.ts), and its outskirts' land comes up to the road there.)
+  private toSea = false; private toPort = false;   // (into a town on the sea; a port)
+  // (Fading out over the first COAST_FADE metres out of a city's gate: a coastal city has its own
+  // sea, on its own side (outline.ts), and its outskirts' land comes up to the road there. Into a
+  // town on the sea, on to its gate: the town's shore bends in to meet it there, its sea on the left
+  // of the way in as the coast is (outline.ts); and a port's road, through wetlands, comes out to
+  // the coast for its last stretch. Into one not on the sea, fading out over the last COAST_FADE.)
   coastAt(s: number) {
-    const f = Math.min(this.inp.kind === "exit" ? s / COAST_FADE : 1, (this.gateS - s) / COAST_FADE);
-    return (this.coastFrom + (this.coastTo - this.coastFrom) * this.blendAt(s)) * smooth(THREE.MathUtils.clamp(f, 0, 1));
+    let land = this.coastFrom + (this.coastTo - this.coastFrom) * this.blendAt(s);
+    if (this.toPort) land = Math.max(land, smooth(THREE.MathUtils.clamp((s - (this.gateS - 1400)) / 400, 0, 1)));
+    const f = Math.min(this.inp.kind === "exit" ? s / COAST_FADE : 1, this.toSea ? 1 : (this.gateS - s) / COAST_FADE);
+    return land * smooth(THREE.MathUtils.clamp(f, 0, 1));
   }
   // The height of the ground at (s, n): the road's level out to the ditches, then the land's own
   // hills (smooth noise, rising more often than falling), eased in over the first 40 m, so the

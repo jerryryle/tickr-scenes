@@ -61,11 +61,15 @@ export class Engine {
     const far = Math.max(20, clear * 0.95);
     this.fog.far = far;
     this.fog.near = Math.min(far - 12, Math.max(far * 0.5, keepClear + 8));
-    if (Math.abs(this.camera.far - clear * 1.05) > 1) {
-      this.camera.far = clear * 1.05;
+    // (Over a town's sea the far plane reaches on past the fog: the sea and its boats fog out over
+    // a longer way (sealife.ts farFog), with nothing to stream in out there.)
+    const camFar = Math.max(clear * 1.05, this.seaFar);
+    if (Math.abs(this.camera.far - camFar) > 1) {
+      this.camera.far = camFar;
       this.camera.updateProjectionMatrix();
     }
   }
+  seaFar = 0;   // (main.ts: set with the town's sea)
 
   // Keep the sun's light direction fixed relative to the camera's neighbourhood.
   followSun(focus: THREE.Vector3) {

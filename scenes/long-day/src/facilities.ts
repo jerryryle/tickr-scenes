@@ -118,6 +118,11 @@ export const FAC = {
   pumpkinPatch: { label: "Pumpkin Patch", w: { park: 0.8 } },
   treeLot: { label: "Tree Lot", w: { park: 0.6, commercial: 0.3 } },
   boatyard: { label: "Boatyard", w: { park: 0.7 } },
+  // The waterfront's own (waterfrontAt: on blocks by the sea only, never drawn by district).
+  fishMarket: { label: "Fish Market", w: {}, dock: true },
+  shipChandler: { label: "Ship Chandler", w: {} },
+  seafood: { label: "Seafood", w: {} },
+  surfShop: { label: "Surf Shop", w: {} },
 } satisfies Record<string, FacilityDef>;
 
 const FAC_IDS = Object.keys(FAC) as FacilityId[];
@@ -133,13 +138,27 @@ for (const d of ["downtown", "commercial", "residential", "industrial", "park"] 
 }
 
 export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
-  const t = FAC_BY_DISTRICT.get(plan.blockOf(bx, bz)?.park ? "park" : plan.district(bx, bz))!;
+  const park = !!plan.blockOf(bx, bz)?.park, wf = park ? null : waterfrontAt(plan, bx, bz);
+  if (wf) return wf;
+  const t = FAC_BY_DISTRICT.get(park ? "park" : plan.district(bx, bz))!;
   const r = hash2(bx, bz, plan.seed, 0xfac) * t.total;
   let i = 0;
   while (i < t.cum.length - 1 && t.cum[i] <= r) i++;
   return t.ids[i];
 }
 const isDock = (id: FacilityId) => (FAC[id] as FacilityDef).dock === true;
+// By the sea (outline.ts nearShore), some blocks are the waterfront's trades: in a port, among its
+// docks, fish markets (where the reefers load) and ship chandlers, and seafood places among its
+// shops; in a seaside town, seafood places and surf shops along the promenade.
+function waterfrontAt(plan: CityPlan, bx: number, bz: number): FacilityId | null {
+  const port = plan.style.id === "port";
+  if (!port && plan.style.id !== "coastal") return null;
+  if (!plan.shoreLine.nearShore(bx, bz, 1.3)) return null;
+  const d = plan.district(bx, bz), r = hash2(bx, bz, plan.seed, 0xfa7);
+  if (port && d === "industrial") return r < 0.3 ? "fishMarket" : r < 0.5 ? "shipChandler" : null;
+  if (d !== "commercial") return null;
+  return port ? (r < 0.35 ? "seafood" : null) : r < 0.3 ? "seafood" : r < 0.5 ? "surfShop" : null;
+}
 
 // ---- names ----------------------------------------------------------------------------------
 const PLACES = ["Hayes Valley", "Mission", "Dogpatch", "Potrero", "Sunset", "Riverside", "Harbor", "Elm Park",
