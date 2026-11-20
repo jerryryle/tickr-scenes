@@ -64,7 +64,9 @@ const TRAFFIC_SPAWN = [70, 150], TRAFFIC_DESPAWN = 175;
 // through the junction it waits at), the room left it, how fast they back up or pull on (m/s), and
 // how long one can stay stuck in its way.
 const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 20, CLEAR_LOOK = 30;
+const CLEAR_WOBBLE = 0.05;   // m: how much circles' gaps to the truck wobble along a lane beside it (clearWay)
 const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
+const SLIDE_LOOK = 6;     // m on along its way a car beside the truck may slide by it to come clear (slidesBy)
 const CAR_STOP_PAUSE = 1.0;     // s a car stands at a stop sign's line before going on
 const GIVE_WAY_GAP = 3.4;   // m between centre lines: closer than this, a car and the truck would touch (the truck's rear cuts its turns)
 const CAR_COLORS = [0xb22222, 0x1f4fa0, 0xe8e8e8, 0x222428, 0x7a7f86, 0xd4a017, 0x2e7d4f, 0x8a3fa0, 0xe8e0d0, 0x5a2a1a, 0x3a8ac8];
@@ -272,6 +274,16 @@ export class Traffic {
     const gapZ = (P: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (const o of Z) m = Math.min(m, Math.hypot(P[i] - o.x, P[i + 1] - o.z) - P[i + 2] - o.r - CLEAR_ROOM); return m; };
     // (And of the truck's body where it stands: none makes way through it, only away from it.)
     const gapB = (P: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (const o of Bd) m = Math.min(m, Math.hypot(P[i] - o.x, P[i + 1] - o.z) - P[i + 2] - o.r - CLEAR_ROOM); return m; };
+    // (Whether car c at s1, going way w, gap g1 to the truck's body (from g0), is coming on into it:
+    // deeper than it was, unless only by the few centimetres the circles' gaps wobble by along a lane
+    // beside it, the gap back again within a little on, and never touching it.)
+    const W = this.clearW;
+    const intoB = (c: Car, s1: number, w: number, g1: number, g0: number) => {
+      if (g1 >= g0 - 1e-6) return false;
+      if (g1 < g0 - CLEAR_WOBBLE || g1 + CLEAR_ROOM < 0) return true;
+      for (let k = 0.5; k <= 2; k += 0.5) if (gapB(at(c, s1 + w * k, W)) >= g0 - 1e-6) return false;
+      return true;
+    };
     const gapQ = (P: number[], Q: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (let k = 0; k < Q.length; k += 3) m = Math.min(m, Math.hypot(P[i] - Q[k], P[i + 1] - Q[k + 1]) - P[i + 2] - Q[k + 2]); return m; };
     const d = CLEAR_V * dt;
     // (Which way along its lane takes car c out of the way sooner: the one it is clear by in the
@@ -282,7 +294,7 @@ export class Traffic {
       const b0 = Math.min(0, gapB(at(c, c.s, A)));
       for (const w of [-1, 1]) for (let m = 1; m <= CLEAR_LOOK; m += 1) {
         const s1 = c.s + w * m;
-        if (s1 >= 0 && s1 <= c.path.length && gapB(at(c, s1, A)) < b0 - 1e-6) break;   // (that way runs into the truck)
+        if (s1 >= 0 && s1 <= c.path.length && intoB(c, s1, w, gapB(at(c, s1, A)), b0)) break;   // (that way runs into the truck)
         if (s1 < 0 || s1 > c.path.length) {
           const g = gapZ(at(c, Math.max(0, Math.min(c.path.length, s1)), A));
           if (bestM === Infinity && g > bestG) { bestG = g; best = w; }
@@ -310,7 +322,7 @@ export class Traffic {
       const s1 = c.s + w * d;
       if (s1 < 0) continue;
       // (Never into the truck, nor deeper into it.)
-      if (gapB(at(c, s1, A)) < Math.min(0, gapB(at(c, c.s, B))) - 1e-6) continue;
+      if (intoB(c, s1, w, gapB(at(c, s1, A)), Math.min(0, gapB(at(c, c.s, B))))) continue;
       // (Another vehicle where it would go, that it isn't moving away from already.)
       at(c, s1, A);
       const C0 = at(c, c.s, this.clearC);
@@ -350,7 +362,7 @@ export class Traffic {
       if ((c.clearT = (c.clearT ?? 0) + dt) > CLEAR_GIVE_UP) this.cars.splice(i, 1);
     }
   }
-  private clearA: number[] = []; private clearB: number[] = []; private clearC: number[] = []; private clearMoved = new Set<Car>();
+  private clearA: number[] = []; private clearB: number[] = []; private clearC: number[] = []; private clearW: number[] = []; private clearMoved = new Set<Car>();
 
   private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[], peds: Obstacle[]) {
     const r = this.rnd;
@@ -1057,6 +1069,16 @@ export class Traffic {
     }
     return m;
   }
+  // Whether car c, close beside the truck, comes clear of it (TRUCK_ROOM) within SLIDE_LOOK m on
+  // along its way without touching it on the way.
+  private slidesBy(c: Car, truck: Obstacle[]) {
+    for (let a = 0.5; a <= SLIDE_LOOK; a += 0.5) {
+      const g = this.truckGap(c, c.s + a, c.dodge, truck);
+      if (g < 0) return false;
+      if (g >= TRUCK_ROOM) return true;
+    }
+    return false;
+  }
   // A vehicle as a row of circles about its own width, so long ones block their whole length
   // without reaching into the next lane (a bus's two big circles used to block the lanes
   // beside it and oncoming traffic).
@@ -1326,8 +1348,12 @@ export class Traffic {
     if (c.s + ds > hardStop) { ds = Math.max(0, hardStop - c.s); c.v = 0; }
     // (Never on into the truck, whatever it has misjudged: a step that would take any of it into
     // the truck's body, or nearer it once there, swinging its tail round a turn beside it, cutting
-    // across its nose, it doesn't take. It waits where it is till there is room.)
-    if (ds > 0 && this.truckGap(c, c.s + ds, c.dodge, truck) < Math.min(TRUCK_ROOM, this.truckGap(c, c.s, c.dodge, truck))) { ds = 0; c.v = 0; c.acc = 0; }
+    // across its nose, it doesn't take. It waits where it is till there is room. (Unless it is only
+    // sliding by, close beside it, its way opening out again a little on without touching it.)
+    if (ds > 0) {
+      const g1 = this.truckGap(c, c.s + ds, c.dodge, truck);
+      if (g1 < Math.min(TRUCK_ROOM, this.truckGap(c, c.s, c.dodge, truck)) && !(g1 >= 0 && this.slidesBy(c, truck))) { ds = 0; c.v = 0; c.acc = 0; }
+    }
     c.s += ds;
     c.stillT = c.v < 0.05 ? c.stillT + dt : 0;
     c.slowT = c.v < 0.5 ? c.slowT + dt : 0;

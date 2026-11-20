@@ -135,6 +135,10 @@ const KEYFRAME_STEPS = 100;       // a keyframe every 10 s of journey within the
 const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is never planned shorter than this
 const THROUGH = 1e9;              // stopS of a path driven straight through its end (JSON has no Infinity)
 const GATE_SPEED = 6.5;           // rough average speed across town, for timing the way out
+// (Metres) what a drive takes beyond the graph's corner to corner: round to the kerb, the lights
+// and the turns; set so a grid town's estimates are what they were when it counted blocks.
+const DRIVE_SLACK = 3 * BLOCK, GATE_SLACK = BLOCK;
+const GATE_MAX = 900;             // s: longer than any drive out of town could be (deadline's early out)
 const VMAX = 11, ACCEL = 1.6, BRAKE = 2.2, FIRM_BRAKE = 4.5, MAX_DECEL = 5, STOP_GAP = 0.6;
 // Gridlock: held standing by street life JAM_HONK s (its own light not red, its own way back into a
 // bay not clear of traffic), the truck honks; JAM_REACT s after (its first two blasts over), the
@@ -410,16 +414,41 @@ export class Journey {
     return this.cfg.weather ? c : { ...c, weather: "clear" };   // (weather off: clear skies; the season stays)
   }
 
-  // Rough seconds for a run of stops from block (bx, bz): driving at ~6 m/s across blocks, about
-  // 50 s at each stop, and a reverse at docks.
-  private estimate(stops: Stop[], bx: number, bz: number) {
-    let t = 0, cx = bx, cz = bz;
+  // Rough seconds to make `stops` in turn, starting from nodes `from` (fromTruck, fromBlock): the
+  // street graph's shortest drive to each (city streets, the right way up one-way ones) at ~6 m/s,
+  // plus the way round to the kerb, about 50 s at each stop, and a reverse at docks.
+  private estimate(stops: Stop[], from: readonly number[]) {
+    let t = 0;
     for (const s of stops) {
       if (!s.site) continue;
-      t += (Math.abs(s.site.bx - cx) + Math.abs(s.site.bz - cz) + 1) * BLOCK / 6 + 50 + (this.isDockStop(s) ? 25 : 0) + (s.kind === "swap" ? 60 : 0);
-      cx = s.site.bx; cz = s.site.bz;
+      const to = this.fromBlock(s.site.bx, s.site.bz);
+      t += (this.driveTo(from, to) + DRIVE_SLACK) / 6 + 50 + (this.isDockStop(s) ? 25 : 0) + (s.kind === "swap" ? 60 : 0);
+      from = to;
     }
     return t;
+  }
+  // The street graph's nodes round block (bx, bz): where a drive from it starts, or one to it ends.
+  private fromBlock(bx: number, bz: number): number[] {
+    const G = this.plan.graph, B = this.plan.blockOf(bx, bz);
+    if (!B) return this.nodesNear(bx * BLOCK + 39, bz * BLOCK + 39);
+    return [...new Set(B.faces.map((f) => G.dedgeFrom(f)))].sort((p, q) => p - q);
+  }
+  // The node nearest the truck (where its drive anywhere starts).
+  private fromTruck(): number[] { return this.nodesNear(this.pose.x, this.pose.z); }
+  private nodesNear(x: number, z: number): number[] {
+    let best = 0, bd = Infinity;
+    for (const N of this.plan.graph.nodes) { const d = (N.x - x) ** 2 + (N.z - z) ** 2; if (d < bd) { bd = d; best = N.id; } }
+    return [best];
+  }
+  // Metres of the shortest drive from any of `from` to any of `to`; where none (a cut-off corner),
+  // as the crow flies and a half again.
+  private driveTo(from: readonly number[], to: readonly number[]) {
+    const G = this.plan.graph, D = G.driveDists(from);
+    let best = Infinity;
+    for (const v of to) best = Math.min(best, D[v]);
+    if (best < Infinity) return best;
+    for (const a of from) for (const b of to) best = Math.min(best, 1.5 * Math.hypot(G.nodes[a].x - G.nodes[b].x, G.nodes[a].z - G.nodes[b].z));
+    return best;
   }
 
   // Fill the stop queue when it runs dry.
@@ -434,7 +463,7 @@ export class Journey {
       // Only if there is time for it and the drive out of town after it (a short stay may not).
       if (job) {
         const last = job[job.length - 1].site!;
-        if (st.cityTime + this.estimate(job, bx, bz) + this.gateTime(last.bx, last.bz) + COUNTRY_MIN + 20 > this.period) { this.log("no time for a final pickup"); job = null; }
+        if (st.cityTime + this.estimate(job, this.fromTruck()) + this.gateTime(this.fromBlock(last.bx, last.bz)) + COUNTRY_MIN + 20 > this.period) { this.log("no time for a final pickup"); job = null; }
       }
       // Without it, the truck still has to be the one the next city starts with.
       const want = this.freightFor(st.city + 1)?.truck;
@@ -443,18 +472,18 @@ export class Journey {
         if (lot) job = [{ kind: "swap", site: lot, job: ++st.jobCounter, cargo: "", units: 0, truck: want }];
       }
       if (job) st.stops.push(...job);
-      this.log(`final pickup planned: ${job ? job.map((j) => j.kind + " " + j.site?.name + " " + (j.site ? Math.abs(j.site.bx - bx) + Math.abs(j.site.bz - bz) : 0) + "blk").join(", ") : "none"} est ${job ? this.estimate(job, bx, bz).toFixed(0) : 0}s`);
+      this.log(`final pickup planned: ${job ? job.map((j) => j.kind + " " + j.site?.name).join(", ") : "none"} est ${job ? this.estimate(job, this.fromTruck()).toFixed(0) : 0}s`);
       st.stops.push({ kind: "depart", site: null, job: -1, cargo: "", units: 0 });
       st.intercity = true;
     };
     if (st.cityTime >= cutoff) { final(); return; }
     // Only start a job that leaves time for the final pickup before the city's time is up; near
     // the end, look for a shorter one before giving up.
-    const reserve = 360 + this.gateTime(bx, bz);   // a typical final pickup, swap included, and the drive out of town
+    const here = this.fromTruck(), reserve = 360 + this.gateTime(here);   // a typical final pickup, swap included, and the drive out of town
     let first: Stop[] | null = null, tooLong = false;
     for (let tries = 0; tries < 6; tries++) {
       first = this.makeJob(bx, bz, false);
-      if (!first || st.cityTime + this.estimate(first, bx, bz) + reserve <= C) break;
+      if (!first || st.cityTime + this.estimate(first, here) + reserve <= C) break;
       // A swap job too long for the time left: no more swaps in this city, so the tries that
       // follow look for an ordinary job.
       if (first.some((x) => x.kind === "swap")) { st.noSwap = true; first = null; st.jobCounter++; continue; }
@@ -468,7 +497,7 @@ export class Journey {
     // look across the whole town before giving up, so the truck never sits at the kerb idle.
     if (!first && !tooLong) {
       first = this.makeJob(bx, bz, false, false, 0, 2 * (CITY_HI - CITY_LO + 1));
-      if (first && st.cityTime + this.estimate(first, bx, bz) + reserve > C) first = null;
+      if (first && st.cityTime + this.estimate(first, here) + reserve > C) first = null;
     }
     if (!first) { this.log("no job found; cruising"); return; }
     // A mixed load now and then: a second pickup near the first, then all drops by nearest next.
@@ -476,7 +505,7 @@ export class Journey {
     if (this.rand(7) < 0.3 && !first.some((s) => s.kind === "swap")) {
       st.jobCounter++;
       const second = this.makeJob(pickA.site!.bx, pickA.site!.bz, false, true, this.slotsOf(first));
-      if (second && !second.some((s) => s.kind === "swap") && st.cityTime + this.estimate([...first, ...second], bx, bz) * 1.15 + reserve <= C) {
+      if (second && !second.some((s) => s.kind === "swap") && st.cityTime + this.estimate([...first, ...second], here) * 1.15 + reserve <= C) {
         const pickups = [...first, ...second].filter((s) => s.kind === "pickup");
         let drops = [...first, ...second].filter((s) => s.kind === "drop");
         const ordered: Stop[] = [];
@@ -1266,7 +1295,9 @@ export class Journey {
     if (st.mode === "country" || st.mode === "inbound") return;
     const [bx, bz] = this.truckBlock();
     if (st.cityTime >= this.period - COUNTRY_MIN) { this.log("out of time: forced onto the road"); this.forceLeave(); return; }
-    if (st.mode !== "drive" || st.stops.some((x) => x.kind === "depart") || st.cityTime < this.period - COUNTRY_MIN - this.gateTime(bx, bz) - (this.path ? 150 : 40)) return;
+    if (st.mode !== "drive" || st.stops.some((x) => x.kind === "depart")) return;
+    // (Long before the end, no drive out could be long enough: not worth timing it every step.)
+    if (st.cityTime < this.period - COUNTRY_MIN - GATE_MAX - 150 || st.cityTime < this.period - COUNTRY_MIN - this.gateTime(this.fromTruck()) - (this.path ? 150 : 40)) return;
     // A stop it is already driving to is still made (the truck can't turn off mid-street).
     const keep = this.path && st.stops[0] ? [st.stops[0]] : [];
     const n = this.aboardUnits - keep.reduce((a, k) => a + (k.kind === "drop" ? k.units : 0), 0);
@@ -1276,19 +1307,20 @@ export class Journey {
     const want = this.freightFor(st.city + 1)?.truck, swap: Stop[] = [];
     if (want && want !== st.truck && !keep.some((k) => k.kind === "swap")) {
       const lot = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1)[0];
-      if (lot && st.cityTime + this.estimate([...keep, { kind: "swap", site: lot, job: 0, cargo: "", units: 0 }], bx, bz) + this.gateTime(lot.bx, lot.bz) + COUNTRY_MIN < this.period)
+      if (lot && st.cityTime + this.estimate([...keep, { kind: "swap", site: lot, job: 0, cargo: "", units: 0 }], this.fromTruck()) + this.gateTime(this.fromBlock(lot.bx, lot.bz)) + COUNTRY_MIN < this.period)
         swap.push({ kind: "swap", site: lot, job: ++st.jobCounter, cargo: "", units: 0, truck: want });
     }
     st.stops = [...keep, ...swap, { kind: "depart", site: null, job: -1, cargo: "", units: 0 }]; st.intercity = true;
   }
 
-  // Rough seconds to drive out of town from block (bx, bz).
-  private gateTime(bx: number, bz: number) {
-    let best = Infinity;
+  // Rough seconds to drive out of town from nodes `from`, by the nearest gate it may leave by.
+  private gateTime(from: readonly number[]) {
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, this.st.city + 1)).dir + 2) % 4;
-    const G = this.plan.graph;
-    GATES.forEach((g, i) => { const gt = G.gates[i]; if (!gt || (inward - g.dir + 4) % 4 === 2) return; const n = G.nodes[gt.node]; best = Math.min(best, Math.abs(Math.floor(n.x / BLOCK) - bx) + Math.abs(Math.floor(n.z / BLOCK) - bz)); });
-    return (best + 1) * BLOCK / GATE_SPEED + 20;
+    const G = this.plan.graph, gates: number[] = [];
+    // (The gates planExit may leave by.)
+    GATES.forEach((g, i) => { const gt = G.gates[i]; if (gt && (inward - g.dir + 4) % 4 !== 2 && g !== this.plan.freeway) gates.push(gt.node); });
+    // (None of them open: no way out it may take, as before the graph: the deadline is now.)
+    return gates.length ? (this.driveTo(from, gates) + GATE_SLACK) / GATE_SPEED + 20 : Infinity;
   }
 
   // The way out: a route from where the truck is now to the end of a gate street, choosing among

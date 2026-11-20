@@ -153,9 +153,10 @@ export class CityOutline {
     return m;
   }
   // Whether block (bx, bz)'s middle lies within `blocks` blocks of the shore (on land).
-  nearShore(bx: number, bz: number, blocks = 1.3) {
+  nearShore(bx: number, bz: number, blocks = 1.3) { return this.nearShoreAt(bx * BLOCK + 39, bz * BLOCK + 39, blocks); }
+  // Whether the point (x, z) lies within `blocks` blocks of the shore (on land).
+  nearShoreAt(x: number, z: number, blocks = 1.3) {
     if (this.sea === null) return false;
-    const x = bx * BLOCK + 39, z = bz * BLOCK + 39;
     return this.inward(this.sea, x, z) - this.shore(this.along(this.sea, x, z)) < blocks * BLOCK;
   }
 }

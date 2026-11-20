@@ -403,6 +403,48 @@ export class CityGraph {
     return best;
   }
   nextFace(f: number) { return this.rightTurn(f); }
+  // The shortest drive in metres from any of nodes `from` to every node, along the city's own
+  // streets (inCity) and the right way up one-way ones; Infinity where none reaches. (Turns are
+  // free: for rough timings, journey.ts estimate.) Cached by source, the last few.
+  private dists = new Map<string, Float64Array>();
+  driveDists(from: readonly number[]): Float64Array {
+    const key = from.join(",");
+    const hit = this.dists.get(key);
+    if (hit) return hit;
+    const dist = new Float64Array(this.nodes.length).fill(Infinity), done = new Uint8Array(this.nodes.length);
+    // (A binary min-heap of nodes by dist at push; a node pushed again is skipped once done.)
+    const hd: number[] = [], hv: number[] = [];
+    const swap = (i: number, j: number) => { [hd[i], hd[j]] = [hd[j], hd[i]]; [hv[i], hv[j]] = [hv[j], hv[i]]; };
+    const push = (d: number, v: number) => {
+      let i = hd.push(d) - 1; hv.push(v);
+      while (i > 0 && hd[(i - 1) >> 1] > hd[i]) { swap(i, (i - 1) >> 1); i = (i - 1) >> 1; }
+    };
+    for (const v of from) { dist[v] = 0; push(0, v); }
+    while (hd.length) {
+      const d = hd[0], v = hv[0], ld = hd.pop()!, lv = hv.pop()!;
+      if (hd.length) {
+        hd[0] = ld; hv[0] = lv;
+        for (let i = 0; ;) {
+          const l = i * 2 + 1, r = l + 1; let m = i;
+          if (l < hd.length && hd[l] < hd[m]) m = l;
+          if (r < hd.length && hd[r] < hd[m]) m = r;
+          if (m === i) break;
+          swap(i, m); i = m;
+        }
+      }
+      if (done[v]) continue;
+      done[v] = 1;
+      for (const a of this.nodes[v].arms) {
+        const st = this.streets[a.street];
+        if (!st.inCity || (st.oneway && a.end === 1)) continue;
+        const w = a.end === 0 ? st.n1 : st.n0, dw = d + st.len;
+        if (dw < dist[w]) { dist[w] = dw; push(dw, w); }
+      }
+    }
+    this.dists.set(key, dist);
+    if (this.dists.size > 24) this.dists.delete(this.dists.keys().next().value!);
+    return dist;
+  }
   // Whether face f's kerb can be driven along (its dedge isn't the wrong way up a one-way street):
   // where a stop on that side can be.
   drivable(f: number) { const st = this.streets[f >> 1]; return !st.oneway || (f & 1) === 0; }

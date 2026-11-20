@@ -458,29 +458,50 @@ export class CityPlan {
     return a + (b - a) * sz;
   }
 
+  // Where block (bx, bz) is, in blocks (a block's middle at bx + 0.5): its centroid once the street
+  // graph has its blocks (a bowed, merged or cut block's middle isn't its old grid cell's), else
+  // the grid cell's middle (for the layout, which asks before there is a graph).
+  private blockPos(bx: number, bz: number): [number, number] {
+    const B = this.g?.block(bx, bz);
+    return B ? [(B.cx - 9) / BLOCK, (B.cz - 9) / BLOCK] : [bx + 0.5, bz + 0.5];
+  }
+
   // Distance in blocks to the nearest downtown core (one jittered core per CORE_CELL square).
-  coreDistance(bx: number, bz: number) {
-    const cx = Math.floor(bx / CORE_CELL), cz = Math.floor(bz / CORE_CELL);
+  coreDistance(bx: number, bz: number) { const [ux, uz] = this.blockPos(bx, bz); return this.coreDistanceAt(ux, uz); }
+  // The same from a point in blocks (x / BLOCK).
+  private coreDistanceAt(ux: number, uz: number) {
+    const cx = Math.floor(ux / CORE_CELL), cz = Math.floor(uz / CORE_CELL);
     let best = Infinity;
     for (let dz = -1; dz <= 1; dz++)
       for (let dx = -1; dx <= 1; dx++) {
         const gx = cx + dx, gz = cz + dz;
         const px = (gx + 0.25 + 0.5 * hash2(gx, gz, this.seed, 21)) * CORE_CELL;
         const pz = (gz + 0.25 + 0.5 * hash2(gx, gz, this.seed, 22)) * CORE_CELL;
-        best = Math.min(best, Math.hypot(bx + 0.5 - px, bz + 0.5 - pz));
+        best = Math.min(best, Math.hypot(ux - px, uz - pz));
       }
     return best;
   }
 
+  // A block's district, judged where the block actually is (blockPos): how far its middle is from
+  // the core, whether it's by the sea, the industrial noise there. (The dice for parks and mixes
+  // are the block's own, by its key.) Cached once the graph is in: every lot, car and vignette asks.
+  private districts = new Map<number, District>();
   district(bx: number, bz: number): District {
-    const d = this.coreDistance(bx, bz);
+    const key = (bx + 4096) * 1e7 + (bz + 5e6);   // (bz: a block key bumped by 1000s, citygraph.ts findBlocks)
+    if (this.g) { const d = this.districts.get(key); if (d) return d; }
+    const [ux, uz] = this.blockPos(bx, bz), d = this.districtAt(ux, uz, bx, bz);
+    if (this.g) this.districts.set(key, d);
+    return d;
+  }
+  private districtAt(ux: number, uz: number, bx: number, bz: number): District {
+    const d = this.coreDistanceAt(ux, uz);
     const core = this.style.core;
     if (d < core) return "downtown";
     // (By the sea, outline.ts: a port's waterfront is its docks, a coastal town's its promenade.)
-    if (this.shoreLine.nearShore(bx, bz)) return this.style.id === "port" ? (hash2(bx, bz, this.seed, 15) < 0.85 ? "industrial" : "commercial") : hash2(bx, bz, this.seed, 15) < 0.55 ? "commercial" : "residential";
+    if (this.shoreLine.nearShoreAt(ux * BLOCK + 9, uz * BLOCK + 9)) return this.style.id === "port" ? (hash2(bx, bz, this.seed, 15) < 0.85 ? "industrial" : "commercial") : hash2(bx, bz, this.seed, 15) < 0.55 ? "commercial" : "residential";
     if (d > core - 0.4 && hash2(bx, bz, this.seed, 11) < 0.07) return "park";
     if (d < core + 2.2) return hash2(bx, bz, this.seed, 12) < 0.8 ? "commercial" : "residential";
-    const n = this.noise(bx, bz, 5, 13);
+    const n = this.noise(ux - 0.5, uz - 0.5, 5, 13);
     if (n < this.style.industrial) return "industrial";
     return hash2(bx, bz, this.seed, 14) < 0.12 ? "commercial" : "residential";
   }
