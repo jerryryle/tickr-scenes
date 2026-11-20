@@ -17,6 +17,10 @@ import type { KerbParked } from "./vignettes.ts";
 import { Ambient } from "./ambient.ts";
 import { DEBUG_BLOCK } from "./debug.ts";
 
+// m/s: a vehicle beside the truck going slower than this, or than the truck, is one it waits for if
+// its body would come into it (truckStop): standing, coming to a stop, or one it would close on
+// moving over into its lane (one coming to a stop for a light ahead of it doesn't drop back).
+const SLOW_BESIDE = 2;
 export class StreetLife implements LifeHook {
   private obs: Obstacle[] = [];
   private spare: Pose = { x: 0, z: 0, h: 0, k: 0 };
@@ -154,8 +158,9 @@ export class StreetLife implements LifeHook {
   truckStop(j: Journey): number | null {
     const st = j.st, P = j.path;
     if (st.mode !== "drive" || !P) return null;
+    // (Pulling out of a bay, where it waits for a gap in the traffic: and short of anything in its
+    // way before that, all the same.)
     const ow = this.outWait(j);
-    if (ow !== null) return ow;
     let E = this.extents.get(st.truck);
     if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck)));
     const X = this.crowd.crossers, C = this.traffic.obstacles, reach = st.v * st.v / (2 * 2.2) + 10, pfx = Math.cos(j.pose.h), pfz = -Math.sin(j.pose.h);
@@ -170,7 +175,8 @@ export class StreetLife implements LifeHook {
     // (And while traffic is still making way, it waits where it is till all of it has: it never
     // comes on into one backing out of its way.)
     if (j.clearing && this.traffic.clearPending) return st.s;
-    let stop = j.clearing ? null : this.traffic.truckZoneStop();
+    const zs = j.clearing ? null : this.traffic.truckZoneStop();
+    let stop = ow === null ? zs : zs === null ? ow : Math.min(ow, zs);
     for (let s = st.s + 0.5; s <= Math.min(P.length, st.s + reach) && s < (stop ?? Infinity); s += 1) {
       const q = P.peek(s, this.spare), fx = Math.cos(q.h), fz = -Math.sin(q.h);
       // (Its body there: nearBody, from rear to nose along its heading, 1.25 m either side.)
@@ -215,9 +221,31 @@ export class StreetLife implements LifeHook {
       // (A vehicle ahead of its nose now: one level with it, beside, drops back out of its way. Not
       // one stopped short of where its junction booking has it wait for the truck to go through.)
       for (let k = 0; k < C.length && !hit; k++) if (!this.traffic.waitsForTruck(C[k].owner) && Math.abs(C[k].x - q.x) < 25 && Math.abs(C[k].z - q.z) < 25 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz > E.front + 0.5) hit = this.nearBody(q, fx, fz, E!.front, E!.rear, C[k].x, C[k].z, C[k].r + 0.3);
+      // (And one standing, or slower than it (SLOW_BESIDE), beside it that its body would come
+      // into, swinging round a corner into the lane where it waits, say: a standing one doesn't
+      // drop back out of the way. Only nearer than it is now, so it slides on past one it is
+      // already alongside. A tractor's cab: its trailer,
+      // which follows the kingpin rather than the cab's line, is looked after above. With a little
+      // less room than traffic leaves it out of a gridlock (traffic.ts CLEAR_ROOM), so whatever it
+      // waits for here, honking, is made way for.)
+      const cabRear = fw !== undefined ? -1.5 : E!.rear;
+      for (let k = 0; k < C.length && !hit; k++) {
+        const c = C[k];
+        if (Math.abs(c.x - q.x) > 25 || Math.abs(c.z - q.z) > 25 || this.traffic.speedOf(c.owner) > Math.max(SLOW_BESIDE, st.v)) continue;
+        const then = this.bodyDist(q, fx, fz, E!.front, cabRear, c.x, c.z), now = this.bodyDist(j.pose, pfx, pfz, E!.front, cabRear, c.x, c.z);
+        // (Or one up against it already, stopped dead there coming across its nose, say, that it
+        // would stay against, sliding along it: it waits, honking, for it to back off.)
+        const touch = 1.25 + c.r;
+        hit = (then < touch + 0.15 && then < now - 0.05) || (now < touch && then < touch && then < now + 0.05);
+      }
       if (hit) { stop = s - 1.5; break; }
     }
     return stop;
+  }
+  // How far (x, z) is from the middle line of the truck's body standing at q (heading fx, fz).
+  private bodyDist(q: { x: number; z: number }, fx: number, fz: number, front: number, rear: number, x: number, z: number): number {
+    const dx = x - q.x, dz = z - q.z, a = Math.max(rear, Math.min(front, dx * fx + dz * fz));
+    return Math.hypot(dx - fx * a, dz - fz * a);
   }
   // Whether (x, z) is within r of the truck's body standing at q (heading fx, fz; 1.25 m either side).
   private nearBody(q: Pose, fx: number, fz: number, front: number, rear: number, x: number, z: number, r: number): boolean {

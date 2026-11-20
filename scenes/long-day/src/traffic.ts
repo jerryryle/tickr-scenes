@@ -64,6 +64,7 @@ const TRAFFIC_SPAWN = [70, 150], TRAFFIC_DESPAWN = 175;
 // through the junction it waits at), the room left it, how fast they back up or pull on (m/s), and
 // how long one can stay stuck in its way.
 const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 20, CLEAR_LOOK = 30;
+const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
 const CAR_STOP_PAUSE = 1.0;     // s a car stands at a stop sign's line before going on
 const GIVE_WAY_GAP = 3.4;   // m between centre lines: closer than this, a car and the truck would touch (the truck's rear cuts its turns)
 const CAR_COLORS = [0xb22222, 0x1f4fa0, 0xe8e8e8, 0x222428, 0x7a7f86, 0xd4a017, 0x2e7d4f, 0x8a3fa0, 0xe8e0d0, 0x5a2a1a, 0x3a8ac8];
@@ -259,7 +260,7 @@ export class Traffic {
     zx /= Z.length; zz /= Z.length;
     // (Car c's circles were it at s along its lane, into `out`.)
     const at = (c: Car, s: number, out: number[]) => {
-      c.path.eval(Math.max(0, s), this.pose);
+      c.path.peek(Math.max(0, s), this.pose);   // (looking: the path's cursor and lane offset left as they are)
       const h = this.pose.h, x = this.pose.x + Math.sin(h) * c.dodge, z = this.pose.z + Math.cos(h) * c.dodge;
       const fx = Math.cos(h), fz = -Math.sin(h), L = c.kind.len, n = Math.max(2, Math.ceil(L / (c.kind.width * 1.1))), step = L / n, r = Math.max(c.kind.width * 0.55, step * 0.55);
       out.length = 0;
@@ -1039,6 +1040,23 @@ export class Traffic {
     return x < 0.6 ? "S" : x < 0.85 ? "R" : "L";
   }
 
+  // How far car c's circles, were it at s along its way and moved `dodge` across from its lane,
+  // stand clear of the truck's (not of the way it is to back into a bay: sweepWay waits for that).
+  // (Peeked, not evaluated: the path's cursor and lane offset stay where the car is. Nowhere near
+  // the truck, not looked at all: every car asks every step.)
+  private truckGap(c: Car, s: number, dodge: number, truck: Obstacle[]): number {
+    const R = c.kind.len + 8;
+    if (!truck.some((o) => !o.sweep && Math.abs(o.x - c.x) < R + o.r && Math.abs(o.z - c.z) < R + o.r)) return Infinity;
+    c.path.peek(Math.min(s, c.path.length), this.pose);
+    const h = this.pose.h, x = this.pose.x + Math.sin(h) * dodge, z = this.pose.z + Math.cos(h) * dodge, fx = Math.cos(h), fz = -Math.sin(h);
+    const L = c.kind.len, n = Math.max(2, Math.ceil(L / (c.kind.width * 1.1))), step = L / n, r = Math.max(c.kind.width * 0.55, step * 0.55);
+    let m = Infinity;
+    for (const o of truck) {
+      if (o.sweep || Math.abs(o.x - x) > L + 6 || Math.abs(o.z - z) > L + 6) continue;
+      for (let i = 0; i < n; i++) { const q = -L / 2 + step * (i + 0.5); m = Math.min(m, Math.hypot(x + fx * q - o.x, z + fz * q - o.z) - r - o.r); }
+    }
+    return m;
+  }
   // A vehicle as a row of circles about its own width, so long ones block their whole length
   // without reaching into the next lane (a bus's two big circles used to block the lanes
   // beside it and oncoming traffic).
@@ -1306,6 +1324,10 @@ export class Traffic {
     }
     let ds = c.v * dt;
     if (c.s + ds > hardStop) { ds = Math.max(0, hardStop - c.s); c.v = 0; }
+    // (Never on into the truck, whatever it has misjudged: a step that would take any of it into
+    // the truck's body, or nearer it once there, swinging its tail round a turn beside it, cutting
+    // across its nose, it doesn't take. It waits where it is till there is room.)
+    if (ds > 0 && this.truckGap(c, c.s + ds, c.dodge, truck) < Math.min(TRUCK_ROOM, this.truckGap(c, c.s, c.dodge, truck))) { ds = 0; c.v = 0; c.acc = 0; }
     c.s += ds;
     c.stillT = c.v < 0.05 ? c.stillT + dt : 0;
     c.slowT = c.v < 0.5 ? c.slowT + dt : 0;
@@ -1318,8 +1340,12 @@ export class Traffic {
       const rate = Math.min(1.4, 0.2 * c.v + 0.6);
       const want = THREE.MathUtils.clamp(1.6 * (c.dodgeTarget - c.dodge), -rate, rate);
       c.dodgeV += THREE.MathUtils.clamp(want - c.dodgeV, -1.2 * dt, 1.2 * dt);
+      const d0 = c.dodge;
       c.dodge += c.dodgeV * dt;
       if (c.dodge <= -3 || c.dodge >= 0) { c.dodge = THREE.MathUtils.clamp(c.dodge, -3, 0); c.dodgeV = 0; }   // in a lane: settled
+      // (Not sideways into the truck, or anything of it standing: moving back over with the truck
+      // alongside, it waits till there is room.)
+      if (c.dodge !== d0 && this.truckGap(c, c.s, c.dodge, truck) < Math.min(TRUCK_ROOM, this.truckGap(c, c.s, d0, truck))) { c.dodge = d0; c.dodgeV = 0; }
     }
     // Next intersection: plan on from the end of this path.
     if (c.s >= p.length - 0.5) {

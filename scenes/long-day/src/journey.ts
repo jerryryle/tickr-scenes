@@ -1029,7 +1029,9 @@ export class Journey {
       this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && this.lightAhead !== "red" && this.lightAhead !== "yellow");
       // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
       if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));
-      if (ys !== null && (ys - st.s >= st.v * st.v / (2 * FIRM_BRAKE) - 0.5 || st.v < 3)) hardStop = Math.min(hardStop, Math.max(ys, st.s));
+      // (Something right at its nose, a car stopped dead across it, say: it stops there, hard as that is,
+      // rather than slide on into it.)
+      if (ys !== null && (ys - st.s >= st.v * st.v / (2 * FIRM_BRAKE) - 0.5 || st.v < 3 || ys - st.s < 1)) hardStop = Math.min(hardStop, Math.max(ys, st.s));
     }
     // The stop at the end of the path.
     if (st.mode === "drive" && st.stopS < THROUGH) {
