@@ -224,7 +224,9 @@ export class StreetLife implements LifeHook {
     return Math.hypot(dx - fx * a, dz - fz * a) < 1.25 + 0.8;
   }
   // Someone (a vehicle or a pedestrian, as last stepped) in the way of the truck's next 6 m back
-  // into the bay: within its sweep there, their circles touching (people with room to spare).
+  // into the bay: within its sweep there, their circles touching (people with room to spare, and
+  // where they walk to in the next 1.5 s: someone walking along the pavement into the cab's swing).
+  // (Someone standing, waiting for it, is only where they are.)
   reverseBlocked(j: Journey): boolean {
     const st = j.st, W = this.sweep;
     if (st.mode !== "reverse" || W.path !== j.path) return false;
@@ -232,7 +234,7 @@ export class StreetLife implements LifeHook {
       if (W.at[k] > st.s + 1 || W.at[k] < st.s - 6) continue;
       const o = W.obs[k];
       for (const c of this.traffic.obstacles) if (Math.hypot(c.x - o.x, c.z - o.z) < c.r + o.r - 0.3) return true;
-      for (const c of this.crowd.obstacles) if (Math.hypot(c.x - o.x, c.z - o.z) < c.r + o.r + 0.5) return true;
+      for (const c of this.crowd.obstacles) for (let t = 0; t <= 1.5; t += 0.5) if (Math.hypot(c.x + (c.vx ?? 0) * t - o.x, c.z + (c.vz ?? 0) * t - o.z) < c.r + o.r + 0.5) return true;
     }
     return false;
   }

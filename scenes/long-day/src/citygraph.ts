@@ -75,7 +75,10 @@ export class CityGraph {
   readonly nodes: CNode[] = [];
   readonly streets: CStreet[] = [];
   readonly blocks: CBlock[] = [];
-  readonly gates: CGate[] = [];
+  readonly gates: (CGate | null)[] = [];   // index-aligned with city.ts GATES: null where a gate is closed (outline.ts)
+  // The edge round the outside of the town (the backs of its outermost sidewalks), the largest
+  // such cycle: where the land ends (outline.ts), and along the sea, the shore.
+  outer: [number, number][] | null = null;
   faceBlock: Int32Array = new Int32Array(0);   // face (dedge) -> block id, or -1 (outside)
   private nodeKey = new Map<string, number>();
   private blockKey = new Map<string, number>();
@@ -163,6 +166,8 @@ export class CityGraph {
     const D = this.streets.length * 2;
     this.faceBlock = new Int32Array(D).fill(-1);
     const seen = new Uint8Array(D);
+    let outerArea = 0;
+    this.outer = null;
     for (let d0 = 0; d0 < D; d0++) {
       if (seen[d0]) continue;
       const cyc: number[] = [];
@@ -177,7 +182,7 @@ export class CityGraph {
       }
       // A cycle keeping its block on its right has a positive shoelace sum in (x, z) (east, then
       // south...); the one round the outside of the city, negative.
-      if (area <= 1) continue;
+      if (area <= 1) { if (area < outerArea) { outerArea = area; this.outer = poly; } continue; }
       cx /= 3 * area; cz /= 3 * area; area /= 2;
       const id = this.blocks.length;
       // The key: the old grid's (bx, bz) from the centroid (a block centred at bx*60 + 39).

@@ -2,7 +2,10 @@
 // exactly: one block per grid block with the same key, its four faces in the old side order with
 // the same frontage frame (city.ts frontPt), usable frontage [9, 51], and two signal phases at
 // every four-way node, east-west first. Also checks blocks and faces are consistent in general.
-import { gridGraph, organicGraph } from "../src/citygen.ts";
+import { gridGraph, organicGraph, trimToOutline } from "../src/citygen.ts";
+import { CityOutline } from "../src/outline.ts";
+import { entryGateOf, GATES, setCityLimits } from "../src/city.ts";
+import { STYLES } from "../src/styles.ts";
 import { Path, planRoute } from "../src/route.ts";
 import { hash2 } from "../src/rng.ts";
 import { frontPt } from "../src/city.ts";
@@ -43,6 +46,7 @@ import { BLOCK } from "../src/grid.ts";
     for (const a of N.arms) if (Math.abs(a.mouth - 9) > 1e-9) err(`node ${N.kx},${N.kz}: mouth ${a.mouth}`);
   }
   for (const [i, gt] of G.gates.entries()) {
+    if (!gt) { err(`gate ${i}: closed on the square`); continue; }
     const st = G.streets[gt.street];
     if (G.faceBlock[st.id * 2] >= 0 || G.faceBlock[st.id * 2 + 1] >= 0) err(`gate ${i}: its street borders a block`);
   }
@@ -54,7 +58,7 @@ import { BLOCK } from "../src/grid.ts";
     const outside = [...W.faceBlock].filter((b) => b < 0).length;
     if (W.blocks.some((b) => b.area < 200)) err(`warp ${seed}: a tiny block`);
     for (const b of W.blocks) if (!b.water && W.blockAt(b.cx, b.cz)?.id !== b.id) err(`warp ${seed}: block ${b.kx},${b.kz} centroid outside it`);
-    const g0 = W.streets[W.gates[0].street], from = g0.id * 2 + 1;
+    const g0 = W.streets[W.gates[0]!.street], from = g0.id * 2 + 1;
     for (let k = 0; k < 12; k++) {
       const s = Math.floor(hash2(k, seed, 0, 1) * W.streets.length), d = s * 2 + (k % 2);
       if (!W.streets[s].inCity) continue;
@@ -71,7 +75,7 @@ import { BLOCK } from "../src/grid.ts";
     const ring = W.streets.filter((st) => st.name === "Circle");
     if (ring.length !== 8) err(`circus: ${ring.length} ring streets`);
     if (!W.blocks.some((b) => b.park)) err("circus: no park in the middle");
-    const from = W.streets[W.gates[0].street].id * 2 + 1, q = { x: 0, z: 0, h: 0, k: 0 };
+    const from = W.streets[W.gates[0]!.street].id * 2 + 1, q = { x: 0, z: 0, h: 0, k: 0 };
     for (const st of ring) for (const d of [st.id * 2, st.id * 2 + 1]) {
       const r = planRoute(W, from, 20, [{ d, after: W.faceLen(d) / 2 }], 20000, (e) => W.streets[e >> 1].inCity);
       if (!r) { err(`circus: no route to ring street ${st.id} (${d & 1})`); continue; }
@@ -111,7 +115,7 @@ import { BLOCK } from "../src/grid.ts";
       rings++;
       if (!ring.every((st) => st.ring && st.oneway)) err(`organic ${seed}: ${name} not one-way`);
       if (ring.some((st) => O.nodes[st.n0].control !== "none")) err(`organic ${seed}: ${name} has signals`);
-      const from = O.streets[O.gates[0].street].id * 2 + 1;
+      const from = O.streets[O.gates[0]!.street].id * 2 + 1;
       for (const st of ring) if (!planRoute(O, from, 20, [{ d: st.id * 2, after: st.len / 2 }], 30000, (e) => O.streets[e >> 1].inCity)) err(`organic ${seed}: no route round ${name}`);
       const N = O.nodes[ring[0].n0], mid = ring.reduce((m, st) => [m[0] + O.nodes[st.n0].x / ring.length, m[1] + O.nodes[st.n0].z / ring.length], [0, 0]);
       const isl = O.blockAt(mid[0], mid[1]);
@@ -130,7 +134,7 @@ import { BLOCK } from "../src/grid.ts";
     if (crossings) err(`organic ${seed}: ${crossings} pairs of streets cross`);
     if (O.gates.length !== gates.length) err(`organic ${seed}: ${O.gates.length} gates of ${gates.length}`);
     if (O.blocks.some((b) => b.area < 150)) err(`organic ${seed}: a block of ${Math.min(...O.blocks.map((b) => b.area)).toFixed(0)} m2`);
-    const from = O.streets[O.gates[0].street].id * 2 + 1;
+    const from = O.streets[O.gates[0]!.street].id * 2 + 1;
     for (let k = 0; k < 10; k++) {
       const s = Math.floor(hash2(k, seed, 0, 2) * O.streets.length), d = s * 2 + (O.streets[s].oneway ? 0 : k % 2);   // (a ring's sides, driven their own way)
       if (!O.streets[s].inCity) continue;
@@ -140,6 +144,52 @@ import { BLOCK } from "../src/grid.ts";
   }
   console.log(`organic: ${rivers} of 10 rivers (${bridges} bridges), ${rings} of 20 roundabouts`);
   if (rings < 10) err(`organic: only ${rings} of 20 roundabouts fit`);
+  // Outlines (outline.ts, citygen.ts trimToOutline): every layout cut back to an uneven outline, in
+  // coastal and port towns with the sea along one side. No two streets cross; the town hangs
+  // together from the entry gate; every open gate's street runs straight in from its outer end,
+  // none on the sea side; no kept block lies off the land or in the sea; and the shore's streets
+  // have the sea on one side only.
+  setCityLimits(5);   // (12 blocks square: lo -6, hi 5, gates at 3, as above)
+  let trimmed = 0, seas = 0, closed = 0;
+  for (let seed = 1; seed <= 18; seed++) {
+    const style = [STYLES.coastal, STYLES.port, STYLES.brick][seed % 3], O = new CityOutline(seed * 7919, style, { freeway: null, straightRows: [], straightCols: [] });
+    const go = { lo, hi, gates: GATES, nameEW: (i: number) => `E${i}`, nameNS: (i: number) => `N${i}`, elevatedRow: () => false, cableColumn: () => false };
+    const L = seed % 3 === 0 ? organicGraph(go, seed, { river: seed % 2 === 0 }) : gridGraph(go, seed % 3 === 1 ? null : { seed, jitter: 10, drop: 0.1, fixed: () => false, keep: () => true, river: 1 });
+    const entry = GATES.indexOf(entryGateOf(seed * 7919)), T = trimToOutline(L, O, GATES, entry);
+    if (!T) { err(`outline ${seed}: the trim failed`); continue; }
+    trimmed++;
+    if (O.sea !== null) seas++;
+    const segs = T.streets.map((st) => { const a = T.nodes[st.n0], b = T.nodes[st.n1]; return [a.x, a.z, b.x, b.z, st.n0, st.n1, st.k]; });
+    let crossings = 0;
+    for (let i = 0; i < segs.length; i++) for (let j = i + 1; j < segs.length; j++) {
+      const [ax, az, bx, bz, a0, a1, ka] = segs[i], [cx, cz, dx, dz, c0, c1, kc] = segs[j];
+      if (ka || kc || a0 === c0 || a0 === c1 || a1 === c0 || a1 === c1) continue;
+      const o = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number) => Math.sign((qx - px) * (rz - pz) - (qz - pz) * (rx - px));
+      if (o(ax, az, bx, bz, cx, cz) * o(ax, az, bx, bz, dx, dz) < 0 && o(cx, cz, dx, dz, ax, az) * o(cx, cz, dx, dz, bx, bz) < 0) crossings++;
+    }
+    if (crossings) err(`outline ${seed}: ${crossings} pairs of streets cross`);
+    T.gates.forEach((gt, i) => {
+      if (!gt) { closed++; if (i === entry) err(`outline ${seed}: the entry gate is closed`); return; }
+      if (GATES[i].dir === O.sea) err(`outline ${seed}: gate ${i} open on the sea side`);
+      const st = T.streets[gt.street], L2 = O.gateLine(i), far = T.nodes[st.n1];
+      if (Math.hypot(far.x - L2.x, far.z - L2.z) > 0.5) err(`outline ${seed}: gate ${i}'s street doesn't reach its outer end`);
+      if (st.inCity || st.k !== 0) err(`outline ${seed}: gate ${i}'s street isn't a straight way out`);
+    });
+    for (const b of T.blocks) if (b.inCity && (O.inSea(b.cx, b.cz) || !O.inLand(b.cx, b.cz))) err(`outline ${seed}: block ${b.kx},${b.kz} off the land`);
+    for (const st of T.streets) {
+      if (!st.inCity) continue;
+      const wet = [0, 1].map((k) => { const b = T.faceBlock[st.id * 2 + k]; if (b >= 0) return T.blocks[b].water; const p = T.facePt(st.id * 2 + k, st.len / 2, 8); return O.inSea(p.x, p.z); });
+      if (wet[0] && wet[1] && [0, 1].every((k) => T.faceBlock[st.id * 2 + k] < 0)) err(`outline ${seed}: street ${st.id} out in the sea`);
+    }
+    const from = T.streets[T.gates[entry]!.street].id * 2 + 1;
+    for (let k = 0; k < 10; k++) {
+      const s2 = Math.floor(hash2(k, seed, 0, 3) * T.streets.length), d = s2 * 2 + (T.streets[s2].oneway ? 0 : k % 2);
+      if (!T.streets[s2].inCity) continue;
+      if (!planRoute(T, from, 20, [{ d, after: T.faceLen(d) / 2 }], 30000, (e) => T.streets[e >> 1].inCity)) err(`outline ${seed}: no route to street ${s2}`);
+    }
+  }
+  console.log(`outlines: ${trimmed} of 18 trimmed, ${seas} on the sea, ${closed} gates closed`);
+  setCityLimits(30);
   console.log(`citygraph: ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks, ${errs.length} errors`);
   if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
 }

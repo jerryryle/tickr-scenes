@@ -253,14 +253,14 @@ export class Journey {
   // The city block at a gate's inner end (where the way in or out is planned from): the block on
   // the right of the way in.
   private gateBlock(g: Gate): [number, number] {
-    const G = this.plan.graph, b = G.faceBlock[this.gateIn(g).d], gt = G.gates[GATES.indexOf(g)];
+    const G = this.plan.graph, b = G.faceBlock[this.gateIn(g).d], gt = G.gates[GATES.indexOf(g)]!;   // (an open gate: the entry)
     const blk = b >= 0 ? G.blocks[b] : G.nearestBlock(G.nodes[gt.node].x, G.nodes[gt.node].z);
     return blk ? [blk.kx, blk.kz] : [0, 0];
   }
   // The way in by a gate: down its gate street from its outer end (GATE_TRIM short of the node
   // beyond), towards the perimeter node.
   gateIn(g: Gate): { d: number; before: number } {
-    const G = this.plan.graph, gt = G.gates[GATES.indexOf(g)], st = G.streets[gt.street];
+    const G = this.plan.graph, gt = G.gates[GATES.indexOf(g)]!, st = G.streets[gt.street];   // (an open gate: the entry)
     return { d: st.id * 2 + (gt.out === 1 ? 1 : 0), before: st.len - GATE_TRIM };
   }
 
@@ -1240,7 +1240,7 @@ export class Journey {
     let best = Infinity;
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, this.st.city + 1)).dir + 2) % 4;
     const G = this.plan.graph;
-    GATES.forEach((g, i) => { const n = G.nodes[G.gates[i].node]; if ((inward - g.dir + 4) % 4 !== 2) best = Math.min(best, Math.abs(Math.floor(n.x / BLOCK) - bx) + Math.abs(Math.floor(n.z / BLOCK) - bz)); });
+    GATES.forEach((g, i) => { const gt = G.gates[i]; if (!gt || (inward - g.dir + 4) % 4 === 2) return; const n = G.nodes[gt.node]; best = Math.min(best, Math.abs(Math.floor(n.x / BLOCK) - bx) + Math.abs(Math.floor(n.z / BLOCK) - bz)); });
     return (best + 1) * BLOCK / GATE_SPEED + 20;
   }
 
@@ -1254,8 +1254,9 @@ export class Journey {
     let best: { route: Route; gate: number; dEst: number; cost: number } | null = null;
     for (let i = 0; i < GATES.length; i++) {
       const g = GATES[i], turn = (inward - g.dir + 4) % 4;
-      if (turn === 2 || g === this.plan.freeway) continue;   // (not out under the flyover the highway came in on)
-      const gt = G.gates[i], gst = G.streets[gt.street];
+      const gt = G.gates[i];
+      if (!gt || turn === 2 || g === this.plan.freeway) continue;   // (not a closed gate, nor out under the flyover the highway came in on)
+      const gst = G.streets[gt.street];
       const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable);
       if (!route) continue;
       if (at.lane !== undefined) route.lane = at.lane;
@@ -1289,8 +1290,10 @@ export class Journey {
     const st = this.st;
     if (!st.exit) {
       const inward = (entryGateOf(citySeedOf(this.cfg.seed, st.city + 1)).dir + 2) % 4;
-      const i = GATES.findIndex((g) => g.dir === inward && g !== this.plan.freeway);
-      st.exit = { gate: Math.max(0, i), dEst: Math.max(COUNTRY_MIN, this.period - st.cityTime) };
+      // (Straight on if it can, else at most a quarter turn, else any open gate: some are closed.)
+      const open = (i: number) => this.plan.gateOpen(i) && GATES[i] !== this.plan.freeway, turn = (i: number) => (inward - GATES[i].dir + 4) % 4;
+      const idx = [...GATES.keys()], i = idx.find((k) => open(k) && turn(k) === 0) ?? idx.find((k) => open(k) && turn(k) !== 2) ?? idx.find((k) => this.plan.gateOpen(k)) ?? 0;
+      st.exit = { gate: i, dEst: Math.max(COUNTRY_MIN, this.period - st.cityTime) };
     }
     st.v = 8;
     this.leave(0);

@@ -22,7 +22,7 @@ import { LANE_INNER, LANE_KERB, Path, STOP_BACK } from "./route.ts";
 import type { Move, Pose, Route } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
 
-export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be
+export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking)
 
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
@@ -45,7 +45,7 @@ interface Car {
   // order, its footprint (x, z every metre from 1 m short of the line), its conflict zones with
   // earlier bookings (each: that car's id and booking, where this car's middle is as its front
   // comes to the zone and as its back leaves, the same for the other) and where it is clear of it.
-  bk?: { node: number; from: number; seq: number; pts: number[]; at?: number[]; zones: number[]; end: number; wide?: boolean; also?: number[] } | null;   // wide: turning from the next lane over; also: the nodes on past it booked with it (the truck's, where their lines are inside this one: truckBook)
+  bk?: { node: number; from: number; seq: number; pts: number[]; at?: number[]; zones: number[]; end: number; wide?: boolean; dodge?: number; turn?: boolean; also?: number[] } | null;   // wide: turning from the next lane over; dodge: how far over it booked from (below -1, the next lane over: a cable car on its tracks, a car passing); turn: it turns; also: the nodes on past it booked with it (the truck's, where their lines are inside this one: truckBook)
   gapT?: number;                       // the gap (s) it wants in the bookings ahead before it goes, giving way
   waitFor?: number;                    // the car whose booking it is waiting short of a zone for (-1: none)
   passStill?: boolean;                 // passing something parked in its lane (last step)
@@ -381,12 +381,12 @@ export class Traffic {
   // A footprint: P's centre line from 1 m short of the line to 2 m past the far mouth, every
   // metre (x, z pairs; the i-th is i - 1 m from the line).
   // (Moved over out of its lane (dodge, negative to the left), from where it is: easing back over
-  // the first 12 m.)
-  private footprint(P: Path, n: Path["nodes"][number], dodge = 0): number[] {
+  // the first 12 m, `ease`; or not, staying there: a car going straight on, a cable car on its tracks.)
+  private footprint(P: Path, n: Path["nodes"][number], dodge = 0, ease = true): number[] {
     const pts: number[] = [];
     for (let s = n.sLine - 1, i = 0; s <= Math.min(n.sOut + 2, P.length); s += 1, i++) {
       P.peek(s, this.gw0);
-      const d = dodge * Math.max(0, 1 - i / 12);
+      const d = ease ? dodge * Math.max(0, 1 - i / 12) : dodge;
       pts.push(cm(this.gw0.x + Math.sin(this.gw0.h) * d), cm(this.gw0.z + Math.cos(this.gw0.h) * d));
     }
     return pts;
@@ -549,21 +549,27 @@ export class Traffic {
   // Book car c through node n (footprint fp): its conflict zones with every earlier booking there.
   // (`at`: a body sweep's, as zone's.)
   private book(c: Car, n: Path["nodes"][number], fp: number[], at?: number[], also?: number[]) {
-    const zones: number[] = [];
-    // (Not with one from the same approach, as they follow each other, as on any street; unless one
-    // turns from the next lane over, across the other's.)
-    const wide = n.move !== "S" && c.dodge < -1;
+    const zones: number[] = [], turn = n.move !== "S", over = c.dodge < -1;
     for (const o of this.bookedAt(n.node, also)) {
-      if (o === c || !o.bk || (o.bk.from === n.from && !wide && !o.bk.wide) || this.relOf(o) > o.bk.end) continue;
+      if (o === c || !o.bk || (o.bk.from === n.from && !Traffic.across(turn, over, o.bk)) || this.relOf(o) > o.bk.end) continue;
       const z = this.zone(fp, c.kind.len / 2, c.kind.width, o.bk.pts, o.kind.len / 2, o.kind.width, at, o.bk.at);
       if (z) zones.push(o.id, o.bk.seq, cm(z[0]), cm(z[1]), cm(z[2]), cm(z[3]));
     }
-    c.bk = { node: n.node, from: n.from, seq: this.bookSeq++, pts: fp, at, zones, end: n.sOut - n.sLine + 2 + c.kind.len / 2, wide, also: also?.length ? also.slice() : undefined };
+    c.bk = { node: n.node, from: n.from, seq: this.bookSeq++, pts: fp, at, zones, end: n.sOut - n.sLine + 2 + c.kind.len / 2, wide: turn && over, dodge: cm(c.dodge) || undefined, turn: turn || undefined, also: also?.length ? also.slice() : undefined };
     for (const nd of [n.node, ...(also ?? [])]) {
       const list = this.listAt(nd), i = list.indexOf(c);
       if (i >= 0) list.splice(i, 1);
       list.push(c);
     }
+  }
+  // Whether two bookings from the same approach must look out for each other: not as a rule, as
+  // they follow each other, as on any street; but where one turns from the next lane over, across
+  // the other's, or where they go side by side, one in the next lane over (a cable car on its
+  // tracks, or a car moved over to pass), and either turns (a long vehicle's back swings out round
+  // a turn into the lane beside). turn, over: the car booking (or asking)'s, through the node (it
+  // turns there; it is moved over, dodge < -1); b: the other's booking.
+  private static across(turn: boolean, over: boolean, b: NonNullable<Car["bk"]>): boolean {
+    return (turn && over) || !!b.wide || (over !== (b.dodge ?? 0) < -1 && (turn || !!b.turn));
   }
   // This step's bookings at node nd (made if none).
   private listAt(nd: number): Car[] { let l = this.booked.get(nd); if (!l) this.booked.set(nd, (l = [])); return l; }
@@ -593,8 +599,9 @@ export class Traffic {
   // Whether car c, at rel from its line going v, could book footprint fp through n now: every
   // earlier booking there whose way it would cross has left the zone `gap` s before c gets to it.
   private gapOk(c: Car, n: Path["nodes"][number], fp: number[], rel: number, gap: number, at?: number[], also?: number[]): boolean {
+    const turn = n.move !== "S", over = c.dodge < -1;
     for (const o of this.bookedAt(n.node, also)) {
-      if (o === c || !o.bk || (o.bk.from === n.from && !(n.move !== "S" && c.dodge < -1) && !o.bk.wide)) continue;
+      if (o === c || !o.bk || (o.bk.from === n.from && !Traffic.across(turn, over, o.bk))) continue;
       const ro = this.relOf(o);
       if (ro > o.bk.end || this.behindOnApproach(o, c, n.from)) continue;
       const z = this.zone(fp, c.kind.len / 2, c.kind.width, o.bk.pts, o.kind.len / 2, o.kind.width, at, o.bk.at);
@@ -698,6 +705,9 @@ export class Traffic {
     if (!J) { c.bk = null; return null; }
     const { n, P, off, rel } = J, line = off + n.sLine;
     if (c.bk && (c.bk.node !== n.node || c.bk.from !== n.from)) c.bk = null;   // (an old one, gone past)
+    // (Moved over since it booked, or back, or on over from part way, still short of its line:
+    // booked again, from where it is now, as the cars beside it judge it by.)
+    if (c.bk && rel + half < 0 && Math.abs(c.dodge - (c.bk.dodge ?? 0)) > 1) c.bk = null;
     // The rules: a light must be green (or it was too close to stop on the change: committed); a
     // stop sign stopped at first; a roundabout entered with a gap.
     const N = G.nodes[n.node], dLine = line - 0.8 - half - c.s;
@@ -748,7 +758,10 @@ export class Traffic {
     }
     if (c.bk) return this.zoneStop(c, rel, line);
     const tooClose = dLine < c.v * c.v / 9 - 0.5;
-    const fp = () => this.footprint(P, n, wide ? c.dodge : 0);
+    // (Its footprint from where it is, moved over or not: turning, easing back over as it goes
+    // round; straight on, kept over, as a car passing or a cable car stays out across the junction.
+    // But one swinging wide round something parked at the corner, from its lane.)
+    const fp = () => this.footprint(P, n, c.dodge < -1 && !(n.move !== "S" && c.passStill) ? c.dodge : 0, n.move !== "S");
     if (sigOk && !exitBlocked && !queued && first && dLine < Math.max(30, c.v * 4)) { this.book(c, n, fp()); return this.zoneStop(c, rel, line); }
     if (sigOk && !exitBlocked && !queued && dLine < 2.5 && c.v < 4) { const f = fp(); if (!(N.control === "stop" && this.pedFirst(c, f)) && this.gapOk(c, n, f, rel, c.gapT ?? 2)) { this.book(c, n, f); return this.zoneStop(c, rel, line); } }
     // (Too close to stop and not booked, as on a light changing: in it goes, last in line.)
@@ -1022,10 +1035,15 @@ export class Traffic {
     const scan = (o: Obstacle, isTruck: boolean, ped = false) => {
       // (Not a car waiting short of a junction zone for this one to go by: by its booking, it is
       // clear of this one's way.)
-      if (!isTruck && !ped && o.owner !== undefined && this.byId.get(o.owner)?.waitFor === c.id) return;
+      // (Though in the lane beside, the one this car would move back into, it is still there: this
+      // one doesn't move over onto it.)
       const rx = o.x - c.x, rz = o.z - c.z;
       if (rx > reach || rx < -reach || rz > reach || rz < -reach) return;
       const along = rx * fx + rz * fz, side = rx * lx + rz * lz;
+      if (!isTruck && !ped && o.owner !== undefined && this.byId.get(o.owner)?.waitFor === c.id) {
+        if (Math.abs(along) < half + 8 && Math.abs(side - otherLane) < 1.5 + o.r * 0.5) otherLaneBlocked = true;
+        return;
+      }
       const standingO = !isTruck && !ped && (this.byId.get(o.owner ?? -1)?.v ?? 9) < 1;
       // (Where the truck reversing into a bay will be: ahead, kept clear of; level with or over
       // the car already, driven on out of before it comes.)
@@ -1318,7 +1336,11 @@ export function truckObstacles(model: TruckModel, x0: number, z0: number, h: num
   const spec = SPECS[model], fx = Math.cos(h), fz = -Math.sin(h);
   const trailer = spec.fifthWheel !== undefined;
   const front = spec.noseFront + 0.05, rear = trailer ? -1.5 : spec.cargo ? spec.cargo.x0 - 0.1 : -1.4;
-  for (let a = rear + 1.2; a <= front - 1.0; a += 2.2) out.push({ x: x0 + fx * a, z: z0 + fz * a, r: 1.5 });
+  // (And one at the nose: the steps can end up to a step short of it, leaving its corners, which
+  // swing out wide reversing into a bay, outside every circle.)
+  let a = rear + 1.2;
+  for (; a <= front - 1.0; a += 2.2) out.push({ x: x0 + fx * a, z: z0 + fz * a, r: 1.5 });
+  if (a - 2.2 < front - 1.05) out.push({ x: x0 + fx * (front - 1.0), z: z0 + fz * (front - 1.0), r: 1.5 });
   if (trailer) {
     const th = h + trailerYaw, tx = Math.cos(th), tz = -Math.sin(th), kx = x0 + fx * (spec.fifthWheel ?? 0), kz = z0 + fz * (spec.fifthWheel ?? 0);
     for (let a = -1; a >= -14.5; a -= 2.2) out.push({ x: kx + tx * a, z: kz + tz * a, r: 1.5 });

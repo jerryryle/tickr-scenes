@@ -18,6 +18,7 @@ import { BLOCK, RING } from "./grid.ts";
 import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
+import { seaSide } from "./outline.ts";
 import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
@@ -144,6 +145,7 @@ const MAX_GRADE = 0.055;
 const HILL_FLAT = 35, HILL_EASE = 90;   // set pieces sit on the level: this far either side, then eased over this
 const SIDE_HILL = 16;                   // the land beside the road rises or falls up to about this much (m)
 export const COAST_N = -57, SEA_N = -75; // the beach (coastal land, on the left) and the sea beyond it
+const COAST_FADE = 500;                  // the coast fades out over this far to a city's gate (coastAt)
 // A tunnel through a hill: its bore (half width, height inside), the cutting walls either side of
 // its approaches, how far they run out, and the hill's height over the road at the portals.
 export const BORE_HALF = 5.2, BORE_H = 6.6, CUT_N = 7.6, CUT_RUN = 80;
@@ -638,7 +640,7 @@ export class CountryRoad {
   get fromFreewayFrame(): Frame | null {
     if (this.fwFrom === undefined) {
       const i = this.inp, cs = citySeedOf(i.seed, i.city), g = i.kind === "exit" ? freewayGate(cs, i.fromStyle) : null;
-      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g) : null;
+      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs, i.fromStyle) !== null) : null;
     }
     return this.fwFrom;
   }
@@ -687,7 +689,12 @@ export class CountryRoad {
   }
   // How much of the land at s is coast (the sea on the left), easing from one land to the next.
   private coastFrom = 0; private coastTo = 0;
-  coastAt(s: number) { return this.coastFrom + (this.coastTo - this.coastFrom) * this.blendAt(s); }
+  // (Fading out over the last COAST_FADE metres to a city's gate at either end: a coastal city has
+  // its own sea, on its own side (outline.ts), and its outskirts' land comes up to the road there.)
+  coastAt(s: number) {
+    const f = Math.min(this.inp.kind === "exit" ? s / COAST_FADE : 1, (this.gateS - s) / COAST_FADE);
+    return (this.coastFrom + (this.coastTo - this.coastFrom) * this.blendAt(s)) * smooth(THREE.MathUtils.clamp(f, 0, 1));
+  }
   // The height of the ground at (s, n): the road's level out to the ditches, then the land's own
   // hills (smooth noise, rising more often than falling), eased in over the first 40 m, so the
   // road runs in cuttings and on embankments. On a coast the land falls away to the beach on the

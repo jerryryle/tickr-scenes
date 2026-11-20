@@ -25,6 +25,7 @@ import type { CityPlan, Gate } from "./city.ts";
 import type { CityStyle } from "./styles.ts";
 import type { CountryRoad } from "./country.ts";
 import { citySeedOf } from "./country.ts";
+import { seaSide } from "./outline.ts";
 import { PlateSet } from "./signs.ts";
 import { CarFleet, carKindAt } from "./cars.ts";
 
@@ -127,16 +128,18 @@ export class Frame {
   constructor(readonly x: number, readonly z: number, h: number, readonly near = -60, readonly far = -1e9) {
     this.ox = -Math.cos(h); this.oz = Math.sin(h); this.rx = Math.sin(h); this.rz = Math.cos(h);
   }
-  static ofCity(plan: CityPlan, g: Gate): Frame { return Frame.ofCitySeed(plan.seed, plan.name, plan.freewayMerge, g); }
+  static ofCity(plan: CityPlan, g: Gate): Frame { return Frame.ofCitySeed(plan.seed, plan.name, plan.freewayMerge, g, seaSide(plan.seed, plan.style) !== null); }
   // (The same from the city's seed and name alone: a country road out of the city needs it.)
-  static ofCitySeed(seed: number, name: string, merge: boolean, g: Gate): Frame {
+  // `seaward`: the city is on the sea (outline.ts), always on the left of the way in, so the far
+  // side's end bends right (+n), away from it, as the entry side's does.
+  static ofCitySeed(seed: number, name: string, merge: boolean, g: Gate, seaward = false): Frame {
     const e = gateEnd(g), f = new Frame(e.x, e.z, e.h + Math.PI);
     // The city's streets along the line, as distances out of the gate end.
     const lo = CITY_LO * BLOCK, hi = (CITY_HI + 1) * BLOCK, along = g.dir === 0 || g.dir === 2;
     const d = (u: number) => along ? (u - e.x) * f.ox : (u - e.z) * f.oz;
     const out = new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), Math.min(d(lo), d(hi)));
     out.merge = merge;
-    out.farSide = hash2(seed, 0xfa5, 0, 0x7a4) < 0.5 ? 1 : -1;
+    out.farSide = seaward || hash2(seed, 0xfa5, 0, 0x7a4) < 0.5 ? 1 : -1;
     return out.label(seed, name);
   }
   static ofRoad(road: CountryRoad, dx = 0, dz = 0): Frame {

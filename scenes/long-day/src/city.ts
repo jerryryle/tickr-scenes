@@ -44,7 +44,8 @@ import { BIOMES, landTree } from "./countryworld.ts";
 import { BLOCK, STREET, KERB, CURB_H, RING } from "./grid.ts";
 import { angleDiff, CityGraph, clipHalf, inPoly, polyDist } from "./citygraph.ts";
 import type { CBlock, CNode, CStreet } from "./citygraph.ts";
-import { gridGraph, organicGraph } from "./citygen.ts";
+import { gridGraph, organicGraph, trimToOutline } from "./citygen.ts";
+import { CityOutline } from "./outline.ts";
 import { DEBUG_EXIT, DEBUG_LAYOUT, DEBUG_ONEWAY } from "./debug.ts";
 
 const LANE_EAST_OUTER = 13.5; // local z of the eastbound kerb lane's centre
@@ -72,18 +73,6 @@ export function setCityLimits(cityMinutes: number) {
 }
 setCityLimits(30);
 export const insideCity = (bx: number, bz: number) => bx >= CITY_LO && bx <= CITY_HI && bz >= CITY_LO && bz <= CITY_HI;
-// The two blocks beside the street leaving node (ix, iz) in direction dir (0 east, 1 north, 2 west, 3 south).
-function streetBlocks(ix: number, iz: number, dir: number): [number, number, number, number] {
-  return dir === 0 ? [ix, iz - 1, ix, iz] : dir === 2 ? [ix - 1, iz - 1, ix - 1, iz] : dir === 1 ? [ix - 1, iz - 1, ix, iz - 1] : [ix - 1, iz, ix, iz];
-}
-// A city street (the truck and traffic drive only on these, plus the gate streets out of town).
-export function cityStreet(ix: number, iz: number, dir: number) {
-  const [ax, az, bx, bz] = streetBlocks(ix, iz, dir);
-  return insideCity(ax, az) || insideCity(bx, bz);
-}
-const nodeInCity = (ix: number, iz: number) => ix >= CITY_LO && ix <= CITY_HI + 1 && iz >= CITY_LO && iz <= CITY_HI + 1;
-// The gate whose gate street leaves node (ix, iz) in direction dir, if any.
-const gateAt = (ix: number, iz: number, dir: number) => GATES.find((g) => g.ix === ix && g.iz === iz && g.dir === dir) ?? null;
 // Distance in blocks (Chebyshev) from block (bx, bz) to the city; 0 inside.
 export const cityDistance = (bx: number, bz: number) => Math.max(CITY_LO - bx, bx - CITY_HI, CITY_LO - bz, bz - CITY_HI, 0);
 export function entryGateOf(citySeed: number): Gate { return GATES[Math.floor(hash2(citySeed, 5, 0, 0x6a7e) * GATES.length)]; }
@@ -112,7 +101,7 @@ export class CityPlan {
   // its lights everywhere.
   private stopSigns(G: CityGraph) {
     if (this.layout === "grid") return;
-    const gateNodes = new Set(G.gates.map((g) => g.node));
+    const gateNodes = new Set(G.gates.flatMap((g) => (g ? [g.node] : [])));
     for (const N of G.nodes) {
       if (N.control !== "signal" || N.arms.length < 3 || gateNodes.has(N.id)) continue;
       let quiet = true;
@@ -130,7 +119,34 @@ export class CityPlan {
       if (quiet && hash2(N.kx, N.kz, this.seed, 0x5709) < 0.7) { N.control = "stop"; N.phases = 1; N.phaseOf.fill(0); }
     }
   }
+  // The layout over the whole square (buildLayout), cut back to the town's outline (outline.ts,
+  // citygen.ts trimToOutline): with the land's edges as drawn, then half as far in, then square;
+  // and if even that fails (it shouldn't), the whole square and no sea.
   private buildGraph(): CityGraph {
+    const L = this.buildLayout(), entry = GATES.indexOf(this.entryGate);
+    for (const sc of [1, 0.5, 0]) {
+      const O = this.outlineAt(sc), T = trimToOutline(L, O, GATES, entry);
+      if (T) { this.ol = O; return this.g = T; }
+    }
+    // (Laid out again without the sea: the districts by the shore, and the layout's streets
+    // round them, asked shoreLine.)
+    this.ol = this.shoreOl = this.outlineAt(0, true);
+    return this.g = this.buildLayout();
+  }
+  // The town's outline: as the graph was cut to (outline, after the graph), or as first drawn
+  // (shore: the sea's line, which the layout's districts ask before there is a graph).
+  private ol: CityOutline | null = null;
+  private shoreOl: CityOutline | null = null;
+  get outline(): CityOutline { void this.graph; return this.ol!; }
+  get shoreLine(): CityOutline { return this.shoreOl ??= this.outlineAt(1); }
+  private outlineAt(scale: number, seaOff = false): CityOutline {
+    const rows: number[] = [], cols: number[] = [];
+    for (let k = CITY_LO; k <= CITY_HI + 1; k++) { if (elevatedLine(this.style, k)) rows.push(k); if (this.style.cableCar && cableColumn(k)) cols.push(k); }
+    return new CityOutline(this.seed, this.style, { freeway: this.freeway, straightRows: rows, straightCols: cols, insetScale: scale, seaOff });
+  }
+  // Whether gate i (GATES) is open: its street runs in to the town (outline.ts).
+  gateOpen(i: number): boolean { return !!this.graph.gates[i]; }
+  private buildLayout(): CityGraph {
     let river: number | undefined;
     const opts = { lo: CITY_LO, hi: CITY_HI, gates: GATES, nameEW: streetNameEW, nameNS: streetNameNS,
       elevatedRow: (iz: number) => elevatedLine(this.style, iz), cableColumn: (ix: number) => !!this.style.cableCar && cableColumn(ix),
@@ -145,11 +161,11 @@ export class CityPlan {
       const nr = DEBUG_LAYOUT === "organicRound" ? 2 : f(11) < 0.6 ? (f(12) < 0.4 ? 2 : 1) : 0, names = ROUND_NAMES;
       const r0 = Math.floor(f(13) * names.length), rounds = Array.from({ length: nr }, (_, i) => names[(r0 + i) % names.length]);
       const og = organicGraph(opts, this.seed, { river, rounds });
-      if (og.gates.length === GATES.length) return this.g = og;
+      if (og.gates.length === GATES.length) return og;
       this.organicFailed = true;
     }
     const cuts = this.slipCuts();
-    if (this.layout === "grid") return this.g = gridGraph(opts, cuts.length ? { seed: this.seed, jitter: 0, drop: 0, fixed: () => true, keep: () => true, cuts } : null);
+    if (this.layout === "grid") return gridGraph(opts, cuts.length ? { seed: this.seed, jitter: 0, drop: 0, fixed: () => true, keep: () => true, cuts } : null);
     // A river across town, in some styles: a row of blocks clear of the freeway's line, elevated
     // lines and gate rows.
     if (this.riverStyle || DEBUG_LAYOUT === "river") {
@@ -163,7 +179,7 @@ export class CityPlan {
     const straight = (ix: number, iz: number) => onFw(ix, iz) || opts.elevatedRow(iz) || opts.cableColumn(ix);
     const h = (salt: number) => hash2(this.seed, 0x1a7, 0, salt);
     const fl = this.flourishes(straight, river);
-    return this.g = gridGraph(opts, { seed: this.seed, jitter: 5 + 5 * h(1), drop: 0.05 + 0.1 * h(2), fixed: straight, river, ...fl, cuts,
+    return gridGraph(opts, { seed: this.seed, jitter: 5 + 5 * h(1), drop: 0.05 + 0.1 * h(2), fixed: straight, river, ...fl, cuts,
       // (Industry's plots are big: between two of its blocks, a street is left out half the time.)
       // (Its streets bend gently: deep enough plots for its yards and loading docks.)
       bend: (ix, iz) => [[ix - 1, iz - 1], [ix, iz - 1], [ix - 1, iz], [ix, iz]].some(([bx, bz]) => this.district(bx, bz) === "industrial") ? 0.3 : 1,
@@ -190,6 +206,25 @@ export class CityPlan {
   // Whether the town has a river across it (citygen.ts: its blocks are water).
   private river?: boolean;
   get hasRiver(): boolean { return this.river ??= this.graph.blocks.some((b) => b.water); }
+  // Whether the town has water below its streets' level in view: a river, or the sea (outline.ts).
+  get lowWater(): boolean { return this.hasRiver || this.outline.sea !== null; }
+  // The shore: the stretches of the town's outer edge (citygraph.ts outer, the backs of its
+  // outermost sidewalks) with the sea beyond them, each with the way out to sea (nx, nz).
+  private shoreE: { ax: number; az: number; bx: number; bz: number; nx: number; nz: number }[] | undefined;
+  get shore() {
+    if (this.shoreE) return this.shoreE;
+    const out: { ax: number; az: number; bx: number; bz: number; nx: number; nz: number }[] = [], O = this.outline, poly = this.graph.outer;
+    if (O.sea !== null && poly) for (let i = 0; i < poly.length; i++) {
+      const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length], L = Math.hypot(bx - ax, bz - az);
+      if (L < 0.5) continue;
+      let nx = -(bz - az) / L, nz = (bx - ax) / L;
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2, sea = (k: number) => O.inSea(mx + nx * k, mz + nz * k);
+      if (!sea(10)) { nx = -nx; nz = -nz; if (!sea(10)) continue; }
+      if (sea(-6)) continue;   // (out in the sea both ways: not the shore)
+      out.push({ ax, az, bx, bz, nx, nz });
+    }
+    return this.shoreE = out;
+  }
   // Whether an avenue (a two-way street named one) downtown or in the shops has a planted median:
   // in about half of a city's avenues, the whole avenue alike (by its name), at least 50 m long,
   // not under an elevated line, cable car or freeway. (At least 50 m: a grid block.)
@@ -431,6 +466,8 @@ export class CityPlan {
     const d = this.coreDistance(bx, bz);
     const core = this.style.core;
     if (d < core) return "downtown";
+    // (By the sea, outline.ts: a port's waterfront is its docks, a coastal town's its promenade.)
+    if (this.shoreLine.nearShore(bx, bz)) return this.style.id === "port" ? (hash2(bx, bz, this.seed, 15) < 0.85 ? "industrial" : "commercial") : hash2(bx, bz, this.seed, 15) < 0.55 ? "commercial" : "residential";
     if (d > core - 0.4 && hash2(bx, bz, this.seed, 11) < 0.07) return "park";
     if (d < core + 2.2) return hash2(bx, bz, this.seed, 12) < 0.8 ? "commercial" : "residential";
     const n = this.noise(bx, bz, 5, 13);
@@ -464,13 +501,6 @@ export interface CityMaterials { ground: THREE.Material; solid: THREE.Material; 
 export interface StallPose { model: TruckModel; x: number; z: number; h: number }
 export type FleetBuilder = (stalls: StallPose[]) => THREE.Object3D | null;
 
-// Whether (x, z) is inside some block (city or river), looking in the tiles round it.
-function underBlock(G: CityGraph, x: number, z: number) {
-  const tx = Math.floor(x / BLOCK), tz = Math.floor(z / BLOCK);
-  for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++)
-    for (const b of G.tile(tx + dx, tz + dz).blocks) { const B = G.blocks[b]; if ((B.inCity || B.water) && inPoly(B.poly, x, z)) return true; }
-  return false;
-}
 // Everything a city tile is made of, as batches (`takeSlot` null: no sign atlas use, for
 // probes): the intersections, streets and blocks the street graph anchors in it (citygraph.ts),
 // each drawn in its own frame, and the countryside's land where the tile has no city block.
@@ -491,7 +521,10 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   for (const id of G.blocksOver(cx, cz)) { const b = G.blocks[id]; if (b.water) { buildRiver(ground, b, ox, oz); buildBoats(solid, b, ox, oz, plan.seed, G); } }
   // (Not inside the city's limits, nor where the tile lies inside a block anchored in another
   // tile: a big block, or a river's stretch, drawn whole from there.)
-  if (!city.length && !water.length && !insideCity(cx, cz) && !underBlock(G, ox + BLOCK / 2, oz + BLOCK / 2)) buildOutskirts(ground, solid, plan, cx, cz, rnd);
+  if (plan.shore.length) buildShore(ground, solid, plan, ox, oz);
+  // (Outside the town's land, or where its edge crosses the tile: outline.ts.)
+  const O = plan.outline;
+  if (!insideCity(cx, cz) || ![[1, 1], [BLOCK - 1, 1], [1, BLOCK - 1], [BLOCK - 1, BLOCK - 1], [BLOCK / 2, BLOCK / 2]].every(([x, z]) => O.inLand(ox + x, oz + z))) buildOutskirts(ground, solid, plan, cx, cz, rnd);
   return { ground, solid, lamps, stalls, district, site };
 }
 
@@ -631,7 +664,8 @@ function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: nu
   };
   const along = (face: number) => (a: number) => (face === fwd ? 9 + a : 9 + st.len - a);
   // Water either side: a bridge (both), or a quay (one).
-  const water = (face: number) => { const b = G.faceBlock[face]; return b >= 0 && G.blocks[b].water; };
+  // (The sea too: a face with no block that looks out over it, outline.ts.)
+  const water = (face: number) => { const b = G.faceBlock[face]; if (b >= 0) return G.blocks[b].water; if (plan.outline.sea === null) return false; const p = G.facePt(face, st.len / 2, 8); return plan.outline.inSea(p.x, p.z); };
   // Downtown and commercial kerbs the truck can stop at have a loading zone at the middle of the
   // side, where it stops (journey.ts: centred on the side): not by a driveway.
   const zone = (face: number) => {
@@ -1010,22 +1044,111 @@ function buildRiver(g: Batch, blk: CBlock, ox: number, oz: number) {
     }
   }
   for (let i = 0; i < poly.length; i++) {
-    const [px, pz] = poly[i], [qx, qz] = poly[(i + 1) % poly.length];
-    // (Each wall clipped to this tile, as the water is: the part of it from t0 to t1. One lying
-    // along a tile's edge belongs to the tile on its far side, as inTile has it: x < BLOCK.)
-    let t0 = 0, t1 = 1;
-    for (const [d, v] of [[qx - px, px], [qz - pz, pz]]) for (const [lim, sgn] of [[0, -1], [BLOCK, 1]]) {
-      const num = sgn * (lim - v), den = sgn * d;
-      if (Math.abs(den) < 1e-9) { if (num < 0 || (sgn > 0 && num < 1e-6)) t1 = -1; continue; }
-      const t = num / den;
-      if (den > 0) t1 = Math.min(t1, t); else t0 = Math.max(t0, t);
-    }
-    if (t1 <= t0) continue;
-    const ax = px + (qx - px) * t0, az = pz + (qz - pz) * t0, bx = px + (qx - px) * t1, bz = pz + (qz - pz) * t1;
-    const nx = -(qz - pz) * w, nz = (qx - px) * w;   // (facing the water)
+    const [px, pz] = poly[i], [qx, qz] = poly[(i + 1) % poly.length], c = clipToTile(px, pz, qx, qz);
+    if (!c) continue;
+    const [ax, az, bx, bz] = c, nx = -(qz - pz) * w, nz = (qx - px) * w;   // (facing the water)
     g.tri(ax, y, az, bx, y, bz, bx, CURB_H, bz, QUAY, [nx, 0, nz]); g.tri(ax, y, az, bx, CURB_H, bz, ax, CURB_H, az, QUAY, [nx, 0, nz]);
   }
 }
+// The part of the segment p..q (tile-local) in this tile, or null. One lying along a tile's edge
+// belongs to the tile on its far side, as inTile has it (x < BLOCK).
+function clipToTile(px: number, pz: number, qx: number, qz: number): [number, number, number, number] | null {
+  let t0 = 0, t1 = 1;
+  for (const [d, v] of [[qx - px, px], [qz - pz, pz]]) for (const [lim, sgn] of [[0, -1], [BLOCK, 1]]) {
+    const num = sgn * (lim - v), den = sgn * d;
+    if (Math.abs(den) < 1e-9) { if (num < 0 || (sgn > 0 && num < 1e-6)) t1 = -1; continue; }
+    const t = num / den;
+    if (den > 0) t1 = Math.min(t1, t); else t0 = Math.max(t0, t);
+  }
+  return t1 <= t0 ? null : [px + (qx - px) * t0, pz + (qz - pz) * t0, px + (qx - px) * t1, pz + (qz - pz) * t1];
+}
+
+// ---- the sea's shore (outline.ts) ---------------------------------------------------------------
+// Along the shore (CityPlan.shore), the part in this tile (tile-local, as the river's walls). A
+// port's: a stone quay wall down to the water, boats moored along it, and here and there a pier
+// out into the sea on piles with boats along both sides. A coastal town's: a sandy beach sloping
+// from the promenade's kerb down under the water, lifeguard towers along it, and in summer (not in
+// rain) umbrellas and towels. The sea itself is one plane under the whole town (main.ts).
+const SAND = 0xe2cf9a, SAND_WET = 0xc9b27a, PIER = 0x8a6a48, PILE = 0x4a3a2c, BEACH_W = 18, SEA_Y = -1.5;
+function buildShore(g: Batch, s: Batch, plan: CityPlan, ox: number, oz: number) {
+  const port = plan.style.id === "port", c = plan.climate, sunny = !!c && c.season === "summer" && !/rain|storm|snow|fog/.test(c.weather);
+  const E = plan.shore;
+  E.forEach((e, i) => {
+    const ax = e.ax - ox, az = e.az - oz, bx = e.bx - ox, bz = e.bz - oz, L = Math.hypot(bx - ax, bz - az), { nx, nz } = e;
+    // (Nothing of an edge's comes more than its beach's width from it: none of it here if it
+    // passes further than that from the tile.)
+    if (Math.max(ax, bx) < -BEACH_W - 2 || Math.min(ax, bx) > BLOCK + BEACH_W + 2 || Math.max(az, bz) < -BEACH_W - 2 || Math.min(az, bz) > BLOCK + BEACH_W + 2) return;
+    const ex = (bx - ax) / L, ez = (bz - az) / L, cl = clipToTile(ax, az, bx, bz);
+    if (port) {
+      if (cl) { const [px, pz, qx, qz] = cl; g.tri(px, SEA_Y, pz, qx, SEA_Y, qz, qx, CURB_H, qz, QUAY, [nx, 0, nz]); g.tri(px, SEA_Y, pz, qx, CURB_H, qz, px, CURB_H, pz, QUAY, [nx, 0, nz]); }
+      // Piers (by the tile their root is in), and boats along the quay between them.
+      const yaw = Math.atan2(-ez, ex);
+      for (let k = 0; k < Math.floor(L / 30); k++) {
+        const t = (k + 0.5) / Math.floor(L / 30), rx = ax + (bx - ax) * t, rz = az + (bz - az) * t, r = hash2(i, k, plan.seed, 0x91e7);
+        if (!inTile(rx, rz)) continue;
+        if (L >= 45 && r < 0.33) pier(s, rx, rz, nx, nz, ex, ez, plan.seed + i * 31 + k);
+        else if (r < 0.75) {
+          const kind: BoatKind = r < 0.45 ? "cruiser" : r < 0.6 ? "sailboat" : "rowboat", { beam } = boatSize(kind);
+          boatAt(s, kind, rx + nx * (1 + beam / 2), SEA_Y, rz + nz * (1 + beam / 2), yaw + (r < 0.55 ? Math.PI : 0), BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length]);
+        }
+      }
+      return;
+    }
+    // The beach: from the sidewalk's back down to under the water, BEACH_W out.
+    const y1 = SEA_Y - 0.25;
+    if (cl) {
+      const [px, pz, qx, qz] = cl, w = BEACH_W * 0.75;
+      quadTri(g, [px, CURB_H - 0.02, pz], [qx, CURB_H - 0.02, qz], [qx + nx * BEACH_W, y1, qz + nz * BEACH_W], [px + nx * BEACH_W, y1, pz + nz * BEACH_W], SAND);
+      quadTri(g, [px + nx * w, SEA_Y + 0.06, pz + nz * w], [qx + nx * w, SEA_Y + 0.06, qz + nz * w], [qx + nx * BEACH_W, y1 + 0.01, qz + nz * BEACH_W], [px + nx * BEACH_W, y1 + 0.01, pz + nz * BEACH_W], SAND_WET);
+    }
+    // (Where the shore turns, the gap between two edges' sand filled.)
+    const nxt = E[(i + 1) % E.length];
+    if (inTile(bx, bz) && Math.hypot(nxt.ax - e.bx, nxt.az - e.bz) < 0.5 && Math.abs(nx * nxt.nz - nz * nxt.nx) > 1e-3)
+      g.tri(bx, CURB_H - 0.02, bz, bx + nx * BEACH_W, y1, bz + nz * BEACH_W, bx + nxt.nx * BEACH_W, y1, bz + nxt.nz * BEACH_W, SAND);
+    for (let k = 0; k < Math.floor(L / 12); k++) {
+      const t = (k + 0.5) / Math.floor(L / 12), d = 4 + 9 * hash2(i, k, plan.seed, 0xbea1), x = ax + (bx - ax) * t + nx * d, z = az + (bz - az) * t + nz * d, r = hash2(i, k, plan.seed, 0xbea2);
+      if (!inTile(x, z)) continue;
+      const y = CURB_H - 0.02 + (y1 - CURB_H) * (d / BEACH_W);
+      if (r < 0.05) lifeguardTower(s, x, y, z, Math.atan2(-nz, nx));
+      else if (sunny && r < 0.45) {
+        const col = [0xe0402a, 0xf2c200, 0x2a7fd4, 0xf2f0ea, 0x2e9a5a][Math.floor(r * 50) % 5];
+        s.cyl(x, y + 1.0, z, 0.03, 2.0, 0xd8d8d8, 4); s.cone(x, y + 2.05, z, 1.1, 0.35, col, 8);
+        s.box(x + ex * 1.2, y + 0.02, z + ez * 1.2, 1.7, 0.03, 0.8, [0x2a7fd4, 0xe86a9a, 0xf2c200][Math.floor(r * 70) % 3], Math.atan2(-ez, ex));
+      }
+    }
+  });
+}
+function quadTri(g: Batch, p: number[], q: number[], r: number[], t: number[], color: number) {
+  g.tri(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2], color);
+  g.tri(p[0], p[1], p[2], r[0], r[1], r[2], t[0], t[1], t[2], color);
+}
+// A pier from the quay at (x, z) out to sea along (nx, nz), across (ex, ez): a plank deck on piles,
+// bollards along it, boats lying alongside.
+function pier(s: Batch, x: number, z: number, nx: number, nz: number, ex: number, ez: number, seed: number) {
+  const len = 34, w = 5, yaw = Math.atan2(-nz, nx), top = CURB_H - 0.02;
+  s.box(x + nx * len / 2, top - 0.15, z + nz * len / 2, len, 0.3, w, PIER, yaw);
+  for (let d = 4; d <= len; d += 6) for (const sd of [-1, 1]) {
+    const px = x + nx * d + ex * sd * (w / 2 - 0.3), pz = z + nz * d + ez * sd * (w / 2 - 0.3);
+    s.cyl(px, (SEA_Y - 0.2 + top - 0.3) / 2, pz, 0.18, top - 0.3 - SEA_Y + 0.2, PILE, 6);
+    if (d % 12 === 4) s.cyl(px, top + 0.2, pz, 0.12, 0.4, 0x2b2d31, 6);
+  }
+  for (const sd of [-1, 1]) for (let k = 0; k < 2; k++) {
+    const r = hash2(seed, k * 2 + (sd > 0 ? 1 : 0), 0, 0x9e1);
+    if (r > 0.7) continue;
+    const kind: BoatKind = r < 0.3 ? "cruiser" : r < 0.5 ? "sailboat" : "rowboat", { beam, len: bl } = boatSize(kind), d = 9 + k * 15;
+    if (d + bl / 2 > len + 2) continue;
+    boatAt(s, kind, x + nx * d + ex * sd * (w / 2 + 0.8 + beam / 2), SEA_Y, z + nz * d + ez * sd * (w / 2 + 0.8 + beam / 2), yaw + (r < 0.4 ? Math.PI : 0), BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length]);
+  }
+}
+// A lifeguard tower on the sand, facing the sea (yaw): legs, a hut with a red roof, a ramp.
+function lifeguardTower(s: Batch, x: number, y: number, z: number, yaw: number) {
+  const c = Math.cos(yaw), sn = Math.sin(yaw), at = (u: number, v: number): [number, number] => [x + c * u + sn * v, z - sn * u + c * v];
+  for (const [u, v] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]]) { const [px, pz] = at(u, v); s.box(px, y + 1.0, pz, 0.12, 2.0, 0.12, 0xf2f0ea, yaw); }
+  const [hx, hz] = at(0, 0); s.box(hx, y + 2.6, hz, 2.0, 1.2, 2.0, 0xf2f0ea, yaw); s.prism(hx, y + 3.45, hz, 2.3, 0.5, 2.3, 0xc0392b, yaw);
+  const [wx, wz] = at(1.01, 0); s.box(wx, y + 2.75, wz, 0.02, 0.5, 1.4, 0x26313d, yaw);
+  const [rx, rz] = at(-2.0, 0); s.boxR(rx, y + 1.0, rz, 2.6, 0.08, 0.8, 0xc8b8a0, 0, yaw, 0.75);
+}
+
 // Which way a polygon winds: +1 if its inside is on the left of each edge, (-z, x) from its
 // direction (a positive shoelace sum in x, z), else -1. (A winding river's middle can lie outside
 // it: this says which side of each edge is the water.)
@@ -1762,27 +1885,13 @@ function buildCorners(g: Batch) {
     for (const z of [0, STREET - KERB]) g.box(x + KERB / 2, CURB_H / 2, z + KERB / 2, KERB, CURB_H, KERB, C.sidewalk);
 }
 
-// Where a node's street doesn't exist (the edge of town), the sidewalk runs on across its mouth.
-const ARM_ALL = (ix: number, iz: number, d: number) => cityStreet(ix, iz, d) || !!gateAt(ix, iz, d) || !!gateAt(ix + [1, 0, -1, 0][d], iz + [0, -1, 0, 1][d], (d + 2) % 4);
-function buildMouths(g: Batch, ix: number, iz: number) {
-  if (!nodeInCity(ix, iz)) return;
-  const span = STREET - 2 * KERB, mid = STREET / 2;
-  const mouths: [number, number, number, number, number][] = [   // dir, x, z, size x, size z
-    [0, STREET - KERB / 2, mid, KERB, span], [2, KERB / 2, mid, KERB, span], [1, mid, KERB / 2, span, KERB], [3, mid, STREET - KERB / 2, span, KERB]];
-  for (const [d, x, z, w, l] of mouths) {
-    if (ARM_ALL(ix, iz, d)) continue;
-    g.box(x, CURB_H / 2, z, w, CURB_H, l, C.sidewalk);
-    const ex = d === 0 ? STREET - KERB + 0.125 : d === 2 ? KERB - 0.125 : x, ez = d === 1 ? KERB - 0.125 : d === 3 ? STREET - KERB + 0.125 : z;
-    g.box(ex, CURB_H + 0.004, ez, d % 2 === 0 ? 0.25 : span, 0.008, d % 2 === 0 ? span : 0.25, C.curb);
-  }
-}
-
 // ---- the countryside round the city -------------------------------------------------------------
-// Chunks outside the city's limits, out to RING blocks: the city's outermost streets and its gate
-// streets where they run, and the rest farmland or wild land of the city's biome (countryworld.ts
-// looks). The highway's corridor out of each gate stays clear: the country road is drawn there.
-function inGateCorridor(wx: number, wz: number, margin = 13) {
-  for (const g of GATES) {
+// Chunks outside the town's land (outline.ts), out to RING blocks past the square: the land under
+// the town's outermost streets and its gate streets where they run, farmland or wild land of the
+// city's biome (countryworld.ts looks), and none in the sea. The highway's corridor out of each gate stays clear: the country road is drawn there.
+function inGateCorridor(plan: CityPlan, wx: number, wz: number, margin = 13) {
+  for (const [i, g] of GATES.entries()) {
+    if (!plan.gateOpen(i)) continue;   // (a closed gate has no road out)
     const e = gateEnd(g), fx = Math.cos(e.h), fz = -Math.sin(e.h);
     const along = (wx - e.x) * fx + (wz - e.z) * fz, across = Math.abs((wx - e.x) * -fz + (wz - e.z) * fx);
     if (along > -2 && along < (RING + 1) * BLOCK && across < margin) return true;
@@ -1792,37 +1901,50 @@ function inGateCorridor(wx: number, wz: number, margin = 13) {
 const PLAIN_FRONT = (side: number): Frontage => ({ side, drive: null, sign: null });
 // (Its streets and intersections are the graph's: cityBatches draws them; this is the land.)
 function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number, cz: number, rnd: Rand) {
-  const ew = ARM_ALL(cx, cz, 0), ns = ARM_ALL(cx, cz, 3), node = nodeInCity(cx, cz);
   if (cityDistance(cx, cz) > RING) return;
-  const rects: Rect[] = [{ x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK }];
-  if (!ew) rects.push({ x0: STREET, z0: 0, x1: BLOCK, z1: STREET });
-  if (!ns) rects.push({ x0: 0, z0: STREET, x1: STREET, z1: BLOCK });
-  if (!node) rects.push({ x0: 0, z0: 0, x1: STREET, z1: STREET });
-  const c = plan.climate, id = BIOME_OF[plan.style.id], b = BIOMES[id];
+  const G = plan.graph, O = plan.outline, c = plan.climate, id = BIOME_OF[plan.style.id], b = BIOMES[id];
   const g0 = c ? seasonGround(b.ground, c) : b.ground, g1 = c ? seasonGround(b.ground2, c) : b.ground2;
   const fields = b.fields?.map((f) => c ? seasonGround(f, c) : f);
   const greens = c ? seasonGreens(b.greens, c) : b.greens, cgreens = c ? seasonGreens(b.greens, c, true) : b.greens;
   const ox = cx * BLOCK, oz = cz * BLOCK, line = elevatedLine(CS, cz);
-  for (const r of rects) {
-    // Ground in 12 m cells: fields in farm country, patchy grass elsewhere. A few cm below the
-    // country road's land (countryworld.ts), which overlaps this ring where they meet: at the
-    // same height the two flickered against each other.
-    for (let x = r.x0; x < r.x1 - 0.01; x += 12) for (let z = r.z0; z < r.z1 - 0.01; z += 12) {
-      const w = Math.min(12, r.x1 - x), d = Math.min(12, r.z1 - z), wx = ox + x + w / 2, wz = oz + z + d / 2;
-      const col = fields ? fields[Math.floor(hash2(Math.floor(wx / 48), Math.floor(wz / 36), plan.seed, 0xf1e) * fields.length)]
-        : hash2(Math.floor(wx / 36), Math.floor(wz / 36), plan.seed, 0x6a) < 0.6 ? g0 : g1;
-      ground.box(x + w / 2, -0.16, z + d / 2, w, 0.1, d, col);
-    }
-    // Trees and rocks, clear of the highway out of town and of the streets' edges.
-    const area = (r.x1 - r.x0) * (r.z1 - r.z0), n = Math.floor(b.density * 0.0024 * area + rnd());
-    for (let k = 0; k < n; k++) {
-      const x = r.x0 + 2 + rnd() * (r.x1 - r.x0 - 4), z = r.z0 + 2 + rnd() * (r.z1 - r.z0 - 4);
-      if (inGateCorridor(ox + x, oz + z) || (line && Math.abs(z - 9) < 7) || plan.freewayFrame?.corridor(ox + x, oz + z)) continue;   // (nor under an elevated line, nor the freeway)
-      const kind = b.trees[Math.floor(rnd() * b.trees.length)], gs = kind === "conifer" || kind === "cypress" || kind === "cactus" ? cgreens : greens;
-      landTree(solid, x, z, kind, gs[Math.floor(rnd() * gs.length)], rnd);
-    }
-    if (rnd() < b.rocks) { const x = r.x0 + rnd() * (r.x1 - r.x0), z = r.z0 + rnd() * (r.z1 - r.z0); if (!inGateCorridor(ox + x, oz + z) && !(line && Math.abs(z - 9) < 7) && !plan.freewayFrame?.corridor(ox + x, oz + z)) { const rr = 0.5 + rnd() * 1.4; solid.ico(x, rr * 0.3, z, rr, 0x8a8478, 0.6, rnd() * 6); } }
+  // (Covered: a city block's, or a river's, over it. Streets lie over the land, which runs under them.)
+  const covered = (wx: number, wz: number) => { const B = G.blockAt(wx, wz); return !!B && (B.inCity || B.water); };
+  // Ground in 12 m cells: fields in farm country, patchy grass elsewhere, none where a block covers
+  // it or out in the sea; beside the sea a cell goes down to the water, a solid edge. A few cm below
+  // the country road's land (countryworld.ts), which overlaps this ring where they meet: at the
+  // same height the two flickered against each other.
+  let land = 0;
+  for (let x = 0; x < BLOCK - 0.01; x += 12) for (let z = 0; z < BLOCK - 0.01; z += 12) {
+    const wx = ox + x + 6, wz = oz + z + 6;
+    if (O.seaward(wx, wz) || covered(wx, wz)) continue;
+    land++;
+    const col = fields ? fields[Math.floor(hash2(Math.floor(wx / 48), Math.floor(wz / 36), plan.seed, 0xf1e) * fields.length)]
+      : hash2(Math.floor(wx / 36), Math.floor(wz / 36), plan.seed, 0x6a) < 0.6 ? g0 : g1;
+    const coast = O.sea !== null && [[12, 0], [-12, 0], [0, 12], [0, -12]].some(([dx, dz]) => O.seaward(wx + dx, wz + dz));
+    if (coast) ground.box(x + 6, (-0.11 + SEA_Y - 0.1) / 2, z + 6, 12, -0.11 - SEA_Y + 0.1, 12, col);
+    else ground.box(x + 6, -0.16, z + 6, 12, 0.1, 12, col);
   }
+  if (!land) return;
+  // Trees and rocks, clear of the highway out of town (nor under an elevated line, nor the
+  // freeway), the streets and blocks, and the sea.
+  const clear = (x: number, z: number) => !O.seaward(ox + x, oz + z) && !G.blockNear(ox + x, oz + z, 3) && !nearStreet(G, ox + x, oz + z, 3) && !inGateCorridor(plan, ox + x, oz + z) && !(line && Math.abs(z - 9) < 7) && !plan.freewayFrame?.corridor(ox + x, oz + z);
+  const n = Math.floor(b.density * 0.0024 * 144 * land + rnd());
+  for (let k = 0; k < n; k++) {
+    const x = 2 + rnd() * (BLOCK - 4), z = 2 + rnd() * (BLOCK - 4);
+    if (!clear(x, z)) continue;
+    const kind = b.trees[Math.floor(rnd() * b.trees.length)], gs = kind === "conifer" || kind === "cypress" || kind === "cactus" ? cgreens : greens;
+    landTree(solid, x, z, kind, gs[Math.floor(rnd() * gs.length)], rnd);
+  }
+  if (rnd() < b.rocks) { const x = rnd() * BLOCK, z = rnd() * BLOCK; if (clear(x, z)) { const rr = 0.5 + rnd() * 1.4; solid.ico(x, rr * 0.3, z, rr, 0x8a8478, 0.6, rnd() * 6); } }
+}
+// Whether (x, z) is within `m` of a street's edge (its sidewalk's back).
+function nearStreet(G: CityGraph, x: number, z: number, m: number) {
+  const gx = Math.floor(x / BLOCK), gz = Math.floor(z / BLOCK);
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) for (const id of G.tile(gx + dx, gz + dz).streets) {
+    const st = G.streets[id], [a, off] = G.toStreet(id, x, z);
+    if (a > -m && a < st.len + m && Math.abs(off) < st.half + m) return true;
+  }
+  return false;
 }
 
 // ---- shared pieces --------------------------------------------------------------------------
@@ -2196,7 +2318,9 @@ function buildIndustrial(g: Batch, s: Batch, B: Rect, rnd: Rand, stand: StandLay
     g.span(Y.x0, CURB_H, Y.z0, Y.x1, CURB_H + 0.01, Y.z1, 0x5c5c58);
     const along = yardSide % 2 === 0; // dock wall runs along x
     // A port yard holds containers under a gantry crane; an old brick one has a rail spur.
-    let special = CS.cranes && rnd() < 0.45 ? "crane" : CS.rail && rnd() < 0.45 ? "rail" : "";
+    // (More often on the waterfront: outline.ts.)
+    const quay = !!DC.plan?.shoreLine.nearShore(DC.cx, DC.cz);
+    let special = CS.cranes && rnd() < (quay ? 0.85 : 0.45) ? "crane" : CS.rail && rnd() < 0.45 ? "rail" : "";
     if (stand) special = "";   // a yard can reach the kerb at the block's corners
     if (special === "crane") portCrane(s, Y, along, rnd);
     else if (special === "rail") railSpur(g, s, Y, along, rnd);

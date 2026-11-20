@@ -1,9 +1,10 @@
 // Test: traffic through busy junctions never overlaps and never gets stuck. Runs the traffic alone
 // round each junction below for 5 minutes (as the truck would see it, focused there) and fails if
 // two vehicles' boxes overlap by more than OVERLAP_MAX, or a vehicle stands still for a minute.
-// The junctions: an all-way stop that once deadlocked (seed 7, node 63), signalled junctions where
+// The junctions: an all-way stop that once deadlocked (seed 7), signalled junctions where
 // left turns once cut across oncoming cars and cars once turned from the passing lane (seed 3),
-// and others from the layouts (warped, organic, roundabouts).
+// a bus whose turn once swung into a cable car beside it (seed 13, the last), and others from the
+// layouts (warped, organic, roundabouts).
 // Args (all optional): seconds
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
@@ -26,10 +27,13 @@ import { Traffic } from "../src/traffic.ts";
     }
     return gap;
   };
-  for (const [seed, city, spot] of [[7, 0, 63], [3, 0, 1], [11, 0, 1], [3, 1, 1], [2, 0, 18], [5, 0, 1], [8, 0, 478], [13, 0, 1]]) {
+  // (Each by where it lies: the junction there, or, where the town's outline (outline.ts) has cut it
+  // away, the nearest junction of three streets or more. Node ids change with the outline.)
+  for (const [seed, city, wx, wz] of [[7, 0, -78, -578], [3, 0, -651, -711], [11, 0, -651, -711], [3, 1, -651, -711], [2, 0, 369, -711], [5, 0, -651, -711], [8, 0, -531, 429], [13, 0, -651, -711], [13, 0, -471, -711]]) {
     void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (sets the city limits the plan reads)
-    const plan = new CityPlan(citySeedOf(seed, city), journeyStyle(seed, city)), n = plan.graph.nodes[spot];
-    if (!n) { errs.push(`seed ${seed} city ${city}: no node ${spot}`); continue; }
+    const plan = new CityPlan(citySeedOf(seed, city), journeyStyle(seed, city));
+    const n = plan.graph.nodes.filter((q) => q.arms.length >= 3).sort((p, q) => Math.hypot(p.x - wx, p.z - wz) - Math.hypot(q.x - wx, q.z - wz))[0], spot = n?.id;
+    if (!n) { errs.push(`seed ${seed} city ${city}: no junction near ${wx},${wz}`); continue; }
     const T = new Traffic(new THREE.Scene(), new THREE.MeshBasicMaterial(), null) as any;
     const still = new Map<number, number>();
     let worst = 0, stuck = 0;

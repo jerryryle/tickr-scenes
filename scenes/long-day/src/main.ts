@@ -3,6 +3,8 @@
 // minutes; the camera director films it, and the crew (the driver and a dock worker) does the
 // work at each stop.
 import * as THREE from "three@0.187.0";
+import { Batch } from "./geom.ts";
+import { SEA_REACH } from "./outline.ts";
 import { hash2 } from "./rng.ts";
 import { journeyPeriod, readConfig } from "./env.ts";
 import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
@@ -90,8 +92,22 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return { v: STATE_VERSION, seed: cfg.seed, random: randomSeed, season: journey.startSeason, simTime: journey.st.simTime, period: journey.period, journey: null };
   }
 
+  // The sea off a coastal or port town (outline.ts): one plane under the whole town at the water's
+  // level, from the shore's deepest bay out to the horizon; the land and the beach lie over it.
+  let seaMesh: THREE.Mesh | null = null;
+  function buildSea() {
+    if (seaMesh) { engine.world.remove(seaMesh); seaMesh.geometry.dispose(); seaMesh = null; }
+    const O = journey.plan.outline, d0 = O.shoreDeepest, deep = d0 === null ? null : d0 + SEA_REACH + 10;   // (under the land the sea reaches round: outline.ts seaward)
+    if (O.sea === null || deep === null) return;
+    const FAR = 7000, s = O.sea, b = new Batch();
+    const x0 = s === 0 ? O.X1 - deep : s === 2 ? O.X0 - FAR : O.X0 - FAR, x1 = s === 0 ? O.X1 + FAR : s === 2 ? O.X0 + deep : O.X1 + FAR;
+    const z0 = s === 1 ? O.Z0 - FAR : s === 3 ? O.Z1 - deep : O.Z0 - FAR, z1 = s === 1 ? O.Z0 + deep : s === 3 ? O.Z1 + FAR : O.Z1 + FAR;
+    b.box((x0 + x1) / 2, -1.55, (z0 + z1) / 2, x1 - x0, 0.1, z1 - z0, 0x2f6f9a);
+    const m = b.build(mats.ground)!; seaMesh = m; engine.world.add(m);
+  }
   function buildCity() {
     streamer?.clear();
+    buildSea();
     engine.setSky(journey.plan.style.sky);
     backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
@@ -312,9 +328,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     } else if (DEBUG_VIEW === "aerial") {
       // High over the downtown nearest the middle of town, circling slowly, looking down at the layout.
       // (Over the river if the city has one, else a roundabout's park, else the residential block
-      // nearest the middle.)
+      // nearest the middle; but the shore before any of them.)
       const G = plan.graph, ring = G.streets.find((st) => st.ring), pickB = G.blocks.find((b) => b.water) ?? (ring ? [G.faceBlock[ring.id * 2], G.faceBlock[ring.id * 2 + 1]].map((b) => G.blocks[b]).find((b) => b?.park) : undefined) ?? G.blocks.filter((b) => plan.district(b.kx, b.kz) === "residential").sort((p, q) => Math.hypot(p.cx, p.cz) - Math.hypot(q.cx, q.cz))[0];
       if (pickB) { cx = pickB.cx; cz = pickB.cz; }
+      // (Over the shore first, in a town on the sea: outline.ts.)
+      const sh = plan.shore[Math.floor(plan.shore.length / 2)];
+      if (sh) { cx = (sh.ax + sh.bx) / 2 + sh.nx * 10; cz = (sh.az + sh.bz) / 2 + sh.nz * 10; }
       const a = tourT * 0.05;
       cam.position.set(cx + Math.cos(a) * 70, 95, cz + Math.sin(a) * 70); cam.lookAt(cx, 0, cz);
     } else if (DEBUG_BLOCK) {
@@ -637,8 +656,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
     // The road (its cars and train at this moment), and the far land under everything in the city's
     // own countryside colour in town (below a river's water, in a town with one: city.ts buildRiver).
-    if (pr) { countryWorld.update(pr.u, pr.s, switched); if (journey.plan.hasRiver) countryWorld.lowerBase(-1.7); }
-    else countryWorld.setBase(truck.root.position.x, truck.root.position.z, countryWorld.groundOf(BIOME_OF[journey.plan.style.id], journey.climate), journey.plan.hasRiver ? -1.7 : -0.3);
+    if (pr) { countryWorld.update(pr.u, pr.s, switched); if (journey.plan.lowWater) countryWorld.lowerBase(-1.7); }
+    else countryWorld.setBase(truck.root.position.x, truck.root.position.z, countryWorld.groundOf(BIOME_OF[journey.plan.style.id], journey.climate), journey.plan.lowWater ? -1.7 : -0.3);
     const inCountry = journey.st.mode === "country";
     syncTrucks();
     setSignalTime(time);

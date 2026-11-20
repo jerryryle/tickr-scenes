@@ -13,18 +13,27 @@
 // Seed 11's: a car turning in beside it as it came off a freeway ramp at 6:40. And the other seeds
 // to 10 minutes, where the truck once turned into cars beside it or waiting at their line (seed 2),
 // stood off with someone in its way (10, 14) or with cars at a junction (3, 7, 13). A pedestrian
-// counts as hit inside the truck's boxes widened by PED_R.
+// counts as hit inside the truck's boxes widened by PED_R. First, for every truck: the circles
+// traffic and the reversing truck see it as (truckObstacles) reach its nose's and its back's
+// corners, which swing out over the pavement as it reverses into a bay (seed 11 at 9.97 min, once).
 // Args (all optional): minutes
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey, SIM_DT } from "../src/journey.ts";
 import { StreetLife } from "../src/life.ts";
-import { Traffic } from "../src/traffic.ts";
+import { Traffic, truckObstacles } from "../src/traffic.ts";
 import { Crowd } from "../src/crowd.ts";
 import { Ambient } from "../src/ambient.ts";
 import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
 {
   const proc = (globalThis as any).process, minutes = Number(proc.argv[2] ?? 10), OVERLAP_MAX = 0.4, PED_R = 0.3, HELD_MAX = 45, errs: string[] = [];
+  for (const model of Object.keys(SPECS) as (keyof typeof SPECS)[]) {
+    const E = truckExtents(model), fw = SPECS[model].fifthWheel, obs: { x: number; z: number; r: number }[] = [];
+    truckObstacles(model, 0, 0, 0, 0, obs);
+    const back = fw !== undefined ? fw + TRAILER.rear : E.rear, hw = fw !== undefined ? TRAILER.hw : 1.25;
+    for (const [x, z] of [[E.front, -1.25], [E.front, 1.25], [back, -hw], [back, hw]])
+      if (!obs.some((o) => Math.hypot(o.x - x, o.z - z) < o.r + PED_R)) errs.push(`${model}: its corner at ${x.toFixed(2)}, ${z.toFixed(2)} is outside every one of its obstacle circles`);
+  }
   for (const seed of [659803215, 7, 8, 5, 11, 1, 2, 3, 4, 6, 9, 10, 12, 13, 14]) {
     const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial(), traffic = new Traffic(scene, mat, null);
     const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");

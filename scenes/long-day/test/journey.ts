@@ -34,6 +34,8 @@ import { Journey } from "../src/journey.ts";
     j.step();
     if (j.st.mode === "country" && pmode !== "country") { const r = j.country!; if ((globalThis as any).process.env.JTPIECES) for (const p of r.pieces) { let t = 0; while (t < r.duration && r.sAt(t) < p.s) t += 0.5; console.log(`PIECE c${j.st.city} ${p.kind} v${p.variant} side${p.side} at journey ${((j.st.cityStart + j.st.departAt + t) / 60).toFixed(2)}min`); }
     departs.push(`city ${j.st.city} left ${(j.st.departAt / 60).toFixed(1)}min ${j.countryLength.toFixed(0)}s (planned ${j.st.exit!.dEst}) gate ${j.st.exit!.gate} ${r.fromBiome}->${r.toBiome} SB ${(r.SB / 1000).toFixed(2)}km stops ${r.stops.map((x) => x.kind + '@' + x.arrive.toFixed(0)).join(',')} | ${r.pieces.map((p) => p.kind).join(',')} | end v${r.vAt(r.duration).toFixed(2)} ${st0truck}->${r.inp.toTruck} ${(() => { let km = 0, la = 0; const q = { x: 0, z: 0, h: 0, k: 0 }; for (let t = 0; t < r.duration; t += 0.5) { r.center(r.sAt(t), q); km = Math.max(km, Math.abs(q.k)); la = Math.max(la, r.vAt(t) ** 2 * Math.abs(q.k)); } return `minR ${(1 / km).toFixed(0)}m lat ${la.toFixed(2)}`; })()}`); }
+    // (Never out by a closed gate: a sea side's, or one in the sea; outline.ts.)
+    if (j.st.mode === "country" && pmode !== "country" && j.st.exit && !j.plan.gateOpen(j.st.exit.gate)) err(`left city ${j.st.city} by closed gate ${j.st.exit.gate}`);
     if (j.st.mode === "country" && pmode !== "country") {
       // The hills: level at both ends (the cities) and through every set piece, never steeper
       // than the grade limit, and the ground under the road is the road.

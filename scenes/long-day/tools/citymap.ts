@@ -32,6 +32,9 @@ import { journeyStyle } from "../src/styles.ts";
         for (let k = 0; k + 1 < xs.length; k += 2) for (let x = Math.max(0, Math.ceil(xs[k])); x <= Math.min(W - 1, Math.floor(xs[k + 1])); x++) img.set(c, (y * W + x) * 3);
       }
     };
+    // The sea (outline.ts), under everything.
+    const O = plan.outline;
+    if (O.sea !== null) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (O.inSea(x / S + x0 - pad, y / S + z0 - pad)) img.set([95, 150, 205], (y * W + x) * 3);
     // Streets: each a quad of its full width, then the blocks over them.
     for (const st of G.streets) {
       const a = G.streetPt(st.id, 0, -st.half), b = G.streetPt(st.id, st.len, -st.half), c = G.streetPt(st.id, st.len, st.half), d = G.streetPt(st.id, 0, st.half);

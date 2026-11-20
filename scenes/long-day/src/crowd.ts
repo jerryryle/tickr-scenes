@@ -76,7 +76,7 @@ export class Crowd {
     this.rng.s = o.rng; this.peds = o.peds; this.flocks = o.flocks; this.vendorCount = o.vendors;
     this.vig.load(o.vig);
     this.obstacles.length = 0;
-    for (const p of this.peds) this.obstacles.push({ x: p.x, z: p.z, r: 0.4 });
+    for (const p of this.peds) this.obstacles.push(pedObstacle(p));
     this.obstacles.push(...this.vig.obstacles);
   }
 
@@ -121,7 +121,7 @@ export class Crowd {
     this.truckPath = more.truckPath ?? null; this.truckYieldsAt = more.truckYieldsAt ?? -1;
     this.carsClear = more.carsClear ?? null; this.cars = more.cars;
     this.crossers.length = 0; this.waiters.length = 0;
-    for (const p of this.peds) { this.walk(G, p, dt, plan, simTime, prs, truck); this.obstacles.push({ x: p.x, z: p.z, r: 0.4 }); }
+    for (const p of this.peds) { this.walk(G, p, dt, plan, simTime, prs, truck); this.obstacles.push(pedObstacle(p)); }
     this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
     this.obstacles.push(...this.vig.obstacles);
     this.updateFlocks(dt, plan, focus);
@@ -457,4 +457,12 @@ export class Crowd {
       for (const k of [-1, 1]) this.F.box(x + rx * k * 0.2, y + Math.sin(k * flap) * 0.1 * k, z + rz * k * 0.2, 0.16, 0.03, 0.38, yaw, 0, wing, k * flap);
     }
   }
+}
+
+// Someone on foot as an obstacle: where they are, and how they are moving (this step's: their pose
+// a step ago is saved with them, so a scrub sees the same). (Not a step faster than anyone runs:
+// one put somewhere new, stepping off the kerb or round a corner, isn't moving that fast.)
+function pedObstacle(p: { x: number; z: number; px: number; pz: number }): Obstacle {
+  const vx = (p.x - p.px) / SIM_DT, vz = (p.z - p.pz) / SIM_DT, fast = Math.hypot(vx, vz) > 5;
+  return { x: p.x, z: p.z, r: 0.4, vx: fast ? 0 : vx, vz: fast ? 0 : vz };
 }
