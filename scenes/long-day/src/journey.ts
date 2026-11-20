@@ -126,7 +126,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number;   // hold: where street life last had it stop, for how much longer   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
+  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean;   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -136,6 +136,14 @@ const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is
 const THROUGH = 1e9;              // stopS of a path driven straight through its end (JSON has no Infinity)
 const GATE_SPEED = 6.5;           // rough average speed across town, for timing the way out
 const VMAX = 11, ACCEL = 1.6, BRAKE = 2.2, FIRM_BRAKE = 4.5, MAX_DECEL = 5, STOP_GAP = 0.6;
+// Gridlock: held standing by street life JAM_HONK s (its own light not red, its own way back into a
+// bay not clear of traffic), the truck honks; JAM_REACT s after (its first two blasts over), the
+// traffic in its way backs up or pulls on out of it (traffic.ts clearWay) and holds there until it
+// has gone JAM_CLEAR m. It never moves into anyone itself: it waits, honking every HONK_EVERY s,
+// until the way is clear.
+export const JAM_HONK = 20;
+export const JAM_SHOT = 8;   // (director.ts: its shot of the jam, from this far into it; jamMoved counts on from here)
+const JAM_REACT = 1.5, JAM_CLEAR = 15, JAM_CREEP = 3, HONK_EVERY = 6;
 const SEARCH = 12;           // blocks searched around a point for facilities
 const LOT_SEARCH = 40;
 const SWAP_SEARCH = 14;      // blocks searched for a source of another truck's cargo when a swap is due
@@ -625,7 +633,7 @@ export class Journey {
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
     if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
     this.path = new Path(this.plan.graph, st.route);
-    st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0; st.holdT = 0;
+    st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0; st.holdT = 0; st.jamT = 0; st.jamGo = 0; st.jamMoved = 0;
     st.stopS = this.path.length;
     if (stop.kind === "swap") {
       const spare = truckExtents(stop.truck!);
@@ -1017,6 +1025,8 @@ export class Journey {
       if (ys !== null) { st.holdS = ys; st.holdT = 1; }
       else if ((st.holdT ?? 0) > 0 && st.v < 1) { st.holdT! -= dt; ys = st.holdS!; }
       else st.holdT = 0;
+      // (Held standing by it, its own light not red nor turning: the jam's clock runs.)
+      this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && this.lightAhead !== "red" && this.lightAhead !== "yellow");
       // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
       if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));
       if (ys !== null && (ys - st.s >= st.v * st.v / (2 * FIRM_BRAKE) - 0.5 || st.v < 3)) hardStop = Math.min(hardStop, Math.max(ys, st.s));
@@ -1076,6 +1086,30 @@ export class Journey {
     this.reversePose(st.s, this.pose);
   }
 
+  // The gridlock clock (JAM_HONK): `held`, standing held by street life this step. Its time adds
+  // up while held; once the truck has gone on since, it is cleared: JAM_CLEAR m once traffic is
+  // making way for it (it holds there till the truck is through), else JAM_CREEP m (stop-and-go
+  // traffic, creeping on a car length at a time, is not a gridlock: it adds up only standing).
+  private jam(dt: number, held: boolean) {
+    const st = this.st;
+    st.jamHeld = held;
+    if (held) { st.jamT = (st.jamT ?? 0) + dt; st.jamGo = 0; return; }
+    if (!st.jamT) return;
+    st.jamGo = (st.jamGo ?? 0) + Math.abs(st.v) * dt;
+    if (st.jamT > JAM_SHOT) st.jamMoved = (st.jamMoved ?? 0) + Math.abs(st.v) * dt;
+    if (st.jamGo > (st.jamT > JAM_HONK + JAM_REACT ? JAM_CLEAR : JAM_CREEP)) { st.jamT = 0; st.jamGo = 0; st.jamMoved = 0; }
+  }
+  // Whether the truck has honked, and traffic has had a moment to react: it clears the truck's way
+  // (street life, traffic).
+  get clearing() { return (this.st.jamT ?? 0) > JAM_HONK + JAM_REACT && (this.st.mode === "drive" || this.st.mode === "reverse"); }
+  // Whether its horn sounds now (drawn: truck.ts honk): held long enough, two short blasts every
+  // HONK_EVERY s (the first before traffic moves).
+  get honking() {
+    if ((this.st.jamT ?? 0) <= JAM_HONK || !this.st.jamHeld || (this.st.mode !== "drive" && this.st.mode !== "reverse")) return false;
+    const u = (this.st.jamT! - JAM_HONK) % HONK_EVERY;
+    return u < 0.4 || (u > 0.6 && u < 1.2);
+  }
+
   // Backing into the bay, gently.
   private reverse(dt: number) {
     const st = this.st, p = this.path!;
@@ -1083,7 +1117,9 @@ export class Journey {
     // (A tractor swinging round ahead of its trailer goes faster than the trailer: slower then. And
     // someone in the way of its next metres back: it stops and waits for them to go by.)
     const blocked = this.life?.reverseBlocked?.(this) ?? false;
-    const limit = blocked ? 0 : Math.min(2.2, Math.sqrt(2 * 0.8 * Math.max(0, dist))) * Math.cos(this.reversePose(st.s, this.revB, true));
+    this.jam(dt, blocked && Math.abs(st.v) < 0.05);
+    const pace = Math.min(2.2, Math.sqrt(2 * 0.8 * Math.max(0, dist))) * Math.cos(this.reversePose(st.s, this.revB, true));
+    const limit = blocked ? 0 : pace;
     const speed = -st.v;
     const next = speed < limit ? Math.min(limit, speed + 0.9 * dt) : Math.max(limit, speed - 3 * dt);
     let ds = next * dt;

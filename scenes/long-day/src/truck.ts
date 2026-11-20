@@ -370,6 +370,31 @@ export class Truck {
     this.strapMat.dispose();
   }
 
+  // The horn (journey.ts honking): Tickr has no sound, so short pale yellow lines fan out from each
+  // front corner of the cab, as a cartoon's horn does, spreading as it sounds (thick: not taken
+  // for rain).
+  private horn: THREE.Group | null = null;
+  honk(on: boolean) {
+    if (!on) { if (this.horn) this.horn.visible = false; return; }
+    if (!this.horn) {
+      const s = this.spec, g = new THREE.Group(), mat = new THREE.MeshBasicMaterial({ color: 0xfff0a0, fog: false });
+      for (const sz of [-1, 1]) for (const a of [-0.45, 0, 0.45]) {
+        const yaw = sz * 0.6 + a * 0.9, m = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.13, 0.13), mat);
+        // (Each line points out from the corner, a little above, level with or below the last.)
+        m.userData = { ox: s.noseFront + 0.15, oy: s.hoodTop + 0.3 + a * 0.9, oz: sz * s.cabHW, dx: Math.cos(yaw), dz: Math.sin(yaw) };
+        m.rotation.set(0, -yaw, a * 0.9, "YXZ");
+        g.add(m);
+      }
+      this.horn = g; this.body.add(g);
+    }
+    this.horn.visible = true;
+    const u = (this.time * 2.5) % 1;   // (spreading out, over and over)
+    for (const m of this.horn.children) {
+      const d = m.userData, r = 0.6 + 0.7 * u;
+      m.position.set(d.ox + d.dx * r, d.oy, d.oz + d.dz * r);
+    }
+  }
+
   // Air-brake hiss when parking.
   hiss() {
     if (!this.puffs) return;

@@ -7,7 +7,7 @@ import { Batch } from "./geom.ts";
 import { SEA_REACH } from "./outline.ts";
 import { hash2 } from "./rng.ts";
 import { journeyPeriod, readConfig } from "./env.ts";
-import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
+import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
@@ -65,7 +65,7 @@ const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
-const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge";   // test renders with a tour camera
+const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam";   // test renders with a tour camera
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const cfg = readConfig(env);
@@ -292,6 +292,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const siteEdgeAt = new THREE.Vector3();   // (the siteEdge view's streaming centre)
   // Test renders only: a tour camera on the downtown core nearest the start.
   let tourT = 0, tourTrain = -1;
+  let jamShot: { x: number; y: number; z: number; lx: number; lz: number } | null = null;   // (DEBUG_VIEW "jam": the fixed shot, once set up)
   function tourCamera(dt: number): boolean {
     if (!DEBUG_VIEW || DEBUG_VIEW === "countryTop" || DEBUG_VIEW === "scrub") return false;
     tourT += dt;
@@ -476,6 +477,25 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const ox = Math.cos(dk.H), oz = -Math.sin(dk.H);
       engine.camera.position.set(dk.edge.x + ox * 24, 30, dk.edge.z + oz * 24); engine.camera.lookAt(dk.edge.x + ox * 13, 0, dk.edge.z + oz * 13); engine.camera.fov = 62; engine.camera.updateProjectionMatrix();
       focus.copy(truck.root.position); updateDriverSpot(engine.camera, null); return;
+    }
+    if (DEBUG_VIEW === "jam") {
+      // Test renders, a gridlock clearing: one fixed shot, set up at about head height 14 m out in
+      // front of the cab and a little to its right once the truck has stood held 5 s (journey.ts
+      // jam), looking back at its front across the street ahead, where the traffic makes way; held
+      // there, not following it. (Before that, from out ahead of it: trim it off.)
+      const p = truck.root.position;
+      // (Where the truck will stand held, given (DEBUG_JAM_SHOT): from the first frame. Else as it
+      // has stood held 5 s.)
+      // (The journey's coordinates, the world's less however far the world has been moved: rebase.)
+      const J = DEBUG_JAM_SHOT ? DEBUG_JAM_SHOT.split(",").map(Number) : null;
+      const at = J ? [J[0] + p.x - journey.pose.x, J[1] + p.z - journey.pose.z, J[2]] : (journey.st.jamT ?? 0) > 5 ? [p.x, p.z, truck.heading] : null;
+      if ((!jamShot || J) && at) {   // (the given spot: each frame, as the world may move under it)
+        const [x, z, h] = at, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h), nose = truckLayout(truck.model).front;
+        jamShot = { x: x + fx * (nose + 14) + rx * 2.5, y: 4.5, z: z + fz * (nose + 14) + rz * 2.5, lx: x + fx * (nose - 1), lz: z + fz * (nose - 1) };
+      }
+      if (jamShot) { engine.camera.position.set(jamShot.x, jamShot.y, jamShot.z); engine.camera.lookAt(jamShot.lx, 1.8, jamShot.lz); }
+      else { const h = truck.heading; engine.camera.position.set(p.x + Math.cos(h) * 30, 7, p.z - Math.sin(h) * 30); engine.camera.lookAt(p.x, 1.5, p.z); }
+      focus.copy(p); updateDriverSpot(engine.camera, null); return;
     }
     if (DEBUG_VIEW === "rear" || DEBUG_VIEW === "door" || DEBUG_VIEW === "yard") {   // test renders: close on the back of the truck (street side), towards the building, or down on the yard beside it
       const L = truckLayout(truck.model), h = truck.heading, p = truck.root.position;
@@ -711,6 +731,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     updateTablet();
     crew.update(dt, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);
     truck.update(dt, time);
+    truck.honk(journey.honking);   // (out of a gridlock: journey.ts JAM_HONK)
     other?.update(dt, time);
     puffs.update(dt);
     // (The preview also streams exactly what is round the truck at every tick, not only when a frame

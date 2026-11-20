@@ -28,6 +28,7 @@ interface Ped {
   kind: PedKind; bx: number; bz: number; side: number; a: number; dir: 1 | -1; n: number;
   speed: number; phase: number; state: "walk" | "wait" | "cross"; crossA: number; crossLen: number; waitT: number;
   crossN?: number;   // where across the crossing lands, in the side's frame (default -0.85)
+  back?: boolean;    // giving the crossing up, held up out in the road: back to the kerb it set out from
   shirt: number; pants: number; skin: number; hair: number;
   x: number; z: number; h: number; px: number; pz: number; ph: number; pphase: number;   // and one step ago
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
@@ -257,7 +258,9 @@ export class Crowd {
       // move their pitch along out of its way.)
       const here = this.sweepPts; here[0] = p.x; here[1] = p.z;
       // (Not past 4 m short of the corner: there they turn and go the other way along.)
-      if (this.truckSweeps(here, 1, 3, 3.5, 1.25 + 1.6)) {
+      // (Or close by the truck, or the way it backs into a bay: reversing it waits for anyone in that,
+      // life.ts reverseBlocked.)
+      if (this.truckSweeps(here, 1, 3, 3.5, 1.25 + 1.6) || truck.some((o) => Math.hypot(o.x - p.x, o.z - p.z) < o.r + 1.6)) {
         const f = faceOf(G, p), a0 = G.faceA0(f) + 4, a1 = G.faceA1(f) - 4;
         p.a += p.dir * 1.0 * dt;
         if (p.a < a0 || p.a > a1) { p.a = Math.min(a1, Math.max(a0, p.a)); p.dir = p.dir > 0 ? -1 : 1; }
@@ -315,7 +318,7 @@ export class Crowd {
       // it may be; elsewhere they wait for a gap, and once they are out cars give way to them. They
       // look for it four times a second.)
       else if (green && clear && p.waitT > 0.8 && Math.floor(p.waitT * 4) !== Math.floor((p.waitT - dt) * 4) && (yielded || !this.truckCrossing(G, p, (cr.a - p.a) * p.dir)) && this.gapToCross(G, p, (cr.a - p.a) * p.dir)) {
-        p.state = "cross"; p.crossA = p.a; p.crossN = cr.n;
+        p.state = "cross"; p.crossA = p.a; p.crossN = cr.n; p.waitT = 0;
         p.crossLen = (cr.a - p.a) * p.dir;   // to the far corner's walkway
       }
       else if (p.waitT > 30) { p.state = "walk"; this.turnCorner(G, p); }
@@ -331,9 +334,15 @@ export class Crowd {
         const fx = Math.cos(p.h), fz = -Math.sin(p.h);
         for (const o of this.cars) { const rx = o.x - p.x, rz = o.z - p.z, al = rx * fx + rz * fz; if (al > -0.3 && al < o.r + 1.4 && Math.abs(rx * -fz + rz * fx) < o.r + 0.7) { sp = 0; break; } }
       }
+      // (Held up out in the road a while, by the truck or a vehicle that is itself waiting on them
+      // or on the truck: they give the crossing up and step back to the kerb they set out from,
+      // rather than stand waiting on it as it waits on them.)
+      if (sp === 0) p.waitT += dt; else if (sp > 0) p.waitT = 0;
+      if (p.waitT > 4) p.back = true;
+      if (p.back) sp = -Math.max(p.speed, 1.4);
       // (Stepping back, they go no further back than where they set out from.)
       p.a += p.dir * sp * dt; p.phase += Math.abs(sp) * dt;
-      if ((p.a - p.crossA) * p.dir <= 0) { p.a = p.crossA; p.n = -0.85; p.state = "wait"; p.waitT = 0; p.crossN = undefined; }
+      if ((p.a - p.crossA) * p.dir <= 0) { p.a = p.crossA; p.n = -0.85; p.state = "wait"; p.waitT = 0; p.crossN = undefined; p.back = undefined; }
       const t = (p.a - p.crossA) * p.dir;
       const L = p.crossLen, nE = p.crossN ?? -0.85;
       if (t < L - 1.6) { const q = G.facePt(f, p.crossA + p.dir * (L - 1.6), 1.7, _pt); this.crossers.push(p.x, p.z, q.x, q.z); }

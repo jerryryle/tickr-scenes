@@ -142,7 +142,7 @@ export class StreetLife implements LifeHook {
     // rather than have everyone stop for it; after 15 s of waiting, it noses out and they do.)
     const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!landing && this.outWait(j) === null && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
-    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters);
+    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, j.clearing ? (st.mode === "reverse" ? -1 : 1) : 0);
     this.ambient.stepBlimp(p, st.simTime);
   }
 
@@ -164,7 +164,13 @@ export class StreetLife implements LifeHook {
     // journey.ts hitchStep and truck.ts draw it.)
     let ax = 0, az = 0;
     if (fw !== undefined) { const th0 = j.pose.h + j.hitchYaw, kx0 = j.pose.x + pfx * fw, kz0 = j.pose.z + pfz * fw; ax = kx0 - Math.cos(th0) * KINGPIN_TO_AXLES; az = kz0 + Math.sin(th0) * KINGPIN_TO_AXLES; }
-    let stop = this.traffic.truckZoneStop();
+    // (Out of a gridlock, honking (journey.ts JAM_HONK): not waiting its turn through the junction
+    // for a car booked before it, which waits there on the truck in turn; only for what is in its
+    // way, which makes way, traffic.ts clearWay.)
+    // (And while traffic is still making way, it waits where it is till all of it has: it never
+    // comes on into one backing out of its way.)
+    if (j.clearing && this.traffic.clearPending) return st.s;
+    let stop = j.clearing ? null : this.traffic.truckZoneStop();
     for (let s = st.s + 0.5; s <= Math.min(P.length, st.s + reach) && s < (stop ?? Infinity); s += 1) {
       const q = P.peek(s, this.spare), fx = Math.cos(q.h), fz = -Math.sin(q.h);
       // (Its body there: nearBody, from rear to nose along its heading, 1.25 m either side.)

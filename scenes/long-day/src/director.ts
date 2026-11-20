@@ -19,10 +19,13 @@
 //            panning with the driver; if it can't see the work, one cut to the angle that can. A
 //            long load cuts once more, half way. A gag insert for humorous cargo.
 //   swap     one shot over the driver's shoulder from the old cab to the new one
+//   jam      held up in the street a while (a gridlock: journey.ts JAM_HONK), one shot locked off
+//            out ahead of the cab, up over the street, looking back at its front: its horn and
+//            the traffic making way, held till it is on its way again
 //   depart   the stop's camera watches the truck pull away, then glides off with it into the follow
 //
 // So a cut means something changed: the truck reaches its stop, goes into the cab, passes a set
-// piece. Everything else is one continuous camera.
+// piece, is stuck in a jam. Everything else is one continuous camera.
 //
 // Every shot is authored: a camera position and what it frames, worked out exactly from the
 // truck, its route or a fixed spot each frame, so a shot is either locked off, panning with its
@@ -52,10 +55,10 @@ import { FW_OFF_D } from "./freeway.ts";
 import type { RoadSign } from "./country.ts";
 import { bladeSignA } from "./city.ts";
 import { hasSign, siteLayout } from "./facilities.ts";
-import { DWELL, Journey } from "./journey.ts";
+import { DWELL, JAM_SHOT, Journey } from "./journey.ts";
 import type { DockPlan } from "./journey.ts";
 
-type Beat = "drive" | "arrive" | "curb" | "backup" | "load" | "swap" | "depart" | "country" | "roadside";
+type Beat = "drive" | "arrive" | "curb" | "backup" | "load" | "swap" | "depart" | "country" | "roadside" | "jam";
 
 interface Shot {
   pos: THREE.Vector3;
@@ -107,7 +110,13 @@ const ARRIVE_SHARE = 1 / 2;     // the dock stops that get the cab arrival; the 
 const ROADSIDE_GAP = 20;        // seconds between set-piece shots by the road, at least
 const ROADSIDE_MIN = 6;         // ...and only one that will be on screen this long
 const GLIDE = 5;                // seconds a camera move from one road setup to the next takes
+const ROAD_MOVING = 2;          // m/s: below this (standing, crawling) the road coverage doesn't change setup on the clock
 const DEPART_HOLD = 3;          // seconds the stop's camera watches the truck pull away before moving off with it
+// A jam (journey.ts jamT): the shot of it is cut to once the truck has stood held JAM_SHOT s
+// (before it honks, at JAM_HONK), set up JAM_AHEAD m on along its way from its nose, JAM_SIDE m to
+// its left (the street side, as the coverage keeps to), JAM_UP m up, and held till it has gone
+// JAM_OFF m on again, before it comes up to the camera; then the road coverage glides on from it.
+const JAM_AHEAD = 18, JAM_SIDE = 5, JAM_UP = 6, JAM_OFF = 6;
 // The road coverage, and how long each setup runs (seconds, min and max).
 type RoadShot = "chase" | "high" | "lead" | "track" | "aerial";
 const ROAD_LEN: Record<RoadShot, [number, number]> = {
@@ -180,10 +189,11 @@ export class Director {
   private loadAlt = ""; private loadMaster = "side"; private loadAltDone = false; private loadSegChore = -1;
   private holdPos = new THREE.Vector3(); private pushPos = new THREE.Vector3(); private holdFov = FOV;
   private backSpot = new THREE.Vector3();
+  private jamPos = new THREE.Vector3(); private jamLook = new THREE.Vector3();   // (the jam's shot)
   // The world moved by (dx, dz) under the camera (main.ts: the next city takes over out on the
   // road): move with it, so nothing on screen changes.
   rebase(dx: number, dz: number) {
-    for (const v of [this.pos, this.anchorPos, this.anchorLook, this.signPos, this.signLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.curbCam, this.curbAim, this.curbOpen, this.backLook, this.backDocked]) { v.x += dx; v.z += dz; }
+    for (const v of [this.pos, this.anchorPos, this.anchorLook, this.signPos, this.signLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.curbCam, this.curbAim, this.curbOpen, this.backLook, this.backDocked, this.jamPos, this.jamLook]) { v.x += dx; v.z += dz; }
   }
   // The director's whole state and the camera's (main.ts: preview snapshots and part-ticks).
   // (`into`: an earlier save, filled again in place.)
@@ -232,6 +242,7 @@ export class Director {
     switch (beat) {
       case "load": case "swap": return Math.max(0, st.modeTime - DWELL.park);
       case "backup": return st.modeTime;
+      case "jam": return Math.max(0, (st.jamT ?? 0) - JAM_SHOT);
       case "depart": return this.departed(j) < 1e8 ? this.departed(j) : 0;
       case "arrive": return j.path ? Math.max(0, (ARRIVE_DIST - (st.stopS - st.s)) / Math.max(st.v, 2)) : 0;
       case "curb": {
@@ -272,6 +283,10 @@ export class Director {
       if (f && id !== this.skipFeature) { if (this.beat !== "roadside" || id !== this.featureKey) { this.feature = f; this.pendingKey = id; } return "roadside"; }
       return "country";
     }
+    // (Till it has gone JAM_OFF m in all: stopping again behind traffic still making way after
+    // that, the road coverage holds on it, rather than cutting back to a shot of it from a step on.
+    // From the journey's own state, so a seek frames it the same.)
+    if (st.mode === "drive" && (st.jamT ?? 0) > JAM_SHOT && (st.jamMoved ?? 0) < JAM_OFF) return "jam";
     if (st.mode === "reverse") return "backup";
     if (st.mode === "dwell") {
       // Parking: still the shot that brought the truck in (backing into a dock, or the kerb).
@@ -307,6 +322,16 @@ export class Director {
     this.anchorH = inp.truck.heading;
     switch (beat) {
       case "arrive": this.variant = this.pick("arrive", ARRIVE_VARIANTS, n); break;
+      case "jam": {
+        // Out ahead along its way (over the street, round any corner it turns), to its left and up
+        // over the traffic in between, looking back at its front.
+        this.truckFrame(inp.truck);
+        const ex = truckExtents(st.truck);
+        if (!this.onRoute(j, ex.front + JAM_AHEAD, -JAM_SIDE, JAM_UP, this.jamPos)) this.at(this.jamPos, ex.front + JAM_AHEAD, JAM_UP, -JAM_SIDE);
+        this.at(this.jamLook, ex.front - 1, 1.8, 0);
+        this.variant = "jam";
+        break;
+      }
       case "backup": {
         this.variant = "bay"; this.backSpot.copy(this.backupSpot(inp));
         // The settled frame: the docked truck and the bay, and the name sign readable over them.
@@ -358,9 +383,12 @@ export class Director {
       }
       case "drive":
       case "country":
-        // The road coverage carries on out of a depart and in and out of town; after anything
-        // else it starts afresh with a cut.
+        // The road coverage carries on out of a depart and in and out of town; out of a jam it
+        // glides on from the jam's camera, out ahead of the truck, into the lead car (also ahead,
+        // looking back), with the truck as it gets going; after anything else it starts afresh
+        // with a cut.
         if (this.lastBeat === "roadside") this.roadsideEnd = this.time;
+        if (this.lastBeat === "jam" && this.started) { this.startRoad(inp, this.roadOptions(inp).includes("lead") ? "lead" : null, GLIDE); break; }
         if (!(this.lastBeat === "depart" || this.lastBeat === "drive" || this.lastBeat === "country") || !this.started) this.road = "";
         break;
       case "roadside": {
@@ -397,7 +425,7 @@ export class Director {
     // A new beat is a new shot only where the camera has to be somewhere else: into the cab, to
     // the stop's camera, to a set piece by the road, to the driver's walk. The load holds the
     // stop's camera (or cuts once, itself); depart and the road coverage carry on from it.
-    if (beatChanged && (beat === "arrive" || beat === "curb" || beat === "backup" || beat === "roadside" || beat === "swap")) shot.cut = true;
+    if (beatChanged && (beat === "arrive" || beat === "curb" || beat === "backup" || beat === "roadside" || beat === "swap" || beat === "jam")) shot.cut = true;
     this.keepInView(shot, inp);
     // Never under the hills, nor through a tunnel's walls (main.ts knows where they are).
     if (this.confine && !this.interior) this.confine(shot.pos);
@@ -468,6 +496,11 @@ export class Director {
       case "drive":
       case "country":
         return this.roadCoverage(inp, s);
+
+      case "jam":
+        // Locked off: the truck's front, and the street ahead of it where the traffic makes way.
+        s.pos.copy(this.jamPos); s.look.copy(this.jamLook); s.fov = 40;
+        return s;
 
       case "roadside": {
         if (!this.feature) {
@@ -891,12 +924,14 @@ export class Director {
     const j = inp.journey, st = j.st, truck = inp.truck, ex = truckExtents(truck.model);
     const L = ex.front - ex.rear;
     // Time for a new setup? Its length is up, or the road no longer suits it (side tracking at a
-    // turn, the lead car near the stop): glide on to the next one.
+    // turn, the lead car near the stop): glide on to the next one. (Not on the clock while the truck
+    // stands or crawls, at a light or in traffic: the camera has no reason to go anywhere then, so
+    // it holds the shot it has till the truck is under way again.)
     let cut = false;
     if (!this.road) { this.startRoad(inp, null); cut = true; }
     else {
       const e = this.time - this.roadStart;
-      let done = e >= this.roadLen;
+      let done = e >= this.roadLen && Math.abs(st.v) > ROAD_MOVING;
       if (this.road === "track" && this.turnWithin(j, -4, Math.max(st.v, 3) * 3 + 10)) done = true;
       if (this.road !== "chase" && this.road !== "lead" && this.tunnelAhead(j)) done = true;
       const fw = this.freewayPhase(j);
