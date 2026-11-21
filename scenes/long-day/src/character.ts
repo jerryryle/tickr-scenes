@@ -28,6 +28,42 @@ export function blendPose(a: BodyPose, b: BodyPose, t: number, out: BodyPose = r
 
 export const HIP_Y = 0.92;
 export const CHARACTER_HIP_Y = HIP_Y;
+// The rig's limbs: shoulder to elbow, elbow to the middle of the glove; hip to knee, knee to the sole.
+export const ARM_U = 0.29, ARM_F = 0.32, LEG_U = 0.43, LEG_L = 0.495;
+export const SHOULDER_Y = 0.5;   // the shoulders above the hips, along the torso
+
+// A point (x forward, y up, z right, from the shoulder) brought into the arm's plane: the roll
+// that turns the plane out (s = 1 left, -1 right: out is -z on the left) to contain it, within
+// [lo, hi], and the point's coordinates in the plane (forward, and along the arm's hanging line).
+function limbPlane(x: number, y: number, z: number, s: number, lo: number, hi: number): [number, number, number] {
+  const below = Math.atan2(-s * z, -y);
+  if (below >= lo && below <= hi) return [below, x, Math.hypot(y, z)];
+  const above = Math.atan2(s * z, y), th = THREE.MathUtils.clamp(Math.abs(above - THREE.MathUtils.clamp(above, lo, hi)) < Math.abs(below - THREE.MathUtils.clamp(below, lo, hi)) ? above : below, lo, hi);
+  return [th, x, -y * Math.cos(th) - s * z * Math.sin(th)];
+}
+// Two segments a, b from the root to a point (fwd, down) in their plane: the root's angle from
+// hanging straight down (positive forward) and the middle joint's (bend +1: folding forward, an
+// elbow; -1: back, a knee), and how far short the point is when out of reach.
+function twoBone(fwd: number, dn: number, a: number, b: number, bend: 1 | -1): [number, number, number] {
+  const d0 = Math.hypot(fwd, dn), d = THREE.MathUtils.clamp(d0, Math.abs(a - b) + 1e-3, (a + b) * 0.999);
+  const beta = Math.atan2(fwd, dn);
+  const joint = Math.PI - Math.acos(THREE.MathUtils.clamp((a * a + b * b - d * d) / (2 * a * b), -1, 1));
+  const base = beta - bend * Math.acos(THREE.MathUtils.clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1));
+  return [base, bend * joint, Math.max(0, d0 - (a + b))];
+}
+
+// The body lowered and leaning so the hands reach a point `h` above the feet and `ahead` of them:
+// bent at the hips and knees for anything low, leaning for anything far (`lean`: added, as into a
+// push). Sets the torso, the drop and (to be planted again by Character.step) the legs.
+export function stoopFor(P: BodyPose, h: number, ahead: number, o: { lean?: number } = {}): BodyPose {
+  const k = THREE.MathUtils.clamp((1.18 - h) / 0.9, 0, 1);
+  const bend = -0.06 - 0.72 * k - THREE.MathUtils.clamp((ahead - 0.5) * 0.9, 0, 0.45) * (1 - k) + (o.lean ?? 0);
+  const drop = 0.4 * k * k + 0.08 * k;
+  P.bend = bend; P.drop = Math.min(0.5, drop);
+  P.hipL = P.hipR = 0.4 * k; P.knL = P.knR = -0.8 * k;
+  P.headP = THREE.MathUtils.clamp(-bend * 0.45 + 0.05, -0.2, 0.55);
+  return P;
+}
 
 interface Look { jacket: number; trousers: number; boots: number; gloves: number; skin: number; hat: number; hatPatch: number; vest: number; hardHat: boolean }
 export const DRIVER_LOOK: Look = { jacket: 0x23365e, trousers: 0x3b3f46, boots: 0x2b241e, gloves: 0xb08a58, skin: 0xb5815f, hat: 0x23365e, hatPatch: 0xce1126, vest: 0xd8f22a, hardHat: false };
@@ -96,6 +132,41 @@ export class Character {
       hp.add(kn); kn.position.y = -0.43;
       part(kn, (b) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, look.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, look.boots); });
     }
+  }
+
+  // ---- reaching (two-bone IK) -----------------------------------------------------------------
+  // The arm (or leg) solved so the hand (or the boot's sole) is at a world point, as near as it
+  // reaches, for the body as `p` poses it, the character already placed. The pose's own values
+  // for that limb are blended towards the solution by `w` (0 leaves them, 1 reaches), so a hand can
+  // go to something and let go of it smoothly. Writes the limb's angles into `p` and applies them.
+  // The arm turns out from the body (roll) to bring the point into its plane, then the shoulder
+  // and elbow are solved in that plane, the elbow bending forward; the leg likewise, the knee
+  // bending back.
+  private ikV = new THREE.Vector3(); private ikM = new THREE.Matrix4();
+  reach(side: "L" | "R", target: THREE.Vector3, p: BodyPose, w = 1): number {
+    if (w <= 0) return 0;
+    const sh = side === "L" ? this.shL : this.shR, s = side === "L" ? 1 : -1;
+    this.root.updateMatrixWorld(true);
+    const v = this.ikV.copy(target).applyMatrix4(this.ikM.copy(this.torso.matrixWorld).invert()).sub(sh.position);
+    const [roll, fwd, dn] = limbPlane(v.x, v.y, v.z, s, -1.0, 1.6);
+    const [a1, a2, miss] = twoBone(fwd, dn, ARM_U, ARM_F, 1);
+    const kP = side === "L" ? "shLP" : "shRP", kR = side === "L" ? "shLR" : "shRR", kE = side === "L" ? "elL" : "elR";
+    p[kP] += (a1 - p[kP]) * w; p[kR] += (roll - p[kR]) * w; p[kE] += (a2 - p[kE]) * w;
+    if (side === "L") { this.shL.rotation.set(p.shLR, 0, p.shLP, "XZY"); this.elL.rotation.z = p.elL; }
+    else { this.shR.rotation.set(-p.shRR, 0, p.shRP, "XZY"); this.elR.rotation.z = p.elR; }
+    return miss;
+  }
+  // The leg: the sole to a world point (feet on the steps of a cab, a kerb).
+  step(side: "L" | "R", target: THREE.Vector3, p: BodyPose, w = 1): number {
+    if (w <= 0) return 0;
+    const hp = side === "L" ? this.hipL : this.hipR;
+    this.root.updateMatrixWorld(true);
+    const v = this.ikV.copy(target).applyMatrix4(this.ikM.copy(this.hips.matrixWorld).invert()).sub(hp.position);
+    const [a1, a2, miss] = twoBone(v.x, -v.y, LEG_U, LEG_L, -1);
+    const kH = side === "L" ? "hipL" : "hipR", kK = side === "L" ? "knL" : "knR";
+    p[kH] += (a1 - p[kH]) * w; p[kK] += (a2 - p[kK]) * w;
+    hp.rotation.z = p[kH]; (side === "L" ? this.knL : this.knR).rotation.z = p[kK];
+    return miss;
   }
 
   set vestOn(v: boolean) { this.vest.visible = v; }

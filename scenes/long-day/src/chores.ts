@@ -201,19 +201,28 @@ export function tripCount(L: TruckLayout, id: string, units: number) {
 // frame), and where the driver stands to take it: in the aisle between the load columns, so
 // the driver is never standing inside a stowed load.
 // A box's cargo starts this far back from the front wall, leaving the strip in front of it for
-// the tool: the hand truck stands there, the pallet jack lies across it with its handle up.
+// the tool: the hand truck stands there, and the pallet jack lies across it once there are loads
+// (in an empty bed it lies along the bed, toolStore).
 const bedFrontGap = (L: TruckLayout) => (L.trailer || L.flatbed ? 0.15 : 0.7);
+// Taking the tool from where it rests (a step to it, a grip, tipping it onto its wheels and
+// drawing it back into the aisle), or putting it back the same way, takes this long.
+export const TOOL_TAKE = 1.9;
 export interface ToolRest { at: [number, number, number]; stand: [number, number, number]; yaw: number }   // yaw: added to the truck's heading
 // `rearX`: the back of the rearmost row of loads (bedRearX), or null for an empty bed. With room
 // behind the loads, the tool is secured right behind them, upright against the last load (the
 // pallet jack along the left wall); otherwise it rides in the strip at the front wall.
 export function toolStore(L: TruckLayout, tool: "handTruck" | "palletJack", rearX: number | null = null): ToolRest {
-  const jack = tool === "palletJack", x = (rearX ?? 0) - (jack ? 0.3 : 0.1), standX = x - (jack ? 1.75 : 1.1);   // the jack's forks run back from the handle
+  // Both stand facing into the bed, ready to be taken: the hand truck upright with its nose plate
+  // to the load (or the wall), the pallet jack with its forks to it and its handle up.
+  const jack = tool === "palletJack", reach = jack ? 1.45 : 0.32, x = (rearX ?? 0) - reach, standX = x - (jack ? 0.85 : 1.1);
   if (rearX !== null && standX >= L.bedRear + 0.45)
-    return { at: [x, L.floor, -L.hw + (jack ? 0.35 : 0.5)], stand: [standX, L.floor, 0], yaw: Math.PI };
+    return { at: [x, L.floor, -L.hw + (jack ? 0.42 : 0.5)], stand: [standX, L.floor, 0], yaw: 0 };
+  // (At the front wall the jack only lies along the bed in an empty one; with loads it lies across
+  // the strip in front of them, bedFrontGap.)
   return tool === "palletJack"
-    ? { at: [L.bedFront - 0.35, L.floor, -L.hw + 0.35], stand: [L.bedFront - 1.3, L.floor, 0], yaw: -Math.PI / 2 }
-    : { at: [L.bedFront - 0.3, L.floor, -L.hw + 0.5], stand: [L.bedFront - 1.3, L.floor, 0], yaw: Math.PI };
+    ? (rearX === null ? { at: [L.bedFront - 1.45, L.floor, -L.hw + 0.42], stand: [L.bedFront - 2.3, L.floor, 0], yaw: 0 }
+      : { at: [L.bedFront - 0.35, L.floor, -L.hw + 0.35], stand: [L.bedFront - 1.3, L.floor, 0], yaw: -Math.PI / 2 })
+    : { at: [L.bedFront - 0.32, L.floor, -L.hw + 0.5], stand: [L.bedFront - 1.3, L.floor, 0], yaw: 0 };
 }
 // The back of the rearmost row holding anything in `aboard` (truck frame x), or null if empty.
 export function bedRearX(L: TruckLayout, model: TruckModel, aboard: { slot: number; slotsPerUnit: number; units: number }[]): number | null {
@@ -308,6 +317,15 @@ function stowSpots(L: TruckLayout, model: TruckModel, stop: Stop, slot0: number,
 // yard; from the road side, plus the drive out from where it's parked (first trip) and back (last).
 export const YARD_TRIP = 11.5, ROAD_TRIP = 13, ROAD_PARK = 2.4;
 
+// At the kerb with no front door: where the load is fetched on the pavement behind the truck
+// (truck frame) and which way the driver faces there: from the ramp's foot (or the lowered lift
+// gate) towards it. crew.ts stages the loads in front of it.
+export function pavementFetch(L: TruckLayout) {
+  const spot: [number, number, number] = [L.bedRear - 2.2, 0, L.hw + 3.2];
+  const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - 0.75;
+  return { spot, face: Math.atan2(-spot[2], spot[0] - foot) };
+}
+
 // Chores for a pickup or drop. (Swaps use swapChores; the driver's walk there is in world space.)
 // `rearBefore` / `rearAfter`: the back of the loads before and after this stop (bedRearX), where
 // the tool is taken from and put back.
@@ -340,7 +358,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   const rear = L.bedRear;
   const side: [number, number, number] = [rear - 1.0, 0, -L.hw - 0.6];            // left rear corner
   const atRear: [number, number, number] = [rear - 0.7, 0, -0.35];               // facing the doors
-  const facility: [number, number, number] = kerbDoor ? [kerbDoor.x, 0, kerbDoor.z] : [rear - 2.2, 0, L.hw + 3.2];   // at the front door
+  const facility: [number, number, number] = kerbDoor ? [kerbDoor.x, 0, kerbDoor.z] : pavementFetch(L).spot;   // at the front door
   // At a door: up to it, it opens, the load goes in (or comes out), it closes.
   const fetchLen = kerbDoor ? 2.6 : 1.3, faceDoor = kerbDoor ? kerbDoor.yaw : null;
   const trips = tripCount(L, stop.cargo, stop.units);
@@ -359,7 +377,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     const r = get ? store : back;
     if (!r) return;
     walk("load", sill, r.stand, WALK, { linear: true, tool: get ? null : tool });
-    add({ kind: get ? "toolGet" : "toolPut", group: "load", len: 1.2, face: FACE_FRONT, rest: r });
+    add({ kind: get ? "toolGet" : "toolPut", group: "load", len: TOOL_TAKE, face: FACE_FRONT, rest: r });
     walk("load", r.stand, sill, WALK, { linear: true, tool: get ? tool : null });
   };
   // A pickup's last trip: from the load just stowed, secure the tool at its place and walk out
@@ -369,12 +387,12 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   const teamWait = () => add({ kind: "wait", group: "load", len: (CARGO_MODELS[stop.cargo]?.size[0] ?? 1) / 1.7 + 1.6, face: FACE_FRONT, gesture: "wave" });
   const putToolFrom = (from: [number, number, number], sill: [number, number, number]) => {
     walk("load", from, back!.stand, WALK, { linear: true, tool });
-    add({ kind: "toolPut", group: "load", len: 1.2, face: FACE_FRONT, rest: back! });
+    add({ kind: "toolPut", group: "load", len: TOOL_TAKE, face: FACE_FRONT, rest: back! });
     walk("load", back!.stand, sill, WALK, { linear: true, tool: null });
   };
   const getToolTo = (x: number, sill: [number, number, number]) => {
     walk("load", sill, store!.stand, WALK, { linear: true, tool: null });
-    add({ kind: "toolGet", group: "load", len: 1.2, face: FACE_FRONT, rest: store! });
+    add({ kind: "toolGet", group: "load", len: TOOL_TAKE, face: FACE_FRONT, rest: store! });
     const p: [number, number, number] = [x, L.floor, 0];
     walk("load", store!.stand, p, WALK, { linear: true, tool });
     return p;
@@ -514,7 +532,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
       if (pickup) {
         if (atDoor) { atDoor = false; walk("load", onRamp, foot, WALK, { tool: st.tool }); }
         walk("load", foot, facility, WALK, { tool: st.tool });
-        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? Math.atan2(-(facility[2] - foot[2]), facility[0] - foot[0]), tool: st.tool });
+        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L).face, tool: st.tool });
         walk("load", facility, foot, st.speed, { item, tool: st.tool, helper });
         intoBed(item);
         if (spots) {
@@ -528,7 +546,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         else add({ kind: "stow", group: "load", len: 1.0, face: FACE_FRONT });
         outOfBed(item);
         walk("load", foot, facility, st.speed, { item, tool: st.tool, helper });
-        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? Math.atan2(-(facility[2] - foot[2]), facility[0] - foot[0]), tool: st.tool });
+        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L).face, tool: st.tool });
         walk("load", facility, foot, WALK, { tool: st.tool });
       }
     }

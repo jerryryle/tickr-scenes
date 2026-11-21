@@ -150,8 +150,9 @@ export function truckExtents(m: TruckModel) {
   const s = SPECS[m];
   const front = s.noseFront + 0.05;
   const rear = s.fifthWheel !== undefined ? s.fifthWheel + TRAILER.rear : s.cargo ? s.cargo.x0 - 0.1 : -1.4;
-  // Where the driver steps down: the cabDoorGround anchor (x along the truck, z to the left).
-  return { front, rear, center: (front + rear) / 2, doorX: s.cabFront - 0.62, doorZ: -(s.cabHW + 0.75) };
+  // Where the driver stands to open the cab door and steps back to after shutting it: behind the
+  // door's rear edge, clear of its swing (crew.ts climb); the cabDoorGround anchor.
+  return { front, rear, center: (front + rear) / 2, doorX: s.cabFront - 0.07 - s.doorLen - 0.3, doorZ: -(s.cabHW + 0.45) };
 }
 
 // Loading geometry of a model in its rear-axle frame (x forward, z to the right), for the
@@ -597,6 +598,11 @@ export class Truck {
       // Steps and mirrors.
       P.span(dxb + 0.15, 0.5, z * (hw - 0.05), dxf - 0.25, 0.57, z * (hw + 0.16), TC.step);
       P.span(dxb + 0.15, yf - 0.32, z * (hw - 0.05), dxf - 0.25, yf - 0.25, z * (hw + 0.12), TC.step);
+      // Grab handles for climbing in: one outside on the pillar behind the door, one just inside the
+      // door opening on the pillar ahead of it (crew.ts cabGeom).
+      P.span(dxb - 0.1, yf + 0.12, z * (hw + 0.035), dxb - 0.06, belt + 0.32, z * (hw + 0.075), TC.chrome);
+      for (const y of [yf + 0.14, belt + 0.3]) P.span(dxb - 0.1, y - 0.02, zo, dxb - 0.06, y + 0.02, z * (hw + 0.075), TC.chrome);
+      P.span(dxf - 0.07, yf + 0.3, z * (hw - 0.14), dxf - 0.03, belt + 0.25, z * (hw - 0.1), TC.chrome);
       P.span(xf - 0.2, belt + 0.38, zo, xf - 0.12, belt + 0.43, z * (hw + 0.24), TC.black);
       P.span(xf - 0.25, belt + 0.12, z * (hw + 0.2), xf - 0.11, belt + 0.62, z * (hw + 0.32), TC.black);
     }
@@ -666,7 +672,7 @@ export class Truck {
 
     this.anchors.driverEye.position.set(xf - 1.25, yf + 1.22, -0.55);
     this.anchors.passengerEye.position.set(xf - 1.25, yf + 1.22, 0.55);
-    this.anchors.cabDoorGround.position.set(dxf - 0.55, 0, -(hw + 0.75));
+    this.anchors.cabDoorGround.position.set(dxb - 0.3, 0, -(hw + 0.45));   // (truckExtents doorX, doorZ)
   }
 
   private buildInterior(P: Batch) {

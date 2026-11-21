@@ -101,7 +101,7 @@ const TRAILER_AXLE_TO_REAR = 2.25;
 // Dwell timeline: park, then the driver's chores (chores.ts: exit, load, close, enter for a
 // normal stop; exit, walk, enter for a swap), then startup. The ledger changes halfway through
 // the load group; a swap hands over to the new truck at startup.
-export const DWELL = { park: 3, exit: 2.6, enter: 2.6, startup: 1.5 };
+export const DWELL = { park: 3, exit: 4.4, enter: 5.0, startup: 1.5 };   // (exit, enter: crew.ts climb, the door opened and shut by hand and the steps taken one at a time)
 type DwellPhase = "park" | ChoreGroup | "startup";
 export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Chore | null; ct: number }
 const STOP_SIGN_PAUSE = 1.5;     // s the truck stands at a stop sign's line before going on
@@ -821,6 +821,15 @@ export class Journey {
   private isYardStand(stop: Stop) { return this.stackKind(stop) === "yard"; }
   // Ahead of a stacking stop, where the truck will park and the door from there (the stack and
   // the forklift are there before the truck arrives), or null.
+  // The kerb stop ahead, as the truck nears it, when its building has no front door to be found
+  // (crew.ts stages its loads on the pavement): where the truck will stand.
+  doorlessAhead(): { pose: Pose; y: number } | null {
+    const st = this.st, stop = st.stops[0];
+    if (!stop || !stop.site || (stop.kind !== "pickup" && stop.kind !== "drop") || st.mode !== "drive" || !this.path || this.path.length - st.s > 150) return null;
+    if (this.dockPlan(stop)) return null;
+    const pose = this.path.peek(this.path.length, this.tmpPose);
+    return this.findKerbDoor(stop, pose) ? null : { pose: { ...pose }, y: this.path.yAt(this.path.length) };
+  }
   stackAhead(): { pose: Pose; y: number; door: KerbDoor; mode: "yard" | "road" } | null {
     const st = this.st, stop = st.stops[0];
     if (!stop || st.mode !== "drive" || !this.path || this.path.length - st.s > 150) return null;
