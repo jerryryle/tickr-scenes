@@ -18,7 +18,7 @@ export function readConfig(env: SceneEnv): Config {
   const num = (k: string, d: number) => (Number.isFinite(Number(env[k])) ? Number(env[k]) : d);
   const tod = String(env.timeOfDay ?? "cycle");
   return {
-    seed: (DEBUG_SEED || Math.floor(num("seed", 0))) >>> 0,   // 0: a random journey (kept in board storage), else this one
+    seed: (DEBUG_SEED || Math.floor(num("seed", 0))) >>> 0,   // 0: a new random journey each time the scene starts, else this one
     timeOfDay: (["cycle", "day", "dusk", "night"].includes(tod) ? tod : "cycle") as TimeMode,
     weather: env.weather !== false,
     humorFrequency: cfgClamp(num("humorFrequency", 0.02), 0, 0.1),

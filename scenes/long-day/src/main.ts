@@ -6,14 +6,12 @@ import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { SEA_REACH } from "./outline.ts";
 import { hash2 } from "./rng.ts";
-import { journeyPeriod, readConfig } from "./env.ts";
+import { readConfig } from "./env.ts";
 import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
 import { OCCLUSION } from "./occlusion.ts";
-import { Persistence, STATE_VERSION } from "./persist.ts";
-import type { SavedState } from "./persist.ts";
 import { applyCutaway, applyDriverSpot, cutUniforms, NO_CUT_BOXES, updateCutaway, updateDriverSpot } from "./cutaway.ts";
 import { Engine } from "./engine.ts";
 import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, HEAD_Y, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
@@ -69,7 +67,7 @@ const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== 
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const cfg = readConfig(env);
-  let engine: Engine, streamer: ChunkStreamer, hud: Hud, persist: Persistence;
+  let engine: Engine, streamer: ChunkStreamer, hud: Hud;
   let puffs: PuffSystem, kit: TruckKit, fleet: FleetBaker, truck: Truck, journey: Journey, mats: CityMaterials, director: Director, crew: Crew, dockFx: DockFx, frontDoor: FrontDoorFx;
   let other: Truck | null = null;
   const backdrop = new Backdrop();
@@ -87,12 +85,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const focus = new THREE.Vector3(), aheadDir = { x: 0, z: 0 };
   const pose: Pose = { x: 0, z: 0, h: 0, k: 0 };
   const spotSeat = new THREE.Vector3(), spotChest = new THREE.Vector3();
-  let base = 0, randomSeed = false, scrubPrev = 0;          // journey time at scene time 0 (the saved time)
+  let base = 0, scrubPrev = 0;          // journey time at scene time 0
   let lastX = NaN, lastZ = 0;   // the truck's last rendered position, for wheel travel
 
-  function snapshot(): SavedState {
-    return { v: STATE_VERSION, seed: cfg.seed, random: randomSeed, season: journey.startSeason, simTime: journey.st.simTime, period: journey.period, journey: null };
-  }
+
 
   // The sea off a coastal or port town (outline.ts): one surface under the whole town at the
   // water's level, from the shore's deepest bay out; the land and the beach lie over it. It reaches
@@ -837,25 +833,23 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       engine.backdrop = backdrop;
       ATLAS_UPLOAD.renderer = engine.renderer;   // (the sign and plate atlases upload just what they draw)
       hud = new Hud();
-      persist = new Persistence(sys);
-      // Seed 0 asks for a random journey: resume the one in storage, or draw a new one.
-      const random = randomSeed = cfg.seed === 0;
-      // The images load meanwhile, all at once (independent of each other and of the storage read).
+      // Seed 0 asks for a random journey: a new one every time the scene starts (nothing is saved or
+      // resumed).
+      const random = cfg.seed === 0;
+      // The images load meanwhile, all at once (independent of each other).
       const loading = Promise.all([
         Promise.all(LIVERY_ASSETS.map((n) => assets[n].loadImage())), assets.facades.loadImage(),
         assets.logoWhite.loadImage(), assets.logoColor.loadImage(), assets.batonWordmark.loadImage(),
       ]);
-      loading.catch(() => {});   // (a failure surfaces at the await below, not as unhandled while storage is read)
-      const saved = await persist.load(cfg.seed, random, journeyPeriod(cfg));
-      // The preview has no lasting storage, so its random journey is the day's journey: the same on
-      // every reload.
+      loading.catch(() => {});   // (a failure surfaces at the await below, not as unhandled meanwhile)
+      // The preview's random journey is the day's journey: the same on every reload.
       const today = new Date();
       const daySeed = Math.floor(hash2(today.getFullYear() * 1000 + today.getMonth() * 40 + today.getDate(), 7, 0, 0x5eed) * 2 ** 31) || 1;
-      if (random) cfg.seed = saved?.seed ?? (sys.isPreview ? daySeed : ((Math.floor(Math.random() * 2 ** 31) ^ Date.now()) >>> 0 || 1));
-      base = (saved?.simTime ?? 0) + DEBUG_SKIP_MINUTES * 60;   // the skip: test renders only
+      if (random) cfg.seed = sys.isPreview ? daySeed : ((Math.floor(Math.random() * 2 ** 31) ^ Date.now()) >>> 0 || 1);
+      base = DEBUG_SKIP_MINUTES * 60;   // (from the start: the skip, test renders only)
       setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
-      journey = new Journey(cfg, base, saved?.season ?? realSeason());
+      journey = new Journey(cfg, base, realSeason());
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).
@@ -1024,7 +1018,6 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       crew.firstPerson(engine.camera);
       engine.draw(ctx);
       if (held) presLoad(held);
-      persist.tick(target, snapshot);
       if (DEBUG_MEMLOG > 0 && Math.floor(t / DEBUG_MEMLOG) !== memLogSlot) {
         memLogSlot = Math.floor(t / DEBUG_MEMLOG);
         (globalThis as any).gc?.();   // test builds: measure what is actually retained
@@ -1045,16 +1038,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
           `next ${ns ? ns.kind + " " + (ns.site?.name ?? "") : "-"}  stops ${st.stopsDone}`,
           `ledger in ${st.loaded} out ${st.unloaded} aboard ${journey.aboardUnits} ${st.loaded - st.unloaded === journey.aboardUnits ? "ok" : "MISMATCH"}  slots ${journey.aboardSlots}/${TRUCK_SLOTS[st.truck]}`,
           director.debugLine(truck),
-          countryWorld.active ? `segments build ${countryWorld.lastBuildMs.toFixed(1)}/${countryWorld.maxBuildMs.toFixed(1)}ms  ${persist.status}` : `chunks ${streamer.chunks.size} q${streamer.pending} build ${streamer.lastBuildMs.toFixed(1)}/${streamer.maxBuildMs.toFixed(1)}ms seek ${seekMs.toFixed(0)}ms`,
+          countryWorld.active ? `segments build ${countryWorld.lastBuildMs.toFixed(1)}/${countryWorld.maxBuildMs.toFixed(1)}ms` : `chunks ${streamer.chunks.size} q${streamer.pending} build ${streamer.lastBuildMs.toFixed(1)}/${streamer.maxBuildMs.toFixed(1)}ms seek ${seekMs.toFixed(0)}ms`,
         ]);
       }
-    },
-
-    // Save where the journey is, so the next start resumes from here rather than from the last
-    // periodic save. Needs a runtime that allows storage in teardown(); on an older one the write
-    // fails with "ended", which flush() swallows.
-    async teardown() {
-      if (persist && journey) await persist.flush(snapshot);
     },
   };
 }
