@@ -16,7 +16,7 @@ import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { pavementFetch, ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
+import { pavementFetch, ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
 import { buildCrewPath, EMPTY_HOLD, samplePath } from "./crewpath.ts";
 import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
 import type { Chore, ItemKind, ToolRest } from "./chores.ts";
@@ -623,7 +623,7 @@ export class Crew {
     this.yaw = yaw; this.yawV = 0;
     this.drv[0] = x; this.drv[1] = y; this.drv[2] = z; this.drv[3] = yaw;
     this.feetY = y;
-    this.mate.attached = false; this.wL = this.wR = 0; this.gripMate = null; this.pushLean = 0;
+    this.mate.attached = false; this.wL = this.wR = 0; this.gripMate = null; this.pushLean = 0; this.hunch = 0;
     if (CARGO_BY_ID.get(stop.cargo)?.handling === "teamLift") this.teamMate(c, t, truck, stop);
     this.props(c, t, u, truck, stop);
     if (c.kind === "rampOut" || c.kind === "rampIn") this.rampGrips(L, truck, c.kind, u);
@@ -641,6 +641,9 @@ export class Crew {
       h /= n; ahead /= n;
       const S = stoopFor({ ...P }, h, ahead, { lean: this.pushLean });
       P.bend += (S.bend - P.bend) * w; P.drop += (S.drop - P.drop) * w; P.headP += (S.headP - P.headP) * w;
+      // (Hunched behind a tall load: knees bent, shoulders rounded, head down.)
+      const k = this.hunch * w;
+      P.drop = Math.max(P.drop, HUNCH_DROP * k); P.bend -= HUNCH_BEND * k; P.headP += HUNCH_HEAD * k;
     }
     // Legs: walking, a stride about whatever crouch the drop asks for; standing, the feet planted.
     if (walking || stepping) {
@@ -657,6 +660,7 @@ export class Crew {
     if (gm && this.helper.root.visible) { this.helper.reach("L", gm.L, this.tmpPose); this.helper.reach("R", gm.R, this.tmpPose); }
   }
   private pushLean = 0;   // props: lean into a push this frame (added to the stoop)
+  private hunch = 0;      // props: how far hunched down behind a tall load this frame (0..1)
 
   // The stop's planned path, worked out once per plan (crewpath.ts).
   private crewPath(truck: Truck, stop: Stop): CrewPath {
@@ -807,7 +811,7 @@ export class Crew {
   private ground(L: TruckLayout, x: number, z: number): number {
     if (x >= L.bedRear - 0.02 && x <= L.bedFront && Math.abs(z) < L.hw) return L.floor;
     if (this.docked) return x < L.rear + 0.02 ? DOCK_PLATFORM : 0;
-    if (L.loader === "ramp" && this.ctl.ramp > 0.999 && Math.abs(z) < 0.47) { const r = rampY(L, x); if (r !== null) return r; }
+    if (L.loader === "ramp" && this.ctl.ramp > 0.999 && Math.abs(z) < RAMP_HW) { const r = rampY(L, x); if (r !== null) return r; }
     if (L.loader === "liftgate" && this.ctl.gate > 0.999 && x > L.bedRear - 1.5 && Math.abs(z) < L.hw - 0.15) return this.gateY(L, this.ctl.drop);
     return this.kerbY(x, z);
   }
@@ -1216,6 +1220,10 @@ export class Crew {
       // Tipped back for the hands: further when loaded (its weight over the wheels), and to
       // upright to stand a load down at a stow (and back when it's off the plate).
       let tip = this.handTruckTip(L, HT_LEAD, item && !ghost ? HT_HANDS_LOADED : HT_HANDS);
+      if (load && item && !ghost) {
+        tip = Math.min(tip, this.handTruckTipClear(L, HT_LEAD, load.size[1]));
+        this.hunch = THREE.MathUtils.clamp((load.size[1] - 1.0) / 0.7, 0, 1);   // (under a tall one, hunched down behind it)
+      }
       if ((c.kind === "stow" || staged) && item) {
         const up = fromHands ? THREE.MathUtils.smoothstep(u, 0.1, 0.48) * (1 - THREE.MathUtils.smoothstep(u, 0.62, 0.92)) : THREE.MathUtils.smoothstep(u, 0.08, 0.38) * (1 - THREE.MathUtils.smoothstep(u, 0.52, 0.9));
         tip = tip + (0.04 - tip) * up;
@@ -1307,6 +1315,14 @@ export class Crew {
   private handTruckTip(L: TruckLayout, lead: number, hands: number) {
     const [ax, az] = this.fromDriver(lead, 0), axleY = this.ground(L, ax, az) + HT_WHEEL;
     return Math.acos(THREE.MathUtils.clamp((this.drv[1] + hands - axleY) / HT_GRIP[1], 0.35, 0.995));
+  }
+  // The most it may be tipped back with a load `h` tall on its plate, for the load's back to stay
+  // clear of the driver's face and chest (a tall carton is carried nearer upright, about its
+  // balance point, its top over the driver's head only if it is above it).
+  private handTruckTipClear(L: TruckLayout, lead: number, h: number) {
+    const [ax, az] = this.fromDriver(lead, 0), axleY = this.ground(L, ax, az) + HT_WHEEL;
+    const face = Math.min(h + HT_PLATE + 0.03, this.drv[1] + HT_HEAD_TOP - axleY);   // (its back, up to the top of the head)
+    return face <= 0.05 ? Math.PI / 2 : Math.asin(THREE.MathUtils.clamp((lead - HT_BODY) / face, 0, 1));
   }
   private placeHandTruck(L: TruckLayout, truck: Truck, lead: number, tip: number) {
     const [ax, az] = this.fromDriver(lead, 0);
@@ -1686,6 +1702,12 @@ function stageLocal(cargo: string, size: number[], at: number[], face: number, k
   return [x, h === "roll" ? hh / 2 : 0, z, face + (across ? Math.PI / 2 : 0)];
 }
 const HT_WHEEL = 0.13, HT_GRIP: [number, number] = [0.02, 1.19], HT_PLATE = -0.115, HT_LEAD = 1.15, HT_HANDS = 1.12, HT_HANDS_LOADED = 1.04;
+// What a load on it keeps clear of: the driver's face and chest, this far ahead of the feet
+// (leaning into the push, hunched), up to the top of the head this high above them.
+const HT_BODY = 0.5, HT_HEAD_TOP = 1.85;
+// Hunched behind a tall load on it: the hips this much lower, the back bent and the head bowed
+// this much more (rad).
+const HUNCH_DROP = 0.12, HUNCH_BEND = 0.14, HUNCH_HEAD = 0.18;
 // The pallet jack: its fork rollers ahead of the steering wheel, its handle's length and pivot,
 // the steering wheel ahead of the driver's feet and the handle's height above them.
 const JACK_TIP = 1.32, JACK_HANDLE = 1.0, JACK_PIVOT: [number, number] = [-0.04, 0.2], JACK_LEAD = 1.0, JACK_HANDS = 1.0;

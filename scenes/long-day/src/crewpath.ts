@@ -9,6 +9,8 @@
 // barely moves, and then catches up with the path. Empty-handed, the driver simply turns. A short
 // walk back the way the driver came with a tool or load in hand (out of the bed after stowing,
 // away from a door) is walked backwards, drawing it along, as people do in a tight space.
+// Down a walk ramp with it (Chore.noTurn) the driver turns nothing: on the way they face,
+// forwards or backwards, until it is off the ramp.
 import type { Chore } from "./chores.ts";
 
 // What the driver holds during a chore, for turning: how far ahead of the feet its weight is,
@@ -70,11 +72,13 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       entered = ci; back = false;
       if (isWalk(c) && h.pivot > 0) {
         const dx = c.b![0] - c.a![0], dz = c.b![2] - c.a![2], len = Math.hypot(dx, dz);
-        back = len > 0.05 && len <= BACK_LEN && Math.abs(wrap(Math.atan2(-dz, dx) - yaw)) > BACK_TURN;
+        const off = Math.abs(wrap(Math.atan2(-dz, dx) - yaw));
+        back = len > 0.05 && (c.noTurn ? off > Math.PI / 2 : len <= BACK_LEN && off > BACK_TURN);
       }
     }
     let target = nm.yaw;
     if (back) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]) + Math.PI; }
+    else if (c.noTurn) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]); }   // (straight on, not turning early for what comes next)
     else if (isWalk(c) && Number.isNaN(target)) {
       target = ahead(ci, u, nm.x, nm.z);
       // Arriving: face the way the next chore wants.
