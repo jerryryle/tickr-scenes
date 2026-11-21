@@ -139,11 +139,15 @@ const GATE_SPEED = 6.5;           // rough average speed across town, for timing
 // and the turns; set so a grid town's estimates are what they were when it counted blocks.
 const DRIVE_SLACK = 3 * BLOCK, GATE_SLACK = BLOCK;
 const GATE_MAX = 900;             // s: longer than any drive out of town could be (deadline's early out)
-const VMAX = 11, ACCEL = 1.6, BRAKE = 2.2, FIRM_BRAKE = 4.5, MAX_DECEL = 5, STOP_GAP = 0.6;
+const VMAX = 11, ACCEL = 1.6, BRAKE = 2.2, MAX_DECEL = 5, STOP_GAP = 0.6;
+export const FIRM_BRAKE = 4.5;   // m/s^2: braking it takes to stop for a light; closer than that, it goes through (traffic.ts too)
 // How fast its acceleration may change (m/s^3): pulling away and easing off gently; braking harder
 // comes on quicker, as a driver's foot does. (Without it, a limit that comes and goes from one step
 // to the next, a car ahead seen and then not, had it surge and shudder.)
 const JERK = 4, BRAKE_JERK = 20, LIM_TAU = 0.4;
+// HOLD_CREEP (m/s): how slowly it rolls up the last of the way to where street life holds it;
+// HOLD_KEEP (s): how long, moving, it keeps a hold street life stops seeing (one passing close).
+const HOLD_CREEP = 0.15, HOLD_KEEP = 0.5;
 // Gridlock: held standing by street life JAM_HONK s (its own light not red, its own way back into a
 // bay not clear of traffic), the truck honks; JAM_REACT s after (its first two blasts over), the
 // traffic in its way backs up or pulls on out of it (traffic.ts clearWay) and holds there until it
@@ -1056,15 +1060,22 @@ export class Journey {
     if (st.mode === "drive") {
       let ys = this.life?.truckStop?.(this) ?? null;
       if (ys !== null) { st.holdS = ys; st.holdT = 1; }
-      else if ((st.holdT ?? 0) > 0 && st.v < 1) { st.holdT! -= dt; ys = st.holdS!; }
+      // (Moving, held a moment too, HOLD_KEEP s: one seen and then not, as it passes close, from one
+      // step to the next, doesn't have it brake and let go by turns, to come on and stop dead.)
+      // (Only while it is still ahead: overrun, braking as hard as it could, it is behind it.)
+      else if ((st.holdT ?? 0) > 0 && (st.v < 1 || (st.holdT! > 1 - HOLD_KEEP && st.holdS! > st.s))) { st.holdT! -= dt; ys = st.holdS!; }
       else st.holdT = 0;
       // (Held standing by it, its own light not red nor turning: the jam's clock runs.)
       this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && this.lightAhead !== "red" && this.lightAhead !== "yellow");
       // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
       if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));
-      // (Something right at its nose, a car stopped dead across it, say: it stops there, hard as that is,
-      // rather than slide on into it.)
-      if (ys !== null && (ys - st.s >= st.v * st.v / (2 * FIRM_BRAKE) - 0.5 || st.v < 3 || ys - st.s < 1)) hardStop = Math.min(hardStop, Math.max(ys, st.s));
+      // (The last metre in to it at a crawl, slowing as it closes: where it stands to is only known to
+      // a step of street life's look (life.ts FINE_STEP), so it never comes up to it still rolling.)
+      if (ys !== null) limit = Math.min(limit, HOLD_CREEP + 1.5 * Math.max(0, ys - st.s));
+      // (Where it stops for them: there; or, closer than it can stop, braking as hard as it can (with
+      // the moment its brakes take to come on), as soon as it can: never dead in one step. Every stop
+      // street life gives it is short of what is in its way, by 1.5 m and a margin, room for that.)
+      if (ys !== null) hardStop = Math.min(hardStop, Math.max(ys, st.s + (st.v * st.v) / (2 * MAX_DECEL) + st.v * (MAX_DECEL / BRAKE_JERK) / 2));
     }
     // The stop at the end of the path.
     if (st.mode === "drive" && st.stopS < THROUGH) {
@@ -1416,7 +1427,10 @@ export class Journey {
     const toStyle = this.styleOf(N1), fromStyle = this.styleOf(N);
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
     const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && this.takesFreeway(N1);
-    return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1),
+    // (The freeway's curve out of this city as it was laid: its graph built first, so a town whose
+    // organic layout fell back, straight, has none.)
+    const P = freewayGate(citySeedOf(this.cfg.seed, N), fromStyle) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
+    return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1), fromCurve,
       seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),

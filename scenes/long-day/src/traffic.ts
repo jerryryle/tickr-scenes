@@ -20,7 +20,7 @@ import type { CityGraph } from "./citygraph.ts";
 import { BLOCK } from "./grid.ts";
 import { LANE_INNER, LANE_KERB, Path, STOP_BACK } from "./route.ts";
 import type { Move, Pose, Route } from "./route.ts";
-import { SIM_DT } from "./journey.ts";
+import { FIRM_BRAKE, SIM_DT } from "./journey.ts";
 
 export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number; body?: boolean }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking); body: the truck's own body (life.ts), parked or not
 
@@ -256,7 +256,10 @@ export class Traffic {
       for (let a = 0; a <= CLEAR_AHEAD; a += 1) {
         tp.path.peek(Math.min(tp.path.length, tp.s + a), this.gw0);
         const q = this.gw0, fx = Math.cos(q.h), fz = -Math.sin(q.h);
-        if (a % 1.5 < 1) for (let b = tp.rear; b < tp.front + 0.75; b += 1.5) { const u = Math.min(b, tp.front); Z.push({ x: q.x + fx * u, z: q.z + fz * u, r: 1.3 }); }
+        // (Circles close enough together, every metre on and 0.75 m along its body, that the way they
+        // cover is as wide as truckStop's (1.25 m and its margin either side): a car clear of these is
+        // clear of what the truck waits for; one in that, between them, would have each wait on the other.)
+        for (let b = tp.rear; b < tp.front + 0.375; b += 0.75) { const u = Math.min(b, tp.front); Z.push({ x: q.x + fx * u, z: q.z + fz * u, r: 1.3 }); }
         if (fw === undefined) continue;
         const kx = q.x + fx * fw, kz = q.z + fz * fw, d = Math.hypot(kx - ax, kz - az) || 1;
         ax = kx - (kx - ax) / d * K; az = kz - (kz - az) / d * K;
@@ -635,7 +638,10 @@ export class Traffic {
     // as the truck waits behind the car, and the car for them. Nor, short of the line, does it keep
     // a booking through a red.)
     const held = this.heldAhead(T, n);
-    if (tc.bk && short && (!sigOk || held)) tc.bk = null;
+    // (Unless it is too close to stop for the light, as journey.ts then goes on through it: then it
+    // keeps its booking, rather than be held at a line it can't stop at.)
+    const tooClose = dLine < (T.v * T.v) / (2 * FIRM_BRAKE) - 0.5;
+    if (tc.bk && short && ((!sigOk && !tooClose) || held)) tc.bk = null;
     if (!tc.bk && sigOk && !held) {
       // (Its sweep from where it stands, kept while it waits there at its line for a gap.)
       const S = this.tSweep;
@@ -839,6 +845,16 @@ export class Traffic {
   }
   // Car `id`'s speed (0 for none).
   speedOf(id: number | undefined): number { return id === undefined ? 0 : this.byId.get(id)?.v ?? 0; }
+  // How far car `id` will have moved `secs` from now, on along its way at its speed (with the lane
+  // changes and turns its path has, its dodge as it is), and its heading then; null if there is
+  // none or it is standing.
+  private aheadP: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  aheadOf(id: number | undefined, secs: number): { dx: number; dz: number; h: number } | null {
+    const c = id === undefined ? undefined : this.byId.get(id);
+    if (!c || c.v < 0.5) return null;
+    const q = c.path.peek(Math.min(c.path.length, c.s + c.v * secs), this.aheadP);
+    return { dx: q.x + Math.sin(q.h) * c.dodge - c.x, dz: q.z + Math.cos(q.h) * c.dodge - c.z, h: q.h };
+  }
   // Whether car `id` stands waiting, where its junction booking has it, for the truck to go through.
   waitsForTruck(id: number | undefined): boolean {
     const c = id === undefined ? undefined : this.byId.get(id);

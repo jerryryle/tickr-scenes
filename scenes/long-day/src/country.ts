@@ -21,6 +21,7 @@ import { SIM_DT } from "./journey.ts";
 import { seaSide } from "./outline.ts";
 import { CityPlan } from "./city.ts";
 import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
+import type { FwCurve } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
@@ -172,6 +173,7 @@ interface CountryInput {
   toFreeway?: boolean;   // the next city has a freeway: the road comes up onto a flyover beside it
   toFreewayMerge?: boolean;   // and joins it, for a stretch (freeway.ts freewayMerge)
   toSea: boolean;   // the next city (or, arriving, this one) is on the sea, as its plan is built (CityPlan.outline)
+  fromCurve?: FwCurve | null;   // leaving a freeway city: its freeway's curve as the city was laid out (CityPlan.fwCurve, after its graph: an organic town that fell back has none)
 }
 
 export class CountryRoad {
@@ -644,7 +646,7 @@ export class CountryRoad {
   get fromFreewayFrame(): Frame | null {
     if (this.fwFrom === undefined) {
       const i = this.inp, cs = citySeedOf(i.seed, i.city), g = i.kind === "exit" ? freewayGate(cs, i.fromStyle) : null;
-      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs, i.fromStyle) !== null, new CityPlan(cs, i.fromStyle).fwCurve) : null;   // (an organic town's curves: CityPlan.fwCurve)
+      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs, i.fromStyle) !== null, i.fromCurve !== undefined ? i.fromCurve : new CityPlan(cs, i.fromStyle).fwCurve) : null;   // (an organic town's curves: CityPlan.fwCurve)
     }
     return this.fwFrom;
   }

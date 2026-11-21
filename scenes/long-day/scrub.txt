@@ -9,9 +9,9 @@
 # journey is the day's, so without one this would test a different journey every day.)
 DEBUG_SCRUBTEST=20 DEBUG_SEED=659803215 DEBUG_HOUR=12 DEBUG_CLIMATE=autumn/clear
 
-# A truck swap at a Ryder lot: seed 1 hands box26 over for a flatbed about 665 s into the journey,
+# A truck swap at a Ryder lot: seed 1 hands box26 over for a flatbed about 697 s into the journey,
 # 26 s into this run and after its scrub point (15 s). If the journey changes and this stops
 # covering a swap, the check says so: find the hand-over again in a longer DEBUG_SCRUBTEST render's
 # TICK lines (their last field is the trucks; the bare journey test runs without the scene's street
 # probes, so its times differ) and move the skip.
-DEBUG_SCRUBTEST=30 DEBUG_SEED=1 DEBUG_SKIP_MINUTES=10.65 DEBUG_HOUR=10.3 DEBUG_CLIMATE=autumn/clear swap
+DEBUG_SCRUBTEST=30 DEBUG_SEED=1 DEBUG_SKIP_MINUTES=11.18 DEBUG_HOUR=10.3 DEBUG_CLIMATE=autumn/clear swap

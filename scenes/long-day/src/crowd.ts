@@ -44,6 +44,7 @@ interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: nu
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
 const BOXED_GONE = 6, BOXED_NEAR = 18;   // s boxed in by the honking truck before stepping into a doorway (walk), and how near it (m)
+const CROSS_TRUCK_T = 3;   // s: how far off, at the speed it comes, the truck must be before they step off the kerb across its way
 const BELLE = 0xf4ead8;
 const _pt: GPt = { x: 0, z: 0, h: 0 };
 const _tq: Pose = { x: 0, z: 0, h: 0, k: 0 };
@@ -336,7 +337,9 @@ export class Crowd {
       const green = signalState(sg.node, sg.phase, simTime, plan.seed, prs) === "green";
       // (Nor if the truck is to come over the crosswalk before they could be across.)
       // (Unless it stands at this all-way stop letting them go first.)
-      const yielded = this.truckYieldsAt === sg.node.id, clear = yielded || truck.every((o) => Math.hypot(o.x - p.x, o.z - p.z) > 12);
+      // (Further off the faster it comes: 12 m, and the way it would go in CROSS_TRUCK_T s.)
+      const near = 12 + Math.abs(this.truckPath?.v ?? 0) * CROSS_TRUCK_T;
+      const yielded = this.truckYieldsAt === sg.node.id, clear = yielded || truck.every((o) => Math.hypot(o.x - p.x, o.z - p.z) > near);
       // (Waiting at an all-way stop with nothing but the cars to wait for: their turn, for the cars
       // stopped there to let them go first: traffic.ts pedFirst. Not while the truck holds them
       // up, or the cars would wait on them as they wait on it.)
