@@ -62,8 +62,6 @@ const CHUNK_CACHE_BYTES = 512e6;
 const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
-const CITY_VIEW = (STREAM_RADIUS + 0.5) * BLOCK;   // m: the fog's reach in town, steady (placeCamera): the streamed radius and a half
-const FOG_GAP = 60;   // m: nearer than this to anything unbuilt (just after a jump), the fog closes in on it all the same
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH = 3;   // ENTRY_PREFETCH: blocks on in from the gate built coming in to town
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam";   // test renders with a tour camera
 
@@ -563,16 +561,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const d = crew.driver.root.position;
     const out = !director.interior && !crew.inSeat && journey.driverSpotOn;
     updateDriverSpot(cam, out ? spotChest.copy(d).setY(d.y + 1.1) : null);
-    // The view: in town, a steady CITY_VIEW, not drawn in to whatever round the camera is yet to be
-    // built (on a board slow to build, that had the fog wash in over the town each time the truck
-    // crossed into the next block); only where nothing is built close by at all (FOG_GAP: just after
-    // a jump) does it close in on that. Out on the open land the country's longer view, as far as
-    // it is built. Eased across the edge of town.
+    // The view: as far as the city is built round the camera (never further, so nothing is seen
+    // popping in), and out on the open land the country's longer view; eased across the edge of town.
     const hard = Math.hypot(streamer.clearDistance(cam.position.x, cam.position.z), cam.position.y);
     const outside = cityDistance(Math.floor(focus.x / BLOCK), Math.floor(focus.z / BLOCK)) > 0;
-    const want = outside ? Math.min(COUNTRY_CLEAR, hard) : CITY_VIEW;
-    fogClear = fogClear < 0 || dt === 0 ? want : fogClear + (want - fogClear) * (1 - Math.exp(-dt / 1.5));
-    if (outside || hard < FOG_GAP) fogClear = Math.min(fogClear, outside ? want : hard);
+    const want = outside ? Math.min(COUNTRY_CLEAR, hard) : streamer.radius > STREAM_RADIUS ? Math.min(hard, (STREAM_RADIUS + 0.5) * BLOCK) : hard;
+    fogClear = fogClear < 0 || dt === 0 ? want : Math.min(hard, fogClear + (want - fogClear) * (1 - Math.exp(-dt / 1.5)));
     engine.setViewDistance(fogClear, cam.position.distanceTo(focus));
     streamer.setCamera(cam.position.x, cam.position.z);   // (the next stream builds round the camera too)
   }
