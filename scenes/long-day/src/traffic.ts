@@ -928,7 +928,9 @@ export class Traffic {
     // (Kept from going a good while by that light, theirs never green with its own: it goes anyway,
     // as drivers do, and waits at it with its tail in the junction. The while counted standing at
     // its own line through its red too, so it goes on its next green, not after greens' worth.)
-    if (c.v > 0.5) c.beyondT = 0;
+    // (Rolling away from its line, not just creeping off it as its green comes and stopping for that
+    // light again: else the while starts over on every green, never long enough to go on.)
+    if (c.v > 0.5 && dLine > 2.5) c.beyondT = 0;
     else if (redBeyond && (sigOk || dLine < 2.5)) c.beyondT = (c.beyondT ?? 0) + SIM_DT;
     if ((c.beyondT ?? 0) > 15) redBeyond = false;
     const exitBlocked = redBeyond || this.boxBlocked(c) !== null;

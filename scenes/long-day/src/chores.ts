@@ -57,7 +57,7 @@ const RAMP_CLEAR = 1.2, RAMP_CLEAR_JACK = 1.6;   // (a pallet jack's forks reach
 // Backing (or drawing what's held along, not turning it), the driver goes this much slower.
 const BACKING = 0.8;
 // Pushing something up it, the driver lines up on the ramp this far short of its foot.
-const RAMP_LINEUP = 3.6;
+export const RAMP_LINEUP = 3.6;
 // The walk ramp's half width (crew.ts ground), and how far clear of its side what's wheeled
 // past it keeps (a hand truck's wheels and a hand's breadth).
 export const RAMP_HW = 0.47;

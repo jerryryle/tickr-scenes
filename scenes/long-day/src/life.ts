@@ -15,6 +15,7 @@ import { Crowd } from "./crowd.ts";
 import type { KerbParked } from "./vignettes.ts";
 import { Ambient } from "./ambient.ts";
 import { DEBUG_BLOCK } from "./debug.ts";
+import { RAMP_HOLD, RAMP_LINEUP } from "./chores.ts";
 
 // m/s: a vehicle beside the truck going slower than this, or than the truck, is one it waits for if
 // its body would come into it (truckStop): standing, coming to a stop, or one it would close on
@@ -103,7 +104,10 @@ export class StreetLife implements LifeHook {
       const L = truckLayout(st.truck), stop = st.stops[0];
       if (L.loader === "ramp" && stop && stop.kind !== "swap" && !j.isDockStop(stop)) {
         const fx = Math.cos(p.h), fz = -Math.sin(p.h);
-        for (let a = L.bedRear - 0.6; a > L.bedRear - L.rampRun - 0.2; a -= 1.0) obs.push({ x: p.x + fx * a, z: p.z + fz * a, r: 0.75 });
+        // (And, while the driver is out, behind its foot, where they line up on it with a hand
+        // truck and turn off it: chores.ts RAMP_LINEUP.)
+        const end = L.bedRear - L.rampRun - (st.mode === "dwell" ? RAMP_HOLD + RAMP_LINEUP + 0.6 : 0.2);
+        for (let a = L.bedRear - 0.6; a > end; a -= 1.0) obs.push({ x: p.x + fx * a, z: p.z + fz * a, r: 0.75 });
       }
       // A forklift unloading from the road side (crew.ts roadLegs) works in the inner lane beside
       // and behind the truck: traffic waits behind it.
