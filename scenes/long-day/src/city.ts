@@ -18,7 +18,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE } from "./facadetiles.ts";
 import type { FacadeBand } from "./facade.ts";
-import { buildSignals, buildStopSigns } from "./signals.ts";
+import { buildSignals, buildStopSigns, linkSignals } from "./signals.ts";
 import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
@@ -44,7 +44,7 @@ import { BIOME_OF } from "./country.ts";
 import { BIOMES, landTree } from "./countryworld.ts";
 import { BLOCK, STREET, KERB, CURB_H, RING } from "./grid.ts";
 import { angleDiff, CityGraph, clipHalf, inPoly, polyDist } from "./citygraph.ts";
-import type { CBlock, CNode, CStreet } from "./citygraph.ts";
+import type { CBlock, CGate, CNode, CStreet } from "./citygraph.ts";
 import { cityGraph, trimToOutline } from "./citygen.ts";
 import type { OrganicAvenue } from "./citygen.ts";
 import { CityOutline, seaSide } from "./outline.ts";
@@ -60,27 +60,33 @@ const at0 = (i: number) => i * BLOCK + STREET / 2;   // (the grid's line i, as w
 // City limits: the city is the square of blocks [CITY_LO, CITY_HI] on both axes, ringed by RING
 // blocks of countryside (the highway's own land takes over beyond). Its streets are those beside
 // at least one block of the city, so the outermost ones run round its edge. The highway leaves
-// and enters through gates: perimeter nodes with a street running straight out of town for one
-// block (the gate street), where the country road begins (country.ts). Three gates a side.
+// and enters through gates: perimeter nodes with a street running straight out of town (the gate
+// street), where the country road begins (country.ts). The way in is on one of GATE_SLOTS (three a
+// side), chosen by the city's seed before the town is laid out; the ways out are wherever the
+// town's own streets meet its edge (citygen.ts trimToOutline), in its graph's gates.
 export let CITY_LO = -12, CITY_HI = 11;
-export interface Gate { ix: number; iz: number; dir: number }   // the perimeter node, and the way out of town
-export const GATES: Gate[] = [];
+export interface Gate { ix: number; iz: number; dir: number }   // a gate slot: the perimeter node, and the way out of town
+export const GATE_SLOTS: Gate[] = [];
 const ROUND_NAMES = ["Market Roundabout", "Town Roundabout", "Elm Roundabout", "Mill Roundabout"];   // (a roundabout's, warped or organic)
 // The city's size follows how long the truck spends in it (a short stay can't cross a big town):
 // 24 blocks square for 20 minutes or more, 18 from 10, 12 below that.
 export function setCityLimits(cityMinutes: number) {
   const half = cityMinutes >= 20 ? 12 : cityMinutes >= 10 ? 9 : 6, at = Math.round(half * 0.58);
   CITY_LO = -half; CITY_HI = half - 1;
-  GATES.length = 0;
-  for (const g of [-at, 0, at]) GATES.push({ ix: CITY_HI + 1, iz: g, dir: 0 }, { ix: g, iz: CITY_LO, dir: 1 }, { ix: CITY_LO, iz: g, dir: 2 }, { ix: g, iz: CITY_HI + 1, dir: 3 });
+  GATE_SLOTS.length = 0;
+  for (const g of [-at, 0, at]) GATE_SLOTS.push({ ix: CITY_HI + 1, iz: g, dir: 0 }, { ix: g, iz: CITY_LO, dir: 1 }, { ix: CITY_LO, iz: g, dir: 2 }, { ix: g, iz: CITY_HI + 1, dir: 3 });
 }
 setCityLimits(30);
 export const insideCity = (bx: number, bz: number) => bx >= CITY_LO && bx <= CITY_HI && bz >= CITY_LO && bz <= CITY_HI;
 // Distance in blocks (Chebyshev) from block (bx, bz) to the city; 0 inside.
 export const cityDistance = (bx: number, bz: number) => Math.max(CITY_LO - bx, bx - CITY_HI, CITY_LO - bz, bz - CITY_HI, 0);
-export function entryGateOf(citySeed: number): Gate { return GATES[Math.floor(hash2(citySeed, 5, 0, 0x6a7e) * GATES.length)]; }
-// The gate street's outer end, where the country road starts (centre line), and the way out.
-export function gateEnd(g: Gate): { x: number; z: number; h: number } {
+export function entryGateOf(citySeed: number): Gate { return GATE_SLOTS[Math.floor(hash2(citySeed, 5, 0, 0x6a7e) * GATE_SLOTS.length)]; }
+// A gate street's outer end, where the country road starts (centre line), and the way out.
+export function gateEnd(g: CGate): { x: number; z: number; h: number } {
+  return { x: g.x - [1, 0, -1, 0][g.dir] * STREET / 2, z: g.z - [0, -1, 0, 1][g.dir] * STREET / 2, h: g.dir * Math.PI / 2 };
+}
+// (The same for a gate slot's: the way in, which the road in arrives at before the town is built.)
+export function gateEndSlot(g: Gate): { x: number; z: number; h: number } {
   const d = BLOCK - STREET / 2;
   return { x: g.ix * BLOCK + STREET / 2 + [1, 0, -1, 0][g.dir] * d, z: g.iz * BLOCK + STREET / 2 + [0, -1, 0, 1][g.dir] * d, h: g.dir * Math.PI / 2 };
 }
@@ -96,6 +102,7 @@ export class CityPlan {
     if (this.g) return this.g;
     const G = this.buildGraph();
     this.stopSigns(G);
+    linkSignals(G);
     return G;
   }
   // All-way stops: in every town, most junctions of three or more streets that lie wholly among
@@ -124,9 +131,9 @@ export class CityPlan {
   // citygen.ts trimToOutline): with the land's edges as drawn, then half as far in, then square;
   // and if even that fails (it shouldn't), the whole square and no sea.
   private buildGraph(): CityGraph {
-    const L = this.buildLayout(), entry = GATES.indexOf(this.entryGate);
+    const L = this.buildLayout();
     for (const sc of [1, 0.5, 0]) {
-      const O = this.outlineAt(sc), T = trimToOutline(L, O, GATES, entry);
+      const O = this.outlineAt(sc), T = trimToOutline(L, O, this.entryGate, this.seed);
       if (T) { this.ol = O; return this.g = T; }
     }
     // (Laid out again without the sea: the districts by the shore, and the layout's streets
@@ -148,15 +155,14 @@ export class CityPlan {
     if (C) { if (C.dx) rows.push(Math.round((C.ez - STREET / 2) / BLOCK)); else cols.push(Math.round((C.ex - STREET / 2) / BLOCK)); }
     return new CityOutline(this.seed, this.style, { freeway: this.freeway, straightRows: rows, straightCols: cols, insetScale: scale, seaOff });
   }
-  // Whether gate i (GATES) is open: its street runs in to the town (outline.ts).
+  // Whether the town has gate i (its graph's gates: 0 the way in, then the ways out).
   gateOpen(i: number): boolean { return !!this.graph.gates[i]; }
   private buildLayout(): CityGraph {
     let river: number | undefined;
-    const opts = { lo: CITY_LO, hi: CITY_HI, gates: GATES, nameEW: streetNameEW, nameNS: streetNameNS,
+    const opts = { lo: CITY_LO, hi: CITY_HI, gates: [this.entryGate], slots: GATE_SLOTS, nameEW: streetNameEW, nameNS: streetNameNS,
       elevatedRow: (iz: number) => elevatedLine(this.style, iz), cableColumn: (ix: number) => !!this.style.cableCar && cableColumn(ix),
       oneway: (ix: number, iz: number, ew: boolean) => this.oneWayDir(ix, iz, ew, river) };
-    // (An organic town that could not put a junction at every gate is laid out warped instead:
-    // gates are found by their index.)
+    // (An organic town that could not put a junction at its way in is laid out warped instead.)
     if (this.layout === "organic") {
       // (A river through town in the same styles and odds as a warped one's, and roundabouts as
       // often as a warped town has circuses.)
@@ -173,7 +179,7 @@ export class CityPlan {
       const og = cityGraph(opts, this.seed, { river: river && !fw,   /* (with avenues too: one crossing it always does on a bridge) */ sea, avenues: fw ? [fw.avenue, ...avenues] : avenues,   /* (the freeway's laid first: the others keep off its streets) */ patch: P, cuts: this.slipCuts(),
         move: (bx, bz) => inP(bx, bz) ? [0, 0] : [(hash2(bx, bz, this.seed, 0x0a1) - 0.5) * BLOCK * 0.8, (hash2(bx, bz, this.seed, 0x0a2) - 0.5) * BLOCK * 0.8],
         relax: (bx, bz) => (inP(bx, bz) ? 0 : 1), rounds: fw ? [] : rounds });
-      if (og.gates.length === GATES.length && this.avenuesWhole(og)) return og;
+      if (og.gates.length === 1 && this.avenuesWhole(og)) return og;
       this.organicFailed = true;
     }
     const cuts = this.slipCuts();
@@ -185,7 +191,7 @@ export class CityPlan {
       // (Nor along the shore of a sea to the north or south, which it would run beside: a couple of
       // blocks clear of it. One to the east or west it runs out into: its mouth, below.)
       const SL = this.shoreLine, alongShore = (iz: number) => (SL.sea === 1 || SL.sea === 3) && Array.from({ length: CITY_HI - CITY_LO + 1 }, (_, k) => CITY_LO + k).some((bx) => SL.nearShore(bx, iz, 2.5));
-      for (let iz = CITY_LO + 2; iz <= CITY_HI - 2; iz++) if (!alongShore(iz) && ![iz, iz + 1].some((r) => opts.elevatedRow(r) || GATES.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === r) || (this.freeway && (this.freeway.dir === 0 || this.freeway.dir === 2) && Math.abs(this.freeway.iz - r) <= 1))) rows.push(iz);
+      for (let iz = CITY_LO + 2; iz <= CITY_HI - 2; iz++) if (!alongShore(iz) && ![iz, iz + 1].some((r) => opts.elevatedRow(r) || GATE_SLOTS.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === r) || (this.freeway && (this.freeway.dir === 0 || this.freeway.dir === 2) && Math.abs(this.freeway.iz - r) <= 1))) rows.push(iz);
       if (rows.length && (DEBUG_LAYOUT === "river" || hash2(this.seed, 0x1a7, 0, 3) < 0.5)) river = rows[Math.floor(hash2(this.seed, 0x1a7, 0, 4) * rows.length)];
     }
     // Kept straight: the freeway's line and the blocks either side of it (its off-ramp's), and the
@@ -241,7 +247,7 @@ export class CityPlan {
     if (!this.oneWays) return 0;
     const sides = ew ? [[ix, iz - 1], [ix, iz]] : [[ix - 1, iz], [ix, iz]];
     if (!sides.every(([bx, bz]) => this.district(bx, bz) === "downtown")) return 0;
-    if (ew ? elevatedLine(this.style, iz) || GATES.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === iz) : (!!this.style.cableCar && cableColumn(ix)) || GATES.some((g) => (g.dir === 1 || g.dir === 3) && g.ix === ix)) return 0;
+    if (ew ? elevatedLine(this.style, iz) || GATE_SLOTS.some((g) => (g.dir === 0 || g.dir === 2) && g.iz === iz) : (!!this.style.cableCar && cableColumn(ix)) || GATE_SLOTS.some((g) => (g.dir === 1 || g.dir === 3) && g.ix === ix)) return 0;
     const fw = this.freeway;
     if (fw && (ew ? (fw.dir === 0 || fw.dir === 2) && Math.abs(iz - fw.iz) <= 1 : (fw.dir === 1 || fw.dir === 3) && Math.abs(ix - fw.ix) <= 1)) return 0;
     if (river !== undefined && ew && (iz === river || iz === river + 1)) return 0;
@@ -306,7 +312,7 @@ export class CityPlan {
     for (let k = 0; k < 40 && out.length < n; k++) {
       const px = CITY_LO + 2 + Math.floor(hash2(k, 1, this.seed, 0x5b1) * (CITY_HI - CITY_LO - 4)), pz = CITY_LO + 2 + Math.floor(hash2(k, 2, this.seed, 0x5b1) * (CITY_HI - CITY_LO - 4));
       let ok = true;
-      for (let x = px; x <= px + 2 && ok; x++) for (let z = pz; z <= pz + 2 && ok; z++) if (straight(x, z) || GATES.some((g) => g.ix === x || g.iz === z)) ok = false;
+      for (let x = px; x <= px + 2 && ok; x++) for (let z = pz; z <= pz + 2 && ok; z++) if (straight(x, z) || GATE_SLOTS.some((g) => g.ix === x || g.iz === z)) ok = false;
       if (river !== undefined && pz <= river + 1 && pz + 2 >= river) ok = false;
       if (out.some(([x, z]) => Math.abs(x - px) < 4 && Math.abs(z - pz) < 4)) ok = false;
       if (circuses.some((c) => c.ix >= px - 2 && c.ix <= px + 4 && c.iz >= pz - 2 && c.iz <= pz + 4)) ok = false;
@@ -327,7 +333,7 @@ export class CityPlan {
     for (let t = 0; t < 40 && circuses.length < nc; t++) {
       const ix = CITY_LO + 3 + Math.floor(h(300 + t) * (span - 5)), iz = CITY_LO + 3 + Math.floor(h(340 + t) * (span - 5));
       let ok = !circuses.some((c) => Math.abs(c.ix - ix) < 5 && Math.abs(c.iz - iz) < 5) && !(river !== undefined && iz >= river - 1 && iz <= river + 2);
-      for (let x = ix - 2; x <= ix + 2 && ok; x++) for (let z = iz - 2; z <= iz + 2 && ok; z++) if (straight(x, z) || GATES.some((g) => g.ix === x || g.iz === z)) ok = false;
+      for (let x = ix - 2; x <= ix + 2 && ok; x++) for (let z = iz - 2; z <= iz + 2 && ok; z++) if (straight(x, z) || GATE_SLOTS.some((g) => g.ix === x || g.iz === z)) ok = false;
       if (!ok) continue;
       const round = DEBUG_LAYOUT === "round" || hash2(ix, iz, this.seed, 0x70d) < 0.5;
       // (Its name by hash, or the next one no other circus in town has.)
@@ -346,7 +352,7 @@ export class CityPlan {
         const ax = ix + dx * n, az = iz + dz * n, bx = ax + dx, bz = az + dz, kb = `${Math.min(ax, bx)},${Math.min(az, bz)}`;
         if (bx <= CITY_LO || bx >= CITY_HI + 1 || bz <= CITY_LO || bz >= CITY_HI + 1 || straight(ax, az) || straight(bx, bz) || used.has(kb)) break;
         if (river !== undefined && (Math.min(az, bz) === river)) break;
-        if (GATES.some((g) => g.ix === bx || g.iz === bz)) break;
+        if (GATE_SLOTS.some((g) => g.ix === bx || g.iz === bz)) break;
         blocks.push(kb);
       }
       return { n, blocks };
@@ -537,7 +543,7 @@ export class CityPlan {
   }
   // The freeway's curve, if it may have one (whatever the layout), and if it has one (an organic town).
   private fwc: FwCurve | null | undefined;
-  private fwCurveOf(): FwCurve | null { if (this.fwc === undefined) this.fwc = this.freeway ? freewayCurveOf(this.seed, this.freeway, GATES, seaSide(this.seed, this.style) !== null) : null; return this.fwc; }
+  private fwCurveOf(): FwCurve | null { if (this.fwc === undefined) this.fwc = this.freeway ? freewayCurveOf(this.seed, this.freeway, GATE_SLOTS, seaSide(this.seed, this.style) !== null) : null; return this.fwc; }
   get fwCurve(): FwCurve | null { return this.freeway && this.layout === "organic" ? this.fwCurveOf() : null; }
   // An organic town's freeway, for laying it out (citygen.ts): its way as an avenue, straight in
   // from its gate through the grid's patch round the interchange (FW_STRAIGHT blocks in, three
@@ -2101,8 +2107,8 @@ function buildCorners(g: Batch) {
 // the town's outermost streets and its gate streets where they run, farmland or wild land of the
 // city's biome (countryworld.ts looks), and none in the sea. The highway's corridor out of each gate stays clear: the country road is drawn there.
 function inGateCorridor(plan: CityPlan, wx: number, wz: number, margin = 13) {
-  for (const [i, g] of GATES.entries()) {
-    if (!plan.gateOpen(i)) continue;   // (a closed gate has no road out)
+  for (const g of plan.graph.gates) {
+    if (!g) continue;
     const e = gateEnd(g), fx = Math.cos(e.h), fz = -Math.sin(e.h);
     const along = (wx - e.x) * fx + (wz - e.z) * fz, across = Math.abs((wx - e.x) * -fz + (wz - e.z) * fx);
     if (along > -2 && along < (RING + 1) * BLOCK && across < margin) return true;

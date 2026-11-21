@@ -20,7 +20,7 @@ import { hash2 } from "./rng.ts";
 import { Batch } from "./geom.ts";
 import { disposeTree } from "./chunks.ts";
 import { BLOCK, STREET } from "./grid.ts";
-import { CITY_HI, CITY_LO, entryGateOf, gateEnd } from "./city.ts";
+import { CITY_HI, CITY_LO, entryGateOf, gateEndSlot } from "./city.ts";
 import type { CityPlan, Gate } from "./city.ts";
 import type { CityStyle } from "./styles.ts";
 import type { CountryRoad } from "./country.ts";
@@ -187,7 +187,7 @@ export class Frame {
   // `seaward`: the city is on the sea (outline.ts), always on the left of the way in, so the far
   // side's end bends right (+n), away from it, as the entry side's does.
   static ofCitySeed(seed: number, name: string, merge: boolean, g: Gate, seaward = false, curve: FwCurve | null = null): Frame {
-    const e = gateEnd(g), f = new Frame(e.x, e.z, e.h + Math.PI);
+    const e = gateEndSlot(g), f = new Frame(e.x, e.z, e.h + Math.PI);
     // The city's streets along the line, as distances out of the gate end.
     const lo = CITY_LO * BLOCK, hi = (CITY_HI + 1) * BLOCK, along = g.dir === 0 || g.dir === 2;
     const d = (u: number) => along ? (u - e.x) * f.ox : (u - e.z) * f.oz;

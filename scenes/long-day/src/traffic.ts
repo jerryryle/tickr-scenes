@@ -13,7 +13,7 @@ import type { CarKind } from "./cars.ts";
 import { SPECS, TRAILER } from "./truck.ts";
 import { KINGPIN_TO_AXLES } from "./hitch.ts";
 import type { TruckModel } from "./truck.ts";
-import { signalState } from "./signals.ts";
+import { signalsInStep, signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
 import { CityPlan, pick } from "./city.ts";
 import type { CityGraph } from "./citygraph.ts";
@@ -65,6 +65,7 @@ const STUCK_GONE = 55;   // s a vehicle may stand before it is gone (longer than
 // through the junction it waits at), the room left it, how fast they back up or pull on (m/s), and
 // how long one can stay stuck in its way.
 const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 12, CLEAR_LOOK = 30;
+const CLEAR_FINE = 0.25, CLEAR_FINE_NEAR = 6;   // m: how finely the truck's way ahead is looked at near its nose, and how far (clearWay)
 const CLEAR_WOBBLE = 0.05;   // m: how much circles' gaps to the truck wobble along a lane beside it (clearWay)
 const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
 const DROP_DEEP = 0.6;   // m: how deep inside a parked truck's circles a car is dropped (dropInside)
@@ -253,13 +254,16 @@ export class Traffic {
         const th = this.gw0.h + (tp.yaw ?? 0), kx = this.gw0.x + Math.cos(this.gw0.h) * fw, kz = this.gw0.z - Math.sin(this.gw0.h) * fw;
         ax = kx - Math.cos(th) * K; az = kz + Math.sin(th) * K;
       }
-      for (let a = 0; a <= CLEAR_AHEAD; a += 1) {
+      // (Every CLEAR_FINE m over the first FINE_NEAR m, as truckStop looks there: round a tight turn
+      // its nose swings further between metres than the room it is left.)
+      for (let a = 0; a <= CLEAR_AHEAD; a += a < CLEAR_FINE_NEAR ? CLEAR_FINE : 1) {
         tp.path.peek(Math.min(tp.path.length, tp.s + a), this.gw0);
         const q = this.gw0, fx = Math.cos(q.h), fz = -Math.sin(q.h);
         // (Circles close enough together, every metre on and 0.75 m along its body, that the way they
         // cover is as wide as truckStop's (1.25 m and its margin either side): a car clear of these is
         // clear of what the truck waits for; one in that, between them, would have each wait on the other.)
-        for (let b = tp.rear; b < tp.front + 0.375; b += 0.75) { const u = Math.min(b, tp.front); Z.push({ x: q.x + fx * u, z: q.z + fz * u, r: 1.3 }); }
+        // (Out to its nose itself, the last circle there.)
+        for (let b = tp.rear; ; b += 0.75) { const u = Math.min(b, tp.front); Z.push({ x: q.x + fx * u, z: q.z + fz * u, r: 1.3 }); if (u >= tp.front) break; }
         if (fw === undefined) continue;
         const kx = q.x + fx * fw, kz = q.z + fz * fw, d = Math.hypot(kx - ax, kz - az) || 1;
         ax = kx - (kx - ax) / d * K; az = kz - (kz - az) / d * K;
@@ -909,16 +913,20 @@ export class Traffic {
     // (Or the way out of the junction has filled up since it booked: it waits at its line, out of
     // the junction, rather than stop in it in others' way.)
     // (A light just past the junction, closer than the car's length beyond its far mouth, that isn't
-    // green: it would stop in the junction for it.)
+    // green: it would stop in the junction for it. Not one in step with this one along the street
+    // between (signals.ts linkSignals): that turns green as this one's cross traffic does, so it
+    // waits there harmlessly.)
     let redBeyond = false;
+    const outArm = N.arms.findIndex((a) => a.street === n.to >> 1), outPhase = outArm >= 0 ? N.phaseOf[outArm] : -1;
     for (const [Q, o] of [[c.path, 0], [c.next, c.path.length]] as [Path | null, number][]) if (Q) for (const sg of Q.signals) {
       const at = o + sg.sLine - (off + n.sOut);
-      if (sg.node !== n.node && at > -2 && at < c.kind.len + 3 && signalState(G.nodes[sg.node], sg.phase, simTime, seed, prs) !== "green") redBeyond = true;
+      if (sg.node !== n.node && at > -2 && at < c.kind.len + 3 && !(outPhase >= 0 && signalsInStep(N, outPhase, G.nodes[sg.node], sg.phase, seed)) && signalState(G.nodes[sg.node], sg.phase, simTime, seed, prs) !== "green") redBeyond = true;
     }
-    // (Kept from going a good while by that light on its own greens, theirs never coming together:
-    // it goes anyway, as drivers do, and waits at it with its tail in the junction.)
+    // (Kept from going a good while by that light, theirs never green with its own: it goes anyway,
+    // as drivers do, and waits at it with its tail in the junction. The while counted standing at
+    // its own line through its red too, so it goes on its next green, not after greens' worth.)
     if (c.v > 0.5) c.beyondT = 0;
-    else if (redBeyond && sigOk) c.beyondT = (c.beyondT ?? 0) + SIM_DT;
+    else if (redBeyond && (sigOk || dLine < 2.5)) c.beyondT = (c.beyondT ?? 0) + SIM_DT;
     if ((c.beyondT ?? 0) > 15) redBeyond = false;
     const exitBlocked = redBeyond || this.boxBlocked(c) !== null;
     // (Nor while it holds at its line for the truck to go by: its turn comes after the truck's.)
@@ -1383,6 +1391,13 @@ export class Traffic {
       if (c.v === 0 && c.acc < 0) c.acc = 0;
     }
     let ds = c.v * dt;
+    // (Moved over off its lane's line round a curve, its own line is longer or shorter than the
+    // lane's by its offset times the turn: it goes along the lane that much slower or faster, so the
+    // car itself keeps the speed it has, not swinging wide round a corner faster than it drives.)
+    if (ds > 0 && Math.abs(c.dodge) > 0.05 && c.s + 1 <= p.length) {
+      const h0 = p.peek(c.s, this.gwS).h, h1 = p.peek(c.s + 1, this.gwS).h;
+      ds /= THREE.MathUtils.clamp(1 + c.dodge * Math.atan2(Math.sin(h1 - h0), Math.cos(h1 - h0)), 0.5, 2);
+    }
     if (c.s + ds > hardStop) { ds = Math.max(0, hardStop - c.s); c.v = 0; }
     // (Never on into the truck, whatever it has misjudged: a step that would take any of it into
     // the truck's body, or nearer it once there, swinging its tail round a turn beside it, cutting

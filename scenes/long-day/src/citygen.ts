@@ -6,13 +6,14 @@
 // Every feature (avenues, rings, parks, the river, one-ways...) is laid the same in any of them.
 import { CityGraph, clipHalf, inPoly } from "./citygraph.ts";
 import type { CGate, CStreet } from "./citygraph.ts";
-import { BLOCK, STREET } from "./grid.ts";
+import { BLOCK, RING, STREET } from "./grid.ts";
 import { hash2 } from "./rng.ts";
 
 export interface GridGate { ix: number; iz: number; dir: number }
 export interface GridOpts {
   lo: number; hi: number;                       // the city's blocks: [lo, hi] on both axes
-  gates: GridGate[];                            // perimeter nodes and the way out of town (0 east, 1 north, 2 west, 3 south)
+  gates: GridGate[];                            // perimeter nodes and the way out of town (0 east, 1 north, 2 west, 3 south): the way in
+  slots?: GridGate[];                           // (where gates may be: a river runs in between them; gates if none)
   nameEW: (iz: number) => string; nameNS: (ix: number) => string;
   elevatedRow: (iz: number) => boolean;         // an elevated line along the east-west street of node row iz
   cableColumn: (ix: number) => boolean;         // a cable-car line along the north-south street of node column ix
@@ -76,20 +77,29 @@ type Seg = { ix: number; iz: number; ew: boolean };
 // Cuts a layout's graph (over the whole square) back to the town's outline: a block is kept if its
 // middle is on the land (a river's water too), the rest dropped (beyond the land's edge, or in
 // the sea). A street stays if it borders a kept block: so the land's edge streets stay, the
-// shore's streets with the sea beyond them, and a river's bridges. Then each gate that can be open
-// gets its street: straight in along its line from its outer end to the first street it meets,
-// split there; or where that is within SPLIT_MIN of a node (a piece that short has no room for its
-// junctions' corners), at that node, moved onto the line if it isn't on it (as an organic town's
-// corners move onto its gates) where its streets are all straight. Closed if its street would
-// cross the sea or meets nothing. Null if the town falls apart or the entry gate can't be reached.
+// shore's streets with the sea beyond them, and a river's bridges.
+// Then the gates, each a street out of town to an outer node a block past the square. The entry
+// gate first (its slot is the city's seed's, known before the town is: the road in arrives on its
+// line): straight in along its line from its outer end to the first street it meets, split there;
+// or where that is within SPLIT_MIN of a node (a piece that short has no room for its junctions'
+// corners), at that node, moved onto the line if it isn't on it where its streets are all
+// straight. Null if it meets nothing, crosses the sea, or the town falls apart.
+// Then the exits, where the town's own streets meet its edge, anywhere along a side (none on the
+// sea's): from a junction with a street heading straight in (within EXIT_ALIGN), straight out
+// across nothing else, off the sea, the river and the lines running out of town (exitClear), clear
+// of the corners and of the way in; up to three a side, EXIT_GAP apart, the straightest first.
 export interface TrimOutline {
+  readonly X0: number; readonly X1: number; readonly Z0: number; readonly Z1: number;
+  readonly sea: number | null;
   inLand(x: number, z: number): boolean;
   inSea(x: number, z: number): boolean;
-  gateLine(i: number): { x: number; z: number; dx: number; dz: number };
-  gatePossible(i: number): boolean;
+  gateLine(g: GridGate): { x: number; z: number; dx: number; dz: number };
+  gatePossible(g: GridGate): boolean;
+  exitClear(side: number, along: number): boolean;
 }
 const SPLIT_MIN = 24, GATE_REACH = 4.5 * BLOCK;
-export function trimToOutline(G: CityGraph, O: TrimOutline, gates: { ix: number; iz: number; dir: number }[], entry: number): CityGraph | null {
+const EXIT_ALIGN = Math.cos(35 * Math.PI / 180), EXIT_SIDE = 0.5, EXIT_CORNER = 1.5 * BLOCK, EXIT_ENTRY = 2.5 * BLOCK, EXIT_GAP = 3 * BLOCK, EXIT_PER_SIDE = 3, EXIT_SEA_LAT = 13;
+export function trimToOutline(G: CityGraph, O: TrimOutline, entry: GridGate, seed: number): CityGraph | null {
   const kind = G.blocks.map((b) => (O.inLand(b.cx, b.cz) ? (b.water ? 2 : 1) : 0));
   const keepSt = G.streets.map((st) => st.gate < 0 && [G.faceBlock[st.id * 2], G.faceBlock[st.id * 2 + 1]].some((b) => b >= 0 && kind[b] > 0));
   const g = new CityGraph(), nodeOf = new Map<number, number>();
@@ -100,19 +110,17 @@ export function trimToOutline(G: CityGraph, O: TrimOutline, gates: { ix: number;
   const pieces: Piece[] = [];
   G.streets.forEach((st, i) => { if (keepSt[i]) pieces.push({ a: node(st.n0), b: node(st.n1), st, s0: 0, s1: st.len }); });
   if (!pieces.length) return null;
-  // Gate streets: the ray in along each gate's line, to the first piece it meets.
-  const out: (CGate | null)[] = gates.map(() => null), gateSt: { i: number; inner: number; outer: number }[] = [];
   const P = { x: 0, z: 0, h: 0 };
   // (A piece's point at s: a straight one's between its nodes as they are now, one perhaps moved
-  // onto an earlier gate's line; an arc's, whose nodes don't move, on its old street.)
+  // onto the entry's line; an arc's, whose nodes don't move, on its old street.)
   const ptOf = (pc: Piece, s: number) => {
     if (Math.abs(pc.st.k) > 1e-9) { G.streetPt(pc.st.id, s, 0, P); return; }
     const A = g.nodes[pc.a], B = g.nodes[pc.b], t = (s - pc.s0) / (pc.s1 - pc.s0);
     P.x = A.x + (B.x - A.x) * t; P.z = A.z + (B.z - A.z) * t;
   };
-  gates.forEach((gt, i) => {
-    if (!O.gatePossible(i)) return;
-    const L = O.gateLine(i);
+  // The first piece the ray from (x, z) along (dx, dz) meets past `from` metres: its distance, the
+  // piece and where along it; d Infinity if none.
+  const ray = (x: number, z: number, dx: number, dz: number, from: number) => {
     let best = Infinity, bp = -1, bs = 0;
     pieces.forEach((pc, pi) => {
       // (The piece as a polyline: straight, or an arc in 4 m steps.)
@@ -122,59 +130,134 @@ export function trimToOutline(G: CityGraph, O: TrimOutline, gates: { ix: number;
         const s = pc.s0 + (pc.s1 - pc.s0) * k / n;
         ptOf(pc, s);
         if (k > 0) {
-          const ex = P.x - px, ez = P.z - pz, den = L.dx * ez - L.dz * ex;
-          const wx = px - L.x, wz = pz - L.z;
+          const ex = P.x - px, ez = P.z - pz, den = dx * ez - dz * ex;
+          const wx = px - x, wz = pz - z;
           if (Math.abs(den) < 1e-9) {
             // (Along the line: its nearer end, if it lies on the line ahead.)
-            if (Math.abs(wx * L.dz - wz * L.dx) < 0.5) for (const [qx, qz, qs] of [[px, pz, s - (pc.s1 - pc.s0) / n], [P.x, P.z, s]]) {
-              const d = (qx - L.x) * L.dx + (qz - L.z) * L.dz;
-              if (d >= 0 && d < best) { best = d; bp = pi; bs = qs; }
+            if (Math.abs(wx * dz - wz * dx) < 0.5) for (const [qx, qz, qs] of [[px, pz, s - (pc.s1 - pc.s0) / n], [P.x, P.z, s]]) {
+              const d = (qx - x) * dx + (qz - z) * dz;
+              if (d >= from && d < best) { best = d; bp = pi; bs = qs; }
             }
           } else {
-            const d = (wx * ez - wz * ex) / den, u = (wx * L.dz - wz * L.dx) / den;
-            if (d >= 0 && u >= -1e-6 && u <= 1 + 1e-6 && d < best) { best = d; bp = pi; bs = s - (pc.s1 - pc.s0) / n + u * (pc.s1 - pc.s0) / n; }
+            const d = (wx * ez - wz * ex) / den, u = (wx * dz - wz * dx) / den;
+            if (d >= from && u >= -1e-6 && u <= 1 + 1e-6 && d < best) { best = d; bp = pi; bs = s - (pc.s1 - pc.s0) / n + u * (pc.s1 - pc.s0) / n; }
           }
         }
         px = P.x; pz = P.z;
       }
     });
-    if (bp < 0 || best > GATE_REACH || best < BLOCK - 1) return;
-    for (let d = 0; d < best; d += 4) if (O.inSea(L.x + L.dx * d, L.z + L.dz * d)) return;
-    // The inner end: a node of the piece if one is near (moved onto the line), else the piece split there.
-    const pc = pieces[bp];
-    let inner: number;
-    if (bs - pc.s0 < SPLIT_MIN || pc.s1 - bs < SPLIT_MIN) {
-      inner = bs - pc.s0 < pc.s1 - bs ? pc.a : pc.b;
-      const N = g.nodes[inner], hx = L.x + L.dx * best, hz = L.z + L.dz * best;
-      if (Math.hypot(N.x - hx, N.z - hz) > 0.5) {
-        if (pieces.some((q) => (q.a === inner || q.b === inner) && Math.abs(q.st.k) > 1e-9) || gateSt.some((q) => q.inner === inner)) return;
-        N.x = hx; N.z = hz;
-      }
-    } else {
-      ptOf(pc, bs);
-      inner = g.addNode(P.x, P.z, 7000 + i, 7000);
-      pieces.splice(bp, 1, { ...pc, b: inner, s1: bs }, { ...pc, a: inner, s0: bs });
+    return { d: best, pi: bp, s: bs };
+  };
+  // The entry gate's street: the ray in along its line, to the first piece it meets.
+  if (!O.gatePossible(entry)) return null;
+  const L = O.gateLine(entry);
+  const hit = ray(L.x, L.z, L.dx, L.dz, 0), best = hit.d;
+  if (hit.pi < 0 || best > GATE_REACH || best < BLOCK - 1) return null;
+  for (let d = 0; d < best; d += 4) if (O.inSea(L.x + L.dx * d, L.z + L.dz * d)) return null;
+  // (Its inner end: a node of the piece if one is near (moved onto the line), else the piece split there.)
+  const pc = pieces[hit.pi];
+  let inner: number;
+  if (hit.s - pc.s0 < SPLIT_MIN || pc.s1 - hit.s < SPLIT_MIN) {
+    inner = hit.s - pc.s0 < pc.s1 - hit.s ? pc.a : pc.b;
+    const N = g.nodes[inner], hx = L.x + L.dx * best, hz = L.z + L.dz * best;
+    if (Math.hypot(N.x - hx, N.z - hz) > 0.5) {
+      if (pieces.some((q) => (q.a === inner || q.b === inner) && Math.abs(q.st.k) > 1e-9)) return null;
+      N.x = hx; N.z = hz;
     }
-    const outer = g.addNode(L.x, L.z, 8000 + i, 8000);
-    gateSt.push({ i, inner, outer });
+  } else {
+    ptOf(pc, hit.s);
+    inner = g.addNode(P.x, P.z, 7000, 7000);
+    pieces.splice(hit.pi, 1, { ...pc, b: inner, s1: hit.s }, { ...pc, a: inner, s0: hit.s });
+  }
+  const gateSt: { inner: number; ox: number; oz: number; dir: number; name: string }[] = [];
+  const ew0 = entry.dir === 0 || entry.dir === 2, src = G.gates[0] ? G.streets[G.gates[0]!.street] : null;
+  gateSt.push({ inner, ox: L.x, oz: L.z, dir: entry.dir, name: src?.name ?? (ew0 ? `${entry.iz}` : `${entry.ix}`) });
+  // The exits. (Each node's pieces: the way each heads off from it, a few metres on.)
+  const DX = [1, 0, -1, 0], DZ = [0, -1, 0, 1];
+  const arms = g.nodes.map(() => [] as { dx: number; dz: number; pc: Piece }[]);
+  for (const q of pieces) for (const [n, s] of [[q.a, Math.min(q.s1, q.s0 + 4)], [q.b, Math.max(q.s0, q.s1 - 4)]] as const) {
+    ptOf(q, s);
+    const N = g.nodes[n], l = Math.hypot(P.x - N.x, P.z - N.z) || 1;
+    arms[n].push({ dx: (P.x - N.x) / l, dz: (P.z - N.z) / l, pc: q });
+  }
+  const edgeOf = (s: number) => (s === 0 ? O.X1 : s === 1 ? O.Z0 : s === 2 ? O.X0 : O.Z1);
+  const eAlong = ew0 ? L.z : L.x;
+  const cands: { n: number; s: number; along: number; score: number; name: string }[] = [];
+  for (let n = 0; n < g.nodes.length; n++) {
+    if (n === inner || arms[n].length < 2 || arms[n].length > 3 || arms[n].some((a) => a.pc.st.ring)) continue;
+    const N = g.nodes[n];
+    for (let s = 0; s < 4; s++) {
+      if (s === O.sea) continue;
+      const ox = DX[s], oz = DZ[s], ew = s === 0 || s === 2, along = ew ? N.z : N.x;
+      // (How far out to the outer line, a block past the square's edge.)
+      const len = (ew ? (edgeOf(s) - N.x) * ox : (edgeOf(s) - N.z) * oz) + BLOCK;
+      if (len > GATE_REACH || len < BLOCK - 1) continue;
+      const lo = ew ? O.Z0 : O.X0, hi = ew ? O.Z1 : O.X1;
+      if (along < lo + EXIT_CORNER || along > hi - EXIT_CORNER) continue;
+      if (s === entry.dir && Math.abs(along - eAlong) < EXIT_ENTRY) continue;
+      // (A street of it straight in, none heading out.)
+      let align = -1, name = "";
+      for (const a of arms[n]) { const c = -(a.dx * ox + a.dz * oz); if (c > align) { align = c; name = a.pc.st.name; } }
+      if (align < EXIT_ALIGN || arms[n].some((a) => a.dx * ox + a.dz * oz > EXIT_SIDE)) continue;
+      if (!O.exitClear(s, along)) continue;
+      // (Out across nothing, nor close beside anything; off the sea; and not along the river.)
+      if (ray(N.x, N.z, ox, oz, 1).d <= len) continue;
+      if (ray(N.x - oz * 10, N.z + ox * 10, ox, oz, 12).d <= len || ray(N.x + oz * 10, N.z - ox * 10, ox, oz, 12).d <= len) continue;
+      let ok = true;
+      // (Its country road clear of the sea too, out over the outskirts, where the shore runs on.)
+      for (let d = 0; d <= len + RING * BLOCK && ok; d += 4) for (const lat of [-EXIT_SEA_LAT, 0, EXIT_SEA_LAT]) if (O.inSea(N.x + ox * d - oz * lat, N.z + oz * d + ox * lat)) ok = false;
+      for (const lat of [-0.6 * BLOCK, -25, 25, 0.6 * BLOCK]) for (const inw of [15, 40]) {
+        const B = G.blockAt(N.x - ox * inw - oz * lat, N.z - oz * inw + ox * lat);
+        if (B?.water) ok = false;
+      }
+      if (!ok) continue;
+      cands.push({ n, s, along, name, score: align + 0.3 * hash2(N.kx, N.kz, seed, 0xe817) });
+    }
+  }
+  cands.sort((p, q) => q.score - p.score);
+  // (A gate street's ends; and whether two cross, or pass within a street's width: near a corner,
+  // one out of each side, or one beside the way in.)
+  const seg = (n: number, s: number): [number, number, number, number] => {
+    const N = g.nodes[n], ew = s === 0 || s === 2, e = edgeOf(s) + (ew ? DX[s] : DZ[s]) * BLOCK;
+    return [N.x, N.z, ew ? e : N.x, ew ? N.z : e];
+  };
+  const near = (A: number[], B: number[]) => {
+    const pd = (px: number, pz: number, S: number[]) => {
+      const ex = S[2] - S[0], ez = S[3] - S[1], t = Math.max(0, Math.min(1, ((px - S[0]) * ex + (pz - S[1]) * ez) / (ex * ex + ez * ez || 1)));
+      return Math.hypot(S[0] + ex * t - px, S[1] + ez * t - pz);
+    };
+    const cr = (a: number[], b: number[], c: number[]) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    const a = [A[0], A[1]], b = [A[2], A[3]], c = [B[0], B[1]], d = [B[2], B[3]];
+    if (cr(a, b, c) * cr(a, b, d) < 0 && cr(c, d, a) * cr(c, d, b) < 0) return true;
+    return Math.min(pd(A[0], A[1], B), pd(A[2], A[3], B), pd(B[0], B[1], A), pd(B[2], B[3], A)) < STREET * 2;
+  };
+  const entrySeg = [g.nodes[inner].x, g.nodes[inner].z, L.x, L.z];
+  const chosen: typeof cands = [], segs: number[][] = [];
+  for (const c of cands) {
+    if (chosen.filter((q) => q.s === c.s).length >= EXIT_PER_SIDE) continue;
+    if (chosen.some((q) => q.n === c.n || (q.s === c.s && Math.abs(q.along - c.along) < EXIT_GAP))) continue;
+    const S = seg(c.n, c.s);
+    if (near(S, entrySeg) || segs.some((T) => near(S, T))) continue;
+    chosen.push(c); segs.push(S);
+  }
+  // (Round each side in turn, along it: a steady order for the journey's choice.)
+  chosen.sort((p, q) => p.s - q.s || p.along - q.along);
+  for (const c of chosen) { const S = seg(c.n, c.s); gateSt.push({ inner: c.n, ox: S[2], oz: S[3], dir: c.s, name: c.name }); }
+  for (const q of pieces) {
+    G.streetPt(q.st.id, q.s0, 0, P);
+    g.addStreet(q.a, q.b, { ...opts(q.st), h0: P.h, len: q.s1 - q.s0 });
+  }
+  gateSt.forEach((q, i) => {
+    const outer = g.addNode(q.ox, q.oz, 8000 + i, 8000);
+    const sid = g.addStreet(q.inner, outer, { name: q.name, inCity: false });
+    g.streets[sid].gate = i;
+    g.gates.push({ node: q.inner, street: sid, out: 1, dir: q.dir, x: q.ox, z: q.oz });
   });
-  if (!gateSt.some((q) => q.i === entry)) return null;
-  for (const pc of pieces) {
-    G.streetPt(pc.st.id, pc.s0, 0, P);
-    g.addStreet(pc.a, pc.b, { ...opts(pc.st), h0: P.h, len: pc.s1 - pc.s0 });
-  }
-  for (const q of gateSt) {
-    const gt = gates[q.i], ew = gt.dir === 0 || gt.dir === 2, src = G.gates[q.i] ? G.streets[G.gates[q.i]!.street] : null;
-    const sid = g.addStreet(q.inner, q.outer, { name: src?.name ?? (ew ? `${gt.iz}` : `${gt.ix}`), inCity: false });
-    g.streets[sid].gate = q.i;
-    out[q.i] = { node: q.inner, street: sid, out: 1 };
-  }
-  g.gates.push(...out);
   g.finish();
   // (Connected: every node reached from the entry gate's.)
   const adj = g.nodes.map(() => [] as number[]);
   for (const st of g.streets) { adj[st.n0].push(st.n1); adj[st.n1].push(st.n0); }
-  const seen = new Set([out[entry]!.node]), todo = [out[entry]!.node];
+  const seen = new Set([g.gates[0]!.node]), todo = [g.gates[0]!.node];
   while (todo.length) for (const n of adj[todo.pop()!]) if (!seen.has(n)) { seen.add(n); todo.push(n); }
   if (seen.size !== g.nodes.length) return null;
   // The blocks' flags from the old graph's (a river's water, a park), and a block the kept streets
@@ -369,13 +452,13 @@ export function cityGraph(o: GridOpts, seed: number, x: CityOpts = {}): CityGrap
   // The river's line: given, or from the middle of a gap between gates on the west edge to one on
   // the east (the same gap or the next), meandering between (none at its ends, so it meets the
   // edges square); out to a sea to the north or south, bending round to run down to it.
-  const gz = [...new Set(o.gates.filter((g) => g.dir === 0 || g.dir === 2).map((g) => at(g.iz)))].sort((p, q) => p - q);
+  const gz = [...new Set((o.slots ?? o.gates).filter((g) => g.dir === 0 || g.dir === 2).map((g) => at(g.iz)))].sort((p, q) => p - q);
   const gaps = gz.slice(1).map((z, i) => (z + gz[i]) / 2);
   const river = !!x.riverLine || (!!x.river && gaps.length > 0);
   const gi = Math.floor(h(1) * gaps.length), go = Math.max(0, Math.min(gaps.length - 1, gi + Math.floor(h(2) * 3) - 1));
   const zIn = gaps[gi] ?? 0, zOut = gaps[go] ?? 0, amp = (0.6 + 0.9 * h(3)) * BLOCK, waves = 1 + Math.floor(h(4) * 3), phase = h(5) * Math.PI * 2;
   const sea = x.sea, northSouth = !!sea && (sea.side === 1 || sea.side === 3);
-  const gx = [...new Set(o.gates.filter((g) => g.dir === 1 || g.dir === 3).map((g) => at(g.ix)))].sort((p, q) => p - q);
+  const gx = [...new Set((o.slots ?? o.gates).filter((g) => g.dir === 1 || g.dir === 3).map((g) => at(g.ix)))].sort((p, q) => p - q);
   const gapsX = gx.slice(1).map((v, i) => (v + gx[i]) / 2);
   const fromEast = h(6) < 0.5, xOut = gapsX[Math.floor(h(7) * gapsX.length)] ?? (X0 + X1) / 2, zSea = sea?.side === 1 ? Z0 : Z1;
   let rLine: P[] = x.riverLine ?? [];
@@ -714,7 +797,7 @@ export function cityGraph(o: GridOpts, seed: number, x: CityOpts = {}): CityGrap
     const ew = gt.dir === 0 || gt.dir === 2;
     const sid = g.addStreet(inner.id, outer, { name: ew ? o.nameEW(gt.iz) : o.nameNS(gt.ix), inCity: false });
     g.streets[sid].gate = i;
-    g.gates.push({ node: inner.id, street: sid, out: 1 });
+    g.gates.push({ node: inner.id, street: sid, out: 1, dir: gt.dir, x: at(ox), z: at(oz) });
   });
   g.finish();
   ringsDone(g, ringVerts.flatMap((r) => nodeOf.get(r) ?? []), islands);

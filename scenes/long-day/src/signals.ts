@@ -18,7 +18,44 @@ export const SIGNAL_CYCLE = 2 * SIG_SLOT;            // a two-phase intersection
 const SIGNAL_WRAP = 12 * SIG_SLOT;                   // what the lamps' time wraps at: a whole number of cycles of 2, 3 or 4 phases
 export type SignalColor = "green" | "yellow" | "red";
 export const signalCycle = (n: CNode) => Math.max(2, n.phases) * SIG_SLOT;
-export function signalOffset(n: CNode, seed: number) { return hash2(n.kx, n.kz, seed, 0x51c) * signalCycle(n); }
+export function signalOffset(n: CNode, seed: number) {
+  const k = n.sigKey, C = signalCycle(n);
+  return k ? (hash2(k[0], k[1], seed, 0x51c) * C + k[2]) % C : hash2(n.kx, n.kz, seed, 0x51c) * C;
+}
+// Lights too close together to stop between (the street between them shorter than a bus and a
+// little: one stopped at the far light has its tail in the near junction, traffic.ts redBeyond)
+// work as one: the far one's phase for that street green with the near one's, both ways along it,
+// as one controller runs them. (Apart, each with its own offset, their greens may never meet, and
+// a car waits through two lights' cycles at the first, its queue behind it.) Only lights of as many
+// phases: their cycles must be the same length to keep in step. Linked in a chain
+// from the first of each, each keyed by that one's key, its offset on by the phases between.
+// Whether light a's phase pa and light b's phase pb are green together, always: lights of as many
+// phases whose offsets differ by the phases between (linkSignals lines a short street's two ends up
+// so). Two lights merely in one chain aren't: a third short street between two of them isn't lined up.
+export function signalsInStep(a: CNode, pa: number, b: CNode, pb: number, seed: number) {
+  if (a === b || a.phases !== b.phases || (!a.sigKey && !b.sigKey)) return false;
+  const C = signalCycle(a), d = ((signalOffset(b, seed) - signalOffset(a, seed) - (pb - pa) * SIG_SLOT) % C + C) % C;
+  return d < 1e-6 || C - d < 1e-6;
+}
+const LINK_ROOM = 18;   // m: the most clear street between the two junctions' mouths for which they are linked
+export function linkSignals(G: CityGraph) {
+  for (const N of G.nodes) if (N.control === "signal") delete N.sigKey;
+  const root = new Map<number, [number, number, number]>();   // node -> its chain's first key, and seconds on from it
+  for (const A of G.nodes) {
+    if (A.control !== "signal") continue;
+    for (const [ai, a] of A.arms.entries()) {
+      const st = G.streets[a.street], B = G.nodes[a.end === 0 ? st.n1 : st.n0];
+      if (B === A || B.control !== "signal" || B.phases !== A.phases || !st.inCity || st.ring) continue;
+      const bi = B.arms.findIndex((b) => b.street === a.street && b.end !== a.end);
+      if (bi < 0 || st.len - a.mouth - B.arms[bi].mouth > LINK_ROOM) continue;
+      if (root.has(B.id)) continue;   // (B already in a chain, or the first of one: left as it is)
+      const rA = root.get(A.id) ?? [A.kx, A.kz, 0];
+      root.set(A.id, rA);
+      const k: [number, number, number] = [rA[0], rA[1], rA[2] + (B.phaseOf[bi] - A.phaseOf[ai]) * SIG_SLOT + signalCycle(A) * 4];
+      root.set(B.id, k); B.sigKey = k;
+    }
+  }
+}
 // The colour of `phase` at node n with no priority request, `t` seconds into its cycle.
 function cycleColor(n: CNode, phase: number, time: number, seed: number): [SignalColor, number] {
   const t = (time + signalOffset(n, seed)) % signalCycle(n), slot = Math.floor(t / SIG_SLOT), w = t - slot * SIG_SLOT;

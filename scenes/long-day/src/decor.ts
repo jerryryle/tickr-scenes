@@ -11,7 +11,7 @@ import { facadeBox } from "./facade.ts";
 import { FACADE } from "./facadetiles.ts";
 import { FLAG_WAVE, NEON_BLINK, NEON_CHASE, NEON_STEADY } from "./signals.ts";
 import type { CityStyle } from "./styles.ts";
-import { C, CITY_HI, CITY_LO, CityPlan, cityTree, CS, faceYaw, GATES, inset, irange, pick, range, shade, streetSide } from "./city.ts";
+import { C, CITY_HI, CITY_LO, CityPlan, cityTree, CS, faceYaw, GATE_SLOTS, inset, irange, pick, range, shade, streetSide } from "./city.ts";
 import { BLOCK, CURB_H, STREET } from "./grid.ts";
 import type { District, Rand, Rect } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
@@ -249,7 +249,7 @@ export const ELEVATED_REACH = 2500;
 // of a gate's row on the east or west side (the line runs straight out of town both ways, and
 // there it would run out over or right beside the highway).
 export function elevatedLine(style: CityStyle, cz: number) {
-  return !!style.elevated && elevatedRow(cz) && cz >= CITY_LO && cz <= CITY_HI && !GATES.some((g) => (g.dir === 0 || g.dir === 2) && Math.abs(g.iz - cz) <= 1);
+  return !!style.elevated && elevatedRow(cz) && cz >= CITY_LO && cz <= CITY_HI && !GATE_SLOTS.some((g) => (g.dir === 0 || g.dir === 2) && Math.abs(g.iz - cz) <= 1);
 }
 
 // One block's length of the line's deck, from x0 (block-local x from 0 to BLOCK otherwise): the

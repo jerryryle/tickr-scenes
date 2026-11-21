@@ -2,8 +2,9 @@
 // (citygen.ts) lays its streets out over the whole square; trimToOutline (citygen.ts) then cuts
 // the graph back to this, each side's land edge standing in from the square by `inset` (smooth
 // noise, up to INSET_MAX), and in a coastal or port city the sea coming in over one side to its
-// `shore` line, with bays and headlands. The gates keep their slots in GATES and their outer ends;
-// their streets run in to wherever the land begins, and a gate in the sea is closed.
+// `shore` line, with bays and headlands. The way in keeps its slot (GATE_SLOTS) and its outer end; its
+// street runs in to wherever the land begins. The ways out are where the land's streets meet its
+// edge, off the sea and the lines running out of town (exitClear).
 //
 // The sea is always on the left of the way into town (the entry gate's side turned a quarter
 // left), so it is never the side the truck comes in by, nor the far side the freeway leaves by;
@@ -16,7 +17,7 @@
 // land lies over the sea there.)
 import { BLOCK, STREET } from "./grid.ts";
 import { hash2 } from "./rng.ts";
-import { CITY_HI, CITY_LO, entryGateOf, GATES } from "./city.ts";
+import { CITY_HI, CITY_LO, entryGateOf } from "./city.ts";
 import type { Gate } from "./city.ts";
 import type { CityStyle } from "./styles.ts";
 import { DEBUG_SEA } from "./debug.ts";
@@ -130,19 +131,28 @@ export class CityOutline {
     for (let s = 0; s < 4; s++) if (s !== this.sea && this.inward(s, x, z) < this.inset(s, this.along(s, x, z))) return false;
     return !this.inSea(x, z) && x >= this.X0 - 1 && x <= this.X1 + 1 && z >= this.Z0 - 1 && z <= this.Z1 + 1;
   }
-  // Gate i's line: its outer end (the gate street's outer node) and the way in.
-  gateLine(i: number) {
-    const g = GATES[i], at = (k: number) => k * BLOCK + STREET / 2;
+  // A gate slot's line: its outer end (the gate street's outer node) and the way in.
+  gateLine(g: Gate) {
+    const at = (k: number) => k * BLOCK + STREET / 2;
     return { x: at(g.ix + DX[g.dir]), z: at(g.iz + DZ[g.dir]), dx: -DX[g.dir], dz: -DZ[g.dir] };
   }
-  // Whether gate i can be open: not on the sea side, and its line not out in the sea (trimToOutline
-  // also closes one whose street in would cross the sea).
-  gatePossible(i: number) {
-    const g = GATES[i];
+  // Whether a gate slot can be open: not on the sea side, and its line not out in the sea
+  // (trimToOutline also refuses one whose street in would cross the sea).
+  gatePossible(g: Gate) {
     if (g.dir === this.sea) return false;
-    const L = this.gateLine(i);
+    const L = this.gateLine(g);
     for (let d = 0; d <= BLOCK + INSET_MAX + BLOCK; d += 6) if (this.inSea(L.x + L.dx * d, L.z + L.dz * d)) return false;
     return true;
+  }
+  // Whether a way out through side s at `along` (z on the east or west, x on the north or south)
+  // keeps clear of the lines running straight out across that side (elevated lines, cable cars, the
+  // freeway's line and where its curve leaves).
+  exitClear(s: number, along: number) {
+    const at = (i: number) => i * BLOCK + STREET / 2, ew = s === 0 || s === 2;
+    const lines: number[] = (ew ? this.o.straightRows : this.o.straightCols).map(at);
+    const fw = this.o.freeway;
+    if (fw && (fw.dir === 0 || fw.dir === 2) === ew) lines.push(at(ew ? fw.iz : fw.ix));
+    return lines.every((c) => Math.abs(c - along) >= 0.75 * BLOCK);
   }
   // The deepest the sea comes in (for the sea plane under the town): a line along its side.
   get shoreDeepest() {

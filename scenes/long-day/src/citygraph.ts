@@ -34,6 +34,7 @@ export interface CNode {
   kx: number; kz: number;       // a key for seeded hashes (the old grid's ix, iz)
   phaseOf: number[];            // signal phase of each arm's approach (index into arms)
   phases: number;               // how many phases the signal cycles through (1: none)
+  sigKey?: [number, number, number];   // a light linked to a near one (signals.ts linkSignals): the key its offset hashes, and seconds on from that
 }
 export interface CStreet {
   id: number; n0: number; n1: number;
@@ -65,7 +66,9 @@ export interface CBlock {
   // square block (it is the grid's own) or where none fits.
   anchor: { face: number; delta: number } | null;
 }
-export interface CGate { node: number; street: number; out: 0 | 1 }   // the perimeter node, its gate street, and which end of it is outside
+// A gate: the perimeter node, its gate street, which end of that is outside, the way out (0 east,
+// 1 north, 2 west, 3 south) and the street's outer end.
+export interface CGate { node: number; street: number; out: 0 | 1; dir: number; x: number; z: number }
 export interface GPt { x: number; z: number; h: number }
 
 const wrapPi = (a: number) => { a %= 2 * Math.PI; if (a <= -Math.PI) a += 2 * Math.PI; else if (a > Math.PI) a -= 2 * Math.PI; return a; };
@@ -75,7 +78,7 @@ export class CityGraph {
   readonly nodes: CNode[] = [];
   readonly streets: CStreet[] = [];
   readonly blocks: CBlock[] = [];
-  readonly gates: (CGate | null)[] = [];   // index-aligned with city.ts GATES: null where a gate is closed (outline.ts)
+  readonly gates: (CGate | null)[] = [];   // the town's gates: the entry first, then its exits (citygen.ts trimToOutline)
   // The edge round the outside of the town (the backs of its outermost sidewalks), the largest
   // such cycle: where the land ends (outline.ts), and along the sea, the shore.
   outer: [number, number][] | null = null;

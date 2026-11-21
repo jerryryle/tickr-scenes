@@ -10,7 +10,7 @@ const organicGraph = (o: Parameters<typeof cityGraph>[0], seed: number, x: CityO
 const warpGraph = (o: Parameters<typeof cityGraph>[0], seed: number, j: number, x: CityOpts = {}) => cityGraph(o, seed, { move: (bx, bz) => [(hash2(bx, bz, seed, 0x5e1) - 0.5) * 2 * j, (hash2(bx, bz, seed, 0x5e2) - 0.5) * 2 * j], ...x });
 const riverRow = (iz: number, lo: number, hi: number): [number, number][] => [[lo * BLOCK + 9, iz * BLOCK + 39], [(hi + 1) * BLOCK + 9, iz * BLOCK + 39]];
 import { CityOutline } from "../src/outline.ts";
-import { entryGateOf, GATES, setCityLimits } from "../src/city.ts";
+import { entryGateOf, GATE_SLOTS, setCityLimits } from "../src/city.ts";
 import { STYLES } from "../src/styles.ts";
 import { Path, planRoute } from "../src/route.ts";
 import { hash2 } from "../src/rng.ts";
@@ -176,16 +176,17 @@ import { BLOCK } from "../src/grid.ts";
   if (rings < 10) err(`organic: only ${rings} of 20 roundabouts fit`);
   // Outlines (outline.ts, citygen.ts trimToOutline): every layout cut back to an uneven outline, in
   // coastal and port towns with the sea along one side. No two streets cross; the town hangs
-  // together from the entry gate; every open gate's street runs straight in from its outer end,
-  // none on the sea side; no kept block lies off the land or in the sea; and the shore's streets
-  // have the sea on one side only.
+  // together from the entry gate, whose street runs straight in from its slot's outer end; every
+  // exit's street runs straight out, square to its side, to a block past the square, from a street of the town,
+  // none on the sea side, EXIT_GAP apart along a side; no kept block lies off the land or in the
+  // sea; and the shore's streets have the sea on one side only.
   setCityLimits(5);   // (12 blocks square: lo -6, hi 5, gates at 3, as above)
-  let trimmed = 0, seas = 0, closed = 0;
+  let trimmed = 0, seas = 0, exits = 0, noExit = 0;
   for (let seed = 1; seed <= 18; seed++) {
     const style = [STYLES.coastal, STYLES.port, STYLES.brick][seed % 3], O = new CityOutline(seed * 7919, style, { freeway: null, straightRows: [], straightCols: [] });
-    const go = { lo, hi, gates: GATES, nameEW: (i: number) => `E${i}`, nameNS: (i: number) => `N${i}`, elevatedRow: () => false, cableColumn: () => false };
+    const eg = entryGateOf(seed * 7919), go = { lo, hi, gates: [eg], slots: GATE_SLOTS, nameEW: (i: number) => `E${i}`, nameNS: (i: number) => `N${i}`, elevatedRow: () => false, cableColumn: () => false };
     const L = seed % 3 === 0 ? organicGraph(go, seed, { river: seed % 2 === 0 }) : seed % 3 === 1 ? cityGraph(go, seed) : warpGraph(go, seed, 10, { drop: { p: () => 0.1, keep: () => true }, riverLine: riverRow(1, lo, hi) });
-    const entry = GATES.indexOf(entryGateOf(seed * 7919)), T = trimToOutline(L, O, GATES, entry);
+    const T = trimToOutline(L, O, eg, seed);
     if (!T) { err(`outline ${seed}: the trim failed`); continue; }
     trimmed++;
     if (O.sea !== null) seas++;
@@ -198,12 +199,21 @@ import { BLOCK } from "../src/grid.ts";
       if (o(ax, az, bx, bz, cx, cz) * o(ax, az, bx, bz, dx, dz) < 0 && o(cx, cz, dx, dz, ax, az) * o(cx, cz, dx, dz, bx, bz) < 0) crossings++;
     }
     if (crossings) err(`outline ${seed}: ${crossings} pairs of streets cross`);
+    const DX = [1, 0, -1, 0], DZ = [0, -1, 0, 1], edge = (s: number) => [O.X1, O.Z0, O.X0, O.Z1][s];
+    if (T.gates.length < 2) noExit++;
+    exits += T.gates.length - 1;
     T.gates.forEach((gt, i) => {
-      if (!gt) { closed++; if (i === entry) err(`outline ${seed}: the entry gate is closed`); return; }
-      if (GATES[i].dir === O.sea) err(`outline ${seed}: gate ${i} open on the sea side`);
-      const st = T.streets[gt.street], L2 = O.gateLine(i), far = T.nodes[st.n1];
-      if (Math.hypot(far.x - L2.x, far.z - L2.z) > 0.5) err(`outline ${seed}: gate ${i}'s street doesn't reach its outer end`);
+      if (!gt) { err(`outline ${seed}: gate ${i} is null`); return; }
+      if (i > 0 && gt.dir === O.sea) err(`outline ${seed}: gate ${i} out on the sea side`);
+      const st = T.streets[gt.street], far = T.nodes[st.n1], near = T.nodes[gt.node];
+      if (Math.hypot(far.x - gt.x, far.z - gt.z) > 0.5) err(`outline ${seed}: gate ${i}'s street doesn't reach its outer end`);
       if (st.inCity || st.k !== 0) err(`outline ${seed}: gate ${i}'s street isn't a straight way out`);
+      if (i === 0) { const L2 = O.gateLine(eg); if (Math.hypot(gt.x - L2.x, gt.z - L2.z) > 0.5 || gt.dir !== eg.dir) err(`outline ${seed}: the entry isn't at its slot`); return; }
+      const ew = gt.dir === 0 || gt.dir === 2, out = ew ? gt.x : gt.z;
+      if (Math.abs(out - (edge(gt.dir) + (ew ? DX[gt.dir] : DZ[gt.dir]) * BLOCK)) > 0.5) err(`outline ${seed}: exit ${i} doesn't end a block past the square`);
+      if (Math.abs(ew ? near.z - gt.z : near.x - gt.x) > 0.5) err(`outline ${seed}: exit ${i} isn't square to its side`);
+      if (!T.streets.some((q) => q.inCity && (q.n0 === gt.node || q.n1 === gt.node))) err(`outline ${seed}: exit ${i} starts from no street of the town`);
+      for (const [j, q] of T.gates.entries()) if (j > 0 && j !== i && q && q.dir === gt.dir && Math.abs(ew ? q.z - gt.z : q.x - gt.x) < 3 * BLOCK - 0.5) err(`outline ${seed}: exits ${i} and ${j} too close`);
     });
     for (const b of T.blocks) if (b.inCity && (O.inSea(b.cx, b.cz) || !O.inLand(b.cx, b.cz))) err(`outline ${seed}: block ${b.kx},${b.kz} off the land`);
     for (const st of T.streets) {
@@ -211,14 +221,15 @@ import { BLOCK } from "../src/grid.ts";
       const wet = [0, 1].map((k) => { const b = T.faceBlock[st.id * 2 + k]; if (b >= 0) return T.blocks[b].water; const p = T.facePt(st.id * 2 + k, st.len / 2, 8); return O.inSea(p.x, p.z); });
       if (wet[0] && wet[1] && [0, 1].every((k) => T.faceBlock[st.id * 2 + k] < 0)) err(`outline ${seed}: street ${st.id} out in the sea`);
     }
-    const from = T.streets[T.gates[entry]!.street].id * 2 + 1;
+    const from = T.streets[T.gates[0]!.street].id * 2 + 1;
     for (let k = 0; k < 10; k++) {
       const s2 = Math.floor(hash2(k, seed, 0, 3) * T.streets.length), d = s2 * 2 + (T.streets[s2].oneway ? 0 : k % 2);
       if (!T.streets[s2].inCity) continue;
       if (!planRoute(T, from, 20, [{ d, after: T.faceLen(d) / 2 }], 30000, (e) => T.streets[e >> 1].inCity)) err(`outline ${seed}: no route to street ${s2}`);
     }
   }
-  console.log(`outlines: ${trimmed} of 18 trimmed, ${seas} on the sea, ${closed} gates closed`);
+  console.log(`outlines: ${trimmed} of 18 trimmed, ${seas} on the sea, ${exits} exits, ${noExit} towns with none`);
+  if (noExit) err(`outlines: ${noExit} towns with no way out`);
   setCityLimits(30);
   console.log(`citygraph: ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks, ${errs.length} errors`);
   if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
