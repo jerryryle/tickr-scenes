@@ -256,8 +256,8 @@ export function elevatedLine(style: CityStyle, cz: number) {
 // track's top is at ELEVATED_Y + 0.5. What holds it up is elevatedBent's, placed by the street
 // beneath (city.ts buildStreet) or out of town (elevated.ts).
 export const EL_DECK = 0x5a5e62, EL_STEEL = 0x4a5450, EL_RAIL = 0x8a8f94;
-export function buildElevated(s: Batch, x0 = 0) {
-  const x1 = x0 + BLOCK;
+// The deck from x0 to x1 along the street's frame (a block, on the grid).
+export function buildElevated(s: Batch, x0 = 0, x1 = x0 + BLOCK) {
   s.span(x0, ELEVATED_Y, 5, x1, ELEVATED_Y + 0.5, 13, EL_DECK);
   for (const z of [5.2, 12.8]) s.span(x0, ELEVATED_Y - 0.6, z - 0.2, x1, ELEVATED_Y, z + 0.2, EL_STEEL);
   for (const z of [5.1, 12.9]) s.span(x0, ELEVATED_Y + 0.5, z - 0.05, x1, ELEVATED_Y + 1.4, z + 0.05, EL_STEEL);
@@ -284,10 +284,16 @@ export function elevatedBent(s: Batch, x: number, top: number) {
     s.boxR(x, beamBot - k / 2, z + (inward * k) / 2, 0.22, len, 0.22, steel, inward * Math.PI / 4, 0, 0);
   }
 }
-export function buildCableTracks(g: Batch) {
+// A cable car's tracks down a street: on the grid along z, a block (a north-south street); given
+// x0..x1, along x in the street's own frame (an avenue's, at any angle).
+export function buildCableTracks(g: Batch, x0?: number, x1?: number) {
   for (const lane of [7.5, 10.5]) {
-    for (const k of [-0.72, 0.72]) g.span(lane + k - 0.05, 0.012, 0, lane + k + 0.05, 0.03, BLOCK, 0x8a8f94);
-    g.span(lane - 0.03, 0.012, 0, lane + 0.03, 0.025, BLOCK, 0x111214);
+    for (const k of [-0.72, 0.72]) {
+      if (x0 === undefined) g.span(lane + k - 0.05, 0.012, 0, lane + k + 0.05, 0.03, BLOCK, 0x8a8f94);
+      else g.span(x0, 0.012, lane + k - 0.05, x1!, 0.03, lane + k + 0.05, 0x8a8f94);
+    }
+    if (x0 === undefined) g.span(lane - 0.03, 0.012, 0, lane + 0.03, 0.025, BLOCK, 0x111214);
+    else g.span(x0, 0.012, lane - 0.03, x1!, 0.025, lane + 0.03, 0x111214);
   }
 }
 

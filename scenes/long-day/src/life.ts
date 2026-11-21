@@ -66,6 +66,7 @@ export class StreetLife implements LifeHook {
     obs.length = 0;
     truckObstacles(st.truck, p.x, p.z, p.h, j.hitchYaw, obs);
     const truckN = obs.length;
+    for (const o of obs) o.body = true;
     // Reversing into a bay: where it will be all the way in (every 2 m), as if parked there, so
     // traffic waits clear of the whole sweep (the cab swings out across the lanes) rather than
     // pull up alongside it.
@@ -111,6 +112,9 @@ export class StreetLife implements LifeHook {
       const n0 = obs.length;
       if (q) truckObstacles(other, q.x, q.z, q.h, 0, obs);
       for (let k = n0; k < obs.length; k++) obs[k].still = true;
+      // (Set down where a car already stood, the spare at a lot, say: that car is gone, turned off
+      // somewhere, rather than left standing inside it.)
+      this.traffic.dropInside(obs, n0, obs.length);
     }
     const prs = st.preempt ?? [];
     // For the vignettes: the truck parked at a kerb stop (its cab), and the blocks it is to stop at.

@@ -19,6 +19,7 @@ import { LANE_KERB, smooth, smoothD } from "./route.ts";
 import type { Pose } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
 import { seaSide } from "./outline.ts";
+import { CityPlan } from "./city.ts";
 import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
@@ -643,7 +644,7 @@ export class CountryRoad {
   get fromFreewayFrame(): Frame | null {
     if (this.fwFrom === undefined) {
       const i = this.inp, cs = citySeedOf(i.seed, i.city), g = i.kind === "exit" ? freewayGate(cs, i.fromStyle) : null;
-      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs, i.fromStyle) !== null) : null;
+      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs, i.fromStyle) !== null, new CityPlan(cs, i.fromStyle).fwCurve) : null;   // (an organic town's curves: CityPlan.fwCurve)
     }
     return this.fwFrom;
   }

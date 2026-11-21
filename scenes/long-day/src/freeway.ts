@@ -107,6 +107,54 @@ const ONRAMP_NOSE = (() => {
   return Math.round(d / 10) * 10;
 })();
 
+// An organic town's freeway (CityPlan.layout: none other has one that bends): straight in from its
+// gate past the interchange (FW_STRAIGHT blocks: the grid's patch round it, citygen.ts), then on
+// through town along a smooth curve, either an S over to the far side (`s`: some blocks to one
+// side) or a long bend out through the side to its right (`bend`: never towards the sea, on the
+// left), leaving town square to that edge on one of the grid's lines, clear of its gates. From the
+// city's seed and gate alone (a country road needs it before the town is laid out), or null: a
+// town too small for it (the straight leaves too little), or with no room clear of the gates.
+export const FW_STRAIGHT = 7;
+export interface FwCurve { pts: [number, number][]; cum: number[]; len: number; ex: number; ez: number; dx: number; dz: number; kind: "s" | "bend" }
+export function freewayCurveOf(seed: number, g: Gate, gates: readonly Gate[], seaward: boolean): FwCurve | null {
+  const span = CITY_HI + 1 - CITY_LO;
+  if (span < 18) return null;
+  const at = (i: number) => i * BLOCK + STREET / 2, X0 = at(CITY_LO), X1 = at(CITY_HI + 1);
+  const I = [[-1, 0], [0, 1], [1, 0], [0, -1]][g.dir], R = [-I[1], I[0]], N0 = [at(g.ix), at(g.iz)];
+  const dot = (x: number, z: number, v: number[]) => (x - N0[0]) * v[0] + (z - N0[1]) * v[1];
+  // (How far the town reaches either side of the line, and where its gates are along each edge.)
+  const room = (v: number[]) => v[0] ? ((v[0] > 0 ? X1 : X0) - N0[0]) * v[0] : ((v[1] > 0 ? X1 : X0) - N0[1]) * v[1];
+  const right = room(R), left = room([-R[0], -R[1]]), h = (k: number) => hash2(seed, 0xc7a, 0, k);
+  const gatesOn = (dir: number) => gates.filter((q) => q.dir === dir);
+  // S: over to the opposite edge, 3 to 6 blocks to one side, clear of its gates (and of the sea).
+  const opp = gatesOn((g.dir + 2) % 4).map((q) => dot(at(q.ix), at(q.iz), R));
+  const sCands: number[] = [];
+  for (let k = -6; k <= 6; k++) {
+    const lat = k * BLOCK;
+    if (Math.abs(k) < 3 || lat > right - 3 * BLOCK || -lat > left - (seaward ? 5 : 3) * BLOCK || opp.some((o) => Math.abs(o - lat) < 1.5 * BLOCK)) continue;
+    sCands.push(lat);
+  }
+  // Bend: out through the right-hand edge, a good way on in from the straight, clear of its gates.
+  const side = gatesOn((g.dir + 1) % 4).map((q) => dot(at(q.ix), at(q.iz), I));   // (the right-hand edge's gates: they face R)
+  const bCands: number[] = [];
+  if (right >= 5 * BLOCK) for (let m = FW_STRAIGHT + 5; m <= span - 3; m++) if (side.every((o) => Math.abs(o - m * BLOCK) >= 1.5 * BLOCK)) bCands.push(m * BLOCK);
+  const bend = bCands.length > 0 && (h(1) < 0.5 || !sCands.length);
+  if (!bend && !sCands.length) return null;
+  const P1 = [N0[0] + I[0] * FW_STRAIGHT * BLOCK, N0[1] + I[1] * FW_STRAIGHT * BLOCK];
+  let E: number[], D: number[];
+  if (bend) { const m = bCands[Math.floor(h(2) * bCands.length) % bCands.length]; E = [N0[0] + I[0] * m + R[0] * right, N0[1] + I[1] * m + R[1] * right]; D = R; }
+  else { const lat = sCands[Math.floor(h(3) * sCands.length) % sCands.length]; E = [N0[0] + I[0] * span * BLOCK + R[0] * lat, N0[1] + I[1] * span * BLOCK + R[1] * lat]; D = I; }
+  // (A cubic from P1 heading in to E heading out, sampled finely.)
+  const c = Math.hypot(E[0] - P1[0], E[1] - P1[1]) * 0.42, C1 = [P1[0] + I[0] * c, P1[1] + I[1] * c], C2 = [E[0] - D[0] * c, E[1] - D[1] * c];
+  const pts: [number, number][] = [], cum: number[] = [0], N = 400;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N, u = 1 - t, b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+    pts.push([b0 * P1[0] + b1 * C1[0] + b2 * C2[0] + b3 * E[0], b0 * P1[1] + b1 * C1[1] + b2 * C2[1] + b3 * E[1]]);
+    if (i) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  }
+  return { pts, cum, len: cum[N], ex: E[0], ez: E[1], dx: D[0], dz: D[1], kind: bend ? "bend" : "s" };
+}
+
 export class Frame {
   readonly ox: number; readonly oz: number; readonly rx: number; readonly rz: number;
   merge = false;   // the truck takes the freeway here (freewayMerge)
@@ -125,19 +173,32 @@ export class Frame {
   farSide = 1;     // which way the far side's end bends (+1: towards +n)
   // (x, z): the gate end; h: the heading of a truck coming in there. near/far: where the city's
   // own streets begin and end along the line (d).
+  // An organic town's curve (freewayCurveOf): from d = bend0 (where the straight from the gate
+  // ends) on through town to the far edge (far), then the far side runs on straight from there the
+  // way it left (its own line: fx + fox * d, across fr), and bends off as a straight one's does.
+  curve: FwCurve | null = null; bend0 = -1e9;
+  fx: number; fz: number; fox: number; foz: number; frx: number; frz: number;
   constructor(readonly x: number, readonly z: number, h: number, readonly near = -60, readonly far = -1e9) {
     this.ox = -Math.cos(h); this.oz = Math.sin(h); this.rx = Math.sin(h); this.rz = Math.cos(h);
+    this.fx = x; this.fz = z; this.fox = this.ox; this.foz = this.oz; this.frx = this.rx; this.frz = this.rz;
   }
-  static ofCity(plan: CityPlan, g: Gate): Frame { return Frame.ofCitySeed(plan.seed, plan.name, plan.freewayMerge, g, seaSide(plan.seed, plan.style) !== null); }
+  static ofCity(plan: CityPlan, g: Gate): Frame { return Frame.ofCitySeed(plan.seed, plan.name, plan.freewayMerge, g, seaSide(plan.seed, plan.style) !== null, plan.fwCurve); }
   // (The same from the city's seed and name alone: a country road out of the city needs it.)
   // `seaward`: the city is on the sea (outline.ts), always on the left of the way in, so the far
   // side's end bends right (+n), away from it, as the entry side's does.
-  static ofCitySeed(seed: number, name: string, merge: boolean, g: Gate, seaward = false): Frame {
+  static ofCitySeed(seed: number, name: string, merge: boolean, g: Gate, seaward = false, curve: FwCurve | null = null): Frame {
     const e = gateEnd(g), f = new Frame(e.x, e.z, e.h + Math.PI);
     // The city's streets along the line, as distances out of the gate end.
     const lo = CITY_LO * BLOCK, hi = (CITY_HI + 1) * BLOCK, along = g.dir === 0 || g.dir === 2;
     const d = (u: number) => along ? (u - e.x) * f.ox : (u - e.z) * f.oz;
-    const out = new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), Math.min(d(lo), d(hi)));
+    // (Curving: the straight to its start, then the curve to the edge it leaves by.)
+    const b0 = -(BLOCK - STREET / 2 + FW_STRAIGHT * BLOCK);
+    const out = new Frame(e.x, e.z, e.h + Math.PI, Math.max(d(lo), d(hi)), curve ? b0 - curve.len : Math.min(d(lo), d(hi)));
+    if (curve) {
+      out.curve = curve; out.bend0 = b0;
+      out.fox = -curve.dx; out.foz = -curve.dz; out.frx = out.foz; out.frz = -out.fox;
+      out.fx = curve.ex - out.fox * out.far; out.fz = curve.ez - out.foz * out.far;
+    }
     out.merge = merge;
     out.farSide = seaward || hash2(seed, 0xfa5, 0, 0x7a4) < 0.5 ? 1 : -1;
     return out.label(seed, name);
@@ -175,11 +236,24 @@ export class Frame {
     }
     const fb = this.far - FW_BEND_FAR;
     if (d < fb) {
-      // Far side: bending towards farSide * n from the line.
-      const v = fb - d, sg = this.farSide, kx = this.x + this.ox * fb + this.rx * sg * R, kz = this.z + this.oz * fb + this.rz * sg * R;
-      if (v <= q) { const c = Math.cos(v / R), s = Math.sin(v / R); p.ax = this.rx * c + this.ox * sg * s; p.az = this.rz * c + this.oz * sg * s; p.x = kx - p.ax * sg * R; p.z = kz - p.az * sg * R; }
-      else { p.ax = this.ox * sg; p.az = this.oz * sg; p.x = kx - this.ox * R + this.rx * sg * (v - q); p.z = kz - this.oz * R + this.rz * sg * (v - q); }
+      // Far side: bending towards farSide * n from its line.
+      const ox = this.fox, oz = this.foz, rx = this.frx, rz = this.frz;
+      const v = fb - d, sg = this.farSide, kx = this.fx + ox * fb + rx * sg * R, kz = this.fz + oz * fb + rz * sg * R;
+      if (v <= q) { const c = Math.cos(v / R), s = Math.sin(v / R); p.ax = rx * c + ox * sg * s; p.az = rz * c + oz * sg * s; p.x = kx - p.ax * sg * R; p.z = kz - p.az * sg * R; }
+      else { p.ax = ox * sg; p.az = oz * sg; p.x = kx - ox * R + rx * sg * (v - q); p.z = kz - oz * R + rz * sg * (v - q); }
       // (at v = q: kx - ox*R*... the leg goes on along +sg*r)
+      return p;
+    }
+    if (d <= this.far) { p.ax = this.frx; p.az = this.frz; p.x = this.fx + this.fox * d; p.z = this.fz + this.foz * d; return p; }
+    const C = this.curve;
+    if (C && d < this.bend0) {
+      // Through town along the curve: u from its start; the way across, square to it.
+      const u = Math.min(C.len, this.bend0 - d);
+      let lo = 0, hi = C.cum.length - 1;
+      while (hi - lo > 1) { const m = (lo + hi) >> 1; if (C.cum[m] <= u) lo = m; else hi = m; }
+      const f = (u - C.cum[lo]) / (C.cum[hi] - C.cum[lo] || 1), [ax, az] = C.pts[lo], [bx, bz] = C.pts[hi], l = Math.hypot(bx - ax, bz - az) || 1;
+      const ox = -(bx - ax) / l, oz = -(bz - az) / l;   // (outward: back along it)
+      p.x = ax + (bx - ax) * f; p.z = az + (bz - az) * f; p.ax = oz; p.az = -ox;
       return p;
     }
     p.ax = this.rx; p.az = this.rz; p.x = this.x + this.ox * d; p.z = this.z + this.oz * d;
@@ -192,6 +266,7 @@ export class Frame {
   nAt(x: number, z: number) { return (x - this.x) * this.rx + (z - this.z) * this.rz; }
   // The freeway's d nearest (x, z) and how far across from its centre line (x, z) is.
   locate(x: number, z: number): { d: number; off: number } {
+    if (this.curve) return this.locateCurved(x, z);
     let d = THREE.MathUtils.clamp(this.dAt(x, z), this.far - FW_TIP_FAR, FW_TIP);
     // (Out on the bends: search along it.)
     if (d > FW_BEND - 1 || d < this.far - FW_BEND_FAR + 1) {
@@ -201,6 +276,35 @@ export class Frame {
       for (let st = 10; st > 0.5; st /= 2) for (const u of [best - st, best + st]) { if (u < lo || u > hi) continue; const dx = this.px(u, this.m(u)) - x, dz = this.pz(u, this.m(u)) - z, e = dx * dx + dz * dz; if (e < bd) { bd = e; best = u; } }
       d = best;
     }
+    const p = this.at(d);
+    return { d, off: (x - p.x) * p.ax + (z - p.z) * p.az - this.m(d) };
+  }
+  // (Curving: the nearest of the straight in, the curve and the far side, each as near as it gets.)
+  private cells: Map<number, number[]> | null = null;
+  private locateCurved(x: number, z: number): { d: number; off: number } {
+    const C = this.curve!, CELL = 40;
+    if (!this.cells) {
+      this.cells = new Map();
+      for (let i = 0; i < C.pts.length; i++) { const k = Math.floor(C.pts[i][0] / CELL) * 100003 + Math.floor(C.pts[i][1] / CELL); let a = this.cells.get(k); if (!a) this.cells.set(k, a = []); a.push(i); }
+    }
+    const dist = (d: number) => { const p = this.at(d); return Math.hypot(x - p.x, z - p.z); };
+    const refine = (d: number, lo: number, hi: number) => {
+      let best = THREE.MathUtils.clamp(d, lo, hi), bd = dist(best);
+      for (let st = 16; st > 0.25; st /= 2) for (const u of [best - st, best + st]) { if (u < lo || u > hi) continue; const e = dist(u); if (e < bd) { bd = e; best = u; } }
+      return best;
+    };
+    const cands: number[] = [];
+    // (The straight in, and on out: as a straight frame's, from bend0 on.)
+    { const d0 = THREE.MathUtils.clamp(this.dAt(x, z), this.bend0, FW_TIP); cands.push(d0 > FW_BEND - 1 ? refine(d0, FW_BEND, FW_TIP) : d0); }
+    // (The curve: its sample nearest, round the point's cell.)
+    { let bi = -1, bd = Infinity; const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+      for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) for (const k of this.cells.get((cx + i) * 100003 + cz + j) ?? []) { const e = Math.hypot(C.pts[k][0] - x, C.pts[k][1] - z); if (e < bd) { bd = e; bi = k; } }
+      if (bi >= 0) cands.push(refine(this.bend0 - C.cum[bi], this.far, this.bend0)); }
+    // (The far side: along its own line, then round its bend.)
+    { const d0 = THREE.MathUtils.clamp(this.far + (x - this.fx - this.fox * this.far) * this.fox + (z - this.fz - this.foz * this.far) * this.foz, this.far - FW_TIP_FAR, this.far);
+      cands.push(d0 < this.far - FW_BEND_FAR + 1 ? refine(d0, this.far - FW_TIP_FAR, this.far - FW_BEND_FAR) : d0); }
+    let d = cands[0];
+    for (const c of cands) if (dist(c) < dist(d)) d = c;
     const p = this.at(d);
     return { d, off: (x - p.x) * p.ax + (z - p.z) * p.az - this.m(d) };
   }
@@ -214,7 +318,7 @@ export class Frame {
   corridor(x: number, z: number) {
     const d0 = this.dAt(x, z), n0 = this.nAt(x, z);
     // (Quick: the bends go off to one side only.)
-    if ((d0 > 0 && n0 * Math.sign(FW_SHIFT) < -8) || (d0 < this.far && n0 * this.farSide < -12)) return false;
+    if ((d0 > 0 && n0 * Math.sign(FW_SHIFT) < -8) || (!this.curve && d0 < this.far && n0 * this.farSide < -12)) return false;
     // The on-ramp (its lane, out to its edges and a little more).
     if (d0 > RAMP_MERGE1 - 20 && d0 < RAMP_DIV0 + 20) { const c = onRampN(THREE.MathUtils.clamp(d0, RAMP_MERGE1, RAMP_DIV0), ONRAMP_FROM); if (Math.abs(n0 - c) < RAMP_HALF + 3) return true; }
     const L = this.locate(x, z);
@@ -253,7 +357,7 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
   };
   const keep = b.dy; b.dy = 0;
   // (Finer where the deck bends, so its pieces follow it without gaps.)
-  const bendy = (a: number) => (a > -1 && a < FW_SHIFT_LEN + 1) || (a > FW_BEND - 1 && a < FW_BEND + FW_BEND_R * Math.PI / 2 + 1) || (a < F.far - FW_BEND_FAR + 1 && a > F.far - FW_BEND_FAR - FW_BEND_R * Math.PI / 2 - 1);
+  const bendy = (a: number) => (F.curve && a < F.bend0 + 1 && a > F.far - 1) || (a > -1 && a < FW_SHIFT_LEN + 1) || (a > FW_BEND - 1 && a < FW_BEND + FW_BEND_R * Math.PI / 2 + 1) || (a < F.far - FW_BEND_FAR + 1 && a > F.far - FW_BEND_FAR - FW_BEND_R * Math.PI / 2 - 1);
   const stepAt = (a: number) => (bendy(a) ? 2 : STEP);
   const next = (a: number) => Math.min(d1, (Math.floor(a / stepAt(a) + 1e-9) + 1) * stepAt(a));
   const gore = (a: number, a2: number) => a >= RAMP_MERGE1 - 1e-6 && a2 <= ONRAMP_NOSE + 1e-6;   // where the on-ramp joins (the barrier is open)
@@ -377,13 +481,14 @@ export function freewayGantry(b: Batch, plates: PlateSet, F: Frame, d: number, a
 // for axis 1, from 0 to BLOCK): the deck, level. Its bents stand on the sidewalks (city.ts).
 // `open`: where the right-hand parapet (+n, k = 1) or the left one (k = -1) is left out, from a0 to
 // a1 along (an off-ramp leaves there: interchange.ts).
+// (x0..x1: along it, for a street of the curve, city.ts: an organic town's, along x in its frame.)
 export function buildFreewayStreet(b: Batch, axis: number, open: { a0: number; a1: number; k: number } | null = null,
-  gantry: { at: number; face: number; k: number; text: string; other: string; plates: PlateSet } | null = null) {
+  gantry: { at: number; face: number; k: number; text: string; other: string; plates: PlateSet } | null = null, x0 = 0, x1 = BLOCK) {
   const F = axis === 0 ? new Frame(0, STREET / 2, Math.PI) : new Frame(STREET / 2, 0, Math.PI / 2);
   // (A frame with the line along +x (or along +z), level all the way: d from 0 to BLOCK.)
   const level = Object.assign(Object.create(Frame.prototype), F, { y: () => FW_TOP, m: () => 0 }) as Frame;
   if (gantry) freewayGantry(b, gantry.plates, level, gantry.at, 0, 0, [{ k: gantry.k, face: gantry.face, text: gantry.text }, { k: -gantry.k, face: -gantry.face, text: gantry.other }]);
-  if (!open) { buildFreeway(b, level, 0, BLOCK, 0, 0, { main: true, bents: false }); return; }
+  if (!open) { buildFreeway(b, level, x0, x1, 0, 0, { main: true, bents: false }); return; }
   // The deck without that parapet, then the parapet where it stands.
   buildFreewayDeck(b, level, open);
 }

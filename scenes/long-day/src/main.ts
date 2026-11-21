@@ -291,7 +291,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
 
   const siteEdgeAt = new THREE.Vector3();   // (the siteEdge view's streaming centre)
   // Test renders only: a tour camera on the downtown core nearest the start.
-  let tourT = 0, tourTrain = -1;
+  let tourT = 0, tourTrain = -1, tourBend: { x: number; z: number; nx: number; nz: number; ex: number; ez: number } | null = null;   // (tourBend: lineBend's shot)
   let jamShot: { x: number; y: number; z: number; lx: number; lz: number } | null = null;   // (DEBUG_VIEW "jam": the fixed shot, once set up)
   function tourCamera(dt: number): boolean {
     if (!DEBUG_VIEW || DEBUG_VIEW === "countryTop" || DEBUG_VIEW === "scrub") return false;
@@ -312,6 +312,41 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const near = DEBUG_VIEW === "batonNear";
       cam.position.set(cx + Math.cos(a) * (near ? 28 : 70), near ? 40 : 24, cz + Math.sin(a) * (near ? 28 : 70));
       cam.lookAt(cx, near ? 38 : 18, cz);
+    } else if (DEBUG_VIEW === "fwBend" && plan.fwCurve) {
+      // A still shot of an organic town's freeway round its curve, from beside and above its middle.
+      const C = plan.fwCurve, i = Math.floor(C.pts.length * 0.55), [px, pz] = C.pts[i], [qx, qz] = C.pts[i + 1], l = Math.hypot(qx - px, qz - pz) || 1;
+      const nx = -(qz - pz) / l, nz = (qx - px) / l, ex = (qx - px) / l, ez = (qz - pz) / l;
+      cx = px; cz = pz;
+      cam.position.set(px + nx * 38 - ex * 22, 22, pz + nz * 38 - ez * 22); cam.lookAt(px, 7, pz);
+    } else if (DEBUG_VIEW === "lineBend") {
+      // A still shot of the sharpest bend on the first elevated line (or, with none, a cable car's
+      // avenue), from beside it and above, to watch the trains or cable cars round it.
+      if (!tourBend) {
+        const G = plan.graph, L = plan.elevatedLines[0]?.pts ?? [];
+        let pts = L;
+        if (pts.length < 3) {
+          // (A cable car's avenue: the junction where two of its streets meet at the sharpest angle.)
+          let bn = -1, bb = -1;
+          for (const N of G.nodes) {
+            const cs = N.arms.filter((a) => G.streets[a.street].tags.cable && G.streets[a.street].inCity);
+            if (cs.length !== 2) continue;
+            const d = cs[0].h - cs[1].h, t = Math.PI - Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
+            if (t > bb) { bb = t; bn = N.id; }
+          }
+          if (bn >= 0) { const N = G.nodes[bn], a = N.arms.find((q) => G.streets[q.street].tags.cable)!; pts = [[N.x - Math.cos(a.h) * 30, N.z + Math.sin(a.h) * 30], [N.x, N.z], [N.x + Math.cos(a.h) * 30, N.z - Math.sin(a.h) * 30]]; }
+        }
+        let best = 1, bt = -1;
+        for (let i = 1; i + 1 < pts.length; i++) {
+          const h0 = Math.atan2(pts[i][1] - pts[i - 1][1], pts[i][0] - pts[i - 1][0]), h1 = Math.atan2(pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0]);
+          const t = Math.abs(Math.atan2(Math.sin(h1 - h0), Math.cos(h1 - h0)));
+          if (t > bt) { bt = t; best = i; }
+        }
+        const P = pts[best] ?? [0, 0], Q = pts[best + 1] ?? [P[0] + 1, P[1]], l = Math.hypot(Q[0] - P[0], Q[1] - P[1]) || 1;
+        tourBend = { x: P[0], z: P[1], nx: -(Q[1] - P[1]) / l, nz: (Q[0] - P[0]) / l, ex: (Q[0] - P[0]) / l, ez: (Q[1] - P[1]) / l };
+      }
+      const B = tourBend;
+      cx = B.x; cz = B.z;
+      cam.position.set(B.x + B.nx * 40 - B.ex * 25, 34, B.z + B.nz * 40 - B.ez * 25); cam.lookAt(B.x, 3, B.z);
     } else if (DEBUG_VIEW.startsWith("elevated")) {
       // The first elevated line: "elevated" pans east alongside it from inside town out over the
       // ramp to the country; "elevatedStreet" looks east along the street beneath it.

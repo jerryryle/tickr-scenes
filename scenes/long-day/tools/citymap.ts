@@ -1,6 +1,6 @@
 // A top-down map of cities' street graphs (citygraph.ts), for looking at layouts without
 // rendering the scene: streets grey, blocks by district (water blue, superblock parks green),
-// signalled intersections red. Writes one PPM per city to the directory given (ffmpeg turns them
+// signalled intersections red, an elevated line's streets purple, a cable car's red and an organic town's freeway orange. Writes one PPM per city to the directory given (ffmpeg turns them
 // into PNGs: see the Makefile's `citymap` target).
 // Args: outDir seed [cities]
 import { readConfig } from "../src/env.ts";
@@ -42,10 +42,15 @@ import { journeyStyle } from "../src/styles.ts";
     }
     for (const nd of G.nodes) if (nd.arms.length > 1) fill([[nd.x - 9, nd.z - 9], [nd.x + 9, nd.z - 9], [nd.x + 9, nd.z + 9], [nd.x - 9, nd.z + 9]], [120, 120, 125]);
     for (const b of G.blocks) fill(b.poly, b.water ? [70, 130, 200] : b.park ? DIST.park : DIST[plan.district(b.kx, b.kz)] ?? [200, 200, 200]);
+    // An elevated line's streets purple, a cable car's red, down their middles.
+    for (const st of G.streets) if (st.tags.elevated || st.tags.cable || st.tags.freeway) {
+      const w = st.tags.freeway ? 6 : st.tags.elevated ? 4 : 2, a = G.streetPt(st.id, 0, -w), b = G.streetPt(st.id, st.len, -w), c = G.streetPt(st.id, st.len, w), d = G.streetPt(st.id, 0, w);
+      fill([[a.x, a.z], [b.x, b.z], [c.x, c.z], [d.x, d.z]], st.tags.freeway ? [215, 120, 40] : st.tags.elevated ? [130, 60, 180] : [210, 40, 40]);
+    }
     for (const nd of G.nodes) if (nd.control === "signal") fill([[nd.x - 3, nd.z - 3], [nd.x + 3, nd.z - 3], [nd.x + 3, nd.z + 3], [nd.x - 3, nd.z + 3]], [210, 60, 50]);
     const head = new TextEncoder().encode(`P6\n${W} ${H}\n255\n`), out = new Uint8Array(head.length + img.length);
     out.set(head); out.set(img, head.length);
     fs.writeFileSync(`${outDir}/city${N}.ppm`, out);
-    console.log(`city ${N}: ${plan.style.id} ${plan.layout}, ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks (${G.blocks.filter((b) => b.water).length} water, ${G.blocks.filter((b) => b.park && b.area > 5000).length} superblock parks, ${G.blocks.filter((b) => !b.square && b.inCity).length} lotted, ${G.blocks.filter((b) => !b.square && b.inCity && b.anchor).length} of them with room for a site; ${G.streets.filter((s) => / Circle$/.test(s.name)).length / 8} circuses, ${new Set(G.streets.filter((s) => s.ring).map((s) => s.name)).size} roundabouts, ${plan.layout === "organic" ? "no" : new Set(G.streets.filter((s) => !/Circle|Roundabout/.test(s.name) && Math.abs(Math.abs(Math.cos(s.h0)) - Math.SQRT1_2) < 0.15).map((s) => s.name)).size} diagonal avenues; industrial blocks able to take a site ${G.blocks.filter((b) => plan.district(b.kx, b.kz) === "industrial" && (b.square || b.anchor)).length}/${G.blocks.filter((b) => plan.district(b.kx, b.kz) === "industrial").length})`);
+    console.log(`city ${N}: ${plan.style.id} ${plan.layout}${plan.freeway ? `, freeway ${plan.fwCurve ? plan.fwCurve.kind : "straight"}` : ""}, ${G.nodes.length} nodes, ${G.streets.length} streets, ${G.blocks.length} blocks (${G.blocks.filter((b) => b.water).length} water, ${G.blocks.filter((b) => b.park && b.area > 5000).length} superblock parks, ${G.blocks.filter((b) => !b.square && b.inCity).length} lotted, ${G.blocks.filter((b) => !b.square && b.inCity && b.anchor).length} of them with room for a site; ${G.streets.filter((s) => / Circle$/.test(s.name)).length / 8} circuses, ${new Set(G.streets.filter((s) => s.ring).map((s) => s.name)).size} roundabouts, ${plan.layout === "organic" ? "no" : new Set(G.streets.filter((s) => !/Circle|Roundabout/.test(s.name) && Math.abs(Math.abs(Math.cos(s.h0)) - Math.SQRT1_2) < 0.15).map((s) => s.name)).size} diagonal avenues; industrial blocks able to take a site ${G.blocks.filter((b) => plan.district(b.kx, b.kz) === "industrial" && (b.square || b.anchor)).length}/${G.blocks.filter((b) => plan.district(b.kx, b.kz) === "industrial").length})`);
   }
 }

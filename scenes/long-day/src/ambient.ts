@@ -3,7 +3,7 @@
 import * as THREE from "three@0.187.0";
 import { Batch, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
-import { ELEVATED_REACH, elevatedLine } from "./decor.ts";
+import { ELEVATED_REACH } from "./decor.ts";
 import { elevatedTrackY } from "./elevated.ts";
 import { CITY_HI, CITY_LO, CityPlan } from "./city.ts";
 import { BLOCK } from "./grid.ts";
@@ -11,7 +11,8 @@ import { signAtlas } from "./signs.ts";
 import { SIM_DT } from "./journey.ts";
 import { GLASS } from "./cars.ts";
 
-const TRAINS = 4, EL_CARS = 4, EL_CAR_PITCH = 14.4;
+type LineWay = { pts: [number, number][]; cum: number[]; w: number; e: number; mid: number };
+const TRAINS = 4, EL_CARS = 4, EL_CAR_PITCH = 14.4, EL_TURN = 7;   // EL_TURN: half the chord a car's heading follows through a bend
 export class Ambient {
   private trains: THREE.Mesh[][] = [];
   readonly trainX: number[] = [];        // where each train's middle is (test renders follow one)   // each train's cars, placed one by one so they follow the ramps
@@ -49,33 +50,69 @@ export class Ambient {
   saveBlimp() { return Number.isNaN(this.blimpX) ? null : [this.blimpX, this.blimpZ, this.blimpPX]; }
   loadBlimp(o: number[] | null) { if (o) [this.blimpX, this.blimpZ, this.blimpPX] = o; else this.resetBlimp(); }
 
+  // Each elevated line's whole way, out along its west row from the far end of its reach, through
+  // town, and on out along its east row: points, the distance along at each, and its rows.
+  private lineWays: { plan: CityPlan; ways: LineWay[] } | null = null;
+  private lineNear(plan: CityPlan, fx: number, fz: number) {
+    if (this.lineWays?.plan !== plan) {
+      const lo = CITY_LO * BLOCK - ELEVATED_REACH + 80, hi = (CITY_HI + 1) * BLOCK + ELEVATED_REACH - 80;
+      this.lineWays = { plan, ways: plan.elevatedLines.map((l) => {
+        const pts: [number, number][] = [[lo, l.pts[0][1]], ...l.pts, [hi, l.pts[l.pts.length - 1][1]]], cum = [0];
+        for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+        return { pts, cum, w: l.w, e: l.e, mid: (CITY_LO + CITY_HI + 1) * BLOCK / 2 };
+      }) };
+    }
+    let best: (LineWay & { dist: number }) | null = null;
+    for (const w of this.lineWays!.ways) {
+      let d = Infinity;
+      for (let i = 0; i + 1 < w.pts.length; i++) {
+        const [ax, az] = w.pts[i], [bx, bz] = w.pts[i + 1], dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((fx - ax) * dx + (fz - az) * dz) / (dx * dx + dz * dz || 1)));
+        d = Math.min(d, Math.hypot(fx - ax - dx * t, fz - az - dz * t));
+      }
+      if (!best || d < best.dist) best = { ...w, dist: d };
+    }
+    return best;
+  }
+  // The point s along a line's way (on its polyline), and at `chord` either side for the heading
+  // and a smooth place through its bends (the middle of the chord); `side` metres to its right
+  // (facing on along it, east: the eastbound track is on the south side).
+  private lineAt(L: LineWay, s: number, chord: number, side: number) {
+    const pt = (sv: number): [number, number] => {
+      sv = Math.max(0, Math.min(L.cum[L.cum.length - 1], sv));
+      let i = 0; while (i < L.pts.length - 2 && L.cum[i + 1] < sv) i++;
+      const f = (sv - L.cum[i]) / (L.cum[i + 1] - L.cum[i] || 1);
+      return [L.pts[i][0] + (L.pts[i + 1][0] - L.pts[i][0]) * f, L.pts[i][1] + (L.pts[i + 1][1] - L.pts[i][1]) * f];
+    };
+    const [ax, az] = pt(s - chord), [bx, bz] = pt(s + chord), [px, pz] = chord > 0 ? [(ax + bx) / 2, (az + bz) / 2] : pt(s);
+    const h = Math.atan2(-(bz - az), bx - ax), rx = Math.sin(h), rz = Math.cos(h);
+    const x = px + rx * side, z = pz + rz * side, row = x < L.mid ? L.w : L.e;
+    const y = elevatedTrackY(row, x), slope = (elevatedTrackY(row, x + 3 * Math.cos(h)) - elevatedTrackY(row, x - 3 * Math.cos(h))) / 6;
+    return { x, z, y, h, slope };
+  }
+
   // `time` is journey time, so the trains are where they would be after a scrub too.
   update(time: number, alpha: number, plan: CityPlan, focus: THREE.Vector3, active: boolean) {
     this.blimp.visible = active && !Number.isNaN(this.blimpX);
     // Elevated trains on the line nearest the focus: TRAINS of them, evenly spaced round a loop
     // out along one track to the far end of the line (ElevatedReach, well out of sight) and back
     // along the other, so one comes through every few minutes each way.
-    let cz = Math.round((focus.z / BLOCK - 1) / 4) * 4 + 1;
-    while (cz > CITY_HI) cz -= 4;
-    while (cz < CITY_LO) cz += 4;
-    let line = elevatedLine(plan.style, cz) ? cz : NaN;
-    if (Number.isNaN(line)) for (const d of [4, -4, 8, -8]) if (elevatedLine(plan.style, cz + d)) { line = cz + d; break; }
-    const z = line * BLOCK + 9, shown = !Number.isNaN(line) && Math.abs(z - focus.z) < 220;
-    const lo = CITY_LO * BLOCK - ELEVATED_REACH + 80, hi = (CITY_HI + 1) * BLOCK + ELEVATED_REACH - 80, len = hi - lo;
-    const half = len / 14, lap = 2 * half;
+    // The line: the one whose way (out of town along its rows, through town along its streets:
+    // plan.elevatedLines) passes nearest the focus.
+    const L = this.lineNear(plan, focus.x, focus.z), shown = !!L && L.dist < 220;
+    const len = L ? L.cum[L.cum.length - 1] : 0, half = len / 14, lap = 2 * half;
     for (let k = 0; k < this.trains.length; k++) {
-      const t = (((time + (k * lap) / this.trains.length) % lap) + lap) % lap, east = t < half, u = (east ? t : t - half) / half;
-      const dir = east ? 1 : -1, x = east ? lo + len * u : hi - len * u;
-      this.trainX[k] = x;
+      const t = L ? (((time + (k * lap) / this.trains.length) % lap) + lap) % lap : 0, east = t < half, u = (east ? t : t - half) / half;
+      const dir = east ? 1 : -1, sMid = east ? len * u : len * (1 - u);
+      this.trainX[k] = L ? this.lineAt(L, sMid, 0, 0).x : 0;
       this.trains[k].forEach((car, i) => {
         car.visible = shown;
-        if (!shown) return;
+        if (!shown || !L) return;
         // Each car on the track where it is (out of town the line ramps down to the ground and
-        // back up over roads), pitched to its slope, facing the way the train runs.
-        const cx = x + dir * (i - (EL_CARS - 1) / 2) * EL_CAR_PITCH, cy = elevatedTrackY(line, cx);
-        const slope = (elevatedTrackY(line, cx + 3) - elevatedTrackY(line, cx - 3)) / 6;
-        car.position.set(cx, cy + 0.05, z + dir * 2.0);
-        car.rotation.set(0, east ? 0 : Math.PI, Math.atan(slope * dir));
+        // back up over roads), pitched to its slope, facing the way the train runs; through a bend
+        // its heading turns over a car's length (the track's chord either side), not at the kink.
+        const sc = sMid + dir * (i - (EL_CARS - 1) / 2) * EL_CAR_PITCH, P = this.lineAt(L, sc, EL_TURN, dir * 2.0);
+        car.position.set(P.x, P.y + 0.05, P.z);
+        car.rotation.set(0, P.h + (east ? 0 : Math.PI), Math.atan(P.slope * dir));
       });
     }
     if (!active) return;

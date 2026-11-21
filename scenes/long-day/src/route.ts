@@ -22,7 +22,11 @@ export type Move = "S" | "L" | "R";
 export const DIR_X = [1, 0, -1, 0], DIR_Z = [0, -1, 0, 1];
 
 export const LANE_KERB = 4.5, LANE_INNER = 1.5;
-const R_RIGHT = 6.5, R_LEFT = 9, R_BEND = 40;
+const R_RIGHT = 6.5, R_LEFT = 9;
+// A bend (straight on, where the street bends at a node): as wide as the room allows, so a street
+// that bends a little at every node (a bowed avenue, an organic town's) drives as one smooth curve
+// rather than a straight run and a quick flick at each node. (At most this radius.)
+const R_BEND = 1000, BEND_MIN = 40;
 // The stop line, short of where the street's mouth opens into the intersection: far enough
 // back that a vehicle waiting there is clear of the truck's swing through a turn (city.ts paints
 // it there).
@@ -94,7 +98,7 @@ interface LinePiece { kind: "line"; s0: number; len: number; x0: number; z0: num
 // A turn through `ang` (radians, > 0): easement spiral, circular arc, easement spiral, so the
 // curvature (and the front wheels) build up and wind off smoothly instead of snapping at the
 // turn's ends. `sc` is metres per unit of its unit turn, `sgn` +1 for left, -1 for right.
-interface ArcPiece { kind: "arc"; s0: number; len: number; x0: number; z0: number; h0: number; sc: number; sgn: number; ang: number; vmax: number }
+interface ArcPiece { kind: "arc"; s0: number; len: number; x0: number; z0: number; h0: number; sc: number; sgn: number; ang: number; vmax: number; lane?: number }   // lane: a bend's (it keeps to its lane through it)
 type Piece = LinePiece | ArcPiece;
 // A signal on the way: the node, the phase its approach runs on, where its stop line is and the
 // move made there.
@@ -134,13 +138,15 @@ function turnUnit(ang: number): TurnUnit {
   TURN_UNITS.set(key, u);
   return u;
 }
-function turnPiece(s0: number, x0: number, z0: number, h0: number, T: number, sgn: number, vmax: number, ang = Math.PI / 2): ArcPiece {
+function turnPiece(s0: number, x0: number, z0: number, h0: number, T: number, sgn: number, vmax: number, ang = Math.PI / 2, lane?: number, R = T): ArcPiece {
   const U = turnUnit(ang), sc = T / U.T;
-  // Same peak sideways pull as a plain arc of radius T at vmax (on a right angle; the unit turn's
-  // peak curvature is 1 / sc whatever its angle).
+  // Same peak sideways pull as a plain arc of radius R at vmax (the turn's own radius: on a right
+  // angle, T; an acute corner's corner distance is shorter than its radius, and taken at the speed
+  // its T allowed it pulled twice as hard). The unit turn's peak curvature is 1 / sc whatever its
+  // angle.
   // (A turn squeezed tight, down to radius sc, also no faster than 1.1 sc m/s: the truck's heading
   // then turns at most 1.1 rad a second.)
-  return { kind: "arc", s0, len: U.len * sc, x0, z0, h0, sc, sgn, ang, vmax: Math.min(vmax * Math.sqrt(sc / T), 1.1 * sc) };
+  return { kind: "arc", s0, len: U.len * sc, x0, z0, h0, sc, sgn, ang, vmax: Math.min(vmax * Math.sqrt(sc / R), 1.1 * sc), lane };
 }
 
 export class Path {
@@ -302,6 +308,9 @@ export class Path {
         const ix2 = N2.x + Math.sin(h1) * o2, iz2 = N2.z + Math.cos(h1) * o2, ox2 = N2.x + Math.sin(h2) * o2, oz2 = N2.z + Math.cos(h2) * o2;
         const u2 = ((ox2 - ix2) * f2[1] - (oz2 - iz2) * f2[0]) / dn;
         room = (run + u2 - v) / 2;
+        // (A bend before a turn that changes lane: it leaves that turn room to change lane in.)
+        // (Never tighter for it than a bend was before it was widened: BEND_MIN.)
+        if (m === "S" && Math.abs(t2) >= Math.PI / 4 && o2 !== oOut) room = Math.min(room, Math.max(run + u2 - v - (t2 > 0 ? R_LEFT : R_RIGHT) * Math.tan(Math.abs(t2) / 2) - MIN_CHANGE - LANE_LEAD, BEND_MIN * Math.tan(ang / 2)));
         break;
       }
       if (Number.isNaN(room)) room = run + route.after - v - 0.5;   // (no turn left: on to the stop)
@@ -309,7 +318,7 @@ export class Path {
       pushLine(toNode + u - T, oIn);
       this.turns.push({ s: this.length, dir: m === "L" ? -1 : m === "R" ? 1 : (turn > 0 ? -1 : 1) });
       const sx = cx - fi[0] * T, sz = cz - fi[1] * T;
-      const tp = turnPiece(this.length, sx, sz, hin, T, turn > 0 ? 1 : -1, m === "L" ? SPEED_LEFT : m === "R" ? SPEED_RIGHT : SPEED_BEND, ang);
+      const tp = turnPiece(this.length, sx, sz, hin, T, turn > 0 ? 1 : -1, m === "L" ? SPEED_LEFT : m === "R" ? SPEED_RIGHT : SPEED_BEND, ang, m === "S" ? oIn : undefined, m === "S" ? BEND_MIN : R);
       this.pieces.push(tp);
       this.length += tp.len;
       d = e; lo = oOut; legS = this.length;
@@ -354,7 +363,7 @@ export class Path {
     const p = this.find(s);
     const u = s - p.s0;
     if (p.kind === "arc") {
-      this.lastOffset = NaN; this.lastLineH = p.h0;
+      this.lastOffset = p.lane ?? NaN; this.lastLineH = p.h0;
       const U = turnUnit(p.ang), w = Math.min(Math.max(u / p.sc, 0), U.len);
       const f = (w / U.len) * U.N, i = Math.min(U.N - 1, Math.floor(f)), a = f - i;
       const fx = (U.xs[i] + (U.xs[i + 1] - U.xs[i]) * a) * p.sc, fy = (U.ys[i] + (U.ys[i + 1] - U.ys[i]) * a) * p.sc * p.sgn;
@@ -362,6 +371,8 @@ export class Path {
       out.x = p.x0 + ch * fx - sh * fy;
       out.z = p.z0 - sh * fx - ch * fy;
       out.h = p.h0 + p.sgn * U.hAt(w); out.k = p.sgn * U.kAt(w) / p.sc;
+      // (Through a bend, in its lane: the lane's heading is its own.)
+      if (p.lane !== undefined) this.lastLineH = out.h;
       return out;
     }
     // Lane offset: o0, blending to o1 over [c0, c0 + tc].

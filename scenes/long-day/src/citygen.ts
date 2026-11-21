@@ -200,9 +200,24 @@ const MERGE_EDGE = 24;
 // the river and the sea, its cells laid out round it so its streets in are long enough; the
 // junction gives way to a one-way ring (ORG_ROUND_R metres out) round a round park, with the
 // streets running in.
-export interface OrganicOpts { river?: boolean; rounds?: string[]; sea?: { side: number; inSea: (x: number, z: number) => boolean } }
+// `avenues`: smooth lines laid first, each a street the whole way across town (an elevated line's,
+// a cable car's: `tag`), from `from` on one edge to `to` on the other (world z on the west and east
+// edges; with `ns`, world x on the north and south), bowing gently between (none at its ends, so it
+// meets the edges square, on the line the grid's would run on). Pairs of points either side of it,
+// a little over a block apart, make the cells' edges between them lie along it; the other streets
+// meet it at junctions. (avenueChains checks each came through whole.)
+// (`line`: its way given instead, as points; its pairs from `pairsFrom` metres along it on: a
+// freeway's, straight through the grid's patch and on round its curve.)
+export interface OrganicAvenue { ns: boolean; from: number; to: number; tag: "elevated" | "cable" | "freeway"; name: string; line?: [number, number][]; pairsFrom?: number }
+// `patch`: a rectangle of the town (world x0..x1, z0..z1) laid out as the grid would be, its points
+// the blocks' middles, so its streets and junctions are the grid's own, square and keyed as the
+// grid's (the freeway's interchange is built on them); `cuts` leaves out its streets as the grid's
+// (a slip ramp's superblock).
+export interface OrganicOpts { river?: boolean; rounds?: string[]; sea?: { side: number; inSea: (x: number, z: number) => boolean }; avenues?: OrganicAvenue[];
+  patch?: { x0: number; z0: number; x1: number; z1: number }; cuts?: { ix: number; iz: number; ew: boolean }[] }
+const AV_SPACING = 52, AV_HALF = 30, AV_NEAR = 4;
 const ORG_ROUND_R = 26;
-type FE = { a: number; b: number; name?: string; ring?: boolean; wet?: [number, number][] };   // wet: a water cell's point on each side that is river
+type FE = { a: number; b: number; name?: string; ring?: boolean; wet?: [number, number][]; tag?: "elevated" | "cable" | "freeway" };   // wet: a water cell's point on each side that is river
 export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): CityGraph {
   const at = (i: number) => i * BLOCK + STREET / 2, X0 = at(o.lo), X1 = at(o.hi + 1), Z0 = X0, Z1 = X1;
   const h = (salt: number) => hash2(seed, 0x0c9, 0, salt);
@@ -228,6 +243,55 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
     for (let k = 0; k < c.length; k++) { const [x0, z0] = c[k], [x1, z1] = c[(k + 1) % c.length], w = x0 * z1 - x1 * z0; A += w; cx += (x0 + x1) * w; cz += (z0 + z1) * w; }
     if (Math.abs(A) > 1) pts[i] = [cx / (3 * A), cz / (3 * A)];
   });
+  // The avenues' lines, sampled; and their points (the pairs either side) in place of those near.
+  const avLines = (x.avenues ?? []).map((av, ai) => {
+    if (av.line) return { av, line: av.line };
+    const ha = (k: number) => hash2(seed, 0xa7e + ai, Math.round(av.from), k);
+    const lo = (av.ns ? X0 : Z0) + 1.6 * SP, hi = (av.ns ? X1 : Z1) - 1.6 * SP;
+    const amp = (0.5 + 0.6 * ha(1)) * BLOCK * (ha(2) < 0.5 ? -1 : 1), sBend = ha(3) < 0.4;
+    const line: [number, number][] = [];
+    for (let k = 0; k <= 96; k++) {
+      const t = k / 96, u = t * t * (3 - 2 * t), env = Math.sin(Math.PI * t) ** 2;
+      const off = Math.max(lo, Math.min(hi, av.from + (av.to - av.from) * u + amp * env * (sBend ? 2 * Math.cos(Math.PI * t) : 1)));
+      const along = (av.ns ? Z0 : X0) + ((av.ns ? Z1 - Z0 : X1 - X0) * t);
+      line.push(av.ns ? [off, along] : [along, off]);
+    }
+    return { av, line };
+  });
+  const segD = (px: number, pz: number, [ax, az]: [number, number], [bx, bz]: [number, number]) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz || 1))); return Math.hypot(px - ax - dx * t, pz - az - dz * t); };
+  const avOff = (px: number, pz: number, L: [number, number][]) => { let m = Infinity; for (let i = 0; i + 1 < L.length; i++) m = Math.min(m, segD(px, pz, L[i], L[i + 1])); return m; };
+  const avNear = (px: number, pz: number) => avLines.some(({ line }) => avOff(px, pz, line) < AV_NEAR);
+  if (avLines.length) {
+    pts = pts.filter(([px, pz]) => avLines.every(({ line }) => avOff(px, pz, line) > SP * 0.6));
+    for (const { line } of avLines) {
+      const cum = [0];
+      for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
+      const L = cum[cum.length - 1], n = Math.max(2, Math.round(L / AV_SPACING)), step = L / n;
+      const from = avLines.find((q) => q.line === line)!.av.pairsFrom ?? 0;
+      for (let k = 0; k < n; k++) {
+        const sv = step * (k + 0.5);
+        if (sv < from + step / 2) continue;
+        let i = 0; while (i < line.length - 2 && cum[i + 1] < sv) i++;
+        const [ax, az] = line[i], [bx, bz] = line[i + 1], f = (sv - cum[i]) / (cum[i + 1] - cum[i] || 1), l = Math.hypot(bx - ax, bz - az) || 1;
+        const cx = ax + (bx - ax) * f, cz = az + (bz - az) * f, nx = -(bz - az) / l, nz = (bx - ax) / l;
+        pts.push([cx + nx * AV_HALF, cz + nz * AV_HALF], [cx - nx * AV_HALF, cz - nz * AV_HALF]);
+      }
+    }
+  }
+  // The grid's patch: its blocks' middles in place of the points there.
+  const PA = x.patch, inPatch = (px: number, pz: number, m = 0) => !!PA && px > PA.x0 - m && px < PA.x1 + m && pz > PA.z0 - m && pz < PA.z1 + m;
+  if (PA) {
+    pts = pts.filter(([px, pz]) => !inPatch(px, pz, SP * 0.6));
+    for (let bz = Math.ceil((PA.z0 - STREET / 2 - BLOCK / 2) / BLOCK); bz * BLOCK + STREET / 2 + BLOCK / 2 < PA.z1; bz++)
+      for (let bx = Math.ceil((PA.x0 - STREET / 2 - BLOCK / 2) / BLOCK); bx * BLOCK + STREET / 2 + BLOCK / 2 < PA.x1; bx++)
+        pts.push([bx * BLOCK + STREET / 2 + BLOCK / 2, bz * BLOCK + STREET / 2 + BLOCK / 2]);
+  }
+  // (A junction of the patch's grid: at one of its lines' crossings, inside it; where it is exactly.)
+  const gridAt = (p: P): P | null => {
+    if (!inPatch(p[0], p[1], 1)) return null;
+    const gx = Math.round((p[0] - STREET / 2) / BLOCK) * BLOCK + STREET / 2, gz = Math.round((p[1] - STREET / 2) / BLOCK) * BLOCK + STREET / 2;
+    return Math.abs(gx - p[0]) < 0.6 && Math.abs(gz - p[1]) < 0.6 ? [gx, gz] : null;
+  };
   // The river's line: from the middle of a gap between gates on the west edge to one on the east
   // (the same gap or the next), meandering between (none at its ends, so it meets the edges square).
   const gz = [...new Set(o.gates.filter((g) => g.dir === 0 || g.dir === 2).map((g) => at(g.iz)))].sort((p, q) => p - q);
@@ -260,6 +324,8 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
   for (let t = 0; t < 40 && sites.length < (x.rounds?.length ?? 0); t++) {
     const sx = X0 + 160 + h(100 + t) * (X1 - X0 - 320), sz = Z0 + 160 + h(140 + t) * (Z1 - Z0 - 320);
     if (river && riverOff(sx, sz) < 150) continue;
+    if (avLines.some(({ line }) => avOff(sx, sz, line) < 160)) continue;   // (nor by an avenue)
+    if (inPatch(sx, sz, 160)) continue;   // (nor by the grid's patch)
     if (sea && [[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]].some(([dx, dz]) => sea.inSea(sx + dx, sz + dz))) continue;   // (nor by the sea)
     if (sites.some((s) => Math.hypot(s.x - sx, s.z - sz) < 340)) continue;
     sites.push({ x: sx, z: sz, name: x.rounds![sites.length] });
@@ -303,11 +369,19 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
       const A = verts[a], B = verts[b];
       if (Math.hypot(A[0] - B[0], A[1] - B[1]) >= MERGE_EDGE) break;
       if (corner(A) && corner(B)) continue;
+      // (The grid's patch keeps its junctions where they are.)
+      const gA = gridAt(A), gB = gridAt(B);
+      if (gA && gB) continue;
+      if (gA || gB) { verts[a] = gA ?? gB!; parent[b] = a; continue; }
       // The merged corner: on the town's edge if either is (a square corner stays put).
-      const m: P = corner(A) ? A : corner(B) ? B : onEdge(A) && !onEdge(B) ? A : onEdge(B) && !onEdge(A) ? B : [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+      // (Or on an avenue, if either is: the avenue keeps its line.)
+      const m: P = corner(A) ? A : corner(B) ? B : onEdge(A) && !onEdge(B) ? A : onEdge(B) && !onEdge(A) ? B
+        : avNear(A[0], A[1]) && !avNear(B[0], B[1]) ? A : avNear(B[0], B[1]) && !avNear(A[0], A[1]) ? B : [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
       verts[a] = [m[0], m[1]]; parent[b] = a;
     }
   }
+  // (The patch's junctions exactly on the grid's lines, so its streets run square.)
+  for (let i = 0; i < verts.length; i++) if (find(i) === i) { const g0 = gridAt(verts[i]); if (g0) verts[i] = g0; }
   // The streets left: between distinct merged corners, once each. Which cells each borders
   // (two, or one round the town's edge), and which cells meet at each corner.
   const mk = (a: number, b: number) => (a < b ? `${a},${b}` : `${b},${a}`);
@@ -319,6 +393,11 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
   for (const [a0, b0] of edges.values()) {
     const a = find(a0), b = find(b0), k = mk(a, b);
     if (a !== b && !seen.has(k)) { seen.add(k); fe.push({ a, b }); }
+  }
+  // (The patch's streets left out, as the grid leaves them: cuts.)
+  if (x.cuts?.length) {
+    const atG = (i: number) => i * BLOCK + STREET / 2, hit = (v: P, ix: number, iz: number) => Math.abs(v[0] - atG(ix)) < 0.5 && Math.abs(v[1] - atG(iz)) < 0.5;
+    fe = fe.filter((e) => !x.cuts!.some((c) => { const [ex, ez] = c.ew ? [c.ix + 1, c.iz] : [c.ix, c.iz + 1]; return (hit(verts[e.a], c.ix, c.iz) && hit(verts[e.b], ex, ez)) || (hit(verts[e.b], c.ix, c.iz) && hit(verts[e.a], ex, ez)); }));
   }
   // The river: the cheapest chain of cells from the west edge's cell nearest its line to the east
   // edge's, each step costing its length, more the further the cell lies off the line (and none
@@ -410,12 +489,33 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
   for (const gp of gatePos) {
     const rs = [...new Set(fe.flatMap((e) => [e.a, e.b]))];
     let best = -1, bd = 30;
-    for (const r of rs) { const v = verts[r]; if (corner(v) || !sameSide(v, gp)) continue; const d = Math.hypot(v[0] - gp[0], v[1] - gp[1]); if (d < bd) { bd = d; best = r; } }
+    for (const r of rs) { const v = verts[r]; if (corner(v) || !sameSide(v, gp)) continue; const d = Math.hypot(v[0] - gp[0], v[1] - gp[1]); if (d > 0.5 && avNear(v[0], v[1])) continue; if (d < bd) { bd = d; best = r; } }
     if (best >= 0) { verts[best] = [gp[0], gp[1]]; continue; }
     const i = fe.findIndex(({ a, b }) => sameSide(verts[a], gp) && sameSide(verts[b], gp) && Math.hypot(verts[a][0] - gp[0], verts[a][1] - gp[1]) + Math.hypot(verts[b][0] - gp[0], verts[b][1] - gp[1]) < Math.hypot(verts[a][0] - verts[b][0], verts[a][1] - verts[b][1]) + 0.5);
     if (i < 0) continue;
     const n = verts.length; verts.push([gp[0], gp[1]]); parent.push(n);
     const e = fe[i]; fe.splice(i, 1, { ...e, b: n }, { ...e, a: n });
+  }
+  // The avenues' streets: for each, the chain of streets from the corner nearest where its line
+  // starts to the one nearest where it ends that keeps closest to its line (each street costing its
+  // length, many times more the further it strays): one unbroken run, edge to edge.
+  for (const { av, line } of avLines) {
+    const adj = new Map<number, FE[]>();
+    for (const e of fe) if (!e.ring) for (const v of [e.a, e.b]) { let l = adj.get(v); if (!l) adj.set(v, l = []); l.push(e); }
+    const nearest = (p: [number, number]) => { let best = -1, bd = Infinity; for (const v of adj.keys()) { const d = Math.hypot(verts[v][0] - p[0], verts[v][1] - p[1]); if (d < bd) { bd = d; best = v; } } return best; };
+    const s0 = nearest(line[0]), s1 = nearest(line[line.length - 1]);
+    if (s0 < 0 || s1 < 0) continue;
+    // (Never along another avenue's street, crossing it only at a corner: the first laid keeps it.)
+    const cost = (e: FE) => { const A = verts[e.a], B = verts[e.b], off = Math.max(avOff(A[0], A[1], line), avOff(B[0], B[1], line), avOff((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, line)); return Math.hypot(B[0] - A[0], B[1] - A[1]) * (1 + (off / AV_NEAR) ** 2 * 4) + (e.tag && e.tag !== av.tag ? 1e7 : 0); };
+    const dist = new Map<number, number>([[s0, 0]]), prev = new Map<number, FE>(), done = new Set<number>();
+    for (;;) {
+      let u = -1, du = Infinity;
+      for (const [v, d] of dist) if (!done.has(v) && d < du) { du = d; u = v; }
+      if (u < 0 || u === s1) break;
+      done.add(u);
+      for (const e of adj.get(u) ?? []) { const w = e.a === u ? e.b : e.a, dw = du + cost(e); if (dw < (dist.get(w) ?? Infinity)) { dist.set(w, dw); prev.set(w, e); } }
+    }
+    for (let v = s1; v !== s0;) { const e = prev.get(v); if (!e) break; e.tag = av.tag; e.name = av.name; v = e.a === v ? e.b : e.a; }
   }
   // The graph: nodes for the merged corners (keyed by the grid cell they fall in), streets for
   // the edges left between distinct ones.
@@ -443,7 +543,7 @@ export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): Ci
     if (e.wet) streetEdge.set(g.streets.length, e);
     const [ax, az] = verts[e.a], [bx, bz] = verts[e.b], ew = Math.abs(bx - ax) > Math.abs(bz - az);
     const [p, q] = ew ? (ax <= bx ? [e.a, e.b] : [e.b, e.a]) : (az <= bz ? [e.a, e.b] : [e.b, e.a]);
-    g.addStreet(node(p), node(q), { name: e.name ?? nameOf(e.a, e.b) });
+    g.addStreet(node(p), node(q), { name: e.name ?? nameOf(e.a, e.b), tags: e.tag ? { [e.tag]: true } : {} });
   }
   // Gate streets out of town, as on the grid.
   o.gates.forEach((gt, i) => {

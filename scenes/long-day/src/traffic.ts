@@ -22,7 +22,7 @@ import { LANE_INNER, LANE_KERB, Path, STOP_BACK } from "./route.ts";
 import type { Move, Pose, Route } from "./route.ts";
 import { SIM_DT } from "./journey.ts";
 
-export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking)
+export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number; body?: boolean }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking); body: the truck's own body (life.ts), parked or not
 
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
@@ -60,12 +60,14 @@ interface Car {
 }
 
 const TRAFFIC_SPAWN = [70, 150], TRAFFIC_DESPAWN = 175;
+const STUCK_GONE = 55;   // s a vehicle may stand before it is gone (longer than a red light lasts: signals.ts, five phases at most)
 // Making way for the truck out of a gridlock (clearWay): how far along its way ahead of its nose (on
 // through the junction it waits at), the room left it, how fast they back up or pull on (m/s), and
 // how long one can stay stuck in its way.
-const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 20, CLEAR_LOOK = 30;
+const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 12, CLEAR_LOOK = 30;
 const CLEAR_WOBBLE = 0.05;   // m: how much circles' gaps to the truck wobble along a lane beside it (clearWay)
 const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
+const DROP_DEEP = 0.6;   // m: how deep inside a parked truck's circles a car is dropped (dropInside)
 const SLIDE_LOOK = 6;     // m on along its way a car beside the truck may slide by it to come clear (slidesBy)
 const CAR_STOP_PAUSE = 1.0;     // s a car stands at a stop sign's line before going on
 const GIVE_WAY_GAP = 3.4;   // m between centre lines: closer than this, a car and the truck would touch (the truck's rear cuts its turns)
@@ -184,6 +186,8 @@ export class Traffic {
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const c = this.cars[i];
       if (Math.hypot(c.x - focus.x, c.z - focus.z) > TRAFFIC_DESPAWN) this.cars.splice(i, 1);
+      // (And one stuck for good, in a knot of traffic nothing undoes: gone, turned off somewhere.)
+      else if (c.stillT > STUCK_GONE) this.cars.splice(i, 1);
     }
     const bx = Math.floor(focus.x / BLOCK), bz = Math.floor(focus.z / BLOCK);
     const d = plan.district(bx, bz);
@@ -233,7 +237,9 @@ export class Traffic {
   private clearWay(G: CityGraph, truck: Obstacle[], tp: { path: Path; s: number; front: number; rear: number; yaw?: number; fw?: number } | null, dir: number, dt: number) {
     const Z = this.clearZone, R = this.clearReq, Bd = this.clearBody;
     Z.length = 0; R.clear(); Bd.length = 0;
-    for (const o of truck) if (!o.still && !o.sweep) { Z.push(o); Bd.push(o); }
+    // (Its body even pulled up, near its stop, as traffic passes it: life.ts marks that still; none
+    // makes way into it all the same.)
+    for (const o of truck) if (o.body || (!o.still && !o.sweep)) { Z.push(o); Bd.push(o); }
     if (dir < 0) { for (const o of truck) if (o.sweep) Z.push(o); }
     // (Ahead: its body as it comes on along its way, as it looks for anything in it, life.ts truckStop.)
     // (A tractor's trailer, its axles dragged along after the kingpin, swinging in across a turn.)
@@ -1079,6 +1085,18 @@ export class Traffic {
     }
     return false;
   }
+  // Drops any vehicle deep inside obstacles o[i0..i1) (a parked truck set down where it stood).
+  private dropC: Obstacle[] = [];
+  dropInside(o: Obstacle[], i0: number, i1: number) {
+    for (let i = this.cars.length - 1; i >= 0; i--) {
+      const c = this.cars[i], C = this.dropC;
+      let near = false;
+      for (let k = i0; k < i1 && !near; k++) near = Math.hypot(o[k].x - c.x, o[k].z - c.z) < o[k].r + c.kind.len;
+      if (!near) continue;
+      C.length = 0; this.carCircles(c, C);
+      if (C.some((p) => { for (let k = i0; k < i1; k++) if (Math.hypot(p.x - o[k].x, p.z - o[k].z) < p.r + o[k].r - DROP_DEEP) return true; return false; })) this.cars.splice(i, 1);
+    }
+  }
   // A vehicle as a row of circles about its own width, so long ones block their whole length
   // without reaching into the next lane (a bus's two big circles used to block the lanes
   // beside it and oncoming traffic).
@@ -1242,8 +1260,10 @@ export class Traffic {
       // (The truck about to turn, a car beside it on the side it turns to (into the inner lane for
       // a left, its rear across the kerb lane for a right), the truck's nose ahead of the car's
       // middle: it treats it as in its lane and drops back behind it. Further ahead than that, it
-      // goes on, and the truck waits for it: street life's truckStop.)
-      if (isTruck && !o.still && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
+      // goes on, and the truck waits for it: street life's truckStop.) (Both standing, the car beside
+      // it already: it goes on past, as the truck waits for it; neither would ever move first.)
+      const bothStill = c.v < 0.1 && Math.abs(this.truckPath?.v ?? 0) < 0.1;
+      if (isTruck && !o.still && !bothStill && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (A parked truck alongside, not yet clear of it sideways: held there while it eases out.)
       if (o.still && Math.abs(along) <= half && Math.abs(side) < rLat + c.kind.width * 0.5) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (Something standing beside it, a parked truck or a car, that its body would swing into as

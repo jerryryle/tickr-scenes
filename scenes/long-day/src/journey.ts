@@ -126,7 +126,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean;   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
+  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -140,12 +140,16 @@ const GATE_SPEED = 6.5;           // rough average speed across town, for timing
 const DRIVE_SLACK = 3 * BLOCK, GATE_SLACK = BLOCK;
 const GATE_MAX = 900;             // s: longer than any drive out of town could be (deadline's early out)
 const VMAX = 11, ACCEL = 1.6, BRAKE = 2.2, FIRM_BRAKE = 4.5, MAX_DECEL = 5, STOP_GAP = 0.6;
+// How fast its acceleration may change (m/s^3): pulling away and easing off gently; braking harder
+// comes on quicker, as a driver's foot does. (Without it, a limit that comes and goes from one step
+// to the next, a car ahead seen and then not, had it surge and shudder.)
+const JERK = 4, BRAKE_JERK = 20, LIM_TAU = 0.4;
 // Gridlock: held standing by street life JAM_HONK s (its own light not red, its own way back into a
 // bay not clear of traffic), the truck honks; JAM_REACT s after (its first two blasts over), the
 // traffic in its way backs up or pulls on out of it (traffic.ts clearWay) and holds there until it
 // has gone JAM_CLEAR m. It never moves into anyone itself: it waits, honking every HONK_EVERY s,
 // until the way is clear.
-export const JAM_HONK = 20;
+export const JAM_HONK = 14;
 export const JAM_SHOT = 8;   // (director.ts: its shot of the jam, from this far into it; jamMoved counts on from here)
 const JAM_REACT = 1.5, JAM_CLEAR = 15, JAM_CREEP = 3, HONK_EVERY = 6;
 const SEARCH = 12;           // blocks searched around a point for facilities
@@ -670,7 +674,7 @@ export class Journey {
     }
     st.backS = dock ? -1 : st.stopS;   // below stopS: reverse into the bay on arrival
     if (stop.kind === "depart") st.stopS = THROUGH;   // no stop at the end: straight on out of town
-    if (st.mode !== "drive") { st.mode = "drive"; st.modeTime = 0; }
+    if (st.mode !== "drive") { st.mode = "drive"; st.modeTime = 0; st.acc = 0; st.lim = undefined; }
   }
 
   // How the current truck uses a stop's dock, or null for a kerb stop (no dock, a flatbed, or a
@@ -1068,10 +1072,20 @@ export class Journey {
       limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, dist)));
       hardStop = Math.min(hardStop, st.stopS);
     }
-    const v0 = st.v;
-    st.v = st.v < limit ? Math.min(limit, st.v + ACCEL * dt) : Math.max(limit, st.v - MAX_DECEL * dt);
+    const v0 = st.v, a0 = st.acc ?? 0, l0 = st.lim ?? limit;
+    // The acceleration it wants: following the limit as it moves (coming down toward a stop at about
+    // BRAKE, say), and closing on it: from below, easing off as it closes in so that it arrives with
+    // none left (JERK); from above, down to it in about LIM_TAU. At most ACCEL up, MAX_DECEL down.
+    // Eased toward from what it had (JERK; braking harder, BRAKE_JERK).
+    const lr = Math.min(ACCEL, Math.max(-MAX_DECEL, (limit - l0) / dt)), gap = limit - st.v;
+    const want = gap >= 0 ? Math.min(ACCEL, lr + Math.sqrt(2 * JERK * gap)) : Math.max(-MAX_DECEL, lr + gap / LIM_TAU);
+    const J = (want < a0 && want < 0 ? BRAKE_JERK : JERK) * dt;
+    let a = a0 + Math.min(J, Math.max(-J, want - a0));
+    st.v = Math.max(0, st.v + a * dt);
+    if (st.v === 0) a = Math.max(0, a);
+    st.acc = a; st.lim = limit;
     let ds = st.v * dt;
-    if (st.s + ds > hardStop) { ds = Math.max(0, hardStop - st.s); st.v = 0; }
+    if (st.s + ds > hardStop) { ds = Math.max(0, hardStop - st.s); st.v = 0; st.acc = 0; st.lim = undefined; }
     this.accel = dt > 0 ? (st.v - v0) / dt : 0;
     st.s += ds; this.lastStep = ds;
     st.redWait = st.v < 0.05 ? st.redWait + dt : 0;
@@ -1094,7 +1108,7 @@ export class Journey {
 
   private arrive() {
     const st = this.st;
-    st.v = 0;
+    st.v = 0; st.acc = 0; st.lim = undefined;
     if (st.backS < st.stopS - 0.01) { this.beginReverse(); return; }
     this.startDwell();
   }
@@ -1248,7 +1262,7 @@ export class Journey {
         st.garageExit = { x: this.pose.x, z: this.pose.z, h: this.pose.h };
       } else this.arriveAtEnd();
       this.path = null; st.route = null; st.s = 0; st.v = 0;
-      st.mode = "drive"; st.modeTime = 0; this.chores = [];
+      st.mode = "drive"; st.modeTime = 0; st.acc = 0; st.lim = undefined; this.chores = [];
       this.placePose();
     }
   }
@@ -1487,7 +1501,7 @@ export class Journey {
     this.countryPose();
     this.lastStep = Math.hypot(this.pose.x - px, this.pose.z - pz);
     if (st.cityTime >= this.arrivalRoad.arriveDur - 1e-6) {
-      st.mode = "drive"; st.modeTime = 0; st.v = this.arrivalRoad.inp.toFreewayMerge ? FW_OFF_V : V_GATE;
+      st.mode = "drive"; st.modeTime = 0; st.acc = 0; st.lim = undefined; st.v = this.arrivalRoad.inp.toFreewayMerge ? FW_OFF_V : V_GATE;
       this.path = null; st.route = null;
     }
   }

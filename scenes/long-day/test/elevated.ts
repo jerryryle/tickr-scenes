@@ -23,7 +23,9 @@ import { BLOCK } from "../src/grid.ts";
   let lastKey = "", checks = 0, crossings = 0, grounded = 0, maxVerts = 0;
   while (j.st.simTime < minutes * 60) {
     j.step();
-    const plan = { ...j.plan, seed: j.plan.seed, style: { ...j.plan.style, elevated: true } } as unknown as CityPlan;
+    // (Every city given lines, as a grid town has them: each row's both ways out of town.)
+    const style = { ...j.plan.style, elevated: true };
+    const plan = { ...j.plan, seed: j.plan.seed, style, elevatedSides: (cz: number) => (elevatedLine(style, cz) ? [-1, 1] : []) } as unknown as CityPlan;
     const rr: { road: CountryRoad; dx: number; dz: number }[] = [{ road: j.arrivalRoad, dx: 0, dz: 0 }];
     const ex = j.exitRoad, pv = j.previousExit;
     if (ex) rr.push({ road: ex, dx: 0, dz: 0 });

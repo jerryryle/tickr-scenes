@@ -8,7 +8,7 @@
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { disposeTree } from "./chunks.ts";
-import { EL_COLUMNS, EL_DECK, EL_RAIL, EL_STEEL, ELEVATED_REACH, ELEVATED_Y, elevatedBent, elevatedLine } from "./decor.ts";
+import { EL_COLUMNS, EL_DECK, EL_RAIL, EL_STEEL, ELEVATED_REACH, ELEVATED_Y, elevatedBent } from "./decor.ts";
 import { CITY_HI, CITY_LO, CityPlan } from "./city.ts";
 import { BLOCK, STREET } from "./grid.ts";
 import { CountryRoad } from "./country.ts";
@@ -44,9 +44,10 @@ export class ElevatedReach {
 
   // `roads`: the roads to keep clear, each with the offset it is drawn at in this city.
   update(plan: CityPlan, roads: { road: CountryRoad; dx: number; dz: number }[]) {
+    // (Each line's row out of town on each side it leaves by: plan.elevatedLines.)
     const lines: number[] = [];
-    for (let cz = CITY_LO; cz <= CITY_HI; cz++) if (elevatedLine(plan.style, cz)) lines.push(cz);
-    const key = lines.length ? `${plan.seed}/${plan.style.id}/${CITY_LO}/${lines.join(",")}|${roads.map((r) => `${r.road.inp.city}:${r.road.inp.kind}:${r.road.inp.dEst}:${r.dx.toFixed(1)}:${r.dz.toFixed(1)}`).join(";")}` : "";
+    for (let cz = CITY_LO; cz <= CITY_HI; cz++) if (plan.elevatedSides(cz).length) lines.push(cz);
+    const key = lines.length ? `${plan.seed}/${plan.style.id}/${CITY_LO}/${lines.map((cz) => `${cz}:${plan.elevatedSides(cz).join("")}`).join(",")}|${roads.map((r) => `${r.road.inp.city}:${r.road.inp.kind}:${r.road.inp.dEst}:${r.dx.toFixed(1)}:${r.dz.toFixed(1)}`).join(";")}` : "";
     if (key === this.key) return;
     this.key = key;
     this.clear();
@@ -95,7 +96,7 @@ export class ElevatedReach {
       // edge street), wherever the deck is high enough and neither column stands on a road.
       const bents: number[] = [];
       for (let k = 0; k * EL_BENT_STEP < blocks * BLOCK; k++) bents.push(E + STREET + 4 + k * EL_BENT_STEP, W - 4 - k * EL_BENT_STEP);
-      for (const side of [-1, 1]) {
+      for (const side of plan.elevatedSides(cz)) {
         // The blocks beyond the edge on this side, in pieces, each built in its own frame of reference.
         const first = side < 0 ? CITY_LO - blocks : CITY_HI + 1;
         for (let p = 0; p < blocks; p += REACH_PIECE) {

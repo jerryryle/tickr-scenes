@@ -33,7 +33,8 @@ import { buildInterchange, interchangeClear, interchangeDrive, interchangeFace, 
 import { isExitKind, STOP_BACK } from "./route.ts";
 import type { ExitKind } from "./route.ts";
 import { GARAGE_H } from "./route.ts";
-import { buildFreewayStreet, Frame, freewayGate, freewayMerge, FW_OFF_K, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
+import { buildFreewayStreet, Frame, freewayCurveOf, freewayGate, freewayMerge, FW_HALF, FW_OFF_K, FW_STRAIGHT, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
+import type { FwCurve } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
@@ -45,7 +46,8 @@ import { BLOCK, STREET, KERB, CURB_H, RING } from "./grid.ts";
 import { angleDiff, CityGraph, clipHalf, inPoly, polyDist } from "./citygraph.ts";
 import type { CBlock, CNode, CStreet } from "./citygraph.ts";
 import { gridGraph, organicGraph, trimToOutline } from "./citygen.ts";
-import { CityOutline } from "./outline.ts";
+import type { OrganicAvenue } from "./citygen.ts";
+import { CityOutline, seaSide } from "./outline.ts";
 import { DEBUG_EXIT, DEBUG_LAYOUT, DEBUG_ONEWAY } from "./debug.ts";
 
 const LANE_EAST_OUTER = 13.5; // local z of the eastbound kerb lane's centre
@@ -53,6 +55,7 @@ const LANE_EAST_OUTER = 13.5; // local z of the eastbound kerb lane's centre
 export type District = "downtown" | "commercial" | "residential" | "industrial" | "park";
 
 const CORE_CELL = 14; // blocks between downtown cores
+const at0 = (i: number) => i * BLOCK + STREET / 2;   // (the grid's line i, as world x or z)
 
 // City limits: the city is the square of blocks [CITY_LO, CITY_HI] on both axes, ringed by RING
 // blocks of countryside (the highway's own land takes over beyond). Its streets are those beside
@@ -142,6 +145,9 @@ export class CityPlan {
   private outlineAt(scale: number, seaOff = false): CityOutline {
     const rows: number[] = [], cols: number[] = [];
     for (let k = CITY_LO; k <= CITY_HI + 1; k++) { if (elevatedLine(this.style, k)) rows.push(k); if (this.style.cableCar && cableColumn(k)) cols.push(k); }
+    // (And where an organic town's freeway leaves it, round its curve.)
+    const C = this.fwCurve;
+    if (C) { if (C.dx) rows.push(Math.round((C.ez - STREET / 2) / BLOCK)); else cols.push(Math.round((C.ex - STREET / 2) / BLOCK)); }
     return new CityOutline(this.seed, this.style, { freeway: this.freeway, straightRows: rows, straightCols: cols, insetScale: scale, seaOff });
   }
   // Whether gate i (GATES) is open: its street runs in to the town (outline.ts).
@@ -161,8 +167,10 @@ export class CityPlan {
       const nr = DEBUG_LAYOUT === "organicRound" ? 2 : f(11) < 0.6 ? (f(12) < 0.4 ? 2 : 1) : 0, names = ROUND_NAMES;
       const r0 = Math.floor(f(13) * names.length), rounds = Array.from({ length: nr }, (_, i) => names[(r0 + i) % names.length]);
       const SL = this.shoreLine, sea = SL.sea === null ? undefined : { side: SL.sea, inSea: (x: number, z: number) => SL.inSea(x, z) };
-      const og = organicGraph(opts, this.seed, { river, rounds, sea });
-      if (og.gates.length === GATES.length) return og;
+      // (A town with avenues has no river: they would cross.)
+      const avenues = this.avenues, fw = this.fwRoute();
+      const og = organicGraph(opts, this.seed, { river: river && !avenues.length && !fw, rounds: fw ? [] : rounds, sea, avenues: fw ? [fw.avenue, ...avenues] : avenues,   /* (the freeway's laid first: the others keep off its streets) */ patch: fw?.patch, cuts: this.slipCuts() });
+      if (og.gates.length === GATES.length && this.avenuesWhole(og)) return og;
       this.organicFailed = true;
     }
     const cuts = this.slipCuts();
@@ -356,16 +364,97 @@ export class CityPlan {
   }
   // How this city's streets are laid out (citygen.ts): the old square grid, one bent out of square,
   // or an organic town, by the style's odds.
-  // An organic town (no grid underneath) only where nothing needs a straight line through it: no
-  // freeway, elevated line or cable car.
+  // An organic town (no grid underneath) only where its freeway, if it has one, can curve through
+  // it (freeway.ts freewayCurveOf: the grid kept round its interchange). (An elevated line or a
+  // cable car runs along a smooth avenue laid for it: avenues.)
   get layout(): "grid" | "warp" | "organic" {
-    const organicOk = !this.freeway && !this.style.elevated && !this.style.cableCar && !this.organicFailed;
+    const organicOk = (!this.freeway || !!this.fwCurveOf()) && !this.organicFailed;
     if (DEBUG_LAYOUT === "grid" || DEBUG_LAYOUT === "warp") return DEBUG_LAYOUT;
     if (DEBUG_LAYOUT.startsWith("organic")) return organicOk ? "organic" : "warp";
     if (DEBUG_LAYOUT === "river" || DEBUG_LAYOUT === "round") return "warp";
     // (By the style's odds: STYLES' layouts.)
     const L = this.style.layouts, o = organicOk ? L.organic : 0, r = hash2(this.seed, 0x1a7, 0, 0) * (L.grid + L.warp + o);
     return r < o ? "organic" : r < o + L.warp ? "warp" : "grid";
+  }
+  // An organic town's avenues (citygen.ts OrganicAvenue): an elevated line's in a town with them,
+  // one or two, each from an elevated row on the west edge to one on the east (the same, or the
+  // next); a cable car's, two, each from a cable column on the north edge to one on the south,
+  // clear of the sea. Where the lines run on out of town (ElevatedReach) and in from (outline.ts).
+  get avenues(): OrganicAvenue[] {
+    if (this.avs) return this.avs;
+    const out: OrganicAvenue[] = [], h = (k: number) => hash2(this.seed, 0xa7f, 0, k), at = (i: number) => i * BLOCK + STREET / 2;
+    const pick = <T>(xs: T[], k: number) => xs[Math.floor(h(k) * xs.length) % xs.length];
+    if (this.style.elevated) {
+      const rows: number[] = [];
+      // (Three blocks in from the north and south edges at least: room for it to bow.)
+      for (let r = CITY_LO + 3; r <= CITY_HI - 2; r++) if (elevatedLine(this.style, r)) rows.push(r);
+      const used: number[] = [];
+      for (let n = 0; n < (rows.length >= 4 && h(1) < 0.5 ? 2 : 1); n++) {
+        const free = rows.filter((r) => used.every((u) => Math.abs(u - r) >= 8));
+        if (!free.length) break;
+        const r0 = pick(free, 2 + n), r1 = pick([r0, r0 - 4, r0 + 4].filter((r) => rows.includes(r) && used.every((u) => Math.abs(u - r) >= 8)), 4 + n);
+        used.push(r0, r1);
+        out.push({ ns: false, from: at(r0), to: at(r1), tag: "elevated", name: streetNameEW(r0) });
+      }
+    }
+    if (this.style.cableCar) {
+      const SL = this.shoreLine, dry = (c: number) => [0.3, 0.5, 0.7].every((t) => !SL.inSea(at(c), at(CITY_LO) + t * (CITY_HI + 1 - CITY_LO) * BLOCK));
+      const cols: number[] = [];
+      for (let c = CITY_LO + 2; c <= CITY_HI - 1; c++) if (cableColumn(c) && dry(c)) cols.push(c);
+      const used: number[] = [];
+      for (let n = 0; n < 2; n++) {
+        const free = cols.filter((c) => used.every((u) => Math.abs(u - c) >= 6));
+        if (!free.length) break;
+        const c0 = pick(free, 6 + n), c1 = pick([c0, c0 - 3, c0 + 3].filter((c) => cols.includes(c) && used.every((u) => Math.abs(u - c) >= 6)), 8 + n);
+        used.push(c0, c1);
+        out.push({ ns: true, from: at(c0), to: at(c1), tag: "cable", name: streetNameNS(c0) });
+      }
+    }
+    return this.avs = out;
+  }
+  private avs: OrganicAvenue[] | null = null;
+  // The elevated lines: each the row it leaves town by to the west and to the east (ElevatedReach
+  // runs it on from there), and its way through town from west to east (the trains): on the grid,
+  // straight along its row; in an organic town, along its avenue's streets.
+  get elevatedLines(): { w: number; e: number; pts: [number, number][] }[] {
+    if (this.elLines) return this.elLines;
+    const out: { w: number; e: number; pts: [number, number][] }[] = [], G = this.graph, row = (v: number) => Math.round((v - STREET / 2) / BLOCK);
+    if (this.style.elevated && this.layout === "organic") {
+      const sts = G.streets.filter((st) => st.inCity && st.tags.elevated), arms = new Map<number, number[]>();
+      for (const st of sts) for (const n of [st.n0, st.n1]) arms.set(n, [...(arms.get(n) ?? []), st.id]);
+      for (const av of this.avenues.filter((a) => a.tag === "elevated")) {
+        // (From its west end: the end node nearest where it was laid from.)
+        let n = -1, bd = Infinity;
+        for (const [k, l] of arms) if (l.length === 1) { const N = G.nodes[k], d = Math.hypot(N.x - at0(CITY_LO), N.z - av.from); if (d < bd) { bd = d; n = k; } }
+        const pts: [number, number][] = [], seen = new Set<number>();
+        for (let prev = -1; n >= 0;) {
+          pts.push([G.nodes[n].x, G.nodes[n].z]);
+          const next = (arms.get(n) ?? []).find((id) => id !== prev && !seen.has(id));
+          if (next === undefined) break;
+          seen.add(next); prev = next; const st = G.streets[next]; n = st.n0 === n ? st.n1 : st.n0;
+        }
+        if (pts.length > 1) out.push({ w: row(pts[0][1]), e: row(pts[pts.length - 1][1]), pts });
+      }
+    } else if (this.style.elevated) for (let r = CITY_LO; r <= CITY_HI; r++) if (elevatedLine(this.style, r)) out.push({ w: r, e: r, pts: [[at0(CITY_LO), at0(r)], [at0(CITY_HI + 1), at0(r)]] });
+    return this.elLines = out;
+  }
+  private elLines: { w: number; e: number; pts: [number, number][] }[] | null = null;
+  // The sides (-1 west, 1 east) an elevated line runs on out of town from row cz.
+  elevatedSides(cz: number): number[] { return this.elevatedLines.flatMap((l) => [...(l.w === cz ? [-1] : []), ...(l.e === cz ? [1] : [])]); }
+  // Whether each avenue came through whole: its streets one unbroken run from edge to edge.
+  private avenuesWhole(G: CityGraph): boolean {
+    for (const tag of ["elevated", "cable", "freeway"] as const) {
+      const want = tag === "freeway" ? (this.fwRoute() ? 1 : 0) : this.avenues.filter((a) => a.tag === tag).length;
+      if (!want) continue;
+      const sts = G.streets.filter((st) => st.inCity && st.tags[tag]), deg = new Map<number, number>();
+      for (const st of sts) for (const n of [st.n0, st.n1]) deg.set(n, (deg.get(n) ?? 0) + 1);
+      if ([...deg.values()].some((d) => d > 2)) return false;
+      // (Each run's two ends on the town's edge, as many runs as avenues.)
+      const ends = [...deg.entries()].filter(([, d]) => d === 1).map(([n]) => G.nodes[n]);
+      const { x0, z0, x1, z1 } = { x0: at0(CITY_LO), z0: at0(CITY_LO), x1: at0(CITY_HI + 1), z1: at0(CITY_HI + 1) };
+      if (ends.length !== 2 * want || ends.some((n) => Math.min(Math.abs(n.x - x0), Math.abs(n.x - x1), Math.abs(n.z - z0), Math.abs(n.z - z1)) > 1)) return false;
+    }
+    return true;
   }
   // The block with key (bx, bz), its face on side `side`, and that face's frontage point.
   blockOf(bx: number, bz: number) { return this.graph.block(bx, bz); }
@@ -439,13 +528,35 @@ export class CityPlan {
     }
     return null;
   }
+  // The freeway's curve, if it may have one (whatever the layout), and if it has one (an organic town).
+  private fwc: FwCurve | null | undefined;
+  private fwCurveOf(): FwCurve | null { if (this.fwc === undefined) this.fwc = this.freeway ? freewayCurveOf(this.seed, this.freeway, GATES, seaSide(this.seed, this.style) !== null) : null; return this.fwc; }
+  get fwCurve(): FwCurve | null { return this.freeway && this.layout === "organic" ? this.fwCurveOf() : null; }
+  // An organic town's freeway, for laying it out (citygen.ts): its way as an avenue, straight in
+  // from its gate through the grid's patch round the interchange (FW_STRAIGHT blocks in, three
+  // either side) and on round its curve; its streets carry the deck.
+  private fwRoute(): { avenue: OrganicAvenue; patch: { x0: number; z0: number; x1: number; z1: number } } | null {
+    const C = this.fwCurveOf(), g = this.freeway;
+    if (!C || !g) return null;
+    const I = [[-1, 0], [0, 1], [1, 0], [0, -1]][g.dir], R = [-I[1], I[0]], N0 = [at0(g.ix), at0(g.iz)];
+    const corners = [[0, -3], [0, 3], [FW_STRAIGHT, -3], [FW_STRAIGHT, 3]].map(([a, b]) => [N0[0] + (I[0] * a + R[0] * b) * BLOCK, N0[1] + (I[1] * a + R[1] * b) * BLOCK]);
+    const patch = { x0: Math.min(...corners.map((c) => c[0])), x1: Math.max(...corners.map((c) => c[0])), z0: Math.min(...corners.map((c) => c[1])), z1: Math.max(...corners.map((c) => c[1])) };
+    const line: [number, number][] = [[N0[0], N0[1]], ...C.pts];
+    return { avenue: { ns: g.dir === 1 || g.dir === 3, from: 0, to: 0, tag: "freeway", name: g.dir === 0 || g.dir === 2 ? streetNameEW(g.iz) : streetNameNS(g.ix), line, pairsFrom: FW_STRAIGHT * BLOCK }, patch };
+  }
   private fwFrame: Frame | null | undefined;
   get freewayFrame(): Frame | null { if (this.fwFrame === undefined) this.fwFrame = this.freeway ? Frame.ofCity(this, this.freeway) : null; return this.fwFrame; }
   // Whether the street leaving node (ix, iz) along axis (0: east, 1: south) is under the freeway.
   freewayStreet(axis: number, ix: number, iz: number) {
     const g = this.freeway;
     if (!g || !insideCity(ix, iz)) return false;
-    return axis === 0 ? (g.dir === 0 || g.dir === 2) && iz === g.iz : (g.dir === 1 || g.dir === 3) && ix === g.ix;
+    const on = axis === 0 ? (g.dir === 0 || g.dir === 2) && iz === g.iz : (g.dir === 1 || g.dir === 3) && ix === g.ix;
+    // (In an organic town only along its straight, through the grid's patch: on round its curve,
+    // its own streets carry it, tagged.)
+    if (!on || !this.fwCurve) return on;
+    const I = [[-1, 0], [0, 1], [1, 0], [0, -1]][g.dir], al = (x: number, z: number) => (x - g.ix) * I[0] + (z - g.iz) * I[1];
+    const a0 = al(ix, iz), a1 = axis === 0 ? al(ix + 1, iz) : al(ix, iz + 1);
+    return Math.min(a0, a1) >= 0 && Math.max(a0, a1) <= FW_STRAIGHT;
   }
 
   // Smooth value noise on a grid of `scale` blocks, in [0, 1).
@@ -680,6 +791,21 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
 // A street between two intersections (tile-local), drawn by buildStreet in the street's own
 // frame: local (9, 9) its first node's centre, x along it, z to its right. (An east-west or
 // north-south street draws in the tile's own axes, as the grid always did.)
+// How far an elevated line's or cable car's street draws on past its end `end` (0: n0, 1: n1): where
+// the line bends on into another street of the same kind there, enough to close the bend's outside
+// at half-width w (and a hair more); where it ends, on over the junction (as the grid's lines do).
+function lineExt(G: CityGraph, st: CStreet, end: 0 | 1, tag: "elevated" | "cable" | "freeway", w: number) {
+  const N = G.nodes[end === 0 ? st.n0 : st.n1], hOut = end === 0 ? G.dedgeStartH(st.id * 2 + 1) + Math.PI : G.dedgeEndH(st.id * 2);
+  for (const a of N.arms) {
+    if (a.street === st.id || !G.streets[a.street].tags[tag]) continue;
+    const turn = Math.abs(angleDiff(a.h - hOut)), o = G.streets[a.street];
+    // (Meeting the grid's own: a freeway's straight, drawn a block from 9 m short of its node, as
+    // buildFreewayStreet does on the grid: on over the junction to it.)
+    const gridOwn = tag === "freeway" && (Math.abs(angleDiff(o.h0)) < 1e-9 || Math.abs(angleDiff(o.h0 + Math.PI / 2)) < 1e-9);
+    return Math.max(gridOwn ? 9 : 0, w * Math.tan(Math.min(turn, 1.2) / 2) + 0.15);
+  }
+  return 9;
+}
 function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: number, oz: number, district: District, rnd: Rand) {
   const G = plan.graph, A = G.nodes[st.n0];
   const mA = G.armOut(st.id * 2).mouth, mB = G.armIn(st.id * 2).mouth;
@@ -708,12 +834,17 @@ function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: nu
   // Features along it: an elevated line, a cable car's tracks, the freeway overhead (on the old grid's axes).
   const gridAxis = south || east;
   const fw = gridAxis && plan.freewayStreet(axis, A.kx, A.kz);
+  // (An organic town's freeway round its curve: its own streets, at any angle, tagged.)
+  const fwCurve = !fw && !!st.tags.freeway && axis === 0;
   const ic = fw ? plan.interchangeStreet(axis, A.kx, A.kz) : null;
   inFrame(f, [g, s, DC.lamps], () => {
     buildStreet(g, s, axis, district, rnd, front(loFace), front(hiFace), along(loFace), along(hiFace), 9 + mA, 9 + st.len - mB,
-      { el: !!st.tags.elevated && axis === 0, fw: !!fw, icClear: ic?.clear ?? null, oneway: st.oneway, ring: !!st.ring, loading: [zone(loFace), zone(hiFace)], wet: [water(loFace), water(hiFace)], median: plan.avenueMedian(st, district) && !front(loFace).drive && !front(hiFace).drive, salt: st.id * 31 + plan.seed });
-    if (st.tags.elevated && axis === 0) buildElevated(s);
-    if (st.tags.cable && axis === 1) buildCableTracks(g);
+      { el: !!st.tags.elevated && axis === 0, fw: !!fw || fwCurve, icClear: ic?.clear ?? null, oneway: st.oneway, ring: !!st.ring, loading: [zone(loFace), zone(hiFace)], wet: [water(loFace), water(hiFace)], median: plan.avenueMedian(st, district) && !front(loFace).drive && !front(hiFace).drive, salt: st.id * 31 + plan.seed });
+    // (Node to node, a little on past each end where the line bends on along the next street, so the
+    // two close up on the outside of the bend; at the line's end, on over the junction as on the grid.)
+    if (st.tags.elevated && axis === 0) buildElevated(s, 9 - lineExt(G, st, 0, "elevated", 4.6), 9 + st.len + lineExt(G, st, 1, "elevated", 4.6));
+    if (st.tags.cable) { if (axis === 1) buildCableTracks(g); else buildCableTracks(g, 9 - lineExt(G, st, 0, "cable", 3), 9 + st.len + lineExt(G, st, 1, "cable", 3)); }
+    if (fwCurve) buildFreewayStreet(g, 0, null, null, 9 - lineExt(G, st, 0, "freeway", FW_HALF + 0.4), 9 + st.len + lineExt(G, st, 1, "freeway", FW_HALF + 0.4));
     if (fw) {
       const F = plan.freewayFrame!;
       const gantry = ic?.gantry != null && DC.plates ? { at: ic.gantry, face: ic.face, k: ic.k, text: `EXIT ${F.exitNo} · ${F.name} CENTER`, other: `I-${F.route} ${F.wayOut}`, plates: DC.plates } : null;
@@ -1869,7 +2000,13 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     const ok = (p: number, soft: boolean) => !(icClear && p > icClear[0] - 1.5 && p < icClear[1] + 1.5) && !inDrive(loD, p, 1.5) && !inDrive(hiD, p, 1.5) && Math.abs(p - (a0 + 10)) > 1.5 && Math.abs(p - (a0 + 31)) > 1.5
       && (loS === null || Math.abs(p - loS) > 2) && (hiS === null || Math.abs(p - hiS) > 2) && (!soft || (!inDrive(loC, p, 0.5) && !inDrive(hiC, p, 0.5)));
     let last = -Infinity;
-    for (const base of (fw ? [26, 50] : [22, 39, 56]).map((b) => a0 + b - STREET)) {
+    // (The elevated line's every 17 m from the first, as far as the street goes: three on the grid's.)
+    const elBases: number[] = [];
+    for (let b = a0 + 4; b <= a1 - 2.5; b += 17) elBases.push(b);
+    // (The freeway's every 24 m: two on the grid's.)
+    const fwBases: number[] = [];
+    for (let b = a0 + 8; b <= a1 - 2.5; b += 24) fwBases.push(b);
+    for (const base of fw ? fwBases : elBases) {
       let at = NaN;
       for (const soft of [true, false]) {
         for (const o of [0, 2, -2, 4, -4, 6]) {
@@ -1973,7 +2110,7 @@ function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number,
   const g0 = c ? seasonGround(b.ground, c) : b.ground, g1 = c ? seasonGround(b.ground2, c) : b.ground2;
   const fields = b.fields?.map((f) => c ? seasonGround(f, c) : f);
   const greens = c ? seasonGreens(b.greens, c) : b.greens, cgreens = c ? seasonGreens(b.greens, c, true) : b.greens;
-  const ox = cx * BLOCK, oz = cz * BLOCK, line = elevatedLine(CS, cz);
+  const ox = cx * BLOCK, oz = cz * BLOCK, line = plan.elevatedSides(cz).includes(cx < (CITY_LO + CITY_HI) / 2 ? -1 : 1);
   // (Covered: a city block's, or a river's, over it. Streets lie over the land, which runs under them.)
   const covered = (wx: number, wz: number) => { const B = G.blockAt(wx, wz); return !!B && (B.inCity || B.water); };
   // Ground in 12 m cells: fields in farm country, patchy grass elsewhere, none where a block covers
