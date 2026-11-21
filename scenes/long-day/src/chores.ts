@@ -107,11 +107,14 @@ function walkRoute(a: [number, number, number], b: [number, number, number], obs
   }
   if (!hit) return [b];
   const s = (hit.x - a[0]) * -uz + (hit.z - a[2]) * ux;   // which side of the line the obstacle is on
-  const off = (hit.r + BODY_R) * 1.35 + 0.1;
-  for (const dir of s > 0 ? [-1, 1] : [1, -1]) {
-    const w: [number, number, number] = [hit.x - uz * off * dir, 0, hit.z + ux * off * dir];
-    if (obs.some((o) => o !== hit && Math.hypot(w[0] - o.x, w[2] - o.z) < o.r + BODY_R)) continue;
-    return [...walkRoute(a, w, obs, depth + 1), ...walkRoute(w, b, obs, depth + 1)];
+  // (Out beside it, then, if something stands there too, further out, round the two together.)
+  for (const wide of [1, 1.8, 2.6]) {
+    const off = ((hit.r + BODY_R) * 1.35 + 0.1) * wide;
+    for (const dir of s > 0 ? [-1, 1] : [1, -1]) {
+      const w: [number, number, number] = [hit.x - uz * off * dir, 0, hit.z + ux * off * dir];
+      if (obs.some((o) => o !== hit && Math.hypot(w[0] - o.x, w[2] - o.z) < o.r + BODY_R)) continue;
+      return [...walkRoute(a, w, obs, depth + 1), ...walkRoute(w, b, obs, depth + 1)];
+    }
   }
   return [b];   // boxed in: straight through
 }
@@ -122,8 +125,8 @@ function walkRoute(a: [number, number, number], b: [number, number, number], obs
 export interface WalkBox { x: number; z: number; hx: number; hz: number; ax: number; az: number }
 // The legs of a walk from a to b (on the ground) round boxes: the shortest way through the
 // corners of each box (stood off from it), by what can be seen from where. Boxes either end is in
-// or beside (standing at a trailer's door) are ignored; if there is no way round, straight through.
-function boxRoute(a: [number, number, number], b: [number, number, number], all: WalkBox[]): [number, number, number][] {
+// or beside (standing at a trailer's door) are ignored; null if there is no way round.
+function boxRoute(a: [number, number, number], b: [number, number, number], all: WalkBox[]): [number, number, number][] | null {
   const CLEAR = BODY_R - 0.04, STAND = BODY_R + 0.3;   // how close a path may pass, and where its corners are
   const local = (o: WalkBox, x: number, z: number) => { const dx = x - o.x, dz = z - o.z; return [dx * o.ax + dz * o.az, -dx * o.az + dz * o.ax]; };
   const inside = (o: WalkBox, x: number, z: number, m: number) => { const [u, v] = local(o, x, z); return Math.abs(u) < o.hx + m && Math.abs(v) < o.hz + m; };
@@ -161,7 +164,7 @@ function boxRoute(a: [number, number, number], b: [number, number, number], all:
       if (d < dist[k] && !blocked(pts[i][0], pts[i][1], pts[k][0], pts[k][1])) { dist[k] = d; prev[k] = i; }
     }
   }
-  if (prev[1] < 0) return [b];
+  if (prev[1] < 0) return null;
   const legs: [number, number, number][] = [];
   for (let k = prev[1]; k > 0; k = prev[k]) legs.unshift([pts[k][0], 0, pts[k][1]]);
   return [...legs, b];
@@ -324,8 +327,10 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   // parked in a dock's yard), in legs.
   const walk = (group: ChoreGroup, a: [number, number, number], b: [number, number, number], speed: number, extra: Partial<Chore> = {}) => {
     const ground = !extra.linear && a[1] === 0 && b[1] === 0;
-    const legs = !ground ? [b] : boxes.length ? boxRoute(a, b, [...boxes, ...obstacles.map((o) => ({ x: o.x, z: o.z, hx: o.r, hz: o.r, ax: 1, az: 0 }))])
-      : obstacles.length ? walkRoute(a, b, obstacles) : [b];
+    // (Round the boxes, the pavement's things as squares among them; where that finds no way (a
+    // square crowding the truck's corner), round the pavement's things as they are, circles.)
+    const legs = !ground ? [b] : (boxes.length ? boxRoute(a, b, [...boxes, ...obstacles.map((o) => ({ x: o.x, z: o.z, hx: o.r, hz: o.r, ax: 1, az: 0 }))]) : null)
+      ?? (obstacles.length ? walkRoute(a, b, obstacles) : [b]);
     let c: Chore | null = null, from = a;
     for (const to of legs) { c = add({ kind: "walk", group, len: Math.max(0.4, dist3(from, to) / speed), a: from, b: to, ...extra }); from = to; }
     return c!;

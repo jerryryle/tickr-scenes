@@ -313,7 +313,12 @@ export class Path {
         if (m === "S" && Math.abs(t2) >= Math.PI / 4 && o2 !== oOut) room = Math.min(room, Math.max(run + u2 - v - (t2 > 0 ? R_LEFT : R_RIGHT) * Math.tan(Math.abs(t2) / 2) - MIN_CHANGE - LANE_LEAD, BEND_MIN * Math.tan(ang / 2)));
         break;
       }
-      if (Number.isNaN(room)) room = run + route.after - v - 0.5;   // (no turn left: on to the stop)
+      if (Number.isNaN(room)) {
+        room = run + route.after - v - 0.5;   // (no turn left: on to the stop)
+        // (A bend out of the inner lane with only the stop after it: it leaves room to move back
+        // over to the kerb before the stop, as the last leg does: never tighter than BEND_MIN.)
+        if (m === "S" && oOut !== LANE_KERB) room = Math.min(room, Math.max(run + route.after - v - MIN_CHANGE - LANE_LEAD, BEND_MIN * Math.tan(ang / 2)));
+      }
       const T = Math.min(R * Math.tan(ang / 2), Math.max(0.3, toNode + u), Math.max(0.3, room));
       pushLine(toNode + u - T, oIn);
       this.turns.push({ s: this.length, dir: m === "L" ? -1 : m === "R" ? 1 : (turn > 0 ? -1 : 1) });

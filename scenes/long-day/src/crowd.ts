@@ -29,6 +29,7 @@ interface Ped {
   speed: number; phase: number; state: "walk" | "wait" | "cross"; crossA: number; crossLen: number; waitT: number;
   crossN?: number;   // where across the crossing lands, in the side's frame (default -0.85)
   back?: boolean;    // giving the crossing up, held up out in the road: back to the kerb it set out from
+  boxT?: number;     // how long it has been held up while the truck honks for its way (it turns this way and that, boxed in)
   shirt: number; pants: number; skin: number; hair: number;
   x: number; z: number; h: number; px: number; pz: number; ph: number; pphase: number;   // and one step ago
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
@@ -38,10 +39,11 @@ interface Ped {
 // What else street life needs from the journey this step (vignettes.ts).
 // truckPath: the truck driving its path (its s, speed, and its body's reach about s), or null.
 // carsClear: whether no vehicle would come over the crossing from (x0, z0) to (x1, z1) within secs s.
-export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean; truckYieldsAt?: number }
+export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean; truckYieldsAt?: number; truckHonks?: boolean }   // truckHonks: out of a gridlock, honking for its way (journey.ts clearing)
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
+const BOXED_GONE = 6, BOXED_NEAR = 18;   // s boxed in by the honking truck before stepping into a doorway (walk), and how near it (m)
 const BELLE = 0xf4ead8;
 const _pt: GPt = { x: 0, z: 0, h: 0 };
 const _tq: Pose = { x: 0, z: 0, h: 0, k: 0 };
@@ -119,10 +121,14 @@ export class Crowd {
     const want = d === "downtown" ? 26 : d === "commercial" ? 20 : d === "park" ? 14 : d === "residential" ? 10 : 5;
     for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus);
     this.obstacles.length = 0;
-    this.truckPath = more.truckPath ?? null; this.truckYieldsAt = more.truckYieldsAt ?? -1;
+    this.truckPath = more.truckPath ?? null; this.truckYieldsAt = more.truckYieldsAt ?? -1; this.truckHonks = !!more.truckHonks;
     this.carsClear = more.carsClear ?? null; this.cars = more.cars;
     this.crossers.length = 0; this.waiters.length = 0;
-    for (const p of this.peds) { this.walk(G, p, dt, plan, simTime, prs, truck); this.obstacles.push(pedObstacle(p)); }
+    for (const p of this.peds) this.walk(G, p, dt, plan, simTime, prs, truck);
+    // (Boxed in by the truck as it honks for its way, turning this way and that with it before them
+    // both ways: into a doorway beside them, gone, rather than stand there as it waits for them.)
+    for (let i = this.peds.length - 1; i >= 0; i--) if ((this.peds[i].boxT ?? 0) > BOXED_GONE) this.peds.splice(i, 1);
+    for (const p of this.peds) this.obstacles.push(pedObstacle(p));
     this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
     this.obstacles.push(...this.vig.obstacles);
     this.updateFlocks(dt, plan, focus);
@@ -180,6 +186,7 @@ export class Crowd {
   // first in turn: where each stands, where their crossing ends, and how long they have waited
   // (x, z, x1, z1, t each).
   readonly waiters: number[] = [];
+  private truckHonks = false;   // (the truck honking for its way: those it waits on clear it)
   private truckYieldsAt = -1;   // (the all-way stop the truck stands at letting those waiting go first, or -1)
   // Whether the truck, driving on, comes within `reach` m (of its body's middle line) of any of the
   // first `n` points of `pts` (x, z pairs) in the next `secs` s: from where it is to where it would
@@ -248,7 +255,14 @@ export class Crowd {
     }
     const q = G.facePt(f, p.a + p.dir * 2, p.n, _pt);
     pts[0] = q.x; pts[1] = q.z;
-    return this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.2) ? 0 : p.speed;
+    // (Held up by the truck as it is by them, its trailer swung across the pavement before them,
+    // say: once it honks, they turn back the way they came, out of its way, if that is clear of it;
+    // boxed in both ways, they stand, and step into a doorway after a while: BOXED_GONE.)
+    if (!this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.2)) return p.speed;
+    if (!this.truckHonks) return 0;
+    const b = G.facePt(f, p.a - p.dir * 2, p.n, _pt);
+    pts[0] = b.x; pts[1] = b.z;
+    return this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.2) ? 0 : -p.speed;
   }
   private sweepPts: number[] = new Array(64).fill(0);
 
@@ -263,7 +277,13 @@ export class Crowd {
       if (this.truckSweeps(here, 1, 3, 3.5, 1.25 + 1.6) || truck.some((o) => Math.hypot(o.x - p.x, o.z - p.z) < o.r + 1.6)) {
         const f = faceOf(G, p), a0 = G.faceA0(f) + 4, a1 = G.faceA1(f) - 4;
         p.a += p.dir * 1.0 * dt;
-        if (p.a < a0 || p.a > a1) { p.a = Math.min(a1, Math.max(a0, p.a)); p.dir = p.dir > 0 ? -1 : 1; }
+        // (At the corner they turn back; but held up by the truck as it is by them, it honking,
+        // they go on round the corner instead, out of its way: a short side holds them in it.)
+        if (p.a < a0 || p.a > a1) {
+          const nf = this.truckHonks ? (p.dir > 0 ? G.nextFace(f) : G.prevFace(f)) : -1, B = nf >= 0 ? G.blocks[G.faceBlock[nf]] : null;
+          if (B && B.inCity && B.kx === p.bx && B.kz === p.bz && B.sides.indexOf(nf) >= 0) { p.side = B.sides.indexOf(nf); p.a = p.dir > 0 ? G.faceA0(nf) + 4 : G.faceA1(nf) - 4; }
+          else { p.a = Math.min(a1, Math.max(a0, p.a)); p.dir = p.dir > 0 ? -1 : 1; }
+        }
       }
       p.phase += dt; this.place(G, p); return;
     }
@@ -284,15 +304,23 @@ export class Crowd {
         else held = (p.dir > 0 ? fp[0] - p.a : p.a - fp[1]) < 1.2;
       }
       // (The truck coming over the walkway, cutting a corner or turning in across it.)
-      const sp = this.truckPace(G, f, p, truck);
+      let sp = this.truckPace(G, f, p, truck);
+      // (Out of its way back the way they came: turned round, not stepping backwards.)
+      if (sp < 0) { p.dir = p.dir > 0 ? -1 : 1; sp = -sp; }
       if (!blocked && !held) { p.a += p.dir * sp * dt; p.phase += sp * dt; }
       // (Held up a while by the truck, standing across the pavement or swinging over it: they turn
       // back and go another way, rather than stand waiting on it as it waits on them.)
-      p.waitT = blocked || sp === 0 ? p.waitT + dt : 0;
+      // (Or held by something on the pavement while the truck honks for them to clear its way.)
+      // (Only by the truck: a walker held up anywhere else in town while it honks is no matter of its.)
+      const byTruck = this.truckHonks && !!truck[0] && Math.hypot(truck[0].x - p.x, truck[0].z - p.z) < BOXED_NEAR;
+      p.waitT = blocked || sp === 0 || (held && byTruck) ? p.waitT + dt : 0;
+      p.boxT = byTruck ? Math.max(0, (p.boxT ?? 0) + (blocked || sp === 0 || held ? dt : -dt * 0.5)) : 0;
       if (p.waitT > 4) { p.dir = p.dir > 0 ? -1 : 1; p.waitT = 0; }
       p.n += (nT - p.n) * Math.min(1, dt * 2);
-      if ((p.dir > 0 && p.a >= corner) || (p.dir < 0 && p.a <= corner)) {
-        p.a = corner;
+      // (The corner ahead the way they face now: turned round, it's the one behind them before.)
+      const cn = (p.dir > 0) === fwd ? corner : p.dir > 0 ? faceCorner(G, f, p.n)[0] : faceCorner(G, G.prevFace(f), p.n)[1];
+      if ((p.dir > 0 && p.a >= cn) || (p.dir < 0 && p.a <= cn)) {
+        p.a = cn;
         if (this.rnd() < 0.35 && p.kind !== "chase") { p.state = "wait"; p.waitT = 0; }
         else this.turnCorner(G, p);
       }

@@ -1,8 +1,14 @@
-// Test: the street graph's grid generator (citygen.ts gridGraph) reproduces the old square grid
+// Test: the street generator (citygen.ts cityGraph) with its points unmoved reproduces the old square grid
 // exactly: one block per grid block with the same key, its four faces in the old side order with
 // the same frontage frame (city.ts frontPt), usable frontage [9, 51], and two signal phases at
 // every four-way node, east-west first. Also checks blocks and faces are consistent in general.
-import { gridGraph, organicGraph, trimToOutline } from "../src/citygen.ts";
+import { cityGraph, trimToOutline } from "../src/citygen.ts";
+import type { CityOpts } from "../src/citygen.ts";
+// (The organic preset: each block's point moved up to 40% of a block, then evened out; CityPlan's.)
+const organicGraph = (o: Parameters<typeof cityGraph>[0], seed: number, x: CityOpts = {}) => cityGraph(o, seed, { move: (bx, bz) => [(hash2(bx, bz, seed, 0x0a1) - 0.5) * 48, (hash2(bx, bz, seed, 0x0a2) - 0.5) * 48], relax: () => 1, ...x });
+// (A warped one: each point moved up to j metres either way.)
+const warpGraph = (o: Parameters<typeof cityGraph>[0], seed: number, j: number, x: CityOpts = {}) => cityGraph(o, seed, { move: (bx, bz) => [(hash2(bx, bz, seed, 0x5e1) - 0.5) * 2 * j, (hash2(bx, bz, seed, 0x5e2) - 0.5) * 2 * j], ...x });
+const riverRow = (iz: number, lo: number, hi: number): [number, number][] => [[lo * BLOCK + 9, iz * BLOCK + 39], [(hi + 1) * BLOCK + 9, iz * BLOCK + 39]];
 import { CityOutline } from "../src/outline.ts";
 import { entryGateOf, GATES, setCityLimits } from "../src/city.ts";
 import { STYLES } from "../src/styles.ts";
@@ -16,7 +22,7 @@ import { BLOCK } from "../src/grid.ts";
   const err = (m: string) => { if (errs.length < 30) errs.push(m); };
   const lo = -6, hi = 5, at = 3;
   const gates = [-at, 0, at].flatMap((g) => [{ ix: hi + 1, iz: g, dir: 0 }, { ix: g, iz: lo, dir: 1 }, { ix: lo, iz: g, dir: 2 }, { ix: g, iz: hi + 1, dir: 3 }]);
-  const G = gridGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false });
+  const G = cityGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, 1);
   const n = hi - lo + 1;
   if (G.blocks.length !== n * n) err(`blocks: ${G.blocks.length}, want ${n * n}`);
   for (let bx = lo; bx <= hi; bx++) for (let bz = lo; bz <= hi; bz++) {
@@ -53,8 +59,8 @@ import { BLOCK } from "../src/grid.ts";
   // Warped and river layouts: every face is a block's or the outside's, blocks wind the right
   // way and don't overlap, every street is reachable both ways from a gate.
   for (const seed of [1, 2, 3, 4, 5, 6]) {
-    const W = gridGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false },
-      { seed, jitter: 10, drop: 0.15, fixed: () => false, keep: () => true, river: seed % 2 ? 1 : undefined });
+    const W = warpGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, seed, 10,
+      { drop: { p: () => 0.15, keep: () => true }, riverLine: seed % 2 ? riverRow(1, lo, hi) : undefined });
     const outside = [...W.faceBlock].filter((b) => b < 0).length;
     if (W.blocks.some((b) => b.area < 200)) err(`warp ${seed}: a tiny block`);
     for (const b of W.blocks) if (!b.water && W.blockAt(b.cx, b.cz)?.id !== b.id) err(`warp ${seed}: block ${b.kx},${b.kz} centroid outside it`);
@@ -70,10 +76,11 @@ import { BLOCK } from "../src/grid.ts";
   // A circus: every street round its ring reachable both ways, and the paths there smooth (finite,
   // no jumps between samples).
   {
-    const W = gridGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false },
-      { seed: 9, jitter: 6, drop: 0, fixed: () => false, keep: () => true, circuses: [{ ix: 0, iz: 0, name: "Circle" }] });
+    const W = warpGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, 9, 6,
+      { rings: [{ x: 9, z: 9, name: "Circle", n: 8, r: 45, oneway: false, arms: 8 }] });
     const ring = W.streets.filter((st) => st.name === "Circle");
-    if (ring.length !== 8) err(`circus: ${ring.length} ring streets`);
+    // (Eight streets in, four of them its diagonals: so eight sides round it at the least.)
+    if (ring.length < 8) err(`circus: ${ring.length} ring streets`);
     if (!W.blocks.some((b) => b.park)) err("circus: no park in the middle");
     const from = W.streets[W.gates[0]!.street].id * 2 + 1, q = { x: 0, z: 0, h: 0, k: 0 };
     for (const st of ring) for (const d of [st.id * 2, st.id * 2 + 1]) {
@@ -89,6 +96,26 @@ import { BLOCK } from "../src/grid.ts";
       }
     }
   }
+  // A warped town's river along its row stays along it with the sea to the north (its ends its own,
+  // not bent off to a mouth on that sea); an organic town's grid patch keeps its junctions exactly
+  // on the lattice (the interchange is built on them).
+  {
+    const go = { lo, hi, gates, nameEW: (i: number) => `E${i}`, nameNS: (i: number) => `N${i}`, elevatedRow: () => false, cableColumn: () => false };
+    const Z0 = lo * BLOCK + 9, rowZ = 1 * BLOCK + 39;
+    const W = warpGraph(go, 4, 10, { riverLine: riverRow(1, lo, hi), sea: { side: 1, inSea: (_x, z) => z < Z0 + 40 } });
+    const wet = W.blocks.filter((b) => b.water);
+    if (!wet.length) err("river by a north sea: no water");
+    for (const b of wet) if (Math.abs(b.cz - rowZ) > BLOCK) { err(`river by a north sea: water block at z ${b.cz.toFixed(0)}, its row at ${rowZ}`); break; }
+    const P = { x0: lo * BLOCK + 9, x1: (lo + 4) * BLOCK + 9, z0: (lo + 2) * BLOCK + 9, z1: (lo + 6) * BLOCK + 9 };
+    const inP = (bx: number, bz: number) => bx * BLOCK + 39 > P.x0 && bx * BLOCK + 39 < P.x1 && bz * BLOCK + 39 > P.z0 && bz * BLOCK + 39 < P.z1;
+    for (const seed of [1, 2, 3, 4]) {
+      const O = organicGraph(go, seed, { patch: P, move: (bx, bz) => (inP(bx, bz) ? [0, 0] : [(hash2(bx, bz, seed, 0x0a1) - 0.5) * 48, (hash2(bx, bz, seed, 0x0a2) - 0.5) * 48]), relax: (bx, bz) => (inP(bx, bz) ? 0 : 1) });
+      for (const N of O.nodes) {
+        if (N.x <= P.x0 + BLOCK || N.x >= P.x1 - BLOCK || N.z <= P.z0 + BLOCK || N.z >= P.z1 - BLOCK) continue;
+        if ((N.x - 9) % BLOCK !== 0 || (N.z - 9) % BLOCK !== 0) { err(`patch ${seed}: junction ${N.x.toFixed(2)},${N.z.toFixed(2)} off the lattice`); break; }
+      }
+    }
+  }
   // Organic towns: no two streets cross (the graph stays planar after short edges close up), every
   // block is sound, every gate has its street, and the streets are all reachable from gate 0.
   // (Twenty towns: gate snapping moves a corner up to 30 m, which could cross streets in any one.)
@@ -99,6 +126,9 @@ import { BLOCK } from "../src/grid.ts";
   for (let seed = 1; seed <= 20; seed++) {
     const opts = { river: seed % 2 === 1, rounds: seed % 4 < 2 ? ["R1", "R2"] : [] };
     const O = organicGraph({ lo, hi, gates, nameEW: (i) => `E${i}`, nameNS: (i) => `N${i}`, elevatedRow: () => false, cableColumn: () => false }, seed, opts);
+    // (A corner by the town's edge is on it: merging never pulls one a little way in or out.)
+    const E0 = lo * BLOCK + 9, E1 = (hi + 1) * BLOCK + 9;
+    for (const N of O.nodes) { const d = Math.min(Math.abs(N.x - E0), Math.abs(N.x - E1), Math.abs(N.z - E0), Math.abs(N.z - E1)); if (d > 1e-6 && d < 1.5) { err(`organic ${seed}: corner ${N.x.toFixed(2)},${N.z.toFixed(2)} ${d.toFixed(2)} m off the edge`); break; } }
     const wet = O.blocks.filter((b) => b.water);
     if (opts.river) {
       if (!wet.length) err(`organic ${seed}: no river`); else rivers++;
@@ -154,7 +184,7 @@ import { BLOCK } from "../src/grid.ts";
   for (let seed = 1; seed <= 18; seed++) {
     const style = [STYLES.coastal, STYLES.port, STYLES.brick][seed % 3], O = new CityOutline(seed * 7919, style, { freeway: null, straightRows: [], straightCols: [] });
     const go = { lo, hi, gates: GATES, nameEW: (i: number) => `E${i}`, nameNS: (i: number) => `N${i}`, elevatedRow: () => false, cableColumn: () => false };
-    const L = seed % 3 === 0 ? organicGraph(go, seed, { river: seed % 2 === 0 }) : gridGraph(go, seed % 3 === 1 ? null : { seed, jitter: 10, drop: 0.1, fixed: () => false, keep: () => true, river: 1 });
+    const L = seed % 3 === 0 ? organicGraph(go, seed, { river: seed % 2 === 0 }) : seed % 3 === 1 ? cityGraph(go, seed) : warpGraph(go, seed, 10, { drop: { p: () => 0.1, keep: () => true }, riverLine: riverRow(1, lo, hi) });
     const entry = GATES.indexOf(entryGateOf(seed * 7919)), T = trimToOutline(L, O, GATES, entry);
     if (!T) { err(`outline ${seed}: the trim failed`); continue; }
     trimmed++;

@@ -221,7 +221,9 @@ export class Traffic {
     this.truckBook(plan.graph, simTime, plan.seed, prs);
     // (Making way for the truck out of a gridlock: those that have hold where they are, clearWay.)
     if (!clear) { this.clearPending = false; for (const c of this.cars) { c.clearHold = undefined; c.clearDir = undefined; } }
-    for (let i = this.cars.length - 1; i >= 0; i--) if (!this.cars[i].clearHold) this.drive(this.cars[i], dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]);
+    // (One holding where it is for the truck stands there all the same: its time standing counts
+    // towards STUCK_GONE, unless it moved making way last step: clearWay, after.)
+    for (let i = this.cars.length - 1; i >= 0; i--) { const c = this.cars[i]; if (!c.clearHold) this.drive(c, dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]); else c.stillT = this.clearMoved.has(c) ? 0 : c.stillT + dt; }
     if (clear) this.clearWay(plan.graph, truck, truckPath, clear, dt);
   }
 

@@ -1,5 +1,6 @@
 // Test: the truck never drives through traffic, nor through anyone on foot, and never stands in the
-// street (waiting for them, or a light) longer than HELD_MAX. Runs journeys with
+// street (waiting for them, or a light) longer than HELD_MAX (60 s, as test/gridlock.ts: its waits at
+// red lights count, which the honk's clock leaves out). Runs journeys with
 // their street life and fails if the truck's body and a vehicle's overlap by more than OVERLAP_MAX
 // while the truck is on the ground (up on a ramp or the freeway it passes over the streets).
 // Boxes: the truck's from its rear to its front about its rear axle, 1.25 m either side (a
@@ -27,7 +28,7 @@ import { Crowd } from "../src/crowd.ts";
 import { Ambient } from "../src/ambient.ts";
 import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
 {
-  const proc = (globalThis as any).process, minutes = Number(proc.argv[2] ?? 10), OVERLAP_MAX = 0.4, PED_R = 0.3, HELD_MAX = 45, errs: string[] = [];
+  const proc = (globalThis as any).process, minutes = Number(proc.argv[2] ?? 10), OVERLAP_MAX = 0.4, PED_R = 0.3, HELD_MAX = 60, errs: string[] = [];
   for (const model of Object.keys(SPECS) as (keyof typeof SPECS)[]) {
     const E = truckExtents(model), fw = SPECS[model].fifthWheel, obs: { x: number; z: number; r: number }[] = [];
     truckObstacles(model, 0, 0, 0, 0, obs);

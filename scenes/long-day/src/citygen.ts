@@ -1,7 +1,9 @@
-// City layout generators: each makes a city's street graph (citygraph.ts) from its seed. `grid`
-// is the original square grid, node for node and street for street: node (ix, iz) at
-// (ix*60 + 9, iz*60 + 9), every block 42 m square, gate streets running one block straight out
-// of town. The others (in stage 2 on) bend, drop and add streets.
+// The city layout generator (cityGraph): a city's street graph (citygraph.ts) from its seed, as the
+// edges of its blocks' cells, one point a block. With the points left on the grid's lattice it is
+// the original square grid, node for node and street for street (node (ix, iz) at (ix*60 + 9,
+// iz*60 + 9), every block 42 m square, gate streets running one block straight out of town); moved
+// a little (a warped town) or a lot and evened out (an organic one), the streets move with them.
+// Every feature (avenues, rings, parks, the river, one-ways...) is laid the same in any of them.
 import { CityGraph, clipHalf, inPoly } from "./citygraph.ts";
 import type { CGate, CStreet } from "./citygraph.ts";
 import { BLOCK, STREET } from "./grid.ts";
@@ -15,42 +17,11 @@ export interface GridOpts {
   elevatedRow: (iz: number) => boolean;         // an elevated line along the east-west street of node row iz
   cableColumn: (ix: number) => boolean;         // a cable-car line along the north-south street of node column ix
   // A one-way street the lattice segment from node (ix, iz) east (ew) or south should be: +1 driven
-  // that way (east or south), -1 the other, 0 two-way. (gridGraph keeps it only where its line runs
+  // that way (east or south), -1 the other, 0 two-way. (cityGraph keeps it only where its line runs
   // on at both ends the same way, and only if every street can still reach every other.)
   oneway?: (ix: number, iz: number, ew: boolean) => number;
 }
 const GEN_DX = [1, 0, -1, 0], GEN_DZ = [0, -1, 0, 1];
-
-// A grid bent out of square (`warp`): the same lattice of intersections, each but the fixed ones
-// moved by up to `jitter` metres (smooth noise, so neighbouring streets lean together), and some
-// street segments left out (`drop`: blocks merge, four-way crossings become T-junctions). Fixed:
-// the city's edge, the gates, and whatever the caller keeps straight (the freeway's line, elevated
-// and cable-car lines); a segment is only dropped where the network stays connected and every
-// intersection keeps three streets or none.
-// `river`: the row of blocks (iz) that is a river instead, its streets either side its quays, and
-// about one in three of the streets across it bridges (the rest left out). `mouth`: the column (ix)
-// of the street across it at its mouth, in a town on the sea to the east or west: always a bridge,
-// the river ending there (the blocks beyond are the sea's: trimToOutline).
-// `parks`: superblock parks, each four blocks (ix..ix+1, iz..iz+1) with the streets between them
-// left out.
-// `diagonals`: avenues cutting corner to corner across blocks, each from lattice node (ix, iz) by
-// (dx, dz) = (+-1, +-1) for `n` blocks (through the intersections, so they cross no street between).
-// `oldTown`: a district (centre and radius, in blocks) of streets bent much further out of square.
-// `sweep`: long avenues bowed into gentle curves (metres of bow, and the wavelength in blocks).
-export interface WarpOpts {
-  seed: number; jitter: number; drop: number; fixed: (ix: number, iz: number) => boolean; keep: (ix: number, iz: number, ew: boolean) => boolean;
-  river?: number; mouth?: number; parks?: [number, number][]; diagonals?: { ix: number; iz: number; dx: number; dz: number; n: number; name: string }[];
-  oldTown?: { ix: number; iz: number; r: number }; sweep?: { bow: number; wave: number };
-  circuses?: { ix: number; iz: number; name: string; round?: boolean }[];   // round: a one-way roundabout (smaller, four streets in, no signals)
-  cuts?: { ix: number; iz: number; ew: boolean }[];   // segments left out whatever else (a slip ramp's superblock)
-  dropMore?: (ix: number, iz: number, ew: boolean) => number;   // extra chance a segment is left out (big plots: industry)
-  bend?: (ix: number, iz: number) => number;                     // how much a node may move, as a share of the jitter (1 by default)
-}
-// A circus: lattice node (ix, iz) and the streets round it give way to a ring road round a round
-// park, with eight streets running in to it: the four avenues that met there and four diagonals
-// from the corners beyond. The ring:
-// CIRCUS_R metres out, eight sides, an intersection where each street meets it.
-const CIRCUS_R = 45, ROUND_R = 30;
 
 // After finish: a roundabout gives way to traffic on its ring (no signals round it), and a
 // circus's or roundabout's middle (the block round each point given) is a park.
@@ -59,129 +30,9 @@ function ringsDone(g: CityGraph, ringNodes: number[], middles: [number, number][
   for (const [x, z] of middles) { const b = g.blockAt(x, z); if (b) b.park = true; }
 }
 
-export function gridGraph(o: GridOpts, warp: WarpOpts | null = null): CityGraph {
-  const g = new CityGraph(), at = (i: number) => i * BLOCK + STREET / 2;
-  const edge = (ix: number, iz: number) => ix <= o.lo || ix >= o.hi + 1 || iz <= o.lo || iz >= o.hi + 1;
-  // Smooth jitter: value noise over a 3-block lattice, per axis.
-  const noise = (x: number, z: number, salt: number) => {
-    const gx = x / 3, gz = z / 3, ix = Math.floor(gx), iz = Math.floor(gz), fx = gx - ix, fz = gz - iz;
-    const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz), h = (a: number, b: number) => hash2(a, b, warp!.seed, salt) * 2 - 1;
-    const p = h(ix, iz) + (h(ix + 1, iz) - h(ix, iz)) * sx, q = h(ix, iz + 1) + (h(ix + 1, iz + 1) - h(ix, iz + 1)) * sx;
-    return (p + (q - p) * sz) * 0.6 + (hash2(x, z, warp!.seed, salt + 1) * 2 - 1) * 0.4;
-  };
-  const moved = (ix: number, iz: number) => !!warp && warp.jitter > 0 && !edge(ix, iz) && !warp.fixed(ix, iz);
-  // How far a node may move: its jitter, more in the old town (fading out over its edge), and the
-  // sweep's bow, faded in from the city's edge so its perimeter stays square.
-  const amp = (ix: number, iz: number) => {
-    const t = warp!.oldTown, d = t ? Math.hypot(ix - t.ix, iz - t.iz) / t.r : 9;
-    return warp!.jitter * (1 + 1.4 * Math.max(0, Math.min(1, (1.3 - d) / 0.5))) * (warp!.bend?.(ix, iz) ?? 1);
-  };
-  const inset = (ix: number, iz: number) => Math.min(1, (Math.min(ix - o.lo, o.hi + 1 - ix, iz - o.lo, o.hi + 1 - iz)) / 3);
-  for (let iz = o.lo; iz <= o.hi + 1; iz++) for (let ix = o.lo; ix <= o.hi + 1; ix++) {
-    let dx = 0, dz = 0;
-    if (moved(ix, iz)) {
-      dx = noise(ix, iz, 0x5e1) * amp(ix, iz); dz = noise(ix, iz, 0x5e2) * amp(ix, iz);
-      const sw = warp!.sweep;
-      if (sw) { const k = inset(ix, iz) * sw.bow; dx += Math.sin((iz / sw.wave) * Math.PI * 2 + warp!.seed % 7) * k; dz += Math.sin((ix / sw.wave) * Math.PI * 2 + (warp!.seed >> 3) % 7) * k * 0.6; }
-    }
-    g.addNode(at(ix) + dx, at(iz) + dz, ix, iz);
-  }
-  const id = (ix: number, iz: number) => g.node(ix, iz)!.id;
-  // The segments: east-west (heading east) from (ix, iz), then north-south (heading south).
-  const segs: { ix: number; iz: number; ew: boolean; on: boolean }[] = [];
-  for (let iz = o.lo; iz <= o.hi + 1; iz++) for (let ix = o.lo; ix <= o.hi; ix++) segs.push({ ix, iz, ew: true, on: true });
-  for (let ix = o.lo; ix <= o.hi + 1; ix++) for (let iz = o.lo; iz <= o.hi; iz++) segs.push({ ix, iz, ew: false, on: true });
-  for (const c of warp?.cuts ?? []) for (const sg of segs) if (sg.ix === c.ix && sg.iz === c.iz && sg.ew === c.ew) sg.on = false;
-  // (A circus's own node loses its four streets: the ring takes them.)
-  // (And the square of streets round it: the avenues run straight on in to the ring, and the
-  // diagonals from the corners beyond.)
-  for (const c of warp?.circuses ?? [])
-    for (const sg of segs) if (sg.ew ? Math.abs(sg.iz - c.iz) <= 1 && (sg.ix === c.ix || sg.ix === c.ix - 1) : Math.abs(sg.ix - c.ix) <= 1 && (sg.iz === c.iz || sg.iz === c.iz - 1)) sg.on = false;
-  const nearCircus = (x: number, z: number) => (warp?.circuses ?? []).some((c) => Math.abs(c.ix - x) <= 1 && Math.abs(c.iz - z) <= 1);
-  for (const [px, pz] of warp?.parks ?? [])
-    for (const sg of segs) if ((sg.ew && sg.iz === pz + 1 && (sg.ix === px || sg.ix === px + 1)) || (!sg.ew && sg.ix === px + 1 && (sg.iz === pz || sg.iz === pz + 1))) sg.on = false;
-  if (warp && warp.river !== undefined) {
-    // Across the river: a bridge every few streets (never two missing in a row at the city's edge).
-    let since = 0;
-    segs.forEach((sg) => {
-      if (sg.ew || sg.iz !== warp.river || sg.ix <= o.lo || sg.ix >= o.hi + 1 || !warp.keep(sg.ix, sg.iz, false)) { if (!sg.ew && sg.iz === warp.river) since = 0; return; }
-      if (sg.ix === warp.mouth) { since = 0; return; }
-      if (since < 2 && hash2(sg.ix, 0x81d, warp.seed, 0xb71) < 0.7) { sg.on = false; since++; } else since = 0;
-    });
-  }
-  if (warp && warp.drop > 0) {
-    const deg = new Map<string, number>(), k = (x: number, z: number) => `${x},${z}`;
-    const ends = (sg: typeof segs[0]) => [[sg.ix, sg.iz], sg.ew ? [sg.ix + 1, sg.iz] : [sg.ix, sg.iz + 1]];
-    for (const sg of segs) if (sg.on) for (const [x, z] of ends(sg)) deg.set(k(x, z), (deg.get(k(x, z)) ?? 0) + 1);
-    const connected = () => {
-      const adj = new Map<string, string[]>();
-      for (const sg of segs) if (sg.on) { const [a, b] = ends(sg).map(([x, z]) => k(x, z)); (adj.get(a) ?? adj.set(a, []).get(a)!).push(b); (adj.get(b) ?? adj.set(b, []).get(b)!).push(a); }
-      const start = adj.keys().next().value!, seen = new Set([start]), todo = [start];
-      while (todo.length) for (const n of adj.get(todo.pop()!)!) if (!seen.has(n)) { seen.add(n); todo.push(n); }
-      return seen.size === adj.size;
-    };
-    segs.forEach((sg, i) => {
-      if (hash2(i, 7, warp.seed, 0xd70) >= warp.drop + (warp.dropMore?.(sg.ix, sg.iz, sg.ew) ?? 0) || !warp.keep(sg.ix, sg.iz, sg.ew) || !sg.on) return;
-      if (warp.river !== undefined && (sg.iz === warp.river || sg.iz === warp.river + 1)) return;   // (the quays and bridges stay)
-      const [[ax, az], [bx, bz]] = ends(sg);
-      if (nearCircus(ax, az) || nearCircus(bx, bz)) return;   // (nor round a circus)
-      if (edge(ax, az) && edge(bx, bz)) return;   // (not round the city's edge)
-      if ((deg.get(k(ax, az)) ?? 0) < 4 || (deg.get(k(bx, bz)) ?? 0) < 4) return;   // (each end keeps three)
-      sg.on = false;
-      if (!connected()) { sg.on = true; return; }
-      deg.set(k(ax, az), deg.get(k(ax, az))! - 1); deg.set(k(bx, bz), deg.get(k(bx, bz))! - 1);
-    });
-  }
-  const dirs = oneWays(o, segs);
-  for (const sg of segs) if (sg.on) {
-    // (A one-way street driven west or north runs from its far node: one-way streets are driven
-    // from n0 to n1.)
-    const d = dirs.get(sg) ?? 0, [a, b] = sg.ew ? [id(sg.ix, sg.iz), id(sg.ix + 1, sg.iz)] : [id(sg.ix, sg.iz), id(sg.ix, sg.iz + 1)], [n0, n1] = d < 0 ? [b, a] : [a, b];
-    if (sg.ew) g.addStreet(n0, n1, { name: o.nameEW(sg.iz), tags: o.elevatedRow(sg.iz) ? { elevated: true } : {}, oneway: d !== 0 });
-    else g.addStreet(n0, n1, { name: o.nameNS(sg.ix), tags: o.cableColumn(sg.ix) ? { cable: true } : {}, oneway: d !== 0 });
-  }
-  // Diagonal avenues, one block at a time between the intersections they pass through.
-  for (const dg of warp?.diagonals ?? []) for (let k = 0; k < dg.n; k++) {
-    const ax = dg.ix + dg.dx * k, az = dg.iz + dg.dz * k, bx = ax + dg.dx, bz = az + dg.dz;
-    if (!g.node(ax, az) || !g.node(bx, bz)) break;
-    g.addStreet(id(ax, az), id(bx, bz), { name: dg.name });
-  }
-  // Circuses: the ring's eight corners, the ring, and the streets in (keys well clear of the lattice's).
-  const ringNodes: number[] = [];
-  for (const c of warp?.circuses ?? []) {
-    // (A roundabout's ring runs anticlockwise seen from above, one way: traffic keeps right.)
-    const C = g.node(c.ix, c.iz)!, ring: number[] = [], R = c.round ? ROUND_R : CIRCUS_R;
-    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; ring.push(g.addNode(C.x + Math.cos(a) * R, C.z - Math.sin(a) * R, c.ix * 100 + 50 + k, c.iz * 100 + 50)); }
-    for (let k = 0; k < 8; k++) g.addStreet(ring[k], ring[(k + 1) % 8], { name: c.name, oneway: !!c.round, ring: !!c.round });
-    const out = [[1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1], [0, 1], [1, 1]];
-    out.forEach(([dx, dz], k) => {
-      if (c.round && k % 2) return;
-      const n = g.node(c.ix + dx, c.iz + dz); if (n) g.addStreet(ring[k], n.id, { name: k % 2 ? `${c.name} Diagonal` : (dx ? o.nameEW(c.iz) : o.nameNS(c.ix)) });
-    });
-    if (c.round) ringNodes.push(...ring);
-  }
-  // Gate streets: out to a node a block beyond the edge (outside the city: no blocks round it).
-  o.gates.forEach((gt, i) => {
-    const ox = gt.ix + GEN_DX[gt.dir], oz = gt.iz + GEN_DZ[gt.dir];
-    const outer = g.node(ox, oz)?.id ?? g.addNode(at(ox), at(oz), ox, oz);
-    const ew = gt.dir === 0 || gt.dir === 2;
-    // (Built from the perimeter node outward, so the gate street's far end, n1, is the one outside.)
-    const sid = g.addStreet(id(gt.ix, gt.iz), outer, { name: ew ? o.nameEW(gt.iz) : o.nameNS(gt.ix), inCity: false });
-    g.streets[sid].gate = i;
-    g.gates.push({ node: id(gt.ix, gt.iz), street: sid, out: 1 });
-  });
-  g.finish();
-  ringsDone(g, ringNodes, (warp?.circuses ?? []).map((c) => { const C = g.node(c.ix, c.iz)!; return [C.x, C.z]; }));
-  for (const [px, pz] of warp?.parks ?? []) { const n = g.node(px + 1, pz + 1)!; for (const b of g.blocks) if (Math.hypot(b.cx - n.x, b.cz - n.z) < 30) b.park = true; }
-  if (warp?.river !== undefined) for (const b of g.blocks) if (Math.floor((b.cz - STREET / 2) / BLOCK) === warp.river) { b.water = true; b.inCity = false; }
-  // (Parks and the river are marked only now, after finish fitted anchors: no site on them.)
-  for (const b of g.blocks) if (b.park || b.water) b.anchor = null;
-  // Nodes outside the city (the gate streets' far ends) have no signal; perimeter nodes keep theirs.
-  return g;
-}
 
-// An organic town: no grid underneath. Points scattered over the town (a jittered lattice about a
-// block apart) each take the land nearest them (a Voronoi cell, clipped to the town's square);
+// The organic preset of cityGraph: no grid underneath. Points scattered over the town (a jittered
+// lattice a block apart, evened out) each take the land nearest them (a Voronoi cell, clipped to the town's square);
 // the cells' edges are the streets, so junctions are mostly Y and T, at any angle, and blocks are
 // irregular polygons. Edges shorter than MERGE_EDGE close up into one junction. The town's edge
 // is a street all round, with the gates on it where the grid has them, and gate streets out.
@@ -205,10 +56,10 @@ const MERGE_EDGE = 24;
 // edges; with `ns`, world x on the north and south), bowing gently between (none at its ends, so it
 // meets the edges square, on the line the grid's would run on). Pairs of points either side of it,
 // a little over a block apart, make the cells' edges between them lie along it; the other streets
-// meet it at junctions. (avenueChains checks each came through whole.)
+// meet it at junctions. (city.ts avenuesWhole checks each came through whole.)
 // (`line`: its way given instead, as points; its pairs from `pairsFrom` metres along it on: a
 // freeway's, straight through the grid's patch and on round its curve.)
-export interface OrganicAvenue { ns: boolean; from: number; to: number; tag: "elevated" | "cable" | "freeway"; name: string; line?: [number, number][]; pairsFrom?: number }
+export interface OrganicAvenue { ns: boolean; from: number; to: number; tag: "elevated" | "cable" | "freeway"; name: string; line?: [number, number][]; pairsFrom?: number; amp?: number }   // amp: its bow given (metres, either way), kept as given
 // `patch`: a rectangle of the town (world x0..x1, z0..z1) laid out as the grid would be, its points
 // the blocks' middles, so its streets and junctions are the grid's own, square and keyed as the
 // grid's (the freeway's interchange is built on them); `cuts` leaves out its streets as the grid's
@@ -217,399 +68,9 @@ export interface OrganicOpts { river?: boolean; rounds?: string[]; sea?: { side:
   patch?: { x0: number; z0: number; x1: number; z1: number }; cuts?: { ix: number; iz: number; ew: boolean }[] }
 const AV_SPACING = 52, AV_HALF = 30, AV_NEAR = 4;
 const ORG_ROUND_R = 26;
-type FE = { a: number; b: number; name?: string; ring?: boolean; wet?: [number, number][]; tag?: "elevated" | "cable" | "freeway" };   // wet: a water cell's point on each side that is river
-export function organicGraph(o: GridOpts, seed: number, x: OrganicOpts = {}): CityGraph {
-  const at = (i: number) => i * BLOCK + STREET / 2, X0 = at(o.lo), X1 = at(o.hi + 1), Z0 = X0, Z1 = X1;
-  const h = (salt: number) => hash2(seed, 0x0c9, 0, salt);
-  // The points: a lattice SP apart, each moved up to 40% of SP at random.
-  const SP = 64;
-  let pts: [number, number][] = [];
-  for (let z = Z0 + SP / 2; z < Z1; z += SP) for (let x = X0 + SP / 2; x < X1; x += SP)
-    pts.push([x + (hash2(x, z, seed, 0x0a1) - 0.5) * SP * 0.8, z + (hash2(x, z, seed, 0x0a2) - 0.5) * SP * 0.8]);
-  type P = [number, number];
-  // Each point's cell: the town's square, cut by the bisector with each point near it.
-  const cellsOf = () => pts.map(([px, pz]) => {
-    let poly: P[] = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
-    for (const [qx, qz] of pts) {
-      if ((qx === px && qz === pz) || Math.hypot(qx - px, qz - pz) > SP * 3) continue;
-      const nx = qx - px, nz = qz - pz;
-      poly = clipHalf(poly, nx, nz, (nx * (px + qx) + nz * (pz + qz)) / 2);
-    }
-    return poly;
-  });
-  // (Twice, each point moves to its cell's centroid: the cells even out, fewer slivers of street.)
-  for (let it = 0; it < 2; it++) cellsOf().forEach((c, i) => {
-    let A = 0, cx = 0, cz = 0;
-    for (let k = 0; k < c.length; k++) { const [x0, z0] = c[k], [x1, z1] = c[(k + 1) % c.length], w = x0 * z1 - x1 * z0; A += w; cx += (x0 + x1) * w; cz += (z0 + z1) * w; }
-    if (Math.abs(A) > 1) pts[i] = [cx / (3 * A), cz / (3 * A)];
-  });
-  // The avenues' lines, sampled; and their points (the pairs either side) in place of those near.
-  const avLines = (x.avenues ?? []).map((av, ai) => {
-    if (av.line) return { av, line: av.line };
-    const ha = (k: number) => hash2(seed, 0xa7e + ai, Math.round(av.from), k);
-    const lo = (av.ns ? X0 : Z0) + 1.6 * SP, hi = (av.ns ? X1 : Z1) - 1.6 * SP;
-    const amp = (0.5 + 0.6 * ha(1)) * BLOCK * (ha(2) < 0.5 ? -1 : 1), sBend = ha(3) < 0.4;
-    const line: [number, number][] = [];
-    for (let k = 0; k <= 96; k++) {
-      const t = k / 96, u = t * t * (3 - 2 * t), env = Math.sin(Math.PI * t) ** 2;
-      const off = Math.max(lo, Math.min(hi, av.from + (av.to - av.from) * u + amp * env * (sBend ? 2 * Math.cos(Math.PI * t) : 1)));
-      const along = (av.ns ? Z0 : X0) + ((av.ns ? Z1 - Z0 : X1 - X0) * t);
-      line.push(av.ns ? [off, along] : [along, off]);
-    }
-    return { av, line };
-  });
-  const segD = (px: number, pz: number, [ax, az]: [number, number], [bx, bz]: [number, number]) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz || 1))); return Math.hypot(px - ax - dx * t, pz - az - dz * t); };
-  const avOff = (px: number, pz: number, L: [number, number][]) => { let m = Infinity; for (let i = 0; i + 1 < L.length; i++) m = Math.min(m, segD(px, pz, L[i], L[i + 1])); return m; };
-  const avNear = (px: number, pz: number) => avLines.some(({ line }) => avOff(px, pz, line) < AV_NEAR);
-  if (avLines.length) {
-    pts = pts.filter(([px, pz]) => avLines.every(({ line }) => avOff(px, pz, line) > SP * 0.6));
-    for (const { line } of avLines) {
-      const cum = [0];
-      for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
-      const L = cum[cum.length - 1], n = Math.max(2, Math.round(L / AV_SPACING)), step = L / n;
-      const from = avLines.find((q) => q.line === line)!.av.pairsFrom ?? 0;
-      for (let k = 0; k < n; k++) {
-        const sv = step * (k + 0.5);
-        if (sv < from + step / 2) continue;
-        let i = 0; while (i < line.length - 2 && cum[i + 1] < sv) i++;
-        const [ax, az] = line[i], [bx, bz] = line[i + 1], f = (sv - cum[i]) / (cum[i + 1] - cum[i] || 1), l = Math.hypot(bx - ax, bz - az) || 1;
-        const cx = ax + (bx - ax) * f, cz = az + (bz - az) * f, nx = -(bz - az) / l, nz = (bx - ax) / l;
-        pts.push([cx + nx * AV_HALF, cz + nz * AV_HALF], [cx - nx * AV_HALF, cz - nz * AV_HALF]);
-      }
-    }
-  }
-  // The grid's patch: its blocks' middles in place of the points there.
-  const PA = x.patch, inPatch = (px: number, pz: number, m = 0) => !!PA && px > PA.x0 - m && px < PA.x1 + m && pz > PA.z0 - m && pz < PA.z1 + m;
-  if (PA) {
-    pts = pts.filter(([px, pz]) => !inPatch(px, pz, SP * 0.6));
-    for (let bz = Math.ceil((PA.z0 - STREET / 2 - BLOCK / 2) / BLOCK); bz * BLOCK + STREET / 2 + BLOCK / 2 < PA.z1; bz++)
-      for (let bx = Math.ceil((PA.x0 - STREET / 2 - BLOCK / 2) / BLOCK); bx * BLOCK + STREET / 2 + BLOCK / 2 < PA.x1; bx++)
-        pts.push([bx * BLOCK + STREET / 2 + BLOCK / 2, bz * BLOCK + STREET / 2 + BLOCK / 2]);
-  }
-  // (A junction of the patch's grid: at one of its lines' crossings, inside it; where it is exactly.)
-  const gridAt = (p: P): P | null => {
-    if (!inPatch(p[0], p[1], 1)) return null;
-    const gx = Math.round((p[0] - STREET / 2) / BLOCK) * BLOCK + STREET / 2, gz = Math.round((p[1] - STREET / 2) / BLOCK) * BLOCK + STREET / 2;
-    return Math.abs(gx - p[0]) < 0.6 && Math.abs(gz - p[1]) < 0.6 ? [gx, gz] : null;
-  };
-  // The river's line: from the middle of a gap between gates on the west edge to one on the east
-  // (the same gap or the next), meandering between (none at its ends, so it meets the edges square).
-  const gz = [...new Set(o.gates.filter((g) => g.dir === 0 || g.dir === 2).map((g) => at(g.iz)))].sort((p, q) => p - q);
-  const gaps = gz.slice(1).map((z, i) => (z + gz[i]) / 2);
-  const river = !!x.river && gaps.length > 0;
-  const gi = Math.floor(h(1) * gaps.length), go = Math.max(0, Math.min(gaps.length - 1, gi + Math.floor(h(2) * 3) - 1));
-  const zIn = gaps[gi] ?? 0, zOut = gaps[go] ?? 0, amp = (0.6 + 0.9 * h(3)) * BLOCK, waves = 1 + Math.floor(h(4) * 3), phase = h(5) * Math.PI * 2;
-  const riverZ = (px: number) => {
-    const t = Math.max(0, Math.min(1, (px - X0) / (X1 - X0)));
-    const z = zIn + (zOut - zIn) * t + amp * Math.sin(Math.PI * t) * Math.sin(Math.PI * waves * t + phase);
-    return Math.max(Z0 + 2.5 * SP, Math.min(Z1 - 2.5 * SP, z));
-  };
-  // (Out to a sea to the north or south: from the west or east edge at zIn, bending round to run
-  // down to the sea's edge at xOut, between two gates on it: a curve, sampled.)
-  const sea = x.sea, northSouth = !!sea && (sea.side === 1 || sea.side === 3);
-  const gx = [...new Set(o.gates.filter((g) => g.dir === 1 || g.dir === 3).map((g) => at(g.ix)))].sort((p, q) => p - q);
-  const gapsX = gx.slice(1).map((v, i) => (v + gx[i]) / 2);
-  const fromEast = h(6) < 0.5, xOut = gapsX[Math.floor(h(7) * gapsX.length)] ?? (X0 + X1) / 2, zSea = sea?.side === 1 ? Z0 : Z1;
-  const curve: [number, number][] = [];
-  if (northSouth) for (let k = 0; k <= 32; k++) {
-    const t = k / 32, ax = fromEast ? X1 : X0, u = 1 - t;
-    curve.push([u * u * ax + 2 * u * t * xOut + t * t * xOut, u * u * zIn + 2 * u * t * zIn + t * t * zSea]);
-  }
-  // How far (x, z) lies off the river's line.
-  const riverOff = (px: number, pz: number) => northSouth ? Math.min(...curve.map(([cx, cz]) => Math.hypot(px - cx, pz - cz))) : Math.abs(pz - riverZ(px));
-  // The roundabouts' places: well inside town, clear of the river and of each other. The points
-  // near each give way to four (or three, or five) round it, so the cells' corner there is a
-  // junction of that many streets, each running well out.
-  const sites: { x: number; z: number; name: string }[] = [];
-  for (let t = 0; t < 40 && sites.length < (x.rounds?.length ?? 0); t++) {
-    const sx = X0 + 160 + h(100 + t) * (X1 - X0 - 320), sz = Z0 + 160 + h(140 + t) * (Z1 - Z0 - 320);
-    if (river && riverOff(sx, sz) < 150) continue;
-    if (avLines.some(({ line }) => avOff(sx, sz, line) < 160)) continue;   // (nor by an avenue)
-    if (inPatch(sx, sz, 160)) continue;   // (nor by the grid's patch)
-    if (sea && [[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]].some(([dx, dz]) => sea.inSea(sx + dx, sz + dz))) continue;   // (nor by the sea)
-    if (sites.some((s) => Math.hypot(s.x - sx, s.z - sz) < 340)) continue;
-    sites.push({ x: sx, z: sz, name: x.rounds![sites.length] });
-  }
-  for (const [k, s] of sites.entries()) {
-    const r = hash2(k, 0x70d, seed, 1), n = r < 0.7 ? 4 : r < 0.85 ? 3 : 5, a0 = hash2(k, 0x70d, seed, 2) * Math.PI * 2;
-    pts = pts.filter(([px, pz]) => Math.hypot(px - s.x, pz - s.z) > 92);
-    for (let i = 0; i < n; i++) pts.push([s.x + Math.cos(a0 + (i * 2 * Math.PI) / n) * 60, s.z + Math.sin(a0 + (i * 2 * Math.PI) / n) * 60]);
-  }
-  const cells = cellsOf();
-  // Junctions: the cells' corners, merged where they coincide (cells share them), then where
-  // the edge between them is short.
-  const verts: P[] = [], key = new Map<string, number>();
-  // (Neighbouring cells' copies of a corner can round into adjacent half-metre cells: look in those too.)
-  const vid = (p: P) => {
-    const kx = Math.round(p[0] * 2), kz = Math.round(p[1] * 2);
-    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
-      const i = key.get(`${kx + dx},${kz + dz}`);
-      if (i !== undefined && Math.hypot(verts[i][0] - p[0], verts[i][1] - p[1]) < 0.5) return i;
-    }
-    const i = verts.length; verts.push([p[0], p[1]]); key.set(`${kx},${kz}`, i); return i;
-  };
-  const edges = new Map<string, [number, number]>(), cellEdges: [number, number][][] = cells.map(() => []);
-  cells.forEach((c, ci) => {
-    for (let i = 0; i < c.length; i++) {
-      const a = vid(c[i]), b = vid(c[(i + 1) % c.length]);
-      cellEdges[ci].push([a, b]);
-      if (a !== b) edges.set(a < b ? `${a},${b}` : `${b},${a}`, a < b ? [a, b] : [b, a]);
-    }
-  });
-  // (Union-find over merged corners; a corner on the town's edge keeps its place, on that edge.)
-  const parent = verts.map((_, i) => i), find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
-  const onEdge = (p: P) => Math.min(Math.abs(p[0] - X0), Math.abs(p[0] - X1), Math.abs(p[1] - Z0), Math.abs(p[1] - Z1)) < 0.5;
-  const corner = (p: P) => (Math.abs(p[0] - X0) < 0.5 || Math.abs(p[0] - X1) < 0.5) && (Math.abs(p[1] - Z0) < 0.5 || Math.abs(p[1] - Z1) < 0.5);
-  for (let pass = 0; pass < 4; pass++) {
-    const list = [...edges.values()].map(([a, b]) => [find(a), find(b)]).filter(([a, b]) => a !== b)
-      .sort((p, q) => Math.hypot(verts[p[0]][0] - verts[p[1]][0], verts[p[0]][1] - verts[p[1]][1]) - Math.hypot(verts[q[0]][0] - verts[q[1]][0], verts[q[0]][1] - verts[q[1]][1]));
-    for (const [a0, b0] of list) {
-      const a = find(a0), b = find(b0);
-      if (a === b) continue;
-      const A = verts[a], B = verts[b];
-      if (Math.hypot(A[0] - B[0], A[1] - B[1]) >= MERGE_EDGE) break;
-      if (corner(A) && corner(B)) continue;
-      // (The grid's patch keeps its junctions where they are.)
-      const gA = gridAt(A), gB = gridAt(B);
-      if (gA && gB) continue;
-      if (gA || gB) { verts[a] = gA ?? gB!; parent[b] = a; continue; }
-      // The merged corner: on the town's edge if either is (a square corner stays put).
-      // (Or on an avenue, if either is: the avenue keeps its line.)
-      const m: P = corner(A) ? A : corner(B) ? B : onEdge(A) && !onEdge(B) ? A : onEdge(B) && !onEdge(A) ? B
-        : avNear(A[0], A[1]) && !avNear(B[0], B[1]) ? A : avNear(B[0], B[1]) && !avNear(A[0], A[1]) ? B : [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
-      verts[a] = [m[0], m[1]]; parent[b] = a;
-    }
-  }
-  // (The patch's junctions exactly on the grid's lines, so its streets run square.)
-  for (let i = 0; i < verts.length; i++) if (find(i) === i) { const g0 = gridAt(verts[i]); if (g0) verts[i] = g0; }
-  // The streets left: between distinct merged corners, once each. Which cells each borders
-  // (two, or one round the town's edge), and which cells meet at each corner.
-  const mk = (a: number, b: number) => (a < b ? `${a},${b}` : `${b},${a}`);
-  const sidesOf = new Map<string, Set<number>>(), cellsAt = new Map<number, Set<number>>();
-  const addTo = <K>(m: Map<K, Set<number>>, k: K, v: number) => { let s = m.get(k); if (!s) m.set(k, s = new Set()); s.add(v); };
-  cellEdges.forEach((l, ci) => { for (const [a0, b0] of l) { const a = find(a0), b = find(b0); addTo(cellsAt, a, ci); addTo(cellsAt, b, ci); if (a !== b) addTo(sidesOf, mk(a, b), ci); } });
-  let fe: FE[] = [];
-  const seen = new Set<string>();
-  for (const [a0, b0] of edges.values()) {
-    const a = find(a0), b = find(b0), k = mk(a, b);
-    if (a !== b && !seen.has(k)) { seen.add(k); fe.push({ a, b }); }
-  }
-  // (The patch's streets left out, as the grid leaves them: cuts.)
-  if (x.cuts?.length) {
-    const atG = (i: number) => i * BLOCK + STREET / 2, hit = (v: P, ix: number, iz: number) => Math.abs(v[0] - atG(ix)) < 0.5 && Math.abs(v[1] - atG(iz)) < 0.5;
-    fe = fe.filter((e) => !x.cuts!.some((c) => { const [ex, ez] = c.ew ? [c.ix + 1, c.iz] : [c.ix, c.iz + 1]; return (hit(verts[e.a], c.ix, c.iz) && hit(verts[e.b], ex, ez)) || (hit(verts[e.b], c.ix, c.iz) && hit(verts[e.a], ex, ez)); }));
-  }
-  // The river: the cheapest chain of cells from the west edge's cell nearest its line to the east
-  // edge's, each step costing its length, more the further the cell lies off the line (and none
-  // touching the north or south edge).
-  const water = new Set<number>();
-  if (river) {
-    const adj = cells.map(() => new Set<number>());
-    for (const s of sidesOf.values()) for (const i of s) for (const j of s) if (i !== j) adj[i].add(j);
-    const along = (ci: number, v: number, ax: 0 | 1) => cells[ci].filter((p) => Math.abs(p[ax] - v) < 0.5).length >= 2;
-    const wet = (ci: number) => !!sea && sea.inSea(pts[ci][0], pts[ci][1]);
-    const banned = (ci: number) => along(ci, Z0, 1) || along(ci, Z1, 1) || wet(ci);
-    const ends = (v: number, z: number) => { let best = -1, bd = Infinity; cells.forEach((_, ci) => { if (along(ci, v, 0) && !banned(ci) && Math.abs(pts[ci][1] - z) < bd) { bd = Math.abs(pts[ci][1] - z); best = ci; } }); return best; };
-    // (Out into the sea: the land cell beside one of the sea's nearest where the river's line meets it.)
-    const mouth = (px: number, pz: number) => { let best = -1, bd = Infinity; cells.forEach((_, ci) => { if (!banned(ci) && [...adj[ci]].some(wet)) { const d = Math.hypot(pts[ci][0] - px, pts[ci][1] - pz); if (d < bd) { bd = d; best = ci; } } }); return best; };
-    const s0 = !sea || sea.side === 0 ? ends(X0, zIn) : sea.side === 2 ? ends(X1, zOut) : ends(fromEast ? X1 : X0, zIn);
-    const s1 = !sea ? ends(X1, zOut) : sea.side === 0 ? mouth(X1, zOut) : sea.side === 2 ? mouth(X0, zIn) : mouth(xOut, zSea);
-    if (s0 >= 0 && s1 >= 0) {
-      const dist = cells.map(() => Infinity), prev = cells.map(() => -1), done = cells.map(() => false);
-      dist[s0] = 0;
-      for (;;) {
-        let u = -1;
-        for (let i = 0; i < cells.length; i++) if (!done[i] && dist[i] < Infinity && (u < 0 || dist[i] < dist[u])) u = i;
-        if (u < 0 || u === s1) break;
-        done[u] = true;
-        for (const v of adj[u]) {
-          if (done[v] || banned(v)) continue;
-          const off = riverOff(pts[v][0], pts[v][1]) / 14, c = dist[u] + Math.hypot(pts[v][0] - pts[u][0], pts[v][1] - pts[u][1]) * (1 + off * off);
-          if (c < dist[v]) { dist[v] = c; prev[v] = u; }
-        }
-      }
-      const chain: number[] = [];
-      if (dist[s1] < Infinity) for (let c = s1; c >= 0; c = prev[c]) chain.unshift(c);
-      for (const c of chain) water.add(c);
-      // The bridges: of the streets between one cell and the next (with land at both ends), one in
-      // three or so; never more than two in a row left out.
-      const bank = (v: number) => onEdge(verts[v]) || [...(cellsAt.get(v) ?? [])].some((c) => !water.has(c));
-      const bridges = new Set<string>(), between = new Map<string, FE[]>();
-      for (const e of fe) { const s = [...sidesOf.get(mk(e.a, e.b))!]; if (s.length === 2) { const k = mk(s[0], s[1]); between.set(k, [...(between.get(k) ?? []), e]); } }
-      let since = 0;
-      for (let i = 0; i + 1 < chain.length; i++) for (const e of between.get(mk(chain[i], chain[i + 1])) ?? []) {
-        if (!bank(e.a) || !bank(e.b)) continue;
-        if (since < 2 && hash2(i, 0x81d, seed, 0xb71) < 0.7) since++; else { since = 0; bridges.add(mk(e.a, e.b)); }
-      }
-      // (Streets with water both sides and no bridge are left out: the river runs on there.)
-      fe = fe.filter((e) => { const k = mk(e.a, e.b), s = sidesOf.get(k)!; return bridges.has(k) || s.size < 2 || ![...s].every((c) => water.has(c)); });
-      for (const e of fe) { const w = [...sidesOf.get(mk(e.a, e.b))!].filter((c) => water.has(c)); if (w.length) e.wet = w.map((c) => pts[c]); }
-    }
-  }
-  // (Streets named by the way they run: east-west ones as streets, the rest as avenues.)
-  const nameOf = (a: number, b: number) => {
-    const [ax, az] = verts[a], [bx, bz] = verts[b];
-    return Math.abs(bx - ax) > Math.abs(bz - az) ? o.nameEW(Math.round((((az + bz) / 2) - STREET / 2) / BLOCK)) : o.nameNS(Math.round((((ax + bx) / 2) - STREET / 2) / BLOCK));
-  };
-  // The roundabouts: at the corner nearest each place, if its streets in are long enough, far
-  // enough apart, and clear of the water and the town's edge. Its ring's corners: one where each
-  // street comes in, and more between so no side turns more than 60 degrees; anticlockwise seen
-  // from above (as the grid's), one way.
-  const ringVerts: number[] = [], islands: P[] = [];
-  for (const s of sites) {
-    const used = new Set(fe.flatMap((e) => [e.a, e.b]));
-    let v = -1, bd = 18;
-    for (const r of used) { const d = Math.hypot(verts[r][0] - s.x, verts[r][1] - s.z); if (d < bd) { bd = d; v = r; } }
-    if (v < 0) continue;
-    const V = verts[v], arms = fe.filter((e) => e.a === v || e.b === v).map((e) => {
-      const u = e.a === v ? e.b : e.a, U = verts[u];
-      return { e, u, ang: Math.atan2(-(U[1] - V[1]), U[0] - V[0]), len: Math.hypot(U[0] - V[0], U[1] - V[1]) };
-    }).sort((p, q) => p.ang - q.ang);
-    const gapAfter = (i: number) => i + 1 < arms.length ? arms[i + 1].ang - arms[i].ang : arms[0].ang + 2 * Math.PI - arms[i].ang;
-    const dry = (r: number) => ![...(cellsAt.get(r) ?? [])].some((c) => water.has(c));
-    if (arms.length < 3 || arms.length > 6 || onEdge(V) || !dry(v) || arms.some((a, i) => a.len < ORG_ROUND_R + 22 || gapAfter(i) < 0.8 || !dry(a.u) || onEdge(verts[a.u]))) continue;
-    // (And every other street a street's width clear of the ring: none crosses it or runs into it.)
-    const segDist = ([ax, az]: P, [bx, bz]: P) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((V[0] - ax) * dx + (V[1] - az) * dz) / (dx * dx + dz * dz || 1))); return Math.hypot(V[0] - ax - dx * t, V[1] - az - dz * t); };
-    if (fe.some((e) => e.a !== v && e.b !== v && segDist(verts[e.a], verts[e.b]) < ORG_ROUND_R + STREET)) continue;
-    const drop = new Set(arms.map((a) => a.e));
-    fe = fe.filter((e) => !drop.has(e));
-    const ring: number[] = [], add = (ang: number) => { const i = verts.length; verts.push([V[0] + Math.cos(ang) * ORG_ROUND_R, V[1] - Math.sin(ang) * ORG_ROUND_R]); parent.push(i); ring.push(i); return i; };
-    arms.forEach((a, i) => {
-      fe.push({ a: add(a.ang), b: a.u, name: a.e.name ?? nameOf(a.e.a, a.e.b) });
-      const g = gapAfter(i), n = Math.ceil(g / (Math.PI / 3)) - 1;
-      for (let j = 1; j <= n; j++) add(a.ang + (g * j) / (n + 1));
-    });
-    ring.forEach((r, k) => fe.push({ a: r, b: ring[(k + 1) % ring.length], name: s.name, ring: true }));
-    ringVerts.push(...ring); islands.push([V[0], V[1]]);
-  }
-  // The gates: the town-edge corner nearest each gate's place, on the same side, moves onto it;
-  // with none near, the edge street there gets a corner at it.
-  const gatePos = o.gates.map((gt) => [at(gt.ix), at(gt.iz)] as P);
-  const sameSide = (v: P, gp: P) => (Math.abs(gp[0] - X0) < 0.5 || Math.abs(gp[0] - X1) < 0.5) ? Math.abs(v[0] - gp[0]) < 0.5 : Math.abs(v[1] - gp[1]) < 0.5;
-  for (const gp of gatePos) {
-    const rs = [...new Set(fe.flatMap((e) => [e.a, e.b]))];
-    let best = -1, bd = 30;
-    for (const r of rs) { const v = verts[r]; if (corner(v) || !sameSide(v, gp)) continue; const d = Math.hypot(v[0] - gp[0], v[1] - gp[1]); if (d > 0.5 && avNear(v[0], v[1])) continue; if (d < bd) { bd = d; best = r; } }
-    if (best >= 0) { verts[best] = [gp[0], gp[1]]; continue; }
-    const i = fe.findIndex(({ a, b }) => sameSide(verts[a], gp) && sameSide(verts[b], gp) && Math.hypot(verts[a][0] - gp[0], verts[a][1] - gp[1]) + Math.hypot(verts[b][0] - gp[0], verts[b][1] - gp[1]) < Math.hypot(verts[a][0] - verts[b][0], verts[a][1] - verts[b][1]) + 0.5);
-    if (i < 0) continue;
-    const n = verts.length; verts.push([gp[0], gp[1]]); parent.push(n);
-    const e = fe[i]; fe.splice(i, 1, { ...e, b: n }, { ...e, a: n });
-  }
-  // The avenues' streets: for each, the chain of streets from the corner nearest where its line
-  // starts to the one nearest where it ends that keeps closest to its line (each street costing its
-  // length, many times more the further it strays): one unbroken run, edge to edge.
-  for (const { av, line } of avLines) {
-    const adj = new Map<number, FE[]>();
-    for (const e of fe) if (!e.ring) for (const v of [e.a, e.b]) { let l = adj.get(v); if (!l) adj.set(v, l = []); l.push(e); }
-    const nearest = (p: [number, number]) => { let best = -1, bd = Infinity; for (const v of adj.keys()) { const d = Math.hypot(verts[v][0] - p[0], verts[v][1] - p[1]); if (d < bd) { bd = d; best = v; } } return best; };
-    const s0 = nearest(line[0]), s1 = nearest(line[line.length - 1]);
-    if (s0 < 0 || s1 < 0) continue;
-    // (Never along another avenue's street, crossing it only at a corner: the first laid keeps it.)
-    const cost = (e: FE) => { const A = verts[e.a], B = verts[e.b], off = Math.max(avOff(A[0], A[1], line), avOff(B[0], B[1], line), avOff((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, line)); return Math.hypot(B[0] - A[0], B[1] - A[1]) * (1 + (off / AV_NEAR) ** 2 * 4) + (e.tag && e.tag !== av.tag ? 1e7 : 0); };
-    const dist = new Map<number, number>([[s0, 0]]), prev = new Map<number, FE>(), done = new Set<number>();
-    for (;;) {
-      let u = -1, du = Infinity;
-      for (const [v, d] of dist) if (!done.has(v) && d < du) { du = d; u = v; }
-      if (u < 0 || u === s1) break;
-      done.add(u);
-      for (const e of adj.get(u) ?? []) { const w = e.a === u ? e.b : e.a, dw = du + cost(e); if (dw < (dist.get(w) ?? Infinity)) { dist.set(w, dw); prev.set(w, e); } }
-    }
-    for (let v = s1; v !== s0;) { const e = prev.get(v); if (!e) break; e.tag = av.tag; e.name = av.name; v = e.a === v ? e.b : e.a; }
-  }
-  // The graph: nodes for the merged corners (keyed by the grid cell they fall in), streets for
-  // the edges left between distinct ones.
-  const g = new CityGraph(), nodeOf = new Map<number, number>(), used = new Set<string>();
-  const keyed = (x: number, z: number): [number, number] => {
-    let kx = Math.floor((x - STREET / 2) / BLOCK + 0.5), kz = Math.floor((z - STREET / 2) / BLOCK + 0.5);
-    while (used.has(`${kx},${kz}`)) kz += 1000;
-    used.add(`${kx},${kz}`); return [kx, kz];
-  };
-  // (Gate corners take the grid's own keys for their places.)
-  o.gates.forEach((gt) => used.add(`${gt.ix},${gt.iz}`));
-  const node = (r: number) => {
-    let id = nodeOf.get(r);
-    if (id === undefined) {
-      const [x, z] = verts[r], gi = gatePos.findIndex((p) => Math.hypot(p[0] - x, p[1] - z) < 0.5);
-      const [kx, kz] = gi >= 0 ? [o.gates[gi].ix, o.gates[gi].iz] : keyed(x, z);
-      id = g.addNode(x, z, kx, kz); nodeOf.set(r, id);
-    }
-    return id;
-  };
-  const streetEdge = new Map<number, FE>();
-  for (const e of fe) {
-    // (A ring's sides are driven from a to b; other streets run east or south from n0.)
-    if (e.ring) { g.addStreet(node(e.a), node(e.b), { name: e.name, oneway: true, ring: true }); continue; }
-    if (e.wet) streetEdge.set(g.streets.length, e);
-    const [ax, az] = verts[e.a], [bx, bz] = verts[e.b], ew = Math.abs(bx - ax) > Math.abs(bz - az);
-    const [p, q] = ew ? (ax <= bx ? [e.a, e.b] : [e.b, e.a]) : (az <= bz ? [e.a, e.b] : [e.b, e.a]);
-    g.addStreet(node(p), node(q), { name: e.name ?? nameOf(e.a, e.b), tags: e.tag ? { [e.tag]: true } : {} });
-  }
-  // Gate streets out of town, as on the grid.
-  o.gates.forEach((gt, i) => {
-    const inner = g.node(gt.ix, gt.iz);
-    if (!inner) return;
-    const ox = gt.ix + GEN_DX[gt.dir], oz = gt.iz + GEN_DZ[gt.dir], outer = g.addNode(at(ox), at(oz), ox * 1000 + 999, oz * 1000 + 999);
-    const ew = gt.dir === 0 || gt.dir === 2;
-    const sid = g.addStreet(inner.id, outer, { name: ew ? o.nameEW(gt.iz) : o.nameNS(gt.ix), inCity: false });
-    g.streets[sid].gate = i;
-    g.gates.push({ node: inner.id, street: sid, out: 1 });
-  });
-  g.finish();
-  ringsDone(g, ringVerts.flatMap((r) => nodeOf.get(r) ?? []), islands);
-  // The river's blocks: for each street along or over it, the block on its water side (just past
-  // the sidewalk, towards a water cell's point: the side of a street, which merging corners can't move).
-  for (const [sid, e] of streetEdge) for (const [wx, wz] of e.wet ?? []) {
-    const st = g.streets[sid], A = g.nodes[st.n0], B = g.nodes[st.n1], mx = (A.x + B.x) / 2, mz = (A.z + B.z) / 2, L = st.len || 1;
-    let nx = -(B.z - A.z) / L, nz = (B.x - A.x) / L;
-    if (nx * (wx - mx) + nz * (wz - mz) < 0) { nx = -nx; nz = -nz; }
-    const px = mx + nx * (st.half + 1), pz = mz + nz * (st.half + 1);
-    for (const f of [sid * 2, sid * 2 + 1]) { const b = g.blocks[g.faceBlock[f]]; if (b && inPoly(b.poly, px, pz)) { b.water = true; b.inCity = false; } }
-  }
-  for (const b of g.blocks) if (b.park || b.water) b.anchor = null;
-  return g;
-}
-
-// The lattice segments that are one-way streets, and which way (o.oneway): only those whose line
-// runs on from both ends (each next segment along it there, one-way the same way or two-way), so
-// none ends at a node it can't be driven on from; and none at all if then some segment can't be
-// reached from another, driving the right way (the junctions all keep a way in and out).
-type Seg = { ix: number; iz: number; ew: boolean; on: boolean };
-function oneWays(o: GridOpts, segs: Seg[]): Map<Seg, number> {
-  const dirs = new Map<Seg, number>();
-  if (!o.oneway) return dirs;
-  const key = (ew: boolean, ix: number, iz: number) => `${ew ? 1 : 0},${ix},${iz}`, at = new Map<string, Seg>();
-  for (const sg of segs) at.set(key(sg.ew, sg.ix, sg.iz), sg);
-  for (const sg of segs) if (sg.on) { const d = o.oneway(sg.ix, sg.iz, sg.ew); if (d) dirs.set(sg, Math.sign(d)); }
-  for (let changed = true; changed;) {
-    changed = false;
-    for (const [sg, d] of dirs) {
-      const prev = at.get(sg.ew ? key(true, sg.ix - 1, sg.iz) : key(false, sg.ix, sg.iz - 1)), next = at.get(sg.ew ? key(true, sg.ix + 1, sg.iz) : key(false, sg.ix, sg.iz + 1));
-      const runs = (n: Seg | undefined) => !!n && n.on && (dirs.get(n) ?? d) === d;
-      if (!runs(prev) || !runs(next)) { dirs.delete(sg); changed = true; }
-    }
-  }
-  // (Nor a block every side of which runs the wrong way for its kerb, where the truck could never
-  // stop: its north side two-way instead. A side's kerb is on the right of its traffic: the north
-  // side's driven east, the south's west, the west's north, the east's south.)
-  for (const sg of segs) if (sg.ew && dirs.get(sg) === -1) {
-    const S = at.get(key(true, sg.ix, sg.iz + 1)), W = at.get(key(false, sg.ix, sg.iz)), E = at.get(key(false, sg.ix + 1, sg.iz));
-    if (S && W && E && S.on && W.on && E.on && dirs.get(S) === 1 && dirs.get(W) === 1 && dirs.get(E) === -1) dirs.delete(sg);
-  }
-  if (!dirs.size) return dirs;
-  // (Every node reached from one, both driving the right way and against it: strongly connected.)
-  const nk = (x: number, z: number) => `${x},${z}`, fwd = new Map<string, string[]>(), back = new Map<string, string[]>();
-  const arc = (m: Map<string, string[]>, a: string, b: string) => { let l = m.get(a); if (!l) m.set(a, (l = [])); l.push(b); };
-  for (const sg of segs) if (sg.on) {
-    const a = nk(sg.ix, sg.iz), b = sg.ew ? nk(sg.ix + 1, sg.iz) : nk(sg.ix, sg.iz + 1), d = dirs.get(sg) ?? 0;
-    if (d >= 0) { arc(fwd, a, b); arc(back, b, a); }
-    if (d <= 0) { arc(fwd, b, a); arc(back, a, b); }
-  }
-  const all = new Set([...fwd.keys(), ...back.keys()]), start = all.values().next().value!;
-  const reach = (m: Map<string, string[]>) => { const seen = new Set([start]), todo = [start]; while (todo.length) for (const n of m.get(todo.pop()!) ?? []) if (!seen.has(n)) { seen.add(n); todo.push(n); } return seen.size; };
-  if (reach(fwd) !== all.size || reach(back) !== all.size) dirs.clear();
-  return dirs;
-}
+type FE = { a: number; b: number; name?: string; ring?: boolean; wet?: [number, number][]; tag?: "elevated" | "cable" | "freeway"; twoWay?: boolean; av?: number };   // wet: a water cell's point on each side that is river
+// A lattice segment: from node (ix, iz) east (ew) or south.
+type Seg = { ix: number; iz: number; ew: boolean };
 
 // ---- the town's outline (outline.ts) -----------------------------------------------------------
 // Cuts a layout's graph (over the whole square) back to the town's outline: a block is kept if its
@@ -728,5 +189,544 @@ export function trimToOutline(G: CityGraph, O: TrimOutline, gates: { ix: number;
   const ringNodes = new Set<number>();
   for (const st of g.streets) if (st.ring) { ringNodes.add(st.n0); ringNodes.add(st.n1); }
   ringsDone(g, [...ringNodes], []);
+  return g;
+}
+
+// ---- the one generator ------------------------------------------------------------------------
+// Which streets are one way, and which way (+1 east or south along its run: its larger x, for one
+// running more east-west than north-south, else its larger z), for streets at any angle (on the
+// lattice, as downtown grids are: each line one way, the next the other). A street's line: the streets carrying straight on (within ONE_WAY_TURN) at
+// each end, each the other's best; o.oneway asks by the lattice line it lies along and the block
+// beside it. Kept only where its line runs on at both ends the same way (or two way); a block every
+// side of which runs the wrong way for its kerb has its northernmost side two way; and none at all
+// if then the streets aren't all reachable from one another, driving the right way.
+const ONE_WAY_TURN = 20 * Math.PI / 180;
+function oneWayDirs<E extends { a: number; b: number; k: string }>(o: GridOpts, es: E[], verts: [number, number][], cells: { c: [number, number]; sides: string[] }[]): Map<E, number> {
+  const dirs = new Map<E, number>();
+  if (!o.oneway) return dirs;
+  const byKey = new Map(es.map((e) => [e.k, e])), at = new Map<number, E[]>();
+  for (const e of es) for (const v of [e.a, e.b]) { let l = at.get(v); if (!l) at.set(v, l = []); l.push(e); }
+  const ewOf = (e: E) => Math.abs(verts[e.b][0] - verts[e.a][0]) > Math.abs(verts[e.b][1] - verts[e.a][1]);
+  // (Its heading leaving v.)
+  const hOut = (e: E, v: number) => { const w = e.a === v ? e.b : e.a; return Math.atan2(verts[w][1] - verts[v][1], verts[w][0] - verts[v][0]); };
+  const turn = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  // (The street carrying straight on from e through v, if any: the straightest, each the other's.)
+  const best = (e: E, v: number) => { let m: E | undefined, bt = ONE_WAY_TURN; for (const q of at.get(v) ?? []) { if (q === e || ewOf(q) !== ewOf(e)) continue; const t = Math.PI - turn(hOut(e, v), hOut(q, v)); if (t < bt) { bt = t; m = q; } } return m; };
+  const onAt = (e: E, v: number) => { const q = best(e, v); return q && best(q, v) === e ? q : undefined; };
+  // (Its ends: the one at its smaller x or z, along its run, first.)
+  const ends = (e: E): [number, number] => { const A = verts[e.a], B = verts[e.b]; return (ewOf(e) ? A[0] <= B[0] : A[1] <= B[1]) ? [e.a, e.b] : [e.b, e.a]; };
+  for (const e of es) {
+    const [p, q] = ends(e), P = verts[p], Q = verts[q], ew = ewOf(e);
+    // (Which lattice line it lies along, and the block it starts from along it.)
+    const line = Math.round((((ew ? P[1] + Q[1] : P[0] + Q[0]) / 2) - STREET / 2) / BLOCK), from = Math.floor(((ew ? P[0] : P[1]) - STREET / 2) / BLOCK + 1e-6);
+    const d = ew ? o.oneway(from, line, true) : o.oneway(line, from, false);
+    if (d) dirs.set(e, Math.sign(d));
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [e, d] of dirs) {
+      const [p, q] = ends(e), runs = (n: E | undefined) => !!n && (dirs.get(n) ?? d) === d;
+      if (!runs(onAt(e, p)) || !runs(onAt(e, q))) { dirs.delete(e); changed = true; }
+    }
+  }
+  // (Nor a block every side of which runs the wrong way for its kerb, where the truck could never
+  // stop: its northernmost side two way instead. A side's kerb is on the right of its traffic.)
+  const kerbOk = (e: E, c: [number, number]) => {
+    const d = dirs.get(e);
+    if (!d) return true;
+    const [p, q] = ends(e), [s, t] = d > 0 ? [p, q] : [q, p], S = verts[s], T = verts[t];
+    // (The block on the right of traffic from S to T: z is south, so right is (-dz, dx) turned... (x east, z south: right of (dx, dz) is (-dz, dx)).)
+    return (-(T[1] - S[1])) * (c[0] - S[0]) + (T[0] - S[0]) * (c[1] - S[1]) > 0;
+  };
+  const north = new Map<E, { c: [number, number]; sides: string[] }>();
+  for (const cell of cells) {
+    const sides = cell.sides.map((k) => byKey.get(k)).filter((e): e is E => !!e);
+    if (!sides.length) continue;
+    const n = sides.reduce((m, e) => (verts[e.a][1] + verts[e.b][1] < verts[m.a][1] + verts[m.b][1] ? e : m));
+    north.set(n, cell);
+  }
+  for (const e of es) {
+    const cell = north.get(e);
+    if (!cell || !dirs.has(e)) continue;
+    const sides = cell.sides.map((k) => byKey.get(k)).filter((q): q is E => !!q);
+    if (sides.every((q) => dirs.has(q) && !kerbOk(q, cell.c))) dirs.delete(e);
+  }
+  if (!dirs.size) return dirs;
+  // (Every corner reached from one, both driving the right way and against it: strongly connected.)
+  const fwd = new Map<number, number[]>(), back = new Map<number, number[]>();
+  const arc = (m: Map<number, number[]>, a: number, b: number) => { let l = m.get(a); if (!l) m.set(a, (l = [])); l.push(b); };
+  for (const e of es) {
+    const [p, q] = ends(e), d = dirs.get(e) ?? 0;
+    if (d >= 0) { arc(fwd, p, q); arc(back, q, p); }
+    if (d <= 0) { arc(fwd, q, p); arc(back, p, q); }
+  }
+  const all = new Set([...fwd.keys(), ...back.keys()]), start = all.values().next().value!;
+  const reach = (m: Map<number, number[]>) => { const seen = new Set([start]), todo = [start]; while (todo.length) for (const n of m.get(todo.pop()!) ?? []) if (!seen.has(n)) { seen.add(n); todo.push(n); } return seen.size; };
+  if (reach(fwd) !== all.size || reach(back) !== all.size) dirs.clear();
+  return dirs;
+}
+
+// A town's streets as the edges of its blocks' cells: one point a block, from the block's middle on
+// the grid's lattice, each taking the land nearest it (a Voronoi cell, clipped to the town's
+// square). Where the points stay on the lattice the cells are the grid's own blocks, their corners
+// its junctions (snapped exactly onto it, keyed as the grid keys them, and added in the grid's
+// order, so a grid town's streets, nodes and blocks are the grid's, id for id); where they move,
+// the cells and their streets move with them, and corners closer than MERGE_EDGE become one.
+// `move`: how far the point of block (bx, bz) moves from its middle; `relax`: how far, twice over,
+// it then moves on towards its cell's middle (0 to 1: an organic town's cells even out).
+// With them, all a town's features, each laid the same whatever the town (see CityOpts).
+export interface CityRing { x: number; z: number; name: string; n?: number; r?: number; oneway?: boolean; arms?: number }   // n: points round it; r: the ring's radius; oneway: a roundabout (gives way, no signals); arms: the most streets in
+export interface CityOpts extends OrganicOpts {
+  move?: (bx: number, bz: number) => [number, number];
+  relax?: (bx: number, bz: number) => number;
+  riverLine?: [number, number][];                 // the river's line given (else, with `river`, one that meanders)
+  rings?: CityRing[];                             // roundabouts and circuses, at (or near) their places: the first clear of the rest
+  ringNames?: string[];                           // (with candidate places for rings: as many as these, named so in turn, three to five streets in)
+  parks?: [number, number][];                     // superblock parks: four blocks each, (bx, bz) to (bx+1, bz+1), the streets between them left out
+  diagonals?: { ix: number; iz: number; dx: number; dz: number; n: number; name: string }[];   // corner to corner across blocks, from junction (ix, iz)
+  drop?: { p: (x: number, z: number, ew: boolean) => number; keep: (ax: number, az: number, bx: number, bz: number) => boolean };   // streets left out (big plots), never one `keep` refuses
+}
+export function cityGraph(o: GridOpts, seed: number, x: CityOpts = {}): CityGraph {
+  type P = [number, number];
+  const at = (i: number) => i * BLOCK + STREET / 2, X0 = at(o.lo), X1 = at(o.hi + 1), Z0 = X0, Z1 = X1;
+  const h = (salt: number) => hash2(seed, 0x0c9, 0, salt);
+  // The points: each block's middle, moved; `blk`: whose each is (a pair's or a ring's: none).
+  let pts: P[] = [], blk: (P | null)[] = [];
+  for (let bz = o.lo; bz <= o.hi; bz++) for (let bx = o.lo; bx <= o.hi; bx++) {
+    const [dx, dz] = x.move?.(bx, bz) ?? [0, 0];
+    pts.push([at(bx) + BLOCK / 2 + dx, at(bz) + BLOCK / 2 + dz]); blk.push([bx, bz]);
+  }
+  const keepPts = (ok: (p: P) => boolean) => { const np: P[] = [], nb: (P | null)[] = []; pts.forEach((p, i) => { if (ok(p)) { np.push(p); nb.push(blk[i]); } }); pts = np; blk = nb; };
+  // Each point's cell: the town's square, cut by the bisector with each point near it.
+  const cellsOf = () => pts.map(([px, pz]) => {
+    let poly: P[] = [[X0, Z0], [X1, Z0], [X1, Z1], [X0, Z1]];
+    for (const [qx, qz] of pts) {
+      if ((qx === px && qz === pz) || Math.abs(qx - px) > BLOCK * 3 || Math.abs(qz - pz) > BLOCK * 3) continue;
+      const nx = qx - px, nz = qz - pz;
+      poly = clipHalf(poly, nx, nz, (nx * (px + qx) + nz * (pz + qz)) / 2);
+    }
+    return poly;
+  });
+  // (Twice, each point moves on towards its cell's centroid, as far as `relax` says.)
+  if (x.relax) for (let it = 0; it < 2; it++) cellsOf().forEach((c, i) => {
+    const w = blk[i] ? x.relax!(blk[i]![0], blk[i]![1]) : 0;
+    if (w <= 0) return;
+    let A = 0, cx = 0, cz = 0;
+    for (let k = 0; k < c.length; k++) { const [x0, z0] = c[k], [x1, z1] = c[(k + 1) % c.length], q = x0 * z1 - x1 * z0; A += q; cx += (x0 + x1) * q; cz += (z0 + z1) * q; }
+    if (Math.abs(A) > 1) pts[i] = [pts[i][0] + (cx / (3 * A) - pts[i][0]) * w, pts[i][1] + (cz / (3 * A) - pts[i][1]) * w];
+  });
+  // The avenues' lines, sampled; and their points (the pairs either side) in place of those near.
+  // (A line given with pairsFrom past its end lies along the lattice already: no pairs.)
+  const avLines = (x.avenues ?? []).map((av, ai) => {
+    if (av.line) return { av, line: av.line };
+    const ha = (k: number) => hash2(seed, 0xa7e + ai, Math.round(av.from), k);
+    const lo = (av.ns ? X0 : Z0) + 1.6 * BLOCK, hi = (av.ns ? X1 : Z1) - 1.6 * BLOCK;
+    const amp = av.amp ?? (0.5 + 0.6 * ha(1)) * BLOCK * (ha(2) < 0.5 ? -1 : 1), sBend = ha(3) < 0.4;
+    const line: P[] = [];
+    for (let k = 0; k <= 96; k++) {
+      const t = k / 96, u = t * t * (3 - 2 * t), env = Math.sin(Math.PI * t) ** 2;
+      const bow = av.from + (av.to - av.from) * u + amp * env * (sBend ? 2 * Math.cos(Math.PI * t) : 1), off = av.amp !== undefined ? bow : Math.max(lo, Math.min(hi, bow));
+      const along = (av.ns ? Z0 : X0) + ((av.ns ? Z1 - Z0 : X1 - X0) * t);
+      line.push(av.ns ? [off, along] : [along, off]);
+    }
+    return { av, line };
+  });
+  const segD = (px: number, pz: number, [ax, az]: P, [bx, bz]: P) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz || 1))); return Math.hypot(px - ax - dx * t, pz - az - dz * t); };
+  const avOff = (px: number, pz: number, L: P[]) => { let m = Infinity; for (let i = 0; i + 1 < L.length; i++) m = Math.min(m, segD(px, pz, L[i], L[i + 1])); return m; };
+  const paired = avLines.filter(({ av, line }) => (av.pairsFrom ?? 0) < line.length * 1e6);
+  const avNear = (px: number, pz: number) => paired.some(({ line }) => avOff(px, pz, line) < AV_NEAR);
+  for (const { av, line } of paired) {
+    const cum = [0];
+    for (let i = 1; i < line.length; i++) cum.push(cum[i - 1] + Math.hypot(line[i][0] - line[i - 1][0], line[i][1] - line[i - 1][1]));
+    const L = cum[cum.length - 1], from = av.pairsFrom ?? 0;
+    if (from >= L) continue;
+    // (The points near it give way to its pairs: near the part of it they lie along, from pairsFrom on.)
+    const i0 = Math.max(0, cum.findIndex((c) => c >= from) - 1), after = line.slice(i0);
+    keepPts(([px, pz]) => avOff(px, pz, after) > BLOCK * 0.6);
+    const n = Math.max(2, Math.round(L / AV_SPACING)), step = L / n;
+    for (let k = 0; k < n; k++) {
+      const sv = step * (k + 0.5);
+      if (sv < from + step / 2) continue;
+      let i = 0; while (i < line.length - 2 && cum[i + 1] < sv) i++;
+      const [ax, az] = line[i], [bx, bz] = line[i + 1], f = (sv - cum[i]) / (cum[i + 1] - cum[i] || 1), l = Math.hypot(bx - ax, bz - az) || 1;
+      const cx = ax + (bx - ax) * f, cz = az + (bz - az) * f, nx = -(bz - az) / l, nz = (bx - ax) / l;
+      pts.push([cx + nx * AV_HALF, cz + nz * AV_HALF], [cx - nx * AV_HALF, cz - nz * AV_HALF]); blk.push(null, null);
+    }
+  }
+  const PA = x.patch, inPatch = (px: number, pz: number, m = 0) => !!PA && px > PA.x0 - m && px < PA.x1 + m && pz > PA.z0 - m && pz < PA.z1 + m;
+  // The grid's patch: its blocks' middles in place of whatever else is there (an avenue's pairs
+  // crossing it: the avenue runs along its streets there).
+  if (PA) {
+    keepPts(([px, pz]) => !inPatch(px, pz, BLOCK * 0.6));
+    for (let bz = Math.ceil((PA.z0 - STREET / 2 - BLOCK / 2) / BLOCK); bz * BLOCK + STREET / 2 + BLOCK / 2 < PA.z1; bz++)
+      for (let bx = Math.ceil((PA.x0 - STREET / 2 - BLOCK / 2) / BLOCK); bx * BLOCK + STREET / 2 + BLOCK / 2 < PA.x1; bx++) { pts.push([at(bx) + BLOCK / 2, at(bz) + BLOCK / 2]); blk.push([bx, bz]); }
+  }
+  // (A junction of the lattice: within 0.6 m of one of its lines' crossings; where it is exactly.)
+  const gridAt = (p: P): P | null => {
+    const gx = Math.round((p[0] - STREET / 2) / BLOCK) * BLOCK + STREET / 2, gz = Math.round((p[1] - STREET / 2) / BLOCK) * BLOCK + STREET / 2;
+    return Math.abs(gx - p[0]) < 0.6 && Math.abs(gz - p[1]) < 0.6 ? [gx, gz] : null;
+  };
+  // The river's line: given, or from the middle of a gap between gates on the west edge to one on
+  // the east (the same gap or the next), meandering between (none at its ends, so it meets the
+  // edges square); out to a sea to the north or south, bending round to run down to it.
+  const gz = [...new Set(o.gates.filter((g) => g.dir === 0 || g.dir === 2).map((g) => at(g.iz)))].sort((p, q) => p - q);
+  const gaps = gz.slice(1).map((z, i) => (z + gz[i]) / 2);
+  const river = !!x.riverLine || (!!x.river && gaps.length > 0);
+  const gi = Math.floor(h(1) * gaps.length), go = Math.max(0, Math.min(gaps.length - 1, gi + Math.floor(h(2) * 3) - 1));
+  const zIn = gaps[gi] ?? 0, zOut = gaps[go] ?? 0, amp = (0.6 + 0.9 * h(3)) * BLOCK, waves = 1 + Math.floor(h(4) * 3), phase = h(5) * Math.PI * 2;
+  const sea = x.sea, northSouth = !!sea && (sea.side === 1 || sea.side === 3);
+  const gx = [...new Set(o.gates.filter((g) => g.dir === 1 || g.dir === 3).map((g) => at(g.ix)))].sort((p, q) => p - q);
+  const gapsX = gx.slice(1).map((v, i) => (v + gx[i]) / 2);
+  const fromEast = h(6) < 0.5, xOut = gapsX[Math.floor(h(7) * gapsX.length)] ?? (X0 + X1) / 2, zSea = sea?.side === 1 ? Z0 : Z1;
+  let rLine: P[] = x.riverLine ?? [];
+  if (!x.riverLine && river) {
+    if (northSouth) for (let k = 0; k <= 32; k++) { const t = k / 32, ax = fromEast ? X1 : X0, u = 1 - t; rLine.push([u * u * ax + 2 * u * t * xOut + t * t * xOut, u * u * zIn + 2 * u * t * zIn + t * t * zSea]); }
+    else for (let k = 0; k <= 64; k++) { const t = k / 64, z = zIn + (zOut - zIn) * t + amp * Math.sin(Math.PI * t) * Math.sin(Math.PI * waves * t + phase); rLine.push([X0 + (X1 - X0) * t, Math.max(Z0 + 2.5 * BLOCK, Math.min(Z1 - 2.5 * BLOCK, z))]); }
+  }
+  const riverOff = (px: number, pz: number) => avOff(px, pz, rLine);
+  // The rings' places: kept clear of the river, the avenues, the patch, the sea and each other; the
+  // points near each give way to n round it, so the cells' corner there is a junction of n streets.
+  const sites: CityRing[] = [];
+  // (`rounds`: roundabouts so named, at candidate places of their own, well inside town.)
+  const ringNames = x.ringNames ?? x.rounds;
+  const cands = x.rings ?? (x.rounds?.length ? Array.from({ length: 40 }, (_, t) => ({ x: X0 + 160 + h(100 + t) * (X1 - X0 - 320), z: Z0 + 160 + h(140 + t) * (Z1 - Z0 - 320), name: "" })) : []);
+  for (const s0 of cands) {
+    if (ringNames && sites.length >= ringNames.length) break;
+    const k = sites.length, r = hash2(k, 0x70d, seed, 1);
+    const s: CityRing = ringNames ? { ...s0, name: ringNames[k], n: (s0 as CityRing).n ?? (r < 0.7 ? 4 : r < 0.85 ? 3 : 5) } : s0;
+    if (river && riverOff(s.x, s.z) < 150) continue;
+    if (paired.some(({ line }) => avOff(s.x, s.z, line) < 160) || inPatch(s.x, s.z, 160)) continue;
+    if (sea && [[0, 0], [150, 0], [-150, 0], [0, 150], [0, -150]].some(([dx, dz]) => sea.inSea(s.x + dx, s.z + dz))) continue;
+    if (sites.some((q) => Math.hypot(q.x - s.x, q.z - s.z) < 340)) continue;
+    sites.push(s);
+  }
+  for (const [k, s] of sites.entries()) {
+    const n = s.n ?? 4, a0 = s.n === 8 ? Math.PI / 8 : hash2(k, 0x70d, seed, 2) * Math.PI * 2;
+    keepPts(([px, pz]) => Math.hypot(px - s.x, pz - s.z) > 92);
+    for (let i = 0; i < n; i++) { pts.push([s.x + Math.cos(a0 + (i * 2 * Math.PI) / n) * 60, s.z + Math.sin(a0 + (i * 2 * Math.PI) / n) * 60]); blk.push(null); }
+  }
+  const cells = cellsOf();
+  const cellOf = new Map<string, number>();
+  blk.forEach((b, i) => { if (b) cellOf.set(`${b[0]},${b[1]}`, i); });
+  // Junctions: the cells' corners, merged where they coincide (cells share them; on the lattice,
+  // exactly on it), then where the edge between them is short.
+  const verts: P[] = [], key = new Map<string, number>();
+  const vid = (p0: P) => {
+    const p = gridAt(p0) ?? p0, kx = Math.round(p[0] * 2), kz = Math.round(p[1] * 2);
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const i = key.get(`${kx + dx},${kz + dz}`);
+      if (i !== undefined && Math.hypot(verts[i][0] - p[0], verts[i][1] - p[1]) < 0.5) return i;
+    }
+    const i = verts.length; verts.push([p[0], p[1]]); key.set(`${kx},${kz}`, i); return i;
+  };
+  const edges = new Map<string, [number, number]>(), cellEdges: [number, number][][] = cells.map(() => []);
+  cells.forEach((c, ci) => {
+    for (let i = 0; i < c.length; i++) {
+      const a = vid(c[i]), b = vid(c[(i + 1) % c.length]);
+      cellEdges[ci].push([a, b]);
+      if (a !== b) edges.set(a < b ? `${a},${b}` : `${b},${a}`, a < b ? [a, b] : [b, a]);
+    }
+  });
+  // (Union-find over merged corners; a corner on the town's edge keeps its place, on that edge; one
+  // on the lattice, its place; one on an avenue, its line.)
+  const parent = verts.map((_, i) => i), find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const onEdge = (p: P) => Math.min(Math.abs(p[0] - X0), Math.abs(p[0] - X1), Math.abs(p[1] - Z0), Math.abs(p[1] - Z1)) < 0.5;
+  const corner = (p: P) => (Math.abs(p[0] - X0) < 0.5 || Math.abs(p[0] - X1) < 0.5) && (Math.abs(p[1] - Z0) < 0.5 || Math.abs(p[1] - Z1) < 0.5);
+  // (Any two corners within a metre of each other, however they came there, become one: never two
+  // junctions on the one spot, their streets meeting without one. Before merging, and again after.)
+  const twins = () => {
+    const atJ = new Map<string, number[]>();
+    for (let i = 0; i < verts.length; i++) if (find(i) === i) {
+      const kx = Math.floor(verts[i][0]), kz = Math.floor(verts[i][1]);
+      let into = -1;
+      for (let dz = -1; dz <= 1 && into < 0; dz++) for (let dx = -1; dx <= 1 && into < 0; dx++) for (const j of atJ.get(`${kx + dx},${kz + dz}`) ?? []) if (find(j) === j && Math.hypot(verts[j][0] - verts[i][0], verts[j][1] - verts[i][1]) < 1) { into = j; break; }
+      // (An exact lattice corner keeps its place; so does one on the town's corner or edge.)
+      if (into >= 0) { const I = verts[i], J = verts[into], gi = gridAt(I); if ((gi && gi[0] === I[0] && gi[1] === I[1]) || (corner(I) && !corner(J)) || (onEdge(I) && !onEdge(J))) verts[into] = I; parent[i] = into; continue; }
+      const k = `${kx},${kz}`, l = atJ.get(k); if (l) l.push(i); else atJ.set(k, [i]);
+    }
+  };
+  twins();
+  // (The streets between distinct corners as they stand: built once a pass, kept up as merges are made.)
+  let liveCache: number[][] | null = null;
+  const liveEdges = () => (liveCache ??= [...edges.values()].map(([u, v]) => [find(u), find(v)]).filter(([u, v]) => u !== v));
+  // (Whether merging corners a and b at m would have a street of either cross another.)
+  const crosses = (a: number, b: number, m: P) => {
+    const side = (p: P, q: P, r: P) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+    const cut = (p: P, q: P, r: P, t: P) => side(p, q, r) * side(p, q, t) < 0 && side(r, t, p) * side(r, t, q) < 0;
+    const live = liveEdges();
+    for (const [u, v] of live) {
+      if (!((u === a || u === b) !== (v === a || v === b))) continue;   // (a street of a or b's, not the one between them)
+      const o = u === a || u === b ? v : u, Q = verts[o];
+      for (const [x, y] of live) {
+        if (x === a || x === b || y === a || y === b || x === o || y === o) continue;
+        if (cut(m, Q, verts[x], verts[y])) return true;
+      }
+    }
+    return false;
+  };
+  // (Pass after pass, while any merge is still made: a merged corner may leave a short street.)
+  for (let pass = 0, more = true; pass < 12 && more; pass++) {
+    more = false;
+    const list = [...edges.values()].map(([a, b]) => [find(a), find(b)]).filter(([a, b]) => a !== b)
+      .sort((p, q) => Math.hypot(verts[p[0]][0] - verts[p[1]][0], verts[p[0]][1] - verts[p[1]][1]) - Math.hypot(verts[q[0]][0] - verts[q[1]][0], verts[q[0]][1] - verts[q[1]][1]));
+    for (const [a0, b0] of list) {
+      const a = find(a0), b = find(b0);
+      if (a === b) continue;
+      const A = verts[a], B = verts[b];
+      if (Math.hypot(A[0] - B[0], A[1] - B[1]) >= MERGE_EDGE) break;
+      if (corner(A) && corner(B)) continue;
+      const gA = gridAt(A), gB = gridAt(B);
+      if (gA && gB) continue;
+      const m: P = gA ?? gB ?? (corner(A) ? A : corner(B) ? B : onEdge(A) && !onEdge(B) ? A : onEdge(B) && !onEdge(A) ? B
+        : avNear(A[0], A[1]) && !avNear(B[0], B[1]) ? A : avNear(B[0], B[1]) && !avNear(A[0], A[1]) ? B : [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2]);
+      // (Never so a street of either comes to cross another: then at the other corner, or between
+      // them, if either is clear; else the two stay apart.)
+      // (Only where neither is held to the lattice, the town's corner or its edge.)
+      const held = !!(gA || gB) || corner(A) || corner(B) || onEdge(A) !== onEdge(B);
+      const at2 = (held ? [m] : [m, A, B, [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2] as P]).find((q) => !crosses(a, b, q));
+      if (!at2) continue;
+      verts[a] = [at2[0], at2[1]]; parent[b] = a; more = true; liveCache = null;
+    }
+  }
+  // (Onto the lattice exactly; and twins again.)
+  for (let i = 0; i < verts.length; i++) if (find(i) === i) { const g0 = gridAt(verts[i]); if (g0) verts[i] = g0; }
+  twins();
+  // The streets left: between distinct merged corners, once each. Which cells each borders
+  // (two, or one round the town's edge), and which cells meet at each corner.
+  const mk = (a: number, b: number) => (a < b ? `${a},${b}` : `${b},${a}`);
+  const sidesOf = new Map<string, Set<number>>(), cellsAt = new Map<number, Set<number>>();
+  const addTo = <K>(m: Map<K, Set<number>>, k: K, v: number) => { let s = m.get(k); if (!s) m.set(k, s = new Set()); s.add(v); };
+  cellEdges.forEach((l, ci) => { for (const [a0, b0] of l) { const a = find(a0), b = find(b0); addTo(cellsAt, a, ci); addTo(cellsAt, b, ci); if (a !== b) addTo(sidesOf, mk(a, b), ci); } });
+  let fe: FE[] = [];
+  const seen = new Set<string>();
+  for (const [a0, b0] of edges.values()) {
+    const a = find(a0), b = find(b0), k = mk(a, b);
+    if (a !== b && !seen.has(k)) { seen.add(k); fe.push({ a, b }); }
+  }
+  // (A lattice segment's ends, (ix, iz) and the next junction east (ew) or south.)
+  const latKey = (v: P): P | null => { const gq = gridAt(v); return gq && gq[0] === v[0] && gq[1] === v[1] ? [Math.round((v[0] - STREET / 2) / BLOCK), Math.round((v[1] - STREET / 2) / BLOCK)] : null; };
+  const segOf = (e: FE): Seg | null => { const A = latKey(verts[e.a]), B = latKey(verts[e.b]); if (!A || !B || Math.abs(A[0] - B[0]) + Math.abs(A[1] - B[1]) !== 1) return null; const ew = A[1] === B[1]; return { ix: Math.min(A[0], B[0]), iz: Math.min(A[1], B[1]), ew }; };
+  if (x.cuts?.length) fe = fe.filter((e) => { const sg = segOf(e); return !sg || !x.cuts!.some((c) => c.ix === sg.ix && c.iz === sg.iz && c.ew === sg.ew); });
+  // Superblock parks: the streets between each one's four cells left out.
+  const parkMid: P[] = [];
+  for (const [px, pz] of x.parks ?? []) {
+    const cs = [[px, pz], [px + 1, pz], [px, pz + 1], [px + 1, pz + 1]].map(([bx, bz]) => cellOf.get(`${bx},${bz}`));
+    if (cs.some((c) => c === undefined)) continue;
+    const set = new Set(cs as number[]);
+    fe = fe.filter((e) => { const s = sidesOf.get(mk(e.a, e.b)); return !s || s.size < 2 || ![...s].every((c) => set.has(c)); });
+    parkMid.push([(pts[cs[0]!][0] + pts[cs[3]!][0]) / 2, (pts[cs[0]!][1] + pts[cs[3]!][1]) / 2]);
+  }
+  // The river: the cheapest chain of cells from the cell nearest one end of its line to the one
+  // nearest the other, each step costing its length, more the further the cell lies off the line
+  // (none touching the north or south edge); its bridges, one in three or so.
+  const water = new Set<number>();
+  if (river && rLine.length > 1) {
+    const adj = cells.map(() => new Set<number>());
+    for (const s of sidesOf.values()) for (const i of s) for (const j of s) if (i !== j) adj[i].add(j);
+    const along = (ci: number, v: number, ax: 0 | 1) => cells[ci].filter((p) => Math.abs(p[ax] - v) < 0.5).length >= 2;
+    const wet = (ci: number) => !!sea && sea.inSea(pts[ci][0], pts[ci][1]);
+    const banned = (ci: number) => along(ci, Z0, 1) || along(ci, Z1, 1) || wet(ci);
+    const nearest = (p: P, edgeX: number | null) => { let best = -1, bd = Infinity; cells.forEach((_, ci) => { if (banned(ci) || (edgeX !== null && !along(ci, edgeX, 0))) return; const d = Math.hypot(pts[ci][0] - p[0], pts[ci][1] - p[1]); if (d < bd) { bd = d; best = ci; } }); return best; };
+    const mouth = (px: number, pz: number) => { let best = -1, bd = Infinity; cells.forEach((_, ci) => { if (!banned(ci) && [...adj[ci]].some(wet)) { const d = Math.hypot(pts[ci][0] - px, pts[ci][1] - pz); if (d < bd) { bd = d; best = ci; } } }); return best; };
+    const L0 = rLine[0], L1 = rLine[rLine.length - 1];
+    // (A line given, as a warped town's along its row: from its own ends, out at the sea's mouth
+    // only where one of them lies in the sea.)
+    const given = !!x.riverLine, wetEnd = (p: P) => !!sea && sea.inSea(p[0], p[1]);
+    const s0 = given ? (wetEnd(L0) ? mouth(L0[0], L0[1]) : nearest(L0, X0)) : !sea || sea.side === 0 ? nearest(L0, X0) : sea.side === 2 ? nearest(L1, X1) : nearest(L0, fromEast ? X1 : X0);
+    const s1 = given ? (wetEnd(L1) ? mouth(L1[0], L1[1]) : nearest(L1, X1)) : !sea ? nearest(L1, X1) : sea.side === 0 ? mouth(L1[0], L1[1]) : sea.side === 2 ? mouth(L0[0], L0[1]) : mouth(xOut, zSea);
+    if (s0 >= 0 && s1 >= 0) {
+      const dist = cells.map(() => Infinity), prev = cells.map(() => -1), done = cells.map(() => false);
+      dist[s0] = 0;
+      for (;;) {
+        let u = -1;
+        for (let i = 0; i < cells.length; i++) if (!done[i] && dist[i] < Infinity && (u < 0 || dist[i] < dist[u])) u = i;
+        if (u < 0 || u === s1) break;
+        done[u] = true;
+        for (const v of adj[u]) {
+          if (done[v] || banned(v)) continue;
+          const off = riverOff(pts[v][0], pts[v][1]) / 14, c = dist[u] + Math.hypot(pts[v][0] - pts[u][0], pts[v][1] - pts[u][1]) * (1 + off * off);
+          if (c < dist[v]) { dist[v] = c; prev[v] = u; }
+        }
+      }
+      const chain: number[] = [];
+      if (dist[s1] < Infinity) for (let c = s1; c >= 0; c = prev[c]) chain.unshift(c);
+      for (const c of chain) water.add(c);
+      const bank = (v: number) => onEdge(verts[v]) || [...(cellsAt.get(v) ?? [])].some((c) => !water.has(c));
+      const bridges = new Set<string>(), between = new Map<string, FE[]>();
+      for (const e of fe) { const s = [...sidesOf.get(mk(e.a, e.b))!]; if (s.length === 2) { const k = mk(s[0], s[1]); between.set(k, [...(between.get(k) ?? []), e]); } }
+      // (An avenue crossing it always on a bridge: its line passes between the two cells.)
+      const avCross = (e: FE) => avLines.some(({ line }) => avOff((verts[e.a][0] + verts[e.b][0]) / 2, (verts[e.a][1] + verts[e.b][1]) / 2, line) < BLOCK * 0.6);
+      let since = 0;
+      for (let i = 0; i + 1 < chain.length; i++) for (const e of between.get(mk(chain[i], chain[i + 1])) ?? []) {
+        if (!bank(e.a) || !bank(e.b)) continue;
+        if (avCross(e)) { bridges.add(mk(e.a, e.b)); since = 0; continue; }
+        if (since < 2 && hash2(i, 0x81d, seed, 0xb71) < 0.7) since++; else { since = 0; bridges.add(mk(e.a, e.b)); }
+      }
+      fe = fe.filter((e) => { const k = mk(e.a, e.b), s = sidesOf.get(k)!; return bridges.has(k) || s.size < 2 || ![...s].every((c) => water.has(c)); });
+      for (const e of fe) { const w = [...sidesOf.get(mk(e.a, e.b))!].filter((c) => water.has(c)); if (w.length) e.wet = w.map((c) => pts[c]); }
+    }
+  }
+  // Streets left out for big plots (drop): never along the town's edge, a quay or a street `keep`
+  // refuses, only where each end keeps three streets, and never so the town splits in two.
+  if (x.drop) {
+    const deg = new Map<number, number>();
+    for (const e of fe) for (const v of [e.a, e.b]) deg.set(v, (deg.get(v) ?? 0) + 1);
+    const connected = () => {
+      const adj = new Map<number, number[]>();
+      for (const e of fe) { (adj.get(e.a) ?? adj.set(e.a, []).get(e.a)!).push(e.b); (adj.get(e.b) ?? adj.set(e.b, []).get(e.b)!).push(e.a); }
+      const start = adj.keys().next().value!, seenV = new Set([start]), todo = [start];
+      while (todo.length) for (const n of adj.get(todo.pop()!)!) if (!seenV.has(n)) { seenV.add(n); todo.push(n); }
+      return seenV.size === adj.size;
+    };
+    const nearRing = (v: P) => sites.some((s) => Math.hypot(v[0] - s.x, v[1] - s.z) < (s.r ?? ORG_ROUND_R) + 2 * BLOCK);
+    [...fe].forEach((e, i) => {
+      const A = verts[e.a], B = verts[e.b], ew = Math.abs(B[0] - A[0]) > Math.abs(B[1] - A[1]);
+      if (hash2(i, 7, seed, 0xd70) >= x.drop!.p((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, ew) || !x.drop!.keep(A[0], A[1], B[0], B[1])) return;
+      if (e.wet || (onEdge(A) && onEdge(B)) || nearRing(A) || nearRing(B)) return;
+      if ((deg.get(e.a) ?? 0) < 4 || (deg.get(e.b) ?? 0) < 4) return;
+      const j = fe.indexOf(e);
+      fe.splice(j, 1);
+      if (!connected()) { fe.splice(j, 0, e); return; }
+      deg.set(e.a, deg.get(e.a)! - 1); deg.set(e.b, deg.get(e.b)! - 1);
+    });
+  }
+  const nameOf = (a: number, b: number) => {
+    const [ax, az] = verts[a], [bx, bz] = verts[b];
+    return Math.abs(bx - ax) > Math.abs(bz - az) ? o.nameEW(Math.round((((az + bz) / 2) - STREET / 2) / BLOCK)) : o.nameNS(Math.round((((ax + bx) / 2) - STREET / 2) / BLOCK));
+  };
+  // The rings: at the corner nearest each place, if its streets in are long enough, far enough
+  // apart, and clear of the water and the town's edge. Its corners: one where each street comes
+  // in, and more between so no side turns more than 60 degrees; anticlockwise seen from above.
+  const ringVerts: number[] = [], islands: P[] = [], ringEdges: FE[] = [];
+  for (const s of sites) {
+    const R = s.r ?? ORG_ROUND_R, used = new Set(fe.flatMap((e) => [e.a, e.b])), n8 = (s.n ?? 4) >= 8;   // (a circus's eight arms are closer together)
+    let v = -1, bd = 18;
+    for (const r of used) { const d = Math.hypot(verts[r][0] - s.x, verts[r][1] - s.z); if (d < bd) { bd = d; v = r; } }
+    if (v < 0) continue;
+    const V = verts[v], arms = fe.filter((e) => e.a === v || e.b === v).map((e) => {
+      const u = e.a === v ? e.b : e.a, U = verts[u];
+      return { e, u, ang: Math.atan2(-(U[1] - V[1]), U[0] - V[0]), len: Math.hypot(U[0] - V[0], U[1] - V[1]) };
+    }).sort((p, q) => p.ang - q.ang);
+    const gapAfter = (i: number) => i + 1 < arms.length ? arms[i + 1].ang - arms[i].ang : arms[0].ang + 2 * Math.PI - arms[i].ang;
+    const dry = (r: number) => ![...(cellsAt.get(r) ?? [])].some((c) => water.has(c));
+    if (arms.length < 3 || arms.length > (s.arms ?? 6) || onEdge(V) || !dry(v) || arms.some((a, i) => a.len < R + 22 || gapAfter(i) < (n8 ? 0.55 : 0.8) || !dry(a.u) || onEdge(verts[a.u]))) continue;
+    const segDist = ([ax, az]: P, [bx, bz]: P) => { const dx = bx - ax, dz = bz - az, t = Math.max(0, Math.min(1, ((V[0] - ax) * dx + (V[1] - az) * dz) / (dx * dx + dz * dz || 1))); return Math.hypot(V[0] - ax - dx * t, V[1] - az - dz * t); };
+    if (fe.some((e) => e.a !== v && e.b !== v && segDist(verts[e.a], verts[e.b]) < R + STREET)) continue;
+    const drop = new Set(arms.map((a) => a.e));
+    fe = fe.filter((e) => !drop.has(e));
+    const ring: number[] = [], add = (ang: number) => { const i = verts.length; verts.push([V[0] + Math.cos(ang) * R, V[1] - Math.sin(ang) * R]); parent.push(i); ring.push(i); return i; };
+    arms.forEach((a, i) => {
+      fe.push({ a: add(a.ang), b: a.u, name: a.e.name ?? nameOf(a.e.a, a.e.b) });
+      const g0 = gapAfter(i), n = Math.ceil(g0 / (Math.PI / 3)) - 1;
+      for (let j = 1; j <= n; j++) add(a.ang + (g0 * j) / (n + 1));
+    });
+    ring.forEach((r, k) => { const e: FE = { a: r, b: ring[(k + 1) % ring.length], name: s.name, ring: true }; fe.push(e); ringEdges.push(e); if (s.oneway === false) e.twoWay = true; });
+    if (s.oneway !== false) ringVerts.push(...ring);
+    islands.push([V[0], V[1]]);
+  }
+  // Diagonals: corner to corner across a block, each step a street from one of its corners to the
+  // one across it (inside the one cell, so crossing no street), named as its avenue.
+  for (const dg of x.diagonals ?? []) for (let k = 0; k < dg.n; k++) {
+    const near = (ix: number, iz: number) => { let best = -1, bd = 14; for (const r of new Set(fe.flatMap((e) => [e.a, e.b]))) { const d = Math.hypot(verts[r][0] - at(ix), verts[r][1] - at(iz)); if (d < bd) { bd = d; best = r; } } return best; };
+    const a = near(dg.ix + dg.dx * k, dg.iz + dg.dz * k), b = near(dg.ix + dg.dx * (k + 1), dg.iz + dg.dz * (k + 1));
+    if (a < 0 || b < 0) break;
+    const shared = [...(cellsAt.get(a) ?? [])].filter((c) => cellsAt.get(b)?.has(c) && !water.has(c));
+    if (!shared.length || fe.some((e) => mk(e.a, e.b) === mk(a, b))) break;
+    fe.push({ a, b, name: dg.name });
+  }
+  // The gates: the town-edge corner nearest each gate's place, on the same side, moves onto it;
+  // with none near, the edge street there gets a corner at it.
+  const gatePos = o.gates.map((gt) => [at(gt.ix), at(gt.iz)] as P);
+  const sameSide = (v: P, gp: P) => (Math.abs(gp[0] - X0) < 0.5 || Math.abs(gp[0] - X1) < 0.5) ? Math.abs(v[0] - gp[0]) < 0.5 : Math.abs(v[1] - gp[1]) < 0.5;
+  for (const gp of gatePos) {
+    const rs = [...new Set(fe.flatMap((e) => [e.a, e.b]))];
+    let best = -1, bd = 30;
+    for (const r of rs) { const v = verts[r]; if (corner(v) || !sameSide(v, gp)) continue; const d = Math.hypot(v[0] - gp[0], v[1] - gp[1]); if (d > 0.5 && avNear(v[0], v[1])) continue; if (d < bd) { bd = d; best = r; } }
+    if (best >= 0) { verts[best] = [gp[0], gp[1]]; continue; }
+    const i = fe.findIndex(({ a, b }) => sameSide(verts[a], gp) && sameSide(verts[b], gp) && Math.hypot(verts[a][0] - gp[0], verts[a][1] - gp[1]) + Math.hypot(verts[b][0] - gp[0], verts[b][1] - gp[1]) < Math.hypot(verts[a][0] - verts[b][0], verts[a][1] - verts[b][1]) + 0.5);
+    if (i < 0) continue;
+    const n = verts.length; verts.push([gp[0], gp[1]]); parent.push(n);
+    const e = fe[i]; fe.splice(i, 1, { ...e, b: n }, { ...e, a: n });
+  }
+  // The avenues' streets: for each, the chain of streets from the corner nearest where its line
+  // starts to the one nearest where it ends that keeps closest to its line: one unbroken run.
+  for (const [ai, { av, line }] of avLines.entries()) {
+    const adj = new Map<number, FE[]>();
+    for (const e of fe) if (!e.ring) for (const v of [e.a, e.b]) { let l = adj.get(v); if (!l) adj.set(v, l = []); l.push(e); }
+    const nearest = (p: P) => { let best = -1, bd = Infinity; for (const v of adj.keys()) { const d = Math.hypot(verts[v][0] - p[0], verts[v][1] - p[1]); if (d < bd) { bd = d; best = v; } } return best; };
+    const s0 = nearest(line[0]), s1 = nearest(line[line.length - 1]);
+    if (s0 < 0 || s1 < 0) continue;
+    const cost = (e: FE) => { const A = verts[e.a], B = verts[e.b], off = Math.max(avOff(A[0], A[1], line), avOff(B[0], B[1], line), avOff((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, line)); return Math.hypot(B[0] - A[0], B[1] - A[1]) * (1 + (off / AV_NEAR) ** 2 * 4) + (e.av !== undefined && e.av !== ai ? 1e7 : 0); };   // (never along another avenue's street)
+    const dist = new Map<number, number>([[s0, 0]]), prev = new Map<number, FE>(), done = new Set<number>();
+    for (;;) {
+      let u = -1, du = Infinity;
+      for (const [v, d] of dist) if (!done.has(v) && d < du) { du = d; u = v; }
+      if (u < 0 || u === s1) break;
+      done.add(u);
+      for (const e of adj.get(u) ?? []) { const w = e.a === u ? e.b : e.a, dw = du + cost(e); if (dw < (dist.get(w) ?? Infinity)) { dist.set(w, dw); prev.set(w, e); } }
+    }
+    for (let v = s1; v !== s0;) { const e = prev.get(v); if (!e) break; e.tag = av.tag; e.name = av.name; e.av = ai; v = e.a === v ? e.b : e.a; }
+  }
+  // One-way streets (oneWayDirs), the lattice's segments sorted first in the grid's order.
+  type E = FE & { seg: Seg | null; k: string };
+  const es: E[] = fe.filter((e) => !e.ring).map((e) => ({ ...e, seg: segOf(e), k: mk(e.a, e.b) }));
+  const order = (e: E) => e.seg ? (e.seg.ew ? 0 : 1e9) + (e.seg.ew ? e.seg.iz * 1e5 + e.seg.ix : e.seg.ix * 1e5 + e.seg.iz) : 2e9;
+  es.sort((p, q) => order(p) - order(q));
+  const cellSides = cellEdges.map((l) => l.map(([a0, b0]) => mk(find(a0), find(b0))));
+  const dirs = oneWayDirs(o, es, verts, cells.map((_, ci) => ({ c: pts[ci], sides: cellSides[ci] })));
+  // The graph: the lattice's junctions first, row by row (as the grid adds them); then the rest,
+  // keyed by the grid cell they fall in (gates by their own).
+  const g = new CityGraph(), nodeOf = new Map<number, number>(), used = new Set<string>();
+  const live = new Set(fe.flatMap((e) => [e.a, e.b]));
+  const latIdx = [...live].map((i) => ({ i, k: latKey(verts[i]) })).filter((q) => q.k).sort((p, q) => p.k![1] - q.k![1] || p.k![0] - q.k![0]);
+  for (const { i, k } of latIdx) { nodeOf.set(i, g.addNode(verts[i][0], verts[i][1], k![0], k![1])); used.add(`${k![0]},${k![1]}`); }
+  o.gates.forEach((gt) => used.add(`${gt.ix},${gt.iz}`));
+  const node = (r: number) => {
+    let id = nodeOf.get(r);
+    if (id === undefined) {
+      const [vx, vz] = verts[r], gi = gatePos.findIndex((p) => Math.hypot(p[0] - vx, p[1] - vz) < 0.5);
+      let kx = gi >= 0 ? o.gates[gi].ix : Math.floor((vx - STREET / 2) / BLOCK + 0.5), kz = gi >= 0 ? o.gates[gi].iz : Math.floor((vz - STREET / 2) / BLOCK + 0.5);
+      if (gi < 0) { while (used.has(`${kx},${kz}`)) kz += 1000; used.add(`${kx},${kz}`); }
+      id = g.addNode(vx, vz, kx, kz); nodeOf.set(r, id);
+    }
+    return id;
+  };
+  const streetEdge = new Map<number, FE>(), avTags = new Set(avLines.map(({ av }) => av.tag));
+  for (const e of es) {
+    if (e.wet) streetEdge.set(g.streets.length, e);
+    const [ax, az] = verts[e.a], [bx, bz] = verts[e.b], ew = e.seg ? e.seg.ew : Math.abs(bx - ax) > Math.abs(bz - az);
+    let [p, q] = ew ? (ax <= bx ? [e.a, e.b] : [e.b, e.a]) : (az <= bz ? [e.a, e.b] : [e.b, e.a]);
+    const d = dirs.get(e) ?? 0;
+    if (d < 0) [p, q] = [q, p];
+    const name = e.name ?? (e.seg ? (e.seg.ew ? o.nameEW(e.seg.iz) : o.nameNS(e.seg.ix)) : nameOf(e.a, e.b));
+    // (On the lattice, its line's tags as the grid gives them: unless an avenue carries that line here.)
+    const tags = e.tag ? { [e.tag]: true } : e.seg ? (e.seg.ew ? (o.elevatedRow(e.seg.iz) && !avTags.has("elevated") ? { elevated: true } : {}) : (o.cableColumn(e.seg.ix) && !avTags.has("cable") ? { cable: true } : {})) : {};
+    g.addStreet(node(p), node(q), { name, tags, oneway: d !== 0 });
+  }
+  // (A ring's sides are driven from a to b: one way round a roundabout, both ways round a circus.)
+  for (const e of ringEdges) g.addStreet(node(e.a), node(e.b), { name: e.name, oneway: !e.twoWay, ring: !e.twoWay });
+  // Gate streets: out to a node a block beyond the edge (outside the city: no blocks round it).
+  o.gates.forEach((gt, i) => {
+    const inner = g.node(gt.ix, gt.iz);
+    if (!inner) return;
+    const ox = gt.ix + GEN_DX[gt.dir], oz = gt.iz + GEN_DZ[gt.dir];
+    const outer = g.node(ox, oz)?.id ?? g.addNode(at(ox), at(oz), ox, oz);
+    const ew = gt.dir === 0 || gt.dir === 2;
+    const sid = g.addStreet(inner.id, outer, { name: ew ? o.nameEW(gt.iz) : o.nameNS(gt.ix), inCity: false });
+    g.streets[sid].gate = i;
+    g.gates.push({ node: inner.id, street: sid, out: 1 });
+  });
+  g.finish();
+  ringsDone(g, ringVerts.flatMap((r) => nodeOf.get(r) ?? []), islands);
+  for (const [px, pz] of parkMid) { const b = g.blockAt(px, pz); if (b) b.park = true; }
+  // The river's blocks: for each street along or over it, the block on its water side.
+  for (const [sid, e] of streetEdge) for (const [wx, wz] of e.wet ?? []) {
+    const st = g.streets[sid], A = g.nodes[st.n0], B = g.nodes[st.n1], mx = (A.x + B.x) / 2, mz = (A.z + B.z) / 2, L = st.len || 1;
+    let nx = -(B.z - A.z) / L, nz = (B.x - A.x) / L;
+    if (nx * (wx - mx) + nz * (wz - mz) < 0) { nx = -nx; nz = -nz; }
+    const px = mx + nx * (st.half + 1), pz = mz + nz * (st.half + 1);
+    for (const f of [sid * 2, sid * 2 + 1]) { const b = g.blocks[g.faceBlock[f]]; if (b && inPoly(b.poly, px, pz)) { b.water = true; b.inCity = false; } }
+  }
+  for (const b of g.blocks) if (b.park || b.water) b.anchor = null;
   return g;
 }
