@@ -75,6 +75,9 @@ export class ChunkStreamer {
   // range is left to build, builds ahead: prefetched cells, then the next ring out on the side
   // `ahead` points to.
   frameMs = 3;
+  // (Behind: with cells in range still unbuilt, round the camera, each frame builds for up to this
+  // long instead, so a board slow to draw catches up before the fog has to close in on the gap.)
+  behindMs = 8;
   private job: { cx: number; cz: number; gen: ChunkBuild; ms: number } | null = null;
   get pending() { return this.queue.length + (this.job ? 1 : 0); }
   get prefetchPending() { return this.prefetchList.length - this.prefetchAt; }
@@ -116,7 +119,7 @@ export class ChunkStreamer {
       }
       ahead = null;   // (built ahead: prefetched cells only, into the cache)
     }
-    const start = performance.now();
+    const start = performance.now(), ms = this.queue.length && !this.filling ? Math.max(this.frameMs, this.behindMs) : this.frameMs;
     let started = 0;
     for (;;) {
       if (!this.job) {
@@ -137,7 +140,7 @@ export class ChunkStreamer {
         j.ms += performance.now() - t0;
         if (r.done) { this.job = null; this.place(j.cx, j.cz, r.value, j.ms); }
       }
-      if (performance.now() - start >= this.frameMs) break;
+      if (performance.now() - start >= ms) break;
     }
   }
   private get keepRadius() { return this.exact ? this.radius : this.radius + 1; }

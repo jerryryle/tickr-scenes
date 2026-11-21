@@ -62,7 +62,9 @@ const CHUNK_CACHE_BYTES = 512e6;
 const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
-const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3;
+const CITY_VIEW = (STREAM_RADIUS + 0.5) * BLOCK;   // m: the fog's reach in town, steady (placeCamera): the streamed radius and a half
+const FOG_GAP = 60;   // m: nearer than this to anything unbuilt (just after a jump), the fog closes in on it all the same
+const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH = 3;   // ENTRY_PREFETCH: blocks on in from the gate built coming in to town
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam";   // test renders with a tour camera
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
@@ -195,6 +197,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
         const bx = Math.floor(prefetchPose.x / BLOCK), bz = Math.floor(prefetchPose.z / BLOCK);
         if (bx !== lx || bz !== lz) { lx = bx; lz = bz; ring(bx, bz, STREAM_RADIUS); }
       }
+    }
+    // (Coming in to town, no path yet: the blocks round the gate it comes in by, and on in from it, so
+    // they are built while it is still out on the road, not as it arrives: on a board too slow to
+    // build them then, the fog that hides what isn't built would roll in over the town.)
+    if (st.mode === "inbound") {
+      const g = journey.plan.entryGate, ix = -[1, 0, -1, 0][g.dir], iz = -[0, -1, 0, 1][g.dir];
+      for (let k = 0; k <= ENTRY_PREFETCH && cells.length < PREFETCH_MAX; k++) ring(g.ix + ix * k, g.iz + iz * k, STREAM_RADIUS);
     }
     for (const p of st.stops.slice(0, PREFETCH_STOPS)) if (p.site && cells.length < PREFETCH_MAX) ring(p.site.bx, p.site.bz, STREAM_RADIUS);
     if (cells.length > PREFETCH_MAX) cells.length = PREFETCH_MAX;
@@ -474,7 +483,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   // The city streamed round the truck at that radius. `ahead`: also build ahead of need (prefetch,
   // the next ring out), as frames do.
   function streamRound(ahead: boolean) {
-    if (ahead) { aheadDir.x = Math.cos(truck.heading); aheadDir.z = -Math.sin(truck.heading); if (!truckOutside()) updatePrefetch(); }
+    // (Outside town only as it comes in: the town it is coming to, round its gate.)
+    if (ahead) { aheadDir.x = Math.cos(truck.heading); aheadDir.z = -Math.sin(truck.heading); if (!truckOutside() || journey.st.mode === "inbound") updatePrefetch(); }
     if (!((DEBUG_VIEW as string) === "vignette" && crowd.vig.view())) streamer.update(truck.root.position, ahead ? aheadDir : null);   // (test renders: streamed round the vignette instead)
   }
 
@@ -553,12 +563,16 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const d = crew.driver.root.position;
     const out = !director.interior && !crew.inSeat && journey.driverSpotOn;
     updateDriverSpot(cam, out ? spotChest.copy(d).setY(d.y + 1.1) : null);
-    // The view: as far as the city is built round the camera (never further, so nothing is seen
-    // popping in), and out on the open land the country's longer view; eased across the edge of town.
+    // The view: in town, a steady CITY_VIEW, not drawn in to whatever round the camera is yet to be
+    // built (on a board slow to build, that had the fog wash in over the town each time the truck
+    // crossed into the next block); only where nothing is built close by at all (FOG_GAP: just after
+    // a jump) does it close in on that. Out on the open land the country's longer view, as far as
+    // it is built. Eased across the edge of town.
     const hard = Math.hypot(streamer.clearDistance(cam.position.x, cam.position.z), cam.position.y);
     const outside = cityDistance(Math.floor(focus.x / BLOCK), Math.floor(focus.z / BLOCK)) > 0;
-    const want = outside ? Math.min(COUNTRY_CLEAR, hard) : streamer.radius > STREAM_RADIUS ? Math.min(hard, (STREAM_RADIUS + 0.5) * BLOCK) : hard;
-    fogClear = fogClear < 0 || dt === 0 ? want : Math.min(hard, fogClear + (want - fogClear) * (1 - Math.exp(-dt / 1.5)));
+    const want = outside ? Math.min(COUNTRY_CLEAR, hard) : CITY_VIEW;
+    fogClear = fogClear < 0 || dt === 0 ? want : fogClear + (want - fogClear) * (1 - Math.exp(-dt / 1.5));
+    if (outside || hard < FOG_GAP) fogClear = Math.min(fogClear, outside ? want : hard);
     engine.setViewDistance(fogClear, cam.position.distanceTo(focus));
   }
 
@@ -940,7 +954,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (!baked) {
         captureCanvasClass(ctx); baked = true;
         // Canvases exist now: paint the full facade atlas over the asset one the city started with.
-        try { setFacadeAtlas(mats.solid, paintFacadeAtlas()); } catch (e: any) { sys.log("facade atlas: kept the asset (" + (e?.message ?? e) + ")"); }
+        try { setFacadeAtlas(mats.solid, paintFacadeAtlas()); } catch { /* (painting failed: the asset's atlas stays) */ }
       }
       const target = Math.max(0, base + t);
       // The presentation runs on fixed ticks of journey time (see step); a scrub, a long jump ahead
