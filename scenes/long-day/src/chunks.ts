@@ -96,11 +96,14 @@ export class ChunkStreamer {
   private cx0 = NaN; private cz0 = NaN;
   setCamera(x: number, z: number) { this.camX = Math.floor(x / this.size); this.camZ = Math.floor(z / this.size); }
   private camX = NaN; private camZ = NaN;
+  // (Not in exact mode: what it shows there is a function of the focus cell alone, the same however
+  // a scrub got there.)
+  private get camOn() { return !this.exact && !Number.isNaN(this.camX); }
   private nearCam(cx: number, cz: number) { return Math.max(Math.abs(cx - this.camX), Math.abs(cz - this.camZ)) <= CAM_KEEP; }
 
   update(focus: THREE.Vector3, ahead: { x: number; z: number } | null = null) {
     const fx = Math.floor(focus.x / this.size), fz = Math.floor(focus.z / this.size);
-    if (fx !== this.fx || fz !== this.fz || this.dirty || this.camX !== this.cx0 || this.camZ !== this.cz0) {
+    if (fx !== this.fx || fz !== this.fz || this.dirty || (this.camOn && (this.camX !== this.cx0 || this.camZ !== this.cz0))) {
       this.fx = fx; this.fz = fz; this.cx0 = this.camX; this.cz0 = this.camZ; this.dirty = false;
       for (const [key, c] of this.chunks) if (!this.near(c.cx, c.cz)) this.retire(key, c);
       this.queue.length = 0;
@@ -110,11 +113,11 @@ export class ChunkStreamer {
         if (this.cache.has(key)) this.restore(key);
         else this.queue.push([cx, cz]);
       };
-      if (!Number.isNaN(this.camX)) for (let dz = -CAM_KEEP; dz <= CAM_KEEP; dz++) for (let dx = -CAM_KEEP; dx <= CAM_KEEP; dx++) want(this.camX + dx, this.camZ + dz);
+      if (this.camOn) for (let dz = -CAM_KEEP; dz <= CAM_KEEP; dz++) for (let dx = -CAM_KEEP; dx <= CAM_KEEP; dx++) want(this.camX + dx, this.camZ + dz);
       for (let dz = -this.radius; dz <= this.radius; dz++)
         for (let dx = -this.radius; dx <= this.radius; dx++) want(fx + dx, fz + dz);
       // (Nearest the camera or the truck first, whichever it is nearer.)
-      const d2 = (q: [number, number]) => Math.min((q[0] - fx) ** 2 + (q[1] - fz) ** 2, Number.isNaN(this.camX) ? Infinity : (q[0] - this.camX) ** 2 + (q[1] - this.camZ) ** 2);
+      const d2 = (q: [number, number]) => Math.min((q[0] - fx) ** 2 + (q[1] - fz) ** 2, !this.camOn ? Infinity : (q[0] - this.camX) ** 2 + (q[1] - this.camZ) ** 2);
       this.queue.sort((a, b) => d2(a) - d2(b));
       this.trim();
     }
@@ -156,7 +159,7 @@ export class ChunkStreamer {
     }
   }
   private get keepRadius() { return this.exact ? this.radius : this.radius + 1; }
-  private near(cx: number, cz: number) { return Math.max(Math.abs(cx - this.fx), Math.abs(cz - this.fz)) <= this.keepRadius || (!Number.isNaN(this.camX) && this.nearCam(cx, cz)); }
+  private near(cx: number, cz: number) { return Math.max(Math.abs(cx - this.fx), Math.abs(cz - this.fz)) <= this.keepRadius || (this.camOn && this.nearCam(cx, cz)); }
   // A finished chunk: into the scene if it is in range, else (prefetched) into the cache.
   private place(cx: number, cz: number, obj: THREE.Object3D | null, ms: number) {
     const o = obj ?? new THREE.Group();
@@ -257,6 +260,8 @@ export class ChunkStreamer {
     for (const c of this.chunks.values()) { this.parent.remove(c.obj); disposeTree(c.obj); }
     for (const c of this.cache.values()) disposeTree(c.obj);
     this.chunks.clear(); this.cache.clear(); this.cacheBytes = 0; this.queue.length = 0; this.fx = this.fz = NaN;
+    // (And the camera's cell, in the old coordinates: until it is set again, round the truck alone.)
+    this.camX = this.camZ = this.cx0 = this.cz0 = NaN; this.dirty = false;
     this.setPrefetch([]);
   }
 }
