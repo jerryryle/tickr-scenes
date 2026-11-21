@@ -12,14 +12,15 @@ import { CARGO_BY_ID } from "../src/cargo.ts";
 import { RAMP_HW, STYLE } from "../src/chores.ts";
 import type { Chore } from "../src/chores.ts";
 import { buildCrewPath, EMPTY_HOLD } from "../src/crewpath.ts";
+import { HT_LEAD, handTruckHold } from "../src/crew.ts";
 import type { Hold, Nominal } from "../src/crewpath.ts";
 
 const proc = (globalThis as any).process;
 setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
 const runs: [number, string][] = proc.argv.length > 2 ? [[Number(proc.argv[2]), proc.argv[3] ?? "{}"]] : [[40, '{"seed":0}'], [40, '{"seed":2}'], [40, '{"seed":7}']];
-// The hand truck as crew.ts holds it: its wheels this far ahead of the driver's feet (HT_LEAD),
-// turning about them this much (its holds), its wheels this far either side of its middle.
-const LEAD = 1.15, WHEEL_Z = 0.2;
+// The hand truck as crew.ts holds it: its wheels HT_LEAD ahead of the driver's feet, this far
+// either side of its middle.
+const LEAD = HT_LEAD, WHEEL_Z = 0.2;
 const TOE = 0.3;        // m of the ramp's foot end low enough to roll off sideways unseen
 const errs: string[] = [];
 let stops = 0, samples = 0, worst = -Infinity;
@@ -53,7 +54,7 @@ for (const [minutes, envJson] of runs) {
     };
     const hold = (c: Chore, u: number): Hold => {
       const h = held(c, u);
-      return !h.tool ? EMPTY_HOLD : h.item ? { lead: LEAD, pivot: 0.8, omega: 2.6, rate: 1.7 } : { lead: LEAD, pivot: 0.5, omega: 4, rate: 3.2 };
+      return h.tool ? handTruckHold(h.item) : EMPTY_HOLD;
     };
     const P = buildCrewPath(plan, nominal, hold, 0);
     // While the ramp is down: from the end of its rampOut to the start of its rampIn.

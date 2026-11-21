@@ -53,7 +53,9 @@ const FACE_FRONT = 0, FACE_BACK = Math.PI;
 export const DOOR_OPEN = 3.4, RAMP_MOVE = 3.6, RAMP_HOLD = 0.5;
 // Backing down the walk ramp with something held out ahead, the driver goes on this far past its
 // foot, so that it is off the ramp before they turn round.
-const RAMP_CLEAR = 1.2;
+const RAMP_CLEAR = 1.2, RAMP_CLEAR_JACK = 1.6;   // (a pallet jack's forks reach further out ahead)
+// Backing (or drawing what's held along, not turning it), the driver goes this much slower.
+const BACKING = 0.8;
 // Pushing something up it, the driver lines up on the ramp this far short of its foot.
 const RAMP_LINEUP = 3.6;
 // The walk ramp's half width (crew.ts ground), and how far clear of its side what's wheeled
@@ -393,7 +395,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   const inBed = (sill: [number, number, number]) => ({
     // From the sill to a spot in the bed and back (linear walks at the floor's height).
     to: (x: number, extra: Partial<Chore>) => { const p: [number, number, number] = [x, L.floor, 0]; walk("load", sill, p, extra.item ? st.speed : WALK, { linear: true, ...extra }); return p; },
-    back: (from: [number, number, number], extra: Partial<Chore>) => walk("load", from, sill, extra.item ? st.speed : WALK, { linear: true, ...extra }),
+    back: (from: [number, number, number], extra: Partial<Chore>) => walk("load", from, sill, (extra.item ? st.speed : WALK) * (extra.noTurn ? BACKING : 1), { linear: true, ...extra }),
   });
   const fetchTool = (sill: [number, number, number], get: boolean, out: Partial<Chore> = {}) => {
     const r = get ? store : back;
@@ -418,7 +420,8 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     const p: [number, number, number] = [x, L.floor, 0];
     // (To a load at the door: backing to it, drawing the hand truck along, rather than turning it
     // round at the sill, out over the ramp or the gate.)
-    walk("load", store!.stand, p, WALK, { linear: true, tool, noTurn: x - sill[0] < 2 || undefined });
+    const backTo = x - sill[0] < 2;
+    walk("load", store!.stand, p, WALK * (backTo ? BACKING : 1), { linear: true, tool, noTurn: backTo || undefined });
     return p;
   };
 
@@ -537,6 +540,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     // Up it with the same out ahead, the driver lines up on the ramp well short of its foot and
     // pushes straight up, the turn done before what's held gets there (`upFrom`: where to).
     const drawnBy = (item: ItemKind | null, t: Chore["tool"]) => ramp && (!!t || (!!item && (cargo.handling === "push" || cargo.handling === "roll")));
+    const rampClear = (t: Chore["tool"]) => (t === "palletJack" ? RAMP_CLEAR_JACK : RAMP_CLEAR);
     const upFrom = (item: ItemKind | null, t: Chore["tool"] = st.tool): [number, number, number] => drawnBy(item, t) ? [foot[0] - RAMP_LINEUP, 0, 0] : foot;
     const intoBed = (item: ItemKind | null, t: Chore["tool"] = st.tool) => {
       const speed = item ? st.speed : WALK;
@@ -559,8 +563,8 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         return;
       }
       const drawn = drawnBy(item, t);
-      street = drawn ? [foot[0] - RAMP_CLEAR, 0, 0] : foot;
-      walk("load", sill, street, speed * (drawn ? 0.8 : 0.95), { item, tool: t, helper: st.helper && !!item, noTurn: drawn || undefined });
+      street = drawn ? [foot[0] - rampClear(t), 0, 0] : foot;
+      walk("load", sill, street, speed * (drawn ? BACKING : 0.95), { item, tool: t, helper: st.helper && !!item, noTurn: drawn || undefined });
     };
     // (So out of the bed to the ramp with it too, backing out as they faced the load: no turn.)
     const bed = inBed(sill), noTurn = ramp || undefined;
@@ -572,8 +576,8 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         if (atDoor) {
           atDoor = false;
           const drawn = drawnBy(null, st.tool);
-          if (drawn) street = [foot[0] - RAMP_CLEAR, 0, 0];
-          walk("load", onRamp, street, WALK * (drawn ? 0.8 : 1), { tool: st.tool, noTurn: drawn || undefined });
+          if (drawn) street = [foot[0] - rampClear(st.tool), 0, 0];
+          walk("load", onRamp, street, WALK * (drawn ? BACKING : 1), { tool: st.tool, noTurn: drawn || undefined });
         }
         walk("load", street, facility, WALK, { tool: st.tool });
         add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L).face, tool: st.tool });

@@ -78,7 +78,7 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
     }
     let target = nm.yaw;
     if (back) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]) + Math.PI; }
-    else if (c.noTurn) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]); }   // (straight on, not turning early for what comes next)
+    else if (c.noTurn) { const a = c.a!, b = c.b!; if (Math.hypot(b[0] - a[0], b[2] - a[2]) > 0.05) target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]); }   // (straight on, not turning early for what comes next; on no way at all, as they are)
     else if (isWalk(c) && Number.isNaN(target)) {
       target = ahead(ci, u, nm.x, nm.z);
       // Arriving: face the way the next chore wants.

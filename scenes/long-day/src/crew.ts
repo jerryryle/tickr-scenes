@@ -702,7 +702,7 @@ export class Crew {
       if (c.kind === "fetch") item = next?.item && u > 0.5 ? next.item : prev?.item && u < 0.5 ? prev.item : null;
       if (c.kind === "toolGet") t = u > 0.55 ? tool : null;
       if (c.kind === "toolPut") t = u < 0.45 ? tool : null;
-      if (t === "handTruck") return item ? { lead: HT_LEAD, pivot: 0.8, omega: 2.6, rate: 1.7 } : { lead: HT_LEAD, pivot: 0.5, omega: 4, rate: 3.2 };
+      if (t === "handTruck") return handTruckHold(!!item);
       if (t === "palletJack") return item ? { lead: JACK_LEAD + 0.8, pivot: 0.85, omega: 2.2, rate: 1.3 } : { lead: JACK_LEAD, pivot: 0.55, omega: 3.5, rate: 2.6 };
       if (!item) return EMPTY_HOLD;
       switch (cargo.handling) {
@@ -1220,10 +1220,8 @@ export class Crew {
       // Tipped back for the hands: further when loaded (its weight over the wheels), and to
       // upright to stand a load down at a stow (and back when it's off the plate).
       let tip = this.handTruckTip(L, HT_LEAD, item && !ghost ? HT_HANDS_LOADED : HT_HANDS);
-      if (load && item && !ghost) {
-        tip = Math.min(tip, this.handTruckTipClear(L, HT_LEAD, load.size[1]));
-        this.hunch = THREE.MathUtils.clamp((load.size[1] - 1.0) / 0.7, 0, 1);   // (under a tall one, hunched down behind it)
-      }
+      if (load && item && !ghost) tip = Math.min(tip, this.handTruckTipClear(L, HT_LEAD, load.size[1]));
+      if (load && loaded) this.hunch = THREE.MathUtils.clamp((load.size[1] - 1.0) / 0.7, 0, 1);   // (under a tall one, hunched down behind it)
       if ((c.kind === "stow" || staged) && item) {
         const up = fromHands ? THREE.MathUtils.smoothstep(u, 0.1, 0.48) * (1 - THREE.MathUtils.smoothstep(u, 0.62, 0.92)) : THREE.MathUtils.smoothstep(u, 0.08, 0.38) * (1 - THREE.MathUtils.smoothstep(u, 0.52, 0.9));
         tip = tip + (0.04 - tip) * up;
@@ -1321,8 +1319,13 @@ export class Crew {
   // balance point, its top over the driver's head only if it is above it).
   private handTruckTipClear(L: TruckLayout, lead: number, h: number) {
     const [ax, az] = this.fromDriver(lead, 0), axleY = this.ground(L, ax, az) + HT_WHEEL;
-    const face = Math.min(h + HT_PLATE + 0.03, this.drv[1] + HT_HEAD_TOP - axleY);   // (its back, up to the top of the head)
-    return face <= 0.05 ? Math.PI / 2 : Math.asin(THREE.MathUtils.clamp((lead - HT_BODY) / face, 0, 1));
+    // (Its back, up to the top of the head: that height reached along the tipped frame, so the
+    // longer the more it is tipped; worked out once from a first guess.)
+    const back = h + HT_PLATE + 0.03, head = this.drv[1] + HT_HEAD_TOP - axleY;
+    if (head <= 0.05) return Math.PI / 2;
+    let tip = 0;
+    for (let i = 0; i < 2; i++) tip = Math.asin(THREE.MathUtils.clamp((lead - HT_BODY) / Math.min(back, head / Math.cos(tip)), 0, 1));
+    return tip;
   }
   private placeHandTruck(L: TruckLayout, truck: Truck, lead: number, tip: number) {
     const [ax, az] = this.fromDriver(lead, 0);
@@ -1701,7 +1704,10 @@ function stageLocal(cargo: string, size: number[], at: number[], face: number, k
   const x = at[0] + Math.cos(face) * STAGE_AHEAD + Math.sin(face) * side, z = at[2] - Math.sin(face) * STAGE_AHEAD + Math.cos(face) * side;
   return [x, h === "roll" ? hh / 2 : 0, z, face + (across ? Math.PI / 2 : 0)];
 }
-const HT_WHEEL = 0.13, HT_GRIP: [number, number] = [0.02, 1.19], HT_PLATE = -0.115, HT_LEAD = 1.15, HT_HANDS = 1.12, HT_HANDS_LOADED = 1.04;
+const HT_WHEEL = 0.13, HT_GRIP: [number, number] = [0.02, 1.19], HT_PLATE = -0.115, HT_HANDS = 1.12, HT_HANDS_LOADED = 1.04;
+export const HT_LEAD = 1.15;
+// Turning with it in hand (crewpath.ts Hold): loaded, about the load more and slower.
+export const handTruckHold = (loaded: boolean): Hold => loaded ? { lead: HT_LEAD, pivot: 0.8, omega: 2.6, rate: 1.7 } : { lead: HT_LEAD, pivot: 0.5, omega: 4, rate: 3.2 };
 // What a load on it keeps clear of: the driver's face and chest, this far ahead of the feet
 // (leaning into the push, hunched), up to the top of the head this high above them.
 const HT_BODY = 0.5, HT_HEAD_TOP = 1.85;
