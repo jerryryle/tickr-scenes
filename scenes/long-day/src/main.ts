@@ -574,6 +574,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     fogClear = fogClear < 0 || dt === 0 ? want : fogClear + (want - fogClear) * (1 - Math.exp(-dt / 1.5));
     if (outside || hard < FOG_GAP) fogClear = Math.min(fogClear, outside ? want : hard);
     engine.setViewDistance(fogClear, cam.position.distanceTo(focus));
+    streamer.setCamera(cam.position.x, cam.position.z);   // (the next stream builds round the camera too)
   }
 
   // ---- the way in and out of town ---------------------------------------------------------------

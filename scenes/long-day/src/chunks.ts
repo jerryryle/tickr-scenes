@@ -41,6 +41,7 @@ function geometryBytes(root: THREE.Object3D): number {
   return n;
 }
 
+const CAM_KEEP = 1;   // cells either way of the camera's own kept and built, wherever it is (setCamera)
 export class ChunkStreamer {
   readonly chunks = new Map<number, Chunk>();
   readonly cache = new Map<number, Chunk>();   // detached chunks, oldest first
@@ -89,21 +90,32 @@ export class ChunkStreamer {
     for (const [cx, cz] of cells) this.prefetchKeys.add(chunkKey(cx, cz));
   }
 
+  // The camera's cell (setCamera): the cells round it are kept and built too, first, wherever it
+  // is: a wide or high shot, or one swinging round as the truck turns, can put it blocks from the
+  // truck, past what is streamed round the truck, where the fog would have to close right in.
+  private cx0 = NaN; private cz0 = NaN;
+  setCamera(x: number, z: number) { this.camX = Math.floor(x / this.size); this.camZ = Math.floor(z / this.size); }
+  private camX = NaN; private camZ = NaN;
+  private nearCam(cx: number, cz: number) { return Math.max(Math.abs(cx - this.camX), Math.abs(cz - this.camZ)) <= CAM_KEEP; }
+
   update(focus: THREE.Vector3, ahead: { x: number; z: number } | null = null) {
     const fx = Math.floor(focus.x / this.size), fz = Math.floor(focus.z / this.size);
-    if (fx !== this.fx || fz !== this.fz) {
-      this.fx = fx; this.fz = fz;
-      for (const [key, c] of this.chunks)
-        if (Math.max(Math.abs(c.cx - fx), Math.abs(c.cz - fz)) > this.keepRadius) this.retire(key, c);
+    if (fx !== this.fx || fz !== this.fz || this.dirty || this.camX !== this.cx0 || this.camZ !== this.cz0) {
+      this.fx = fx; this.fz = fz; this.cx0 = this.camX; this.cz0 = this.camZ; this.dirty = false;
+      for (const [key, c] of this.chunks) if (!this.near(c.cx, c.cz)) this.retire(key, c);
       this.queue.length = 0;
+      const want = (cx: number, cz: number) => {
+        const key = chunkKey(cx, cz);
+        if (this.chunks.has(key) || this.queue.some((q) => q[0] === cx && q[1] === cz)) return;
+        if (this.cache.has(key)) this.restore(key);
+        else this.queue.push([cx, cz]);
+      };
+      if (!Number.isNaN(this.camX)) for (let dz = -CAM_KEEP; dz <= CAM_KEEP; dz++) for (let dx = -CAM_KEEP; dx <= CAM_KEEP; dx++) want(this.camX + dx, this.camZ + dz);
       for (let dz = -this.radius; dz <= this.radius; dz++)
-        for (let dx = -this.radius; dx <= this.radius; dx++) {
-          const key = chunkKey(fx + dx, fz + dz);
-          if (this.chunks.has(key)) continue;
-          if (this.cache.has(key)) this.restore(key);
-          else this.queue.push([fx + dx, fz + dz]);
-        }
-      this.queue.sort((a, b) => ((a[0] - fx) ** 2 + (a[1] - fz) ** 2) - ((b[0] - fx) ** 2 + (b[1] - fz) ** 2));
+        for (let dx = -this.radius; dx <= this.radius; dx++) want(fx + dx, fz + dz);
+      // (Nearest the camera or the truck first, whichever it is nearer.)
+      const d2 = (q: [number, number]) => Math.min((q[0] - fx) ** 2 + (q[1] - fz) ** 2, Number.isNaN(this.camX) ? Infinity : (q[0] - this.camX) ** 2 + (q[1] - this.camZ) ** 2);
+      this.queue.sort((a, b) => d2(a) - d2(b));
       this.trim();
     }
     if (this.exact) {   // everything in range, now
@@ -144,7 +156,7 @@ export class ChunkStreamer {
     }
   }
   private get keepRadius() { return this.exact ? this.radius : this.radius + 1; }
-  private near(cx: number, cz: number) { return Math.max(Math.abs(cx - this.fx), Math.abs(cz - this.fz)) <= this.keepRadius; }
+  private near(cx: number, cz: number) { return Math.max(Math.abs(cx - this.fx), Math.abs(cz - this.fz)) <= this.keepRadius || (!Number.isNaN(this.camX) && this.nearCam(cx, cz)); }
   // A finished chunk: into the scene if it is in range, else (prefetched) into the cache.
   private place(cx: number, cz: number, obj: THREE.Object3D | null, ms: number) {
     const o = obj ?? new THREE.Group();
@@ -231,7 +243,11 @@ export class ChunkStreamer {
   }
 
   // A new radius: the wanted set is worked out again on the next update.
-  setRadius(r: number) { if (r !== this.radius) { this.radius = r; this.fx = this.fz = NaN; } }
+  // (The next update recomputes what is in range. Where it is stays known meanwhile: cleared, the
+  // view would close in to nothing (clearDistance) for a frame drawn before that update, a flash of
+  // fog as the truck crosses the edge of town, turning along it, on the board.)
+  setRadius(r: number) { if (r !== this.radius) { this.radius = r; this.dirty = true; } }
+  private dirty = false;
 
   clear() {
     // An unfinished build is dropped, not finished (return() runs its finally blocks): a builder
