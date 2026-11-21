@@ -258,6 +258,76 @@ function release(v: Vig, b: number, V: Vignettes, p: Omit<Adopt, "bx" | "bz" | "
 }
 
 // A walking (or standing) person at frontage (a, n) of frame f.
+// A bicycle standing on (x, z), heading h, `ridden` metres on (its wheels turned so far, its cranks
+// by BIKE_GEAR), its frame `frame`: a diamond frame of tubes, a fork, round tyres on silver rims
+// with spokes, a saddle on its post, flat bars on a stem, and the cranks and pedals either side.
+// In the bike's own plane: a along it (forward), y up; off: across it (+ its right).
+const BIKE_R = 0.34, BIKE_GEAR = 0.45;   // m: the wheels' radius (700c tyres); metres ridden per radian of the cranks
+// (Where the rider meets it, in its plane (a, y): the bottom bracket the cranks turn on, the crank
+// length and the pedals' offset either side; the saddle's top; the grips, either side.)
+const BIKE_BB: [number, number] = [-0.06, 0.29], BIKE_CRANK = 0.17, BIKE_PEDAL_OFF = 0.12;
+const BIKE_SADDLE: [number, number] = [-0.2, 0.92], BIKE_GRIP: [number, number] = [0.4, 1.0], BIKE_GRIP_OFF = 0.25;
+export const BIKE_FRAMES = [0x1d5fa8, 0xc0392b, 0x2a2a2a, 0x2e8b57, 0xe0e0e0, 0xf39c12];
+function bicycle(F: Figures, x: number, z: number, h: number, ridden: number, frame: number) {
+  const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+  const W = (a: number, off: number): [number, number] => [x + fx * a + rx * off, z + fz * a + rz * off];
+  const tube = (a0: number, y0: number, a1: number, y1: number, w: number, col: number, off = 0) => {
+    const [ax, az] = W(a0, off), [bx, bz] = W(a1, off);
+    F.seg(ax, y0, az, bx, y1, bz, w, col);
+  };
+  // (A ring of n bars round (a, y), radius r, turned by `rot`.)
+  const ring = (a: number, y: number, r: number, n: number, rot: number, w: number, col: number, off = 0) => {
+    for (let k = 0; k < n; k++) {
+      const t0 = rot + k * 2 * Math.PI / n, t1 = t0 + 2 * Math.PI / n;
+      tube(a + Math.cos(t0) * r, y + Math.sin(t0) * r, a + Math.cos(t1) * r, y + Math.sin(t1) * r, w, col, off);
+    }
+  };
+  // Wheels: tyre, rim, three spokes across, hub; turning as it rolls (its top going forward).
+  const spin = -ridden / BIKE_R;
+  for (const a of [-0.52, 0.52]) {
+    ring(a, BIKE_R, BIKE_R - 0.022, 14, spin, 0.05, 0x1c1c1c);
+    ring(a, BIKE_R, BIKE_R - 0.06, 12, spin, 0.022, 0xb8bcc0);
+    for (let k = 0; k < 3; k++) { const t = spin + k * Math.PI / 3, c = Math.cos(t) * (BIKE_R - 0.07), s = Math.sin(t) * (BIKE_R - 0.07); tube(a - c, BIKE_R - s, a + c, BIKE_R + s, 0.014, 0xd0d4d8); }
+    const [hx, hz] = W(a, 0); F.box(hx, BIKE_R, hz, 0.06, 0.06, 0.1, h, 0, 0x6a6e72);
+  }
+  // The frame: chain and seat stays, seat, top and down tubes, head tube; the fork.
+  const R: [number, number] = [-0.52, BIKE_R], B = BIKE_BB, S: [number, number] = [-0.16, 0.8];
+  const Ht: [number, number] = [0.33, 0.88], Hb: [number, number] = [0.37, 0.72], Fa: [number, number] = [0.52, BIKE_R];
+  for (const off of [-0.05, 0.05]) { tube(R[0], R[1], B[0], B[1], 0.026, frame, off); tube(R[0], R[1], S[0], S[1], 0.024, frame, off); tube(Hb[0], Hb[1], Fa[0], Fa[1], 0.028, frame, off * 0.9); }
+  tube(B[0], B[1], S[0], S[1], 0.04, frame); tube(S[0], S[1], Ht[0], Ht[1], 0.038, frame); tube(B[0], B[1], Hb[0], Hb[1], 0.044, frame);
+  tube(Hb[0], Hb[1] - 0.02, Ht[0], Ht[1] + 0.02, 0.05, frame);
+  // Saddle on its post; bars on a stem, black grips.
+  tube(S[0], S[1], BIKE_SADDLE[0] + 0.02, BIKE_SADDLE[1] - 0.03, 0.025, 0x9aa0a6);
+  { const [sx, sz] = W(BIKE_SADDLE[0], 0); F.box(sx, BIKE_SADDLE[1] - 0.022, sz, 0.26, 0.045, 0.11, h, 0, 0x1a1a1a); }
+  tube(Ht[0], Ht[1], BIKE_GRIP[0] - 0.02, BIKE_GRIP[1], 0.03, 0x9aa0a6);
+  { const [bx, bz] = W(BIKE_GRIP[0], 0); F.box(bx, BIKE_GRIP[1], bz, 0.035, 0.035, 2 * BIKE_GRIP_OFF + 0.1, h, 0, 0x6a6e72);
+    for (const off of [-BIKE_GRIP_OFF, BIKE_GRIP_OFF]) { const [gx, gz] = W(BIKE_GRIP[0], off); F.box(gx, BIKE_GRIP[1], gz, 0.05, 0.05, 0.11, h, 0, 0x111111); } }
+  // Chainring and chain on the right; the cranks, opposite, pedals level.
+  const cr = -ridden / BIKE_GEAR;   // (turning forward: the front pedal going down, as the wheels' tops go forward)
+  ring(B[0], B[1], 0.1, 8, cr, 0.03, 0x8a8e92, 0.07);
+  tube(B[0], B[1] + 0.1, R[0], R[1] + 0.035, 0.012, 0x3a3a3a, 0.07); tube(B[0], B[1] - 0.1, R[0], R[1] - 0.035, 0.012, 0x3a3a3a, 0.07);
+  for (const k of [-1, 1]) {
+    const [pa, py] = bikePedal(ridden, k);
+    tube(B[0], B[1], pa, py, 0.03, 0x6a6e72, k * (BIKE_PEDAL_OFF - 0.03));
+    const [px, pz] = W(pa, k * BIKE_PEDAL_OFF); F.box(px, py, pz, 0.1, 0.025, 0.09, h, 0, 0x222222);
+  }
+}
+// Where the pedal on side k (-1 left, +1 right) is, in the bike's plane, `ridden` metres on (the
+// right crank at the angle the chainring turns to, the left opposite).
+function bikePedal(ridden: number, k: number): [number, number] {
+  const t = -ridden / BIKE_GEAR + (k < 0 ? Math.PI : 0);
+  return [BIKE_BB[0] + Math.cos(t) * BIKE_CRANK, BIKE_BB[1] + Math.sin(t) * BIKE_CRANK];
+}
+// A two-jointed limb from (a0, y0) to reach (a1, y1), in a body's plane (a forward, y up), its
+// lengths l1 and l2: its swings (figure.ts Body: from hanging down, + forward), the upper and the
+// lower. The joint bends forward (a knee: bend +1) or back (an elbow: -1). Out of reach, straight
+// towards it.
+function reach(a0: number, y0: number, a1: number, y1: number, l1: number, l2: number, bend: number): [number, number] {
+  const dx = a1 - a0, dy = y1 - y0, d = Math.min(Math.hypot(dx, dy), l1 + l2 - 1e-4), base = Math.atan2(dx, -dy);
+  const al = Math.acos(Math.max(-1, Math.min(1, (l1 * l1 + d * d - l2 * l2) / (2 * l1 * d))));
+  const s1 = base + bend * al, ja = a0 + Math.sin(s1) * l1, jy = y0 - Math.cos(s1) * l1;
+  return [s1, Math.atan2(a1 - ja, -(y1 - jy))];
+}
 function walker(F: Figures, f: VFrame, a: number, n: number, yaw: number, phase: number, cs: Cast, moving: boolean, extraB: Partial<Body> = {}) {
   const [x, z] = P(f, a, n), w = walkSwing(phase);
   F.person({ x, z, yaw, y: Y0 + (moving ? w.bob : 0), legs: moving ? w.legs : [0, 0], arms: moving ? w.arms : [0.05, -0.05], ...cs, ...extraB });
@@ -764,7 +834,7 @@ const K: Record<VK, Kind> = {
       if (!st.inCity || !G.streets[arm.street].inCity) return false;
       if (st.tags.freeway || freewayGrid(c.plan, d >> 1)) return false;
       const s = G.faceA0(d), p = G.facePt(d, s, -st.half, _ga);
-      v.st = [0, p.x, p.z, p.h, 5, d, 0, 0, s]; v.pst = v.st.slice();   // [_, x, z, h, v, dedge, -, -, s along]
+      v.st = [0, p.x, p.z, p.h, 5, d, 0, 0, s]; v.pst = v.st.slice();   // [_, x, z, h, v, dedge, -, metres ridden (wheels, cranks), s along]
       v.c.push(pick(r, [0x27ae60, 0xff5722, 0xf1c40f, 0x00bcd4]), pick(r, PANTS), pick(r, SKINS), pick(r, HAIRS), pick(r, [0x2ecc71, 0xff7a1a, 0xe91e63, 0x1abc9c]));
       return true;
     },
@@ -785,7 +855,7 @@ const K: Record<VK, Kind> = {
       }
       const want = Math.max(0, Math.min(6.5, (gap - 1.5) * 1.6));
       sp += Math.max(-6 * SIM_DT, Math.min(2.5 * SIM_DT, want - sp));
-      s += sp * SIM_DT;
+      s += sp * SIM_DT; S[7] += sp * SIM_DT;
       // On through the node, straight on; at the edge of town (no street on, or not the city's):
       // gone (far off).
       if (s >= G.faceLen(d)) {
@@ -799,19 +869,34 @@ const K: Record<VK, Kind> = {
       S[4] = sp; S[5] = d; S[8] = s;
     },
     draw(v, F, t, D) {
-      const S = D.st, x = S[1], z = S[2], h = S[3], fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
-      const ped = v.t * 0 + S[8] * 1.4, cs = { shirt: v.c[0], pants: v.c[1], skin: v.c[2], hair: v.c[3] };
-      // The bike: wheels, frame, bars.
-      for (const k of [-0.52, 0.52]) { const wx = x + fx * k, wz = z + fz * k; F.box(wx, 0.34, wz, 0.66, 0.1, 0.04, h, ped * 2, 0x1a1a1a); F.box(wx, 0.34, wz, 0.66, 0.1, 0.04, h, ped * 2 + Math.PI / 2, 0x1a1a1a); }
-      F.seg(x - fx * 0.52, 0.34, z - fz * 0.52, x + fx * 0.1, 0.9, z + fz * 0.1, 0.05, 0x8a8f94);
-      F.seg(x + fx * 0.52, 0.34, z + fz * 0.52, x + fx * 0.42, 1.05, z + fz * 0.42, 0.05, 0x8a8f94);
-      F.seg(x - fx * 0.12, 0.6, z - fz * 0.12, x + fx * 0.42, 0.95, z + fz * 0.42, 0.05, 0x8a8f94);
-      F.box(x + fx * 0.42, 1.06, z + fz * 0.42, 0.05, 0.05, 0.5, h, 0, 0x2a2a2a);
-      const pedal = S[8] * 2.2, stopped = S[4] < 0.3;
-      F.person({ x: x - fx * 0.12, z: z - fz * 0.12, yaw: h, y: 0.02, hip: 0.98, lean: 0.75, legs: stopped ? [0.9, 0.05] : [0.9 + Math.sin(pedal) * 0.45, 0.9 - Math.sin(pedal) * 0.45], shins: stopped ? [0.1, 0.05] : [Math.sin(pedal + 1.2) * 0.4 - 0.1, -Math.sin(pedal + 1.2) * 0.4 - 0.1], legOut: stopped ? [0, 0.25] : [0, 0], arms: [1.15, 1.15], ...cs, hat: 0x222222, hatH: 0.08 });
-      const back = F.hipC;
-      F.box(back[0] - fx * 0.32 + 0, back[1] + 0.6 + Math.sin(0.75) * 0.1, back[2] - fz * 0.32, 0.42, 0.42, 0.42, h, -0.75, v.c[4]);
-      void rx; void rz;
+      const S = D.st, x = S[1], z = S[2], h = S[3], fx = Math.cos(h), fz = -Math.sin(h);
+      const cs = { shirt: v.c[0], pants: v.c[1], skin: v.c[2], hair: v.c[3] };
+      bicycle(F, x, z, h, S[7], BIKE_FRAMES[v.c[4] % BIKE_FRAMES.length]);
+      // The rider: on the saddle, feet on the pedals, hands on the grips (figure.ts limbs: thigh
+      // 0.45, shin 0.43; upper arm 0.32, forearm 0.29; hips 0.1 either side, shoulders 0.25, 0.58
+      // up the torso). Coming to a stop, off the saddle's nose with the right foot down.
+      const stop = Math.max(0, Math.min(1, (0.9 - S[4]) / 0.7)), lean = 0.62 - stop * 0.2;
+      const ha = BIKE_SADDLE[0] + 0.03 + stop * 0.1, hy = BIKE_SADDLE[1] + 0.03 - stop * 0.04;
+      const legs: [number, number] = [0, 0], shins: [number, number] = [0, 0];
+      for (const [i, k] of [[0, -1], [1, 1]] as const) {
+        let [pa, py] = bikePedal(S[7], k);
+        if (k > 0) { pa += (0.02 - pa) * stop; py += (0.03 - py) * stop; }
+        [legs[i], shins[i]] = reach(ha, hy, pa, py + 0.04, 0.45, 0.43, 1);
+      }
+      const sa = ha + Math.sin(lean) * 0.58, sy = hy + Math.cos(lean) * 0.58;
+      const [arm, fore] = reach(sa, sy, BIKE_GRIP[0], BIKE_GRIP[1] + 0.03, 0.32, 0.29, -1);
+      F.person({ x: x + fx * ha, z: z + fz * ha, yaw: h, y: hy - 0.86, hip: 0.86, lean, legs, shins, legOut: [0, stop * 0.22], arms: [arm, arm], fore: [fore, fore], ...cs, hat: 0x222222, hatH: 0.08, nod: -0.25 });
+      // The insulated bag on its back, square to the torso, its straps over the shoulders.
+      const bx = -Math.cos(lean), by = Math.sin(lean), ux = Math.sin(lean), uy = Math.cos(lean);
+      const pa = ha + ux * 0.36 + bx * 0.32, py = hy + uy * 0.36 + by * 0.32;
+      F.box(x + fx * pa, py, z + fz * pa, 0.38, 0.44, 0.42, h, -lean, v.c[4]);
+      F.box(x + fx * (pa + bx * 0.192), py + by * 0.192, z + fz * (pa + bx * 0.192), 0.01, 0.12, 0.3, h, -lean, 0xf4f4f4);   // (the brand panel)
+      for (const k of [-1, 1]) {
+        const rx = Math.sin(h) * k * 0.13, rz = Math.cos(h) * k * 0.13;
+        const top = [ha + ux * 0.6 + bx * 0.13, hy + uy * 0.6 + by * 0.13], mid = [ha + ux * 0.62 - bx * 0.13, hy + uy * 0.62 - by * 0.13], low = [ha + ux * 0.25 - bx * 0.13, hy + uy * 0.25 - by * 0.13];
+        F.seg(x + fx * top[0] + rx, top[1], z + fz * top[0] + rz, x + fx * mid[0] + rx, mid[1], z + fz * mid[0] + rz, 0.05, 0x222222);
+        F.seg(x + fx * mid[0] + rx, mid[1], z + fz * mid[0] + rz, x + fx * low[0] + rx, low[1], z + fz * low[0] + rz, 0.05, 0x222222);
+      }
     },
     done: (v) => v.st[0] === 1,
   },
@@ -1504,11 +1589,13 @@ export class Vignettes {
       const t = v.on ? v.pt + (v.t - v.pt) * alpha : 0;
       const st = v.st.map((x, i) => (i === 0 || v.st[0] !== v.pst[0] ? x : v.pst[i] + (x - v.pst[i]) * alpha));
       dc.st = st;
+      if (DEBUG_VIGNETTE && v.k === DEBUG_VIGNETTE) this.viewSt = st;   // (test renders: the debug camera follows it as drawn, not by steps)
       K[v.k].draw(v, F, t, dc);
     }
     F.end_();
   }
 
+  private viewSt: number[] | null = null;   // (test renders: the debug vignette's state as last drawn, blended between steps)
   get count() { return this.list.length; }
   // Test renders: where to watch the debug vignette from (its point, the way along its
   // frontage and the way out to the street), and how far back and how high to look.
@@ -1521,7 +1608,7 @@ export class Vignettes {
     const [back, y, look] = far[v.k] ?? [5, 2.0, 0.8];
     if (v.k === "washers" && washPt[0] !== 0) { const [wx, wz] = washPt; return { x: wx, z: wz, fx: washF[0], fz: washF[1], ox: washF[2], oz: washF[3], back: back + washSeen[0], y, look: washSeen[1] }; }
     if (v.k === "ticket") return { x, z, fx: f.fx * v.c[4], fz: f.fz * v.c[4], ox: f.rx * 0.08, oz: f.rz * 0.08, back: 16, y: 2.2, look: 1.4 };   // (along the pavement, behind the officer)
-    if (v.k === "courier") { const h = v.st[3]; return { x, z, fx: Math.cos(h), fz: -Math.sin(h), ox: Math.sin(h), oz: Math.cos(h), back, y, look }; }
+    if (v.k === "courier") { const S = this.viewSt?.length === v.st.length ? this.viewSt : v.st, h = S[3]; return { x: S[1], z: S[2], fx: Math.cos(h), fz: -Math.sin(h), ox: Math.sin(h), oz: Math.cos(h), back, y, look }; }
     return { x, z, fx: f.fx, fz: f.fz, ox: -f.rx, oz: -f.rz, back: back + Math.max(0, v.n), y, look };
   }
   kinds() { return this.list.map((v) => v.k); }
