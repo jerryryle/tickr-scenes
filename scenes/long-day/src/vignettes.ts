@@ -18,7 +18,7 @@ import type { Body, V3 } from "./figure.ts";
 import { CityPlan, kerbDoors, pavementObstacles, pick } from "./city.ts";
 import type { District } from "./city.ts";
 import { CURB_H } from "./grid.ts";
-import { TILE, angleDiff } from "./citygraph.ts";
+import { TILE, angleDiff, outOfSight } from "./citygraph.ts";
 import type { CityGraph, CNode, GPt } from "./citygraph.ts";
 import { PK } from "./decor.ts";
 import { facilityAt, siteLayout } from "./facilities.ts";
@@ -57,6 +57,7 @@ export interface VigInput {
   plan: CityPlan; simTime: number; prs: SignalPreempt[]; focus: { x: number; z: number };
   truck: Obstacle[]; cars: Obstacle[]; peds: { x: number; z: number; run: boolean }[];
   parked: KerbParked | null; busy: Set<string>;
+  eye?: { x: number; z: number; h: number };   // the truck, for spawning out of its sight (citygraph.ts outOfSight)
 }
 interface Ctx extends VigInput { hour: number; w: WeatherMix; season: string; snow: boolean }
 
@@ -146,6 +147,22 @@ const doorN = (v: { bx: number; bz: number; side: number }, n: number) => nk(n, 
 const adoptK = (V: Vignettes, p: Adopt) => { const f = sideFace(graph(), p.bx, p.bz, p.side); V.adopt?.(f < 0 ? p : { ...p, n: kn(p.n, kerbOf(f)) }); };
 // Yaws: along +a, towards the street (-n), towards the buildings (+n).
 const along = (f: VFrame, dir = 1) => (dir > 0 ? f.h0 : f.h0 + Math.PI);
+// The length of the polyline of n points at c[i0..] (x, z pairs).
+function ptsLen(c: number[], i0: number, n: number) {
+  let L = 0;
+  for (let i = i0 + 2; i < i0 + 2 * n; i += 2) L += Math.hypot(c[i] - c[i - 2], c[i + 1] - c[i - 1]);
+  return L;
+}
+// The point `back` metres short of the end of the polyline of n points at c[i0..] (x, z pairs),
+// and the heading along it there: [x, z, h].
+function alongPts(c: number[], i0: number, n: number, back: number): [number, number, number] {
+  for (let i = i0 + 2 * (n - 1); i > i0; i -= 2) {
+    const x1 = c[i], z1 = c[i + 1], x0 = c[i - 2], z0 = c[i - 1], L = Math.hypot(x1 - x0, z1 - z0), h = Math.atan2(-(z1 - z0), x1 - x0);
+    if (back <= L || i === i0 + 2) { const u = L > 0 ? Math.max(0, 1 - back / L) : 1; return [x0 + (x1 - x0) * u, z0 + (z1 - z0) * u, h]; }
+    back -= L;
+  }
+  return [c[i0], c[i0 + 1], 0];
+}
 const toStreet = (f: VFrame) => f.h0 + Math.PI / 2;
 const toBldg = (f: VFrame) => f.h0 - Math.PI / 2;
 const yawTo = (dx: number, dz: number) => Math.atan2(-dz, dx);
@@ -649,9 +666,18 @@ const K: Record<VK, Kind> = {
   ticket: {
     w: () => 0, trigger: 0,   // (started by step when the truck is parked)
     place() { return false; },
+    done: (v) => v.st[0] === 1,
     step(v, c, V) {
       const p = c.parked;
       v.st[1] = p && Math.hypot(p.cabX - v.st[2], p.cabZ - v.st[3]) < 0.3 ? 1 : 0;   // still there?
+      // (The truck gone before they're round the corner: they are gone too, back the way they came,
+      // rather than come on and write a ticket for an empty kerb. Only out of sight of the truck
+      // where it is now: in view, they come on as before.)
+      const back = (12 - v.t) * 1.08;
+      if (!v.st[1] && v.t < 12 && back > ptsLen(v.c, 5, 4) - Math.hypot(v.c[7] - v.c[5], v.c[8] - v.c[6])) {
+        const [x, z] = alongPts(v.c, 5, 4, back);
+        if (!c.eye || outOfSight(graph(), c.eye, x, z)) v.st[0] = 1;   // (on its way again: its cameras riding with it too)
+      }
       if (v.t > 24) release(v, 0, V, { a: v.a + v.c[4] * (v.t - 18) * 1.1, n: -1.0, dir: v.c[4] > 0 ? 1 : -1, ...castAt(v, 0), hat: 0x1f2f55 });
     },
     draw(v, F, t, D) {
@@ -659,7 +685,10 @@ const K: Record<VK, Kind> = {
       if (t > 17.6 && D.st[1]) { const [x, z] = P(f, v.a, -3.32); F.box(x, Y0 + 1.75, z, 0.18, 0.1, 0.012, f.h0, 0.15, 0xfff2a0); }
       if (v.rel & 1) return;
       let body: Body;
-      if (t < 12) { const [x, z] = P(f, v.a - s * (13 - t * 1.08), -1.0), w = walkSwing(t * 1.08); body = { x, z, yaw: along(f, s), y: Y0 + w.bob, legs: w.legs, arms: w.arms, ...cs }; }
+      if (t < 12) {
+        const w = walkSwing(t * 1.08), [x, z, yaw] = alongPts(v.c, 5, 4, (12 - t) * 1.08);   // (from round the corner: spawnTicket)
+        body = { x, z, yaw, y: Y0 + w.bob, legs: w.legs, arms: w.arms, ...cs };
+      }
       else if (t < 18.2) {
         const k = vEase(ramp(t, 12, 13)), back = vEase(ramp(t, 17.6, 18.2)), [x, z] = P(f, v.a - s * 0.04, lerp(-1.0, -2.55, k) + back * 0.1);
         const write = t > 13 && t < 17 ? 1 : 0, scrib = Math.sin(t * 11) * 0.12 * write, reach = ramp(t, 17, 17.5) * (1 - back);
@@ -822,11 +851,12 @@ const K: Record<VK, Kind> = {
   courier: {
     w: (d, c) => (d !== "industrial" && c.hour >= 7 && c.hour < 23 && !c.snow ? 1.3 : 0), trigger: 0,
     place(v, c, r) {
-      // A street heading past the truck: from the node nearest it, a street or two back along
-      // one of its arms (straight on through the nodes between), pointed its way.
+      // A street heading past the truck: from the node nearest it, two or three streets back along
+      // one of its arms (straight on through the nodes between), pointed its way. (Any nearer, it
+      // would be in view as it is set down.)
       const G = c.plan.graph, N = nearestNode(G, c.focus.x, c.focus.z);
       if (!N) return false;
-      const arm = N.arms[Math.floor(r() * N.arms.length)], back = 1 + Math.floor(r() * 2);
+      const arm = N.arms[Math.floor(r() * N.arms.length)], back = 2 + Math.floor(r() * 2);
       let e = arm.street * 2 + arm.end;   // (away from N: the courier comes the other way)
       for (let k = 1; k < back && e >= 0; k++) e = G.faceAcross(e);
       if (e < 0) return false;
@@ -1450,6 +1480,8 @@ const THREE_CLAMP = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi
 
 // ---- the set -----------------------------------------------------------------------------------
 const VIG_SPAWN = [40, 105], VIG_DESPAWN = 140, VIG_TRY = 1.5;
+const TICKET_ROUND = 12;   // m round the corner the parking officer comes from (spawnTicket)
+const TICKET_WALK_MAX = 45;   // m: the longest walk the officer takes to the cab (about 30 s more than the old 13 m)
 const WANT: Record<District, number> = { downtown: 5, commercial: 5, park: 5, residential: 4, industrial: 1 };
 const KINDS = Object.keys(K) as VK[];
 
@@ -1557,6 +1589,12 @@ export class Vignettes {
     // Not where the truck can already see it pop in.
     const [vx, vz] = this.where(v);
     if (!dbg && Math.hypot(vx - c.focus.x, vz - c.focus.z) < VIG_SPAWN[0] - 8) return;
+    if (!dbg && c.eye) {
+      // (All of it: where it stands, and both ends of what it takes up of the pavement.)
+      if (!outOfSight(c.plan.graph, c.eye, vx, vz)) return;
+      const ft = K[k].foot?.(v);
+      if (ft) { const f = frameOf(v.bx, v.bz, v.side, v.a); for (const a of [ft[0], ft[1]]) { const [x, z] = P(f, a, (ft[2] + ft[3]) / 2); if (!outOfSight(c.plan.graph, c.eye, x, z)) return; } }
+    }
     if (v.pst.length !== v.st.length) v.pst = v.st.slice();
     this.list.push(v);
   }
@@ -1572,6 +1610,22 @@ export class Vignettes {
         const r = mulberry32(Math.floor(this.rnd() * 2 ** 31));
         const v: Vig = { k: "ticket", bx, bz, side, a, n: -1, t: 0, pt: 0, on: true, seed: 1, c: [], st: [0, 1, p.cabX, p.cabZ], pst: [0, 1, p.cabX, p.cabZ], rel: 0 };
         v.c.push(0x2f4f7f, 0x1f2f55, pick(r, SKINS), pick(r, HAIRS), s);
+        // The officer's way up to the cab: from round the corner behind it, out of sight down the
+        // side street (TICKET_ROUND m), so they come into view round the building, not from nowhere
+        // on the pavement. With no such way (no side street, a corner in view, or so far that the
+        // truck may be gone before they get there): no ticket this stop.
+        const g = s > 0 ? G.prevFace(fc) : G.nextFace(fc);
+        if (g < 0 || !B.faces.includes(g)) return;
+        const sg = faceSpan(G, g), from = s > 0 ? sg.a1 - TICKET_ROUND : sg.a0 + TICKET_ROUND;
+        if (sg.a1 - sg.a0 <= TICKET_ROUND + 1) return;
+        const ga = s > 0 ? sg.a1 : sg.a0, fa = s > 0 ? sp.a0 + 0.5 : sp.a1 - 0.5, fg = frameOfFace(g), ff = frameOfFace(fc);
+        const pts = [P(fg, from, -1.0), P(fg, ga, -1.0), P(ff, fa, -1.0), P(ff, a - s * 0.04, -1.0)];
+        const len = ptsLen(pts.flat(), 0, pts.length);
+        // (Out of sight of the truck itself: parked, it has no cameras riding along its way ahead
+        // and behind, as outOfSight allows for, and one 25 m back sees down the side street.)
+        if (len > TICKET_WALK_MAX || (c.eye && !G.sightBlocked(c.eye.x, c.eye.z, pts[0][0], pts[0][1]))) return;
+        for (const q of pts) v.c.push(q[0], q[1]);
+        v.t = v.pt = -Math.max(0, len - 12.96) / 1.08;
         this.list.push(v);
         return;
       }

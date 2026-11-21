@@ -134,15 +134,24 @@ export class StreetLife implements LifeHook {
     }
     this.busy.clear();
     for (const s of st.stops) if (s.site) this.busy.add(`${s.site.bx},${s.site.bz}`);
-    // (Test renders watching one block, "block:kx,kz": the traffic round that block instead.)
+    // (Out of town, on the road in or just out: round the town's gate nearest the truck, all there
+    // as the town comes into view. Round the truck, out there, cars and people would be set down on
+    // the town's nearest streets, far from it, and be gone again the next step.)
     let tf: { x: number; z: number } = p;
+    if (st.mode === "inbound" || st.mode === "country") {
+      const G = j.plan.graph;
+      let bd = Infinity;
+      for (const g of G.gates) if (g) { const n = G.nodes[g.node], d = Math.hypot(n.x - p.x, n.z - p.z); if (d < bd) { bd = d; tf = n; } }
+    }
+    const cf = tf;
+    // (Test renders watching one block, "block:kx,kz": the traffic round that block instead.)
     if (DEBUG_BLOCK) { const B = j.plan.graph.block(DEBUG_BLOCK[0], DEBUG_BLOCK[1]); if (B) tf = { x: B.cx, z: B.cz }; }
     // (Driving on its path, the truck has traffic give way where their ways cross. Arriving, in
     // its last 8 s before the gate, traffic gives way at the junction inside it: the truck's first.)
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
     if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
-    this.crowd.step(j.plan, st.simTime, prs, p, obs, { cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt, truckHonks: j.clearing });
+    this.crowd.step(j.plan, st.simTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt, truckHonks: j.clearing });
     const g = st.mode === "inbound" && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[0] : null;
     const gate = g ? this.truckGate : null;
     if (gate) { gate.node = g!.node; gate.street = g!.street; }
@@ -157,7 +166,7 @@ export class StreetLife implements LifeHook {
     // rather than have everyone stop for it; after 15 s of waiting, it noses out and they do.)
     const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!landing && this.outWait(j) === null && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
-    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, j.clearing ? (st.mode === "reverse" ? -1 : 1) : 0);
+    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, j.clearing ? (st.mode === "reverse" ? -1 : 1) : 0, p);
     this.ambient.stepBlimp(p, st.simTime);
   }
 

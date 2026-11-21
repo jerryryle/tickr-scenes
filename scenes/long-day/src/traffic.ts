@@ -16,6 +16,7 @@ import type { TruckModel } from "./truck.ts";
 import { signalsInStep, signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
 import { CityPlan, pick } from "./city.ts";
+import { outOfSight } from "./citygraph.ts";
 import type { CityGraph } from "./citygraph.ts";
 import { BLOCK } from "./grid.ts";
 import { LANE_INNER, LANE_KERB, Path, STOP_BACK } from "./route.ts";
@@ -162,7 +163,7 @@ export class Traffic {
   private landing: number[] = [];
   private landingAt = 0;   // (where on the way the ramp meets the street)
   private landingS: number[] = [];
-  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null, crossers: number[] = [], waiters: number[] = [], clear = 0) {
+  step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null, crossers: number[] = [], waiters: number[] = [], clear = 0, eye: { x: number; z: number; h: number } | null = null) {
     this.truckPath = truckPath; this.truckGate = truckGate; this.crossers = crossers; this.waiters = waiters;
     // (Its body at each place on that way, from rear to nose along its heading every 1.5 m: pulling
     // out of a bay or off a ramp, its nose swings wide of the way its rear wheels take. landingS:
@@ -193,7 +194,7 @@ export class Traffic {
     const bx = Math.floor(focus.x / BLOCK), bz = Math.floor(focus.z / BLOCK);
     const d = plan.district(bx, bz);
     const want = d === "downtown" ? 30 : d === "commercial" ? 26 : d === "residential" ? 15 : 12;
-    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck, simTime, prs, peds);
+    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck, simTime, prs, peds, eye);
     // Drive.
     this.obstacles.length = 0;
     for (const c of this.cars) this.carCircles(c, this.obstacles);
@@ -379,7 +380,7 @@ export class Traffic {
   }
   private clearA: number[] = []; private clearB: number[] = []; private clearC: number[] = []; private clearW: number[] = []; private clearMoved = new Set<Car>();
 
-  private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[], peds: Obstacle[]) {
+  private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[], peds: Obstacle[], eye: { x: number; z: number; h: number } | null) {
     const r = this.rnd;
     const ang = r() * Math.PI * 2, dist = TRAFFIC_SPAWN[0] + r() * (TRAFFIC_SPAWN[1] - TRAFFIC_SPAWN[0]);
     const px = focus.x + Math.cos(ang) * dist, pz = focus.z + Math.sin(ang) * dist;
@@ -406,6 +407,8 @@ export class Traffic {
     for (const o of truck) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const o of this.obstacles) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const c of this.cars) if (Math.hypot(c.x - this.pose.x, c.z - this.pose.z) < 14) return;
+    // Nor where it would be seen appearing: nose, middle or tail.
+    if (eye) for (const u of [-0.5, 0, 0.5]) { const q = u * kind.len; if (!outOfSight(G, eye, this.pose.x + Math.cos(this.pose.h) * q, this.pose.z - Math.sin(this.pose.h) * q)) return; }
     // (Nor on anyone in the road, nor just short of someone crossing it.)
     const fx = Math.cos(this.pose.h), fz = -Math.sin(this.pose.h);
     for (const o of peds) { const dx = o.x - this.pose.x, dz = o.z - this.pose.z, a = dx * fx + dz * fz; if (a > -8 && a < 14 && Math.abs(dx * fz - dz * fx) < 4) return; }

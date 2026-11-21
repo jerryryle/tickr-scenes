@@ -287,6 +287,18 @@ export class CityGraph {
     for (const id of this.blockGrid.get(tileKey(Math.floor(x / TILE), Math.floor(z / TILE))) ?? []) if (inPoly(this.blocks[id].poly, x, z)) return this.blocks[id];
     return null;
   }
+  // Whether the straight line from (x0, z0) to (x1, z1) runs through `need` metres or more of the
+  // town's built blocks (in the city, not a park or a river): what stands there hides one end
+  // from the other. (In 2 m steps; seen over the rooftops from high up, it may not be hidden.)
+  sightBlocked(x0: number, z0: number, x1: number, z1: number, need = 6): boolean {
+    const L = Math.hypot(x1 - x0, z1 - z0), n = Math.floor(L / 2);
+    let hit = 0;
+    for (let i = 1; i < n; i++) {
+      const u = i / n, b = this.blockAt(x0 + (x1 - x0) * u, z0 + (z1 - z0) * u);
+      if (built(b) && (hit += L / n) >= need) return true;
+    }
+    return false;
+  }
   // The block whose edge encloses (x, z) or passes within `margin` of it, if any.
   blockNear(x: number, z: number, margin: number): CBlock | null {
     const inside = this.blockAt(x, z);
@@ -479,6 +491,25 @@ export function clipHalf(poly: [number, number][], nx: number, nz: number, c: nu
   }
   return out;
 }
+// Whether (x, z) is out of sight of the truck at `eye` (heading h): hidden by the town's blocks from
+// where it is and from 25 m ahead of and behind it on its way, where the cameras that follow it
+// ride (director.ts). What is spawned, or set down, where it would be seen would appear from nowhere.
+// (Past the fog, it is out of sight anyway. Ahead or behind, round a corner from it, the point
+// 25 m off is brought back towards the truck out of the block it would be in: inside one, every
+// line from it would count as hidden.)
+export function outOfSight(G: CityGraph, eye: { x: number; z: number; h: number }, x: number, z: number): boolean {
+  if (Math.hypot(x - eye.x, z - eye.z) > SIGHT_FOG) return true;
+  if (!G.sightBlocked(eye.x, eye.z, x, z)) return false;
+  const fx = Math.cos(eye.h), fz = -Math.sin(eye.h);
+  for (const k of [1, -1]) {
+    let d = 25;
+    while (d > 0 && built(G.blockAt(eye.x + fx * k * d, eye.z + fz * k * d))) d -= 2.5;
+    if (d > 0 && !G.sightBlocked(eye.x + fx * k * d, eye.z + fz * k * d, x, z)) return false;
+  }
+  return true;
+}
+const SIGHT_FOG = 350;   // m: farther than anything is seen (the view distance, at most countryworld.ts COUNTRY_CLEAR from a camera a little off the truck)
+const built = (b: CBlock | null) => !!b && b.inCity && !b.park && !b.water;
 export function inPoly(poly: [number, number][], x: number, z: number) {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {

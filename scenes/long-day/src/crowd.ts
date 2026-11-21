@@ -16,6 +16,7 @@ import { weatherMix } from "./climate.ts";
 import { signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
 import { CityPlan, pick } from "./city.ts";
+import { outOfSight } from "./citygraph.ts";
 import type { CityGraph, GPt } from "./citygraph.ts";
 import { CURB_H } from "./grid.ts";
 import { SIM_DT } from "./journey.ts";
@@ -39,7 +40,7 @@ interface Ped {
 // What else street life needs from the journey this step (vignettes.ts).
 // truckPath: the truck driving its path (its s, speed, and its body's reach about s), or null.
 // carsClear: whether no vehicle would come over the crossing from (x0, z0) to (x1, z1) within secs s.
-export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean; truckYieldsAt?: number; truckHonks?: boolean }   // truckHonks: out of a gridlock, honking for its way (journey.ts clearing)
+export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: Set<string>; truckPath?: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null; carsClear?: (x0: number, z0: number, x1: number, z1: number, secs: number) => boolean; truckYieldsAt?: number; truckHonks?: boolean; eye?: { x: number; z: number; h: number } }   // eye: the truck, for what may be spawned out of its sight (citygraph.ts outOfSight); truckHonks: out of a gridlock, honking for its way (journey.ts clearing)
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
@@ -120,7 +121,7 @@ export class Crowd {
     }
     const d = districtAt(plan, focus.x, focus.z);
     const want = d === "downtown" ? 26 : d === "commercial" ? 20 : d === "park" ? 14 : d === "residential" ? 10 : 5;
-    for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus);
+    for (let k = 0; k < 3 && this.peds.length < want; k++) this.spawn(plan, focus, more.eye);
     this.obstacles.length = 0;
     this.truckPath = more.truckPath ?? null; this.truckYieldsAt = more.truckYieldsAt ?? -1; this.truckHonks = !!more.truckHonks;
     this.carsClear = more.carsClear ?? null; this.cars = more.cars;
@@ -130,13 +131,13 @@ export class Crowd {
     // both ways: into a doorway beside them, gone, rather than stand there as it waits for them.)
     for (let i = this.peds.length - 1; i >= 0; i--) if ((this.peds[i].boxT ?? 0) > BOXED_GONE) this.peds.splice(i, 1);
     for (const p of this.peds) this.obstacles.push(pedObstacle(p));
-    this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
+    this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, eye: more.eye, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
     this.obstacles.push(...this.vig.obstacles);
-    this.updateFlocks(dt, plan, focus);
+    this.updateFlocks(dt, plan, more.eye ?? focus);   // (the birds: round the truck, out of town too)
   }
 
   // ---- pedestrians --------------------------------------------------------------------------
-  private spawn(plan: CityPlan, focus: { x: number; z: number }) {
+  private spawn(plan: CityPlan, focus: { x: number; z: number }, eye?: { x: number; z: number; h: number }) {
     const r = this.rnd, ang = r() * Math.PI * 2, dist = PED_SPAWN[0] + r() * (PED_SPAWN[1] - PED_SPAWN[0]);
     const wx = focus.x + Math.cos(ang) * dist, wz = focus.z + Math.sin(ang) * dist;
     const G = plan.graph, B = blockNear(G, wx, wz);
@@ -166,6 +167,7 @@ export class Crowd {
     this.place(G, p);
     p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
     if (Math.hypot(p.x - focus.x, p.z - focus.z) < PED_SPAWN[0] - 5) return;
+    if (eye && !outOfSight(G, eye, p.x, p.z)) return;   // (not where it would be seen appearing)
     if (fixed) this.vendorCount++;
     this.peds.push(p);
   }
