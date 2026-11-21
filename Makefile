@@ -6,6 +6,9 @@
 #   make check-long-day        the same, one scene
 #   make test                  run every scene's tests (scenes/<scene>/test/*.ts)
 #   make test-long-day         the same, one scene
+#                              (tests run TEST_JOBS at a time: by default two fewer than the CPUs;
+#                              e.g. TEST_JOBS=2 on a machine short of memory, TEST_JOBS=1 for one at
+#                              a time; make's own -jN, when given, limits them instead)
 #   make render-long-day       build, then render with tickr-scene
 #   make scrub-long-day [SCRUB=20]
 #                              render a scrub test (needs the toolkit): play, scrub back half way,
@@ -52,7 +55,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
 
 .PHONY: all check clean distclean debug run test list tool citymap FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
-        $(addprefix scrub-,$(SCENES))
+        $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
 .DELETE_ON_ERROR:
 
@@ -96,24 +99,38 @@ $(addprefix check-,$(SCENES)): check-%: %
 	@$(BIN)/tsc -p build/tsconfig.$*.json && echo "ok   $*: build/$*/scene.ts"
 	@$(call node-bundle,build/$*/scene.ts,build/$*/load.mjs) && \
 	 node --input-type=module -e 'await import("./build/$*/load.mjs")' && echo "ok   $*: loads (top-level code runs in order)"
-	@$(MAKE) --no-print-directory -s test-$*
-	@if [ -x "$(TICKR_BIN)" ]; then $(TICKR) check build/$* && echo "ok   $*: tickr-scene check"; \
+	@$(MAKE) --no-print-directory -s $(if $(findstring jobserver,$(MAKEFLAGS)),,-j$$(( $(TEST_JOBS) + 2 ))) test-$* toolkit-check-$* scrub-if-$*
+
+# (check-<scene>'s last three steps, run side by side: the tests, the toolkit's check, and the
+# scrub cases when the scene has them.)
+$(addprefix toolkit-check-,$(SCENES)): toolkit-check-%:
+	@if [ -x "$(TICKR_BIN)" ]; then \
+	   if $(TICKR) check build/$* > build/$*-toolkit-check.txt 2>&1; then grep -v '^no type errors$$' build/$*-toolkit-check.txt; echo "ok   $*: tickr-scene check"; \
+	   else cat build/$*-toolkit-check.txt; echo "FAIL $*: tickr-scene check"; exit 1; fi; \
 	 else echo "skip $*: tickr-scene check (no toolkit in $(TICKR_HOME); see README)"; fi
+$(addprefix scrub-if-,$(SCENES)): scrub-if-%:
 	@if [ -x "$(TICKR_BIN)" ] && grep -qs '^export const DEBUG_SCRUBTEST\b' scenes/$*/src/debug.ts; then $(MAKE) --no-print-directory -s scrub-$*; \
 	 else echo "skip $*: scrub check (needs the toolkit and DEBUG_SCRUBTEST)"; fi
 
 test: $(addprefix test-,$(SCENES))
 
-# Each test is built from its own imports into build/<scene>-<test>/ and run; its output is
-# shown only when it fails.
+# Each test is built from its own imports into build/<scene>-<test>/ and run, TEST_JOBS at a time
+# (by default two fewer than the CPUs, leaving room for check's scrub renders); their results are
+# reported in order once all are done, a test's output only when it fails.
+TESTS = $(wildcard scenes/$*/test/*.ts)
+TEST_JOBS ?= $(shell n=$$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 2); echo $$(( n > 3 ? n - 2 : 1 )))
 $(addprefix test-,$(SCENES)): test-%: | $(DEPS)
-	@set -e; for t in $(wildcard scenes/$*/test/*.ts); do \
-	  n=$$(basename $$t .ts); out=build/$*-$$n; mkdir -p $$out; \
-	  $(FLATTEN) $$t --root scenes/$*/src > $$out/scene.ts; \
-	  $(call node-bundle,$$out/scene.ts,$$out/$$n.mjs); \
-	  if node $$out/$$n.mjs > $$out/output.txt 2>&1; then echo "ok   $*: test/$$n.ts"; \
-	  else cat $$out/output.txt; echo "FAIL $*: test/$$n.ts"; exit 1; fi; \
-	done
+	@$(MAKE) --no-print-directory -s $(if $(findstring jobserver,$(MAKEFLAGS)),,-j$(TEST_JOBS)) $(patsubst scenes/$*/test/%.ts,run-test/$*/%,$(TESTS))
+	@fail=0; for t in $(TESTS); do \
+	  n=$$(basename $$t .ts); out=build/$*-$$n; \
+	  if [ "$$(cat $$out/status 2>/dev/null)" = 0 ]; then echo "ok   $*: test/$$n.ts"; \
+	  else cat $$out/output.txt; echo "FAIL $*: test/$$n.ts"; fail=1; fi; \
+	done; exit $$fail
+# (One test, run-test/<scene>/<test>: its exit code to build/<scene>-<test>/status, for test-<scene>.)
+run-test/%: FORCE | $(DEPS)
+	@sc=$(firstword $(subst /, ,$*)); n=$(notdir $*); out=build/$$sc-$$n; mkdir -p $$out; echo running > $$out/status; \
+	{ $(FLATTEN) scenes/$$sc/test/$$n.ts --root scenes/$$sc/src > $$out/scene.ts && $(call node-bundle,$$out/scene.ts,$$out/$$n.mjs) && \
+	  node $$out/$$n.mjs; } > $$out/output.txt 2>&1; echo $$? > $$out/status
 
 # Scrub tests: a build with DEBUG_SCRUBTEST=<s> plays s seconds, scrubs back to half way and plays
 # on at 2.1x (main.ts scrubTestTime), logging every presentation tick; every tick played again
@@ -125,17 +142,23 @@ $(addprefix scrub-,$(SCENES)): scrub-%: | $(DEPS)
 	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
 	@$(call copy-assets,scenes/$*/assets,build/$*-scrub-assets)
 	@cn=0; { if [ -f scenes/$*/scrub.txt ]; then grep -Ev '^[[:space:]]*(#|$$)' scenes/$*/scrub.txt; else echo "DEBUG_SCRUBTEST=$(SCRUB)"; fi; } | \
-	while read -r line; do \
-	  cn=$$((cn + 1)); out=build/$*-scrub$$cn; swap=0; defs=""; \
-	  for w in $$line; do if [ "$$w" = swap ]; then swap=1; else defs="$$defs --define $$w"; fi; done; \
-	  secs=$$(echo "$$line" | sed -nE 's/.*DEBUG_SCRUBTEST=([0-9]+).*/\1/p'); \
-	  [ -n "$$secs" ] || { echo "scenes/$*/scrub.txt: no DEBUG_SCRUBTEST in: $$line" >&2; exit 1; }; \
-	  mkdir -p $$out && $(FLATTEN) scenes/$*/src/main.ts --root scenes/$*/src $$defs > $$out/scene.ts || exit 1; \
-	  cp scenes/$*/scene.json $$out/ && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/ || exit 1; \
-	  $(TICKR) render $$out --seconds $$(( secs * 5 / 4 + 1 )) --every 1000 > $$out/log.txt 2>&1 || { tail -5 $$out/log.txt; exit 1; }; \
-	  r=$$(awk -v swap=$$swap -f scripts/scrubcheck.awk $$out/log.txt) && echo "ok   $*: scrub check $$cn ($$r)" || \
-	    { echo "$$r"; echo "FAIL $*: scrub check $$cn, $$line (log: $$out/log.txt)"; exit 1; }; \
-	done
+	{ while read -r line; do \
+	  cn=$$((cn + 1)); out=build/$*-scrub$$cn; mkdir -p $$out; echo "FAIL $*: scrub check $$cn (did not finish)" > $$out/result.txt; \
+	  { swap=0; defs=""; \
+	    for w in $$line; do if [ "$$w" = swap ]; then swap=1; else defs="$$defs --define $$w"; fi; done; \
+	    secs=$$(echo "$$line" | sed -nE 's/.*DEBUG_SCRUBTEST=([0-9]+).*/\1/p'); \
+	    if [ -z "$$secs" ]; then echo "scenes/$*/scrub.txt: no DEBUG_SCRUBTEST in: $$line"; echo "FAIL $*: scrub check $$cn"; \
+	    elif ! { $(FLATTEN) scenes/$*/src/main.ts --root scenes/$*/src $$defs > $$out/scene.ts && \
+	             cp scenes/$*/scene.json $$out/ && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/; }; then \
+	      echo "FAIL $*: scrub check $$cn, building $$line"; \
+	    elif ! $(TICKR) render $$out --seconds $$(( secs * 5 / 4 + 1 )) --every 1000 > $$out/log.txt 2>&1; then \
+	      tail -5 $$out/log.txt; echo "FAIL $*: scrub check $$cn, $$line (log: $$out/log.txt)"; \
+	    elif r=$$(awk -v swap=$$swap -f scripts/scrubcheck.awk $$out/log.txt); then echo "ok   $*: scrub check $$cn ($$r)"; \
+	    else echo "$$r"; echo "FAIL $*: scrub check $$cn, $$line (log: $$out/log.txt)"; fi; \
+	  } > $$out/result.txt.new 2>&1 && mv $$out/result.txt.new $$out/result.txt & \
+	done; wait; \
+	fail=0; k=1; while [ $$k -le $$cn ]; do cat build/$*-scrub$$k/result.txt; grep -q '^FAIL' build/$*-scrub$$k/result.txt && fail=1; k=$$((k + 1)); done; \
+	exit $$fail; }
 
 $(addprefix render-,$(SCENES)): render-%: %
 	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }

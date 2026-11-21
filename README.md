@@ -49,7 +49,9 @@ Everything built goes under `build/`, which is git-ignored and safe to delete (`
 | `build/<scene>/dist/` | what tickr-scene writes there: render frames, bundle, thumbnail |
 | `build/<scene>/load.mjs` | the Node bundle `make check` loads |
 | `build/<scene>-debug/` | `make debug` |
-| `build/<scene>-<test>/` | a test: its `scene.ts`, the `<test>.mjs` bundle, and `output.txt` from `make check` |
+| `build/<scene>-<test>/` | a test: its `scene.ts`, the `<test>.mjs` bundle, and `output.txt` and its exit code (`status`) from `make check` |
+| `build/<scene>-toolkit-check.txt` | what `tickr-scene check` said in `make check` |
+| `build/<scene>-scrub<n>/` | scrub case n: its build, the render's `log.txt`, and `result.txt` |
 
 `build/<scene>/` is a plain tickr scene directory, so every `tickr-scene` command runs on it.
 
