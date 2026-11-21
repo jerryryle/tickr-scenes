@@ -72,8 +72,9 @@ export class Batch {
   cyl(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0) {
     this.emit(batchTemplate("cyl" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg)), x, y, z, color, 0, rotX, rotZ, r, h, r);
   }
-  cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8) {
-    this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, 0, 0, 0, r, h, r);
+  // Points up; rotX = Math.PI turns it point down.
+  cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0) {
+    this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, 0, rotX, 0, r, h, r);
   }
   // Low-poly ball (tree crowns, bushes): an icosahedron of radius r, squashed by `sy`.
   ico(x: number, y: number, z: number, r: number, color: number, sy = 1, rotY = 0) {

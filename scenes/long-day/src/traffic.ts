@@ -8,7 +8,7 @@
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
 import { Batch } from "./geom.ts";
-import { CAR_SPECS, carModel, GLASS, headLamp, tailLamp, TYRE } from "./cars.ts";
+import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { SPECS, TRAILER } from "./truck.ts";
 import { KINGPIN_TO_AXLES } from "./hitch.ts";
@@ -114,7 +114,7 @@ export class Traffic {
     kind("van", ...car("van"), 10, 2, [0xe8e8e8, 0xe8e8e8, 0x8a8f94, 0x1f4fa0], 6, (b) => carModel(b, "van"));
     kind("bus", 11.5, 2.5, 9, 0.8, null, 3, busBody);
     kind("police", ...car("sedan"), 11, 0.5, null, 2, (b) => { carModel(b, "sedan", 0xf4f4f0); for (const z of [-1, 1]) b.box(-0.05, 0.68, z * 0.906, 1.9, 0.3, 0.01, 0x15181c); b.box(-0.35, 1.49, 0, 0.3, 0.1, 1.2, 0x222222); });
-    kind("icecream", 5.8, 2.1, 8, 0.5, null, 2, iceCreamBody);
+    kind("icecream", 5.8, 2.1, 8, 0.5, null, 2, (b) => iceCreamTruck(b));
     kind("ryder", 11.3, 2.5, 10, 0.8, null, 2, null);
     kind("cablecar", 8.6, 2.5, 6, 0, null, 3, cableCarBody);
     const bb = new Batch(); bb.box(0, 0, 0, 0.28, 0.14, 0.5, 0xffffff);
@@ -1541,14 +1541,6 @@ function busBody(b: Batch) {
   for (const x of [F - 1.1, -0.6]) { b.box(x, 1.6, W / 2 + 0.02, 1.2, 2.2, 0.04, PILLAR); b.box(x, 1.65, W / 2 + 0.04, 0.5, 1.95, 0.02, GLASS); b.box(x + 0.27, 1.65, W / 2 + 0.04, 0.04, 1.95, 0.03, PILLAR); b.box(x - 0.27, 1.65, W / 2 + 0.04, 0.5, 1.95, 0.02, GLASS); }
   // Wheels, set into the wells.
   for (const x of [F - 2.4, R + 2.7]) for (const z of [-W / 2 + 0.2, W / 2 - 0.2]) { b.box(x, 0.62, z * 1.02, 1.25, 0.72, 0.1, 0x111214); b.cyl(x, 0.5, z, 0.5, 0.32, TYRE, 12, Math.PI / 2); b.cyl(x, 0.5, z * 1.03, 0.28, 0.32, 0x8d9296, 8, Math.PI / 2); }
-}
-function iceCreamBody(b: Batch) {
-  const L = 5.8, W = 2.1;
-  b.box(-0.5, 1.45, 0, L - 1.0, 2.3, W, 0xf7c9de); b.box(L / 2 - 0.5, 0.9, 0, 1.0, 1.2, W, 0xf7c9de);
-  b.box(L / 2 - 1.05, 1.85, 0, 0.2, 0.75, W * 0.9, GLASS);
-  b.box(-0.6, 1.7, W / 2 + 0.01, 2.4, 0.9, 0.02, 0x8fd3e8); b.box(-0.6, 2.25, W / 2 + 0.3, 2.6, 0.06, 0.6, 0xff6fa8);   // serving hatch, awning
-  b.cone(-0.5, 3.2, 0, 0.35, 0.8, 0xe0a050, 8); b.ico(-0.5, 3.75, 0, 0.42, 0xfff0f5);                                        // giant cone
-  wheels(b, L, W, 0.36); lamps(b, L, W, 0.9);
 }
 // San Francisco style cable car: maroon below with gold lines, a cream closed saloon with a grid
 // of small windows in the middle, open bench sections at both ends with brass poles, and a long

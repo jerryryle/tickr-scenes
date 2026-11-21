@@ -241,3 +241,60 @@ export class CarFleet {
     for (const m of this.meshes.values()) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; }
   }
 }
+
+// The ice cream truck (traffic.ts), 5.8 x 2.1 m: a step van lofted like the cars. A tall box behind
+// a lower cab with a raked windscreen; a cream band with icing drips along the top of the box; on
+// the kerb side (+z) a serving window with a counter, a striped awning and a menu board; a painted
+// cone on the street side; amber lamps and a caution plate at the back; on the roof a speaker and
+// a giant cone.
+const ICE_CREAM: CarSpec = { len: 5.8, width: 2.1, r: 0.38, wheelIn: 1.0, clear: 0.32, sections: ((f) => [
+  [-f, 1.0, 1.0, 1.45, 1.0, 2.5, "b"], [-f + 0.08, 1.05, 1.05, 1.45, 1.05, 2.56, "b"],
+  [0.62, 1.05, 1.05, 1.45, 1.05, 2.56, "b"], [0.72, 1.05, 1.05, 1.45, 0.98, 2.36, "p"],
+  [0.84, 1.05, 1.05, 1.45, 0.98, 2.36, "g"], [1.55, 1.05, 1.05, 1.45, 0.97, 2.32, "w"],
+  [2.15, 1.05, 1.04, 1.25, 0.99, 1.34, "b"], [f - 0.12, 1.03, 1.0, 1.17, 0.95, 1.24, "b"],
+  [f, 0.98, 0.94, 1.1, 0.88, 1.15, "b"],
+] as Section[])(F(5.8)) };
+export function iceCreamTruck(b: Batch, paint = 0xf490b8) {
+  const s = ICE_CREAM, f = s.len / 2, BX0 = -f + 0.08, BX1 = 0.62, Z = 1.058;   // the box's straight sides; decals 8 mm proud of them
+  const CREAM = 0xfff4e0, MINT = 0x8fe0c4, CONE = 0xd99a4e, CHOC = 0x6a3a1e, STEEL = 0xc8ccd0;
+  lower(b, s, paint);
+  loft(b, s.sections, 2 * s.r + 0.02, paint);
+  for (const k of [-1, 1]) {
+    // Icing along the top of the box, dripping.
+    b.box((BX0 + BX1) / 2, 2.4, k * Z, BX1 - BX0, 0.3, 0.012, CREAM);
+    for (let x = BX0 + 0.14, i = 0; x < BX1 - 0.1; x += 0.27, i++) { const h = [0.12, 0.26, 0.08, 0.2, 0.32, 0.1, 0.18][i % 7]; b.box(x, 2.25 - h / 2, k * Z, 0.13, h, 0.012, CREAM); }
+    b.box(0, 1.0, k * Z, s.len - 0.7, 0.08, 0.012, CREAM);            // a stripe along the body
+  }
+  // Kerb side: the serving window (a sliding pane, the shop lit behind), counter, awning and its valance.
+  const wx0 = -1.75, wx1 = 0.15, wm = (wx0 + wx1) / 2, ww = wx1 - wx0;
+  b.box(wm, 1.73, Z, ww + 0.1, 0.84, 0.012, TRIM);
+  b.box(wm + ww / 4, 1.73, Z + 0.005, ww / 2 - 0.04, 0.74, 0.012, 0xffe7b0);
+  b.box(wm - ww / 4, 1.73, Z + 0.005, ww / 2 - 0.04, 0.74, 0.012, 0x7fb8cc);
+  b.box(wm, 1.3, Z + 0.11, ww + 0.1, 0.05, 0.22, STEEL);
+  const tilt = 0.35, aw = 0.56, n = 9, sw = (ww + 0.2) / n;
+  for (let i = 0; i < n; i++) {
+    const x = wx0 - 0.1 + sw * (i + 0.5), c = i % 2 ? CREAM : MINT;
+    b.boxR(x, 2.25 - aw / 2 * Math.sin(tilt), Z + aw / 2 * Math.cos(tilt), sw, 0.04, aw, c, tilt, 0, 0);
+    b.box(x, 2.25 - aw * Math.sin(tilt) - 0.06, Z + aw * Math.cos(tilt), sw, 0.12, 0.02, c);
+  }
+  // Menu board behind the window: scoops in rows.
+  b.box(-2.3, 1.7, Z, 0.7, 0.72, 0.012, CREAM);
+  [0xf27aa8, CHOC, MINT, 0xf2d24a, 0xd94c86, CREAM - 0x101010].forEach((c, i) => b.box(-2.48 + (i % 2) * 0.36, 1.9 - Math.floor(i / 2) * 0.22, Z + 0.006, 0.12, 0.12, 0.012, c));
+  // Street side: a painted cone, two scoops and a cherry (over the icing's drips).
+  const cx = -1.0, dz = -Z - 0.002;
+  b.tri(cx - 0.24, 1.56, dz, cx + 0.24, 1.56, dz, cx, 1.06, dz, CONE, [0, 0, -1]);
+  for (const [y, c] of [[1.66, MINT], [1.95, CHOC]] as [number, number][]) { b.box(cx, y, dz - 0.002, 0.52, 0.28, 0.012, c); b.box(cx, y, dz - 0.004, 0.38, 0.4, 0.012, c); }
+  b.box(cx, 2.2, dz - 0.006, 0.1, 0.1, 0.012, 0xd0202a);
+  // Back: window, caution plate, amber lamps up at the corners.
+  b.box(-f - 0.006, 2.08, 0, 0.012, 0.42, 0.9, GLASS);
+  b.box(-f - 0.006, 1.6, 0, 0.012, 0.3, 1.3, 0x222222); b.box(-f - 0.012, 1.6, 0, 0.012, 0.24, 1.24, 0xf2c200);
+  for (const z of [-0.78, 0.78]) b.box(-f - 0.01, 2.4, z, 0.04, 0.12, 0.18, 0xffa020);
+  // Front: a chrome grille over the slot between the headlamps.
+  b.box(f + 0.004, 0.95, 0, 0.012, 0.24, 0.86, CHROME); b.box(f + 0.008, 0.95, 0, 0.012, 0.16, 0.78, TRIM);
+  // Roof: a speaker horn at the front, the giant cone (point down on a stand) with its scoop and cherry.
+  const ry = 2.575;
+  b.box(0.3, ry + 0.06, 0, 0.16, 0.12, 0.16, STEEL); b.cyl(0.4, ry + 0.18, 0, 0.05, 0.2, STEEL, 6, 0, -Math.PI / 2); b.cyl(0.52, ry + 0.18, 0, 0.13, 0.06, STEEL, 8, 0, -Math.PI / 2);
+  b.cyl(-1.0, ry + 0.08, 0, 0.12, 0.16, STEEL, 8);
+  b.cone(-1.0, ry + 0.6, 0, 0.4, 0.9, CONE, 8, Math.PI);
+  b.ico(-1.0, ry + 1.15, 0, 0.44, CREAM, 0.85); b.ico(-1.0, ry + 1.57, 0, 0.1, 0xd0202a);
+}
