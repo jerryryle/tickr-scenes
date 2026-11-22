@@ -16,7 +16,7 @@ import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { pavementFetch, ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
+import { pavementFetch, ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, JACK_TURN, JACK_TURN_LOADED, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
 import { buildCrewPath, EMPTY_HOLD, samplePath } from "./crewpath.ts";
 import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
 import type { Chore, ItemKind, ToolRest } from "./chores.ts";
@@ -28,7 +28,7 @@ import type { CarriedLoad } from "./loads.ts";
 import { ARM_F, ARM_U, blendPose, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, stoopFor, walkPose, WORKER_LOOK } from "./character.ts";
 import type { BodyPose } from "./character.ts";
 
-const STRIDE = 1.2;   // metres per walk cycle (two steps)
+const STRIDE = 1.6;   // metres per walk cycle (two steps): the walk cycle's (character.ts walkPose) planted foot keeps still
 
 type CrewSave = { f: Record<string, unknown>; gag: THREE.Vector3; gagOn: boolean };   // (the vector kept when there is no gag)
 export class Crew {
@@ -59,7 +59,7 @@ export class Crew {
   private jackHandle!: THREE.Group;
   // The stop's planned way round the truck (crewpath.ts), for the plan it was worked out for.
   private path: CrewPath | null = null; private pathPlan: Chore[] | null = null; private pathKey = "";
-  private ps = { x: 0, z: 0, yaw: 0, steps: 0, travel: 0, speed: 0 };
+  private ps = { x: 0, z: 0, yaw: 0, steps: 0, travel: 0, speed: 0, along: 1, jx: NaN, jz: NaN, jyaw: NaN };
   // What the ground does this frame, in the truck's frame: the ramp and lift gate as the chores
   // have them, the platform at a dock, and the kerb (a point on its edge and the normal out into
   // the road) when the stop has a front door to place it by.
@@ -591,7 +591,7 @@ export class Crew {
       // is set down (rampIn: lifting it and walking it back in).
       const r = rampControl(c.kind, u), tip = rampTip(L, r);
       x = tip[0] - RAMP_HOLD; z = 0; yaw = 0; y = 0;
-      this.walkPhase = Math.abs(tip[0] - L.bedRear) / STRIDE;
+      this.walkPhase = (tip[0] - L.bedRear) / STRIDE;   // (facing the truck: backing as it slides out, the cycle running back)
       walking = r > 0.01 && r < 0.64;
     } else if (c.kind === "doorOpen" || c.kind === "doorClose") {
       // At the door: the hands hold its bottom edge, or its strap while that is out of reach; the
@@ -617,7 +617,7 @@ export class Crew {
       y = this.ground(L, x, z);
       if (c.kind === "wait") gesturePose(c.gesture ?? "clipboard", t, P);
     }
-    if (walking) walkPose(this.walkPhase, P, true);
+    if (walking) walkPose(this.walkPhase, P, true, c.kind === "rampOut" || c.kind === "rampIn" ? 1 : 0.35 + 0.65 * ps.along);   // (side-stepping, short steps)
     d.apply(P);
     this.place(truck, x, y, z, yaw);
     this.yaw = yaw; this.yawV = 0;
@@ -695,6 +695,11 @@ export class Crew {
       }
       return { x: at[0], z: at[2], yaw: c.face ?? NaN, exact: false };
     };
+    // (Square to the bed: in it (a walk from one spot in it to another, or a chore there), and at
+    // a dock, where the platform is too shallow to turn it: straight between the bed and the
+    // building's doorway behind, turned round out of sight inside.)
+    const inBedAt = (p: [number, number, number]) => p[0] >= L.bedRear - 0.1 && p[0] <= L.bedFront && Math.abs(p[2]) < L.hw && p[1] > L.floor - 0.1;
+    const inBed = (c: Chore) => this.docked || (c.kind === "walk" ? inBedAt(c.a!) && inBedAt(c.b!) : c.kind === "stow" || c.kind === "toolGet" || c.kind === "toolPut");
     const hold = (c: Chore, u: number): Hold => {
       const i = plan.indexOf(c), prev = plan[i - 1], next = plan[i + 1];
       let item = c.item ?? null, t = c.tool ?? null;
@@ -703,7 +708,7 @@ export class Crew {
       if (c.kind === "toolGet") t = u > 0.55 ? tool : null;
       if (c.kind === "toolPut") t = u < 0.45 ? tool : null;
       if (t === "handTruck") return handTruckHold(!!item);
-      if (t === "palletJack") return item ? { lead: JACK_LEAD + 0.8, pivot: 0.85, omega: 2.2, rate: 1.3 } : { lead: JACK_LEAD, pivot: 0.55, omega: 3.5, rate: 2.6 };
+      if (t === "palletJack") return { lead: JACK_LEAD, tip: JACK_PIVOT_AT, tips: JACK_TIP, square: inBed(c), from: c.kind === "toolGet" && c.rest ? { x: c.rest.at[0], z: c.rest.at[2], yaw: c.rest.yaw } : undefined, pivot: 0.85, omega: 2.2, rate: item ? JACK_TURN_LOADED : JACK_TURN };
       if (!item) return EMPTY_HOLD;
       switch (cargo.handling) {
         case "push": return stop.cargo === "motorcycles" ? { lead: 0.3, pivot: 0.5, omega: 2.2, rate: 1.4 } : { lead: 0.4 + size[0] / 2, pivot: 0.85, omega: 2.0, rate: 1.2 };
@@ -1238,7 +1243,7 @@ export class Crew {
     } else if (held === "palletJack") {
       const h = this.tools.palletJack; h.visible = true;
       this.placeJack(L, truck, JACK_LEAD);
-      if (rest) this.restBlend(h, truck, rest, 0, tk.carry, 1);
+      if (rest) { this.restBlend(h, truck, rest, 0, tk.carry, 1); this.jackClear(L, truck); }   // (and on the way to and from its rest)
       this.toolGrips(this.jackHandle, 0, JACK_HANDLE, 0.12, tk.grip);
       if (load && item) {
         load.group.visible = !ghost; load.group.position.copy(h.position); load.group.quaternion.copy(h.quaternion);
@@ -1332,12 +1337,41 @@ export class Crew {
     this.setTF(this.tools.handTruck, truck, ax, this.ground(L, ax, az) + HT_WHEEL, az, this.drv[3], tip);
   }
   // The pallet jack on its steering wheel and fork rollers, its handle drawn back to the hands.
+  // The forks pitch to rest on the highest ground under them, not just the ground at their tips:
+  // across the bed's back edge, a kerb or the walk ramp's side they ride over the edge rather
+  // than through it (and tips past the bed's walls, where the ground reads as the road, don't
+  // pull them down into the floor).
+  // Steered (the stop's path has it, crewpath.ts), it lies its own way, its handle swivelled to
+  // the driver; otherwise straight out ahead of them.
   private placeJack(L: TruckLayout, truck: Truck, lead: number) {
-    const [ox, oz] = this.fromDriver(lead, 0), [tx, tz] = this.fromDriver(lead + JACK_TIP, 0);
-    const y0 = this.ground(L, ox, oz), y1 = this.ground(L, tx, tz), pitch = Math.atan2(y1 - y0, JACK_TIP);
-    this.setTF(this.tools.palletJack, truck, ox, y0, oz, this.drv[3], pitch);
+    const ps = this.ps, steered = !Number.isNaN(ps.jx);
+    const yaw = steered ? ps.jyaw : this.drv[3], c = Math.cos(yaw), s = Math.sin(yaw);
+    const [ox, oz] = steered ? [ps.jx, ps.jz] : this.fromDriver(lead, 0), y0 = this.ground(L, ox, oz);
+    let pitch = -Infinity;
+    for (let x = JACK_TIP; x > 0.35; x -= 0.15) for (const side of JACK_FORKS) {
+      const px = ox + c * x + s * side, pz = oz - s * x + c * side;
+      pitch = Math.max(pitch, Math.atan2(this.ground(L, px, pz) - y0, x));
+    }
+    this.setTF(this.tools.palletJack, truck, ox, y0, oz, yaw, pitch);
+    this.jackClear(L, truck);   // (an edge right ahead of the wheel, a kerb: lifted over it)
+    // The handle: tipped back to the hands, swivelled towards the driver (in the jack's frame,
+    // behind it is -x).
+    const dx = this.drv[0] - ox, dz = this.drv[2] - oz, lx = dx * c - dz * s, lz = dx * s + dz * c;
+    const swivel = Math.hypot(lx, lz) > 0.1 ? THREE.MathUtils.clamp(Math.atan2(lz, -lx), -1.4, 1.4) : 0;
     const up = this.drv[1] + JACK_HANDS - (y0 + JACK_PIVOT[1]);
-    this.jackHandle.rotation.z = Math.acos(THREE.MathUtils.clamp(up / JACK_HANDLE, 0.3, 0.98)) - pitch;
+    this.jackHandle.rotation.set(0, swivel, Math.acos(THREE.MathUtils.clamp(up / JACK_HANDLE, 0.3, 0.98)) - pitch * Math.cos(swivel), "YZX");
+  }
+  // The pallet jack raised, if need be, so its forks are nowhere below the ground under them (on
+  // the way between its rest and the hands, turning as it goes).
+  private jackClear(L: TruckLayout, truck: Truck) {
+    const o = this.tools.palletJack, inv = this.m4.copy(truck.root.matrixWorld).invert();
+    o.updateMatrixWorld(true);
+    let low = 0;
+    for (let x = 0; x <= JACK_TIP + 0.04; x += 0.05) for (const side of JACK_FORKS) {
+      const q = this.v.set(x, 0, side).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+      low = Math.max(low, this.ground(L, q.x, q.z) - q.y);
+    }
+    if (low > 0) o.position.y += low;
   }
   // Taking a tool from its rest (or putting it back): from standing there upright (k 0) to in
   // the hands as placed (k 1), the handle of a jack swinging down with it.
@@ -1346,7 +1380,7 @@ export class Crew {
     this.qa.setFromEuler(this.eu.set(0, truck.heading + r.yaw, 0, "YXZ"));
     o.position.lerpVectors(this.v, o.position, k);
     o.quaternion.slerpQuaternions(this.qa, o.quaternion.clone(), k);
-    if (jack) this.jackHandle.rotation.z *= k;
+    if (jack) { this.jackHandle.rotation.z *= k; this.jackHandle.rotation.y *= k; }
   }
   // Both hands on a tool's handle (in the frame of `o`: at (x, y), `half` either side), as firmly as `w`.
   private toolGrips(o: THREE.Object3D, x: number, y: number, half: number, w: number) {
@@ -1716,6 +1750,9 @@ const HT_BODY = 0.5, HT_HEAD_TOP = 1.85;
 const HUNCH_DROP = 0.12, HUNCH_BEND = 0.14, HUNCH_HEAD = 0.18;
 // The pallet jack: its fork rollers ahead of the steering wheel, its handle's length and pivot,
 // the steering wheel ahead of the driver's feet and the handle's height above them.
+const JACK_FORKS = [-0.25, 0.25];   // the pallet jack's forks, either side of its middle
+const JACK_PIVOT_AT = 0.68;   // it turns about its middle, this far on from its steering wheel (crewpath.ts Hold.tip)
+
 const JACK_TIP = 1.32, JACK_HANDLE = 1.0, JACK_PIVOT: [number, number] = [-0.04, 0.2], JACK_LEAD = 1.0, JACK_HANDS = 1.0;
 // Taking a tool from its rest: where the driver goes (from the stand to close by it, to grip its
 // handle; back a step as it is tipped into the hands, to where it's held as carried; back to the

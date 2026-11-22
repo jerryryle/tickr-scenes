@@ -187,12 +187,15 @@ export class Character {
 }
 
 // ---- poses ----------------------------------------------------------------------------------
-// Walking: phase in cycles (one cycle = two steps). `arms` false leaves the arms to an upper-body
-// pose (carrying, pushing).
+// Walking: phase in cycles (one cycle = two steps), counting up walking forwards and down walking
+// backwards. `arms` false leaves the arms to an upper-body pose (carrying, pushing). Each knee
+// bends while its leg swings forward (the foot lifted to come through) and is straight while the
+// leg swings back, the foot planted under the body as it passes over; run backwards, the foot is
+// lifted as the leg reaches back, and planted as the body backs over it.
 export function walkPose(phase: number, out: BodyPose, arms = true, stride = 1): BodyPose {
   const s = Math.sin(phase * Math.PI * 2), c = Math.cos(phase * Math.PI * 2);
   out.hipL = 0.45 * s * stride; out.hipR = -0.45 * s * stride;
-  out.knL = -Math.max(0, -c) * 0.7 * stride - 0.05; out.knR = -Math.max(0, c) * 0.7 * stride - 0.05;
+  out.knL = -Math.max(0, c) * 0.7 * stride - 0.05; out.knR = -Math.max(0, -c) * 0.7 * stride - 0.05;
   out.drop = 0.02 + 0.015 * Math.abs(Math.sin(phase * Math.PI * 4));
   out.bend = -0.04;
   if (arms) { out.shLP = -0.4 * s * stride; out.shRP = 0.4 * s * stride; out.elL = 0.3 + 0.15 * Math.max(0, -s); out.elR = 0.3 + 0.15 * Math.max(0, s); }

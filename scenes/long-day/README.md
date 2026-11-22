@@ -133,7 +133,8 @@ match speed and heading, and it never crosses in front of a train. `make check` 
 street-life tests: `test/truck.ts` (the truck never drives through a vehicle or anyone on foot,
 and never stands in the street for long), `test/junctions.ts` (traffic alone round busy
 junctions never overlaps or deadlocks) and `test/crossings.ts` (people cross, and nobody runs
-into them). To run it with other arguments and see its report:
+into them), and `test/crewmotion.ts` (the driver never moonwalks, and the pallet jack, steered
+about its middle, never sinks into a floor, slides sideways or goes through a wall or the truck). To run it with other arguments and see its report:
 
 ```bash
 make run SCENE=long-day TEST=journey ARGS="30 '{\"seed\":2}'"
