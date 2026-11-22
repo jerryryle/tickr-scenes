@@ -4,3 +4,9 @@ export const FACADE = {
   OFFICE: 0, PUNCHED: 1, DECO: 2, RESIDENTIAL: 3, STOREFRONT: 4, INDUSTRIAL: 5, DOCK: 6, BLANK: 7,
   BRICK: 8, BRUTALIST: 9, CURTAIN: 10, APARTMENT: 11, SIDING: 12, DOOR: 13, LOBBY: 14, RIBBON: 15,
 } as const;
+// The tiles that paint a ground-floor door (facadeart.ts), and where in the tile (pixels of
+// FACADE_TILE, y from the top) it is: [left, right, top], down to the tile's foot. (A lobby's
+// doors are glass on glass: only their push bars and below read as a door.)
+export const PAINTED_DOORS: Partial<Record<number, readonly [number, number, number]>> = {
+  [FACADE.STOREFRONT]: [96, 124, 34], [FACADE.DOOR]: [40, 88, 20], [FACADE.LOBBY]: [40, 88, 76],
+};

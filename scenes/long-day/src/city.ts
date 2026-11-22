@@ -16,7 +16,8 @@ import { LAMP_SITES, PoolBuilder } from "./atmosphere.ts";
 import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
-import { FACADE } from "./facadetiles.ts";
+import { FACADE, PAINTED_DOORS } from "./facadetiles.ts";
+import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals } from "./signals.ts";
 import { cityName, STYLES } from "./styles.ts";
@@ -949,10 +950,12 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   }
   // The buildings, each in its face's frame: x along the face, z in from it (the street at z < 0).
   // Each building's front door, between two of its bays (as kerbDoors would put it): x0..x1 its
-  // street wall, n its depth in from the block's edge.
-  const door = (f: number, x0: number, x1: number, n: number) => {
+  // street wall, n its depth in from the block's edge. `painted`: over the door facadeBox paints
+  // in the street wall (side 2, which runs x1 to x0) instead, in its middle bay.
+  const door = (f: number, x0: number, x1: number, n: number, painted = false) => {
     const bays = Math.max(1, Math.round((x1 - x0) / BAY));
-    doorSpot(blk.sides.indexOf(f), bays > 1 ? x0 + (x1 - x0) * Math.round(bays / 2) / bays : (x0 + x1) / 2, n);
+    const a = painted ? x1 - (x1 - x0) * (Math.floor(bays / 2) + 0.5) / bays : bays > 1 ? x0 + (x1 - x0) * Math.round(bays / 2) / bays : (x0 + x1) / 2;
+    doorSpot(blk.sides.indexOf(f), a, n);
   };
   for (const L of lots) {
     const P = G.facePt(L.f, 0, 0), fr: Frame2 = { ox: P.x - ox, oz: P.z - oz, rot: P.h };
@@ -975,7 +978,7 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
         flatRoof(s, b, top, wall, rnd, 0);
       } else if (district === "residential") {
         const h: Rect = { x0: b.x0 + 0.8, z0: b.z0 + range(rnd, 2.2, 3.2), x1: b.x1 - 0.8, z1: Math.min(b.z1, b.z0 + 10) };
-        door(L.f, h.x0, h.x1, h.z0);
+        door(L.f, h.x0, h.x1, h.z0, true);
         const wall = pick(rnd, CS.walls.residential), floors = irange(rnd, 1, 2);
         const top = facadeBox(s, h.x0, h.z0, h.x1, h.z1, CURB_H, [{ tile: FACADE.RESIDENTIAL, floors, floorH: 3.1 }], wall, 2, FACADE.DOOR);
         flatRoof(s, h, top, wall, rnd, 0);
@@ -1654,8 +1657,8 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
     dd.plain = plain > 0;
   }
   // Elsewhere, look for a wall to put one in (a park has none).
-  const mesh = site.kind === "kerb" && out.some((d) => !d) ? built.solid.build(DOOR_PROBE_MAT) : null;
-  if (mesh) {
+  const mesh = built.solid.build(DOOR_PROBE_MAT);
+  if (mesh && site.kind === "kerb" && out.some((d) => !d)) {
     const probe = new LevelProbe(mesh.geometry.getAttribute("position").array, 24), o = new THREE.Vector3(), dir = new THREE.Vector3();
     // (In the tile's coordinates, as the probe mesh is.)
     const lp = (side: number, a: number, n: number): [number, number] => { const P = fp(side, a, n); return [P.x - ox, P.z - oz]; };
@@ -1709,10 +1712,61 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
         break;
       }
     }
+  }
+  if (mesh) {
+    for (let side = 0; side < out.length; side++) { const d = out[side]; if (d && !d.plain) out[side] = overPaintedDoor(mesh.geometry, d, fp, ox, oz); }
     mesh.geometry.dispose();
   }
   KERB_DOORS.set(key, out);
   return out;
+}
+// A door the facade paints where the real one goes (a house's front door, a shop's, a lobby's:
+// PAINTED_DOORS) would show beside or behind it. Find the nearest on the same wall's ground floor
+// (in `geo`, the block's walls in its tile's coordinates, origin (ox, oz) in the world) within
+// REACH of the real door, and move the real door over it, big enough to hide it: kept inside the
+// painted door's bay where it fits, so it covers no more of the next bay's window than it must.
+// (How far beyond the real door's frame a painted one still reads as a second door beside it.)
+const REACH = 1.5;
+function overPaintedDoor(geo: THREE.BufferGeometry, d: KerbDoor, fp: (side: number, a: number, n: number) => { x: number; z: number }, ox: number, oz: number): KerbDoor {
+  const auxA = geo.getAttribute("aAux"), pos = geo.getAttribute("position").array, aux = auxA?.array;
+  if (!aux) return d;
+  const P0 = fp(d.side, d.a, d.n), P1 = fp(d.side, d.a + 1, d.n), cx = P0.x - ox, cz = P0.z - oz;
+  const tl = Math.hypot(P1.x - P0.x, P1.z - P0.z) || 1, tx = (P1.x - P0.x) / tl, tz = (P1.z - P0.z) / tl;
+  const along = (x: number, z: number) => (x - cx) * tx + (z - cz) * tz;
+  const sill = d.y ?? CURB_H, F = d.half + 0.1;   // (F: the frame's half width)
+  let best: { l: number; r: number; top: number; b0: number; b1: number } | null = null;
+  // (A wall is six vertices, the first three its corners (0,0), (1,0), (1,1); primitives' aux.z < 0.)
+  for (let i = 0; i < auxA.count;) {
+    const k = i * 3, tile = aux[k + 2];
+    if (tile < 0) { i++; continue; }
+    i += 6;
+    const pd = PAINTED_DOORS[tile % 16];
+    if (!pd) continue;
+    const ax = pos[k], ay = pos[k + 1], az = pos[k + 2], bx = pos[k + 3], bz = pos[k + 5], y1 = pos[k + 7];
+    const u0 = aux[k], u1 = aux[k + 3], v0 = aux[k + 1], v1 = aux[k + 7];
+    const wx = bx - ax, wz = bz - az, wl = Math.hypot(wx, wz);
+    if (wl < 0.01 || u1 <= u0 || v1 <= v0) continue;
+    // Facing the street as the door does, in its plane, with a row of tiles at its sill.
+    if ((-wz * d.nx + wx * d.nz) / wl < 0.95 || Math.abs((ax - cx) * d.nx + (az - cz) * d.nz) > 0.2) continue;
+    const fh = (y1 - ay) / (v1 - v0), j = Math.ceil(v0 - 1e-6), yb = ay + (j - v0) * fh;
+    if (j >= v1 || Math.abs(yb - sill) > 0.4) continue;
+    const top = yb + fh * (1 - pd[2] / FACADE_TILE);
+    const at = (u: number) => { const s = (u - u0) / (u1 - u0); return along(ax + wx * s, az + wz * s); };
+    for (let m = Math.floor(u0); m < u1; m++) {
+      const p0 = at(m + pd[0] / FACADE_TILE), p1 = at(m + pd[1] / FACADE_TILE), q0 = at(m), q1 = at(m + 1);
+      const l = Math.min(p0, p1), r = Math.max(p0, p1);
+      if (m + pd[1] / FACADE_TILE <= u0 || m + pd[0] / FACADE_TILE >= u1) continue;   // (the tile's door is off this piece of wall)
+      if (r < -F - REACH || l > F + REACH) continue;
+      if (!best || Math.abs(l + r) < Math.abs(best.l + best.r)) best = { l, r, top, b0: Math.min(q0, q1), b1: Math.max(q0, q1) };
+    }
+  }
+  if (!best) return d;
+  const { l, r, top, b0, b1 } = best, G = Math.max(F, (r - l) / 2 + 0.03), pc = (l + r) / 2;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const lo = Math.max(r - G, b0 + G), hi = Math.min(l + G, b1 - G);
+  const c = lo <= hi ? clamp(pc, lo, hi) : clamp(pc, r - G, l + G);
+  const a = d.a + c, P = fp(d.side, a, d.n);
+  return { ...d, a, x: P.x, z: P.z, half: G - 0.1, h: Math.max(d.h, top - sill - 0.1) };
 }
 // A builder's own door for a block side (frontage a, n: the wall's face, and a height when it
 // can't take the usual one), for kerbDoors.
@@ -2464,7 +2518,7 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
     const [lo, hi] = side < 2 ? [9.4, 50.6] : [9 + setback + depth + 0.6, 51 - setback - depth - 0.6];
     const n0 = setback, n1 = setback + depth;
     let a = lo, alt = 0;
-    const stoops: number[] = [];
+    const stoops: number[] = [];   // (door a, bay width) of each
     let doorAt = -1, doorD = Infinity;
     while (hi - a > 4.2) {
       const w = Math.min(hi - a, hi - a < 9 ? hi - a : range(rnd, 4.8, 6.4));
@@ -2485,12 +2539,17 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
       } else {
         flatRoof(s, r, top, wall, rnd, 0);
         fspan(s, side, a, a + w, top - 0.35, top + 0.1, n0 - 0.35, n0, shade(wall, 0.7));   // cornice
-        stoops.push(a + w / 2);
+        stoops.push(doorBayA(side, a, w), w / Math.max(1, Math.round(w / BAY)));
       }
       a += w;
     }
-    // The stoops, but not at the house whose door the driver uses (its own step: entranceDoor).
-    for (const sa of stoops) if (doorAt < 0 || Math.abs(sa - doorAt) > 2.6) fspan(s, side, sa - 0.9, sa + 0.9, CURB_H, CURB_H + 0.9, n0 - 1.6, n0, 0x8a8278);
+    // A step at each painted door, as entranceDoor gives the real one (its half width from the
+    // painted frame's: PAINTED_DOORS), but not at the house whose door the driver uses (its own step).
+    const pd = PAINTED_DOORS[FACADE.DOOR]!;
+    for (let i = 0; i < stoops.length; i += 2) {
+      const sa = stoops[i], hw = stoops[i + 1] * (pd[1] - pd[0]) / 2 / FACADE_TILE + 0.15;
+      if (doorAt < 0 || Math.abs(sa - doorAt) > 0.5) fspan(s, side, sa - hw, sa + hw, 0, CURB_H + 0.03, n0 - 0.5, n0, 0x9d9a91);
+    }
     if (doorAt >= 0) doorSpot(side, doorAt, n0);
   }
   // Back gardens.
