@@ -44,12 +44,57 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
     case "ferry": return [{ s: S - 150, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
     case "cattle": return [{ s: S - 150, n: 9, y: 2.9, w: 4.4, h: 0.62 }];
     case "fruit": return [{ s: S, n: side * 9.5, y: 1.6, w: 4.0, h: 0.5 }];
-    case "gas": return [{ s: S + 5, n: side * 11, y: 7.2, w: 4.6, h: 0.6 }];
+    case "gas": return [{ s: S + GAS_SIGN, n: side * 7.4, y: 7.2, w: 4.6, h: 0.6 }];
     // A freeway's signs (freeway.ts draws them): its entrance sign by the highway, and the
     // plates over its lanes on the gantries ahead of the exit and where its lane opens.
     case "fwsign": return [p.variant === 0 ? { s: S, n: p.n ?? 8.8, y: 3.55, w: 5.6, h: 0.7 } : { s: S, n: p.n ?? 0, y: FW_TOP + 6.35, w: 6.4, h: 0.8 }];
     default: return [];
   }
+}
+// A roadside business's paving, in road coordinates (n to the right of the centre line): its lot,
+// and the drives that take it off the road and back on, each a convex polygon at a height above
+// the piece's ground. Every lot is reached from the road through its drives: a drive starts at the
+// asphalt's edge (PAVE_EDGE, just inside it, over the shoulder) and meets its lot along a shared
+// edge. Gas stations and truck stops have a tapered entrance at one end and an exit at the other
+// (the same both ways, so either side of the road reads right), a grass island between them and
+// the road; a fruit stand pulls in onto a wide gravel shoulder in front of it; an attraction has a
+// car park, a drive straight in off the road. countryworld.ts lays them; the test checks them.
+export const PAVE_EDGE = 4.0;
+export const GAS_SIGN = 30;   // a gas station's price sign, on the island between its drives, from its s
+export type PaveKind = "drive" | "lot" | "apron" | "gravel";
+export interface RoadPave { kind: PaveKind; pts: [number, number][]; top: number }
+export function piecePaving(p: RoadPiece): RoadPave[] {
+  const S = p.s, sd = p.side, E = PAVE_EDGE;
+  const poly = (kind: PaveKind, top: number, pts: [number, number][]): RoadPave => ({ kind, top, pts: pts.map(([a, n]) => [S + a, sd * n] as [number, number]) });
+  const rect = (kind: PaveKind, top: number, a0: number, a1: number, n0: number, n1: number) => poly(kind, top, [[a0, n0], [a1, n0], [a1, n1], [a0, n1]]);
+  switch (p.kind) {
+    case "gas": return [
+      rect("lot", 0.005, 0, p.len, 9, 27),
+      poly("drive", 0, [[-28, E], [16, E], [16, 9], [4, 9]]),                    // in (or out, from the far side)
+      poly("drive", 0, [[p.len - 16, E], [p.len + 28, E], [p.len - 4, 9], [p.len - 16, 9]]),
+    ];
+    case "truckstop": return [
+      rect("apron", 0.01, -120, 150, 9, 18),
+      rect("lot", 0.005, -40, 120, 18, 43),
+      rect("lot", 0.005, 85, 130, 43, 63),                                      // the rental trucks' lot
+      poly("drive", 0, [[-160, E], [-108, E], [-108, 9], [-120, 9]]),
+      poly("drive", 0, [[138, E], [182, E], [150, 9], [138, 9]]),
+    ];
+    case "fruit": return [poly("gravel", 0, [[12, E], [68, E], [58, 10.6], [22, 10.6]])];
+    case "attraction": return [
+      rect("lot", 0.005, 22, 78, 18, 31),
+      poly("drive", 0, [[36, E], [64, E], [56, 9], [44, 9]]),
+      rect("drive", 0, 44, 56, 9, 18),
+    ];
+    default: return [];
+  }
+}
+// The stretch of road a piece takes up, its drives and signs included (pieces keep apart by these).
+export function pieceSpan(p: RoadPiece): [number, number] {
+  let a = p.s, b = p.s + p.len;
+  for (const v of piecePaving(p)) for (const [s] of v.pts) { a = Math.min(a, s); b = Math.max(b, s); }
+  for (const g of pieceSigns(p)) { a = Math.min(a, g.s - 1); b = Math.max(b, g.s + 1); }
+  return [a, b];
 }
 type RoadStopKind = "truckstop" | "rail" | "weigh" | "ferry" | "cattle";
 interface CountryStop { s: number; dwell: number; kind: RoadStopKind; arrive: number }
@@ -322,7 +367,8 @@ export class CountryRoad {
       for (const [kind, len] of extras) {
         for (let tries = 0; tries < 8 && hi - len > lo; tries++) {
           const s = lo + h(40 + k * 9 + tries) * (hi - len - lo);
-          if (this.pieces.some((p) => s < p.s + p.len + 120 && s + len + 120 > p.s)) continue;
+          const [a, b] = pieceSpan({ kind, s, side: 1, len, variant: 0 });
+          if (this.pieces.some((p) => { const [c, d] = pieceSpan(p); return a < d + 120 && b + 120 > c; })) continue;
           if (kind === "weigh" && this.pieces.some((p) => p.kind === "truckstop" && Math.abs(p.s - s) < 800)) continue;
           this.pieces.push({ kind, s, side: kind === "gas" || kind === "fruit" ? (h(60 + k) < 0.5 ? 1 : -1) : kind === "weigh" ? 1 : h(60 + k) < 0.5 ? 1 : -1,
             len, variant: Math.floor(h(70 + k) * 4) });
