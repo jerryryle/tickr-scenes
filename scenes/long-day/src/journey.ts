@@ -712,7 +712,7 @@ export class Journey {
     const sp = L.deep ? at(30, L.wall - 0.13) : at(39, 1.87);
     const sign = hasSign(stop.site!.fac) ? { x: sp.x, z: sp.z, y: L.deep ? DOCK_PLATFORM + 5.7 : CURB_H + 5.5, w: L.deep ? 9.6 : 9.2, h: L.deep ? 1.2 : 1.15, nx: -rx, nz: -rz } : null;
     return { face, pa: p + dl, p, R, pull: tractor ? 1.5 : 3, trail, stair: dockStair(L, p),
-      geom: { x: ref.x, z: ref.z, H, Lb, R, door }, edge: at(p, L.edge), H, sign };
+      geom: { x: ref.x, z: ref.z, H, Lb, R, door, trail }, edge: at(p, L.edge), H, sign };
   }
   get dock(): DockPlan | null { return this.dockPlan(this.st.stops[0]); }
   // Whether the truck comes into city N by its freeway (freeway.ts freewayMerge): never a

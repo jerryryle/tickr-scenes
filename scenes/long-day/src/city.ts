@@ -2977,8 +2977,10 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // Ground: the block's raised base behind the yard (and beside a shallow one), the yard itself
   // at road level so trucks drive straight in.
   fspan(g, side, 9, 51, 0, CURB_H, L.edge + 0.02, 42, pave);   // (just behind the platform's face: shared planes flicker)
-  if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, CURB_H, 0, L.edge, pave);
-  fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge, 0x66655f);
+  // (Both up to the raised base's face, where theirs meet it back to back: a gap there is a slit
+  // to the void that glints at a distance.)
+  if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, CURB_H, 0, L.edge + 0.02, pave);
+  fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge + 0.02, 0x66655f);
   for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
 
   // The dock building: a plinth up to platform height, a band of dock doors on the yard side,
@@ -2994,7 +2996,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   const near = (i: number, k = 1) => used.some((u) => Math.abs(u - i) <= k);
   const lr = (salt: number) => hash2(Math.floor(L.look * 1e6), salt, 0x77, 0);   // the dressing's own randoms (stable per site)
   fspan(s, side, L.a0, L.a1, 0, P, L.edge, L.wall, 0x9d9a91);
-  fspan(s, side, L.a0, L.a1, P - 0.08, P + 0.004, L.edge - 0.01, L.edge + 0.1, C.yellow);
+  fspan(s, side, L.a0, L.a1, P - 0.08, P + 0.01, L.edge - 0.01, L.edge + 0.1, C.yellow);   // (1 cm proud of the platform's top: nearer, they flicker)
   for (const b of L.bays) for (const k of [-1.0, 1.0]) fspan(s, side, b + k - 0.14, b + k + 0.14, 0.6, 1.1, L.edge - 0.14, L.edge + 0.01, C.dark);   // (into the platform, off the steps' plane)
   const dw = bw * 0.41;
   const doorC = pick(rnd, [0xc4c8cc, 0xc4c8cc, 0x2d5f9a, 0xd8d2c4, 0x9b2a24, 0x3d6b3a, 0x5b6470, 0xe0b02a]);
@@ -3008,8 +3010,10 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
     fspan(s, side, b - dw - 0.12, b + dw + 0.12, P, P + doorH + 0.15, L.wall - 0.05, L.wall + 0.01, frameC);   // frame
     if (open > 0) fspan(s, side, b - dw, b + dw, P, y0, L.wall - 0.07, L.wall - 0.04, 0x121416);              // dark inside
     fspan(s, side, b - dw, b + dw, y0, P + doorH, L.wall - 0.09, L.wall - 0.05, doorC);
-    if (ribs) for (let y = y0 + 0.45; y < P + doorH - 0.1; y += 0.5) fspan(s, side, b - dw, b + dw, y, y + 0.04, L.wall - 0.1, L.wall - 0.09, shade(doorC, 0.75));
-    if (windows && P + 1.7 > y0) fspan(s, side, b - dw + 0.2, b + dw - 0.2, P + 1.6, P + 1.85, L.wall - 0.1, L.wall - 0.09, 0x2a3644);
+    // (A window strip is on the ribs' plane, so no rib crosses it: on a door part way up they would.)
+    const win = windows && P + 1.6 >= y0;
+    if (ribs) for (let y = y0 + 0.45; y < P + doorH - 0.1; y += 0.5) if (!win || y + 0.04 < P + 1.6 || y > P + 1.85) fspan(s, side, b - dw, b + dw, y, y + 0.04, L.wall - 0.1, L.wall - 0.09, shade(doorC, 0.75));
+    if (win) fspan(s, side, b - dw + 0.2, b + dw - 0.2, P + 1.6, P + 1.85, L.wall - 0.1, L.wall - 0.09, 0x2a3644);
     if (shelter) {
       fspan(s, side, b - dw - 0.5, b - dw - 0.12, P, P + doorH + 0.4, L.wall - 0.55, L.wall, 0x232426);
       fspan(s, side, b + dw + 0.12, b + dw + 0.5, P, P + doorH + 0.4, L.wall - 0.55, L.wall, 0x232426);
@@ -3018,7 +3022,8 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
     if (isUsed) {
       fspan(s, side, b - 1.05, b + 1.05, P, P + 0.025, L.edge, L.edge + 1.6, 0x70757a);                       // leveller plate
       fspan(s, side, b + dw + 0.55, b + dw + 0.85, P + 2.6, P + 2.9, L.wall - 0.2, L.wall, 0xf2b200);          // dock light
-      for (const k of [-1, 1]) fspan(s, side, b + k * (dw + 0.35) - 0.09, b + k * (dw + 0.35) + 0.09, P, P + 1.1, L.wall - 0.4, L.wall - 0.22, C.yellow);   // bollards
+      const bn = shelter ? L.wall - 0.6 : L.wall - 0.22;   // (out in front of a shelter where there is one, else by the wall)
+      for (const k of [-1, 1]) fspan(s, side, b + k * (dw + 0.35) - 0.09, b + k * (dw + 0.35) + 0.09, P, P + 1.1, bn - 0.18, bn, C.yellow);   // bollards
     }
   });
   // Lights over the bays: a wall pack each, or a row of strip lights on some sites. Lit at night;

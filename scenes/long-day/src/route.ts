@@ -41,8 +41,9 @@ const SPEED_RIGHT = 4.2, SPEED_LEFT = 5.2, SPEED_BEND = 10, DOCK_TURN_SPEED = 2.
 
 // `dock`: the route starts in a loading bay instead (journey.ts): a straight line out of the bay
 // from (x, z) on heading H for Lb metres, then a right turn of radius R onto the kerb lane,
-// which arrives exactly at the route's start (d, before).
-export interface DockGeom { x: number; z: number; H: number; Lb: number; R: number; door?: DockDoor }
+// which arrives exactly at the route's start (d, before). `trail`: how far along it the route
+// starts (a tractor's trailer axles behind its own; journey.ts DockPlan).
+export interface DockGeom { x: number; z: number; H: number; Lb: number; R: number; door?: DockDoor; trail: number }
 // The bay's roll-up door in world space (centre of its foot on the wall, half-width, height) and
 // the leveller lip's hinge at the platform edge: what DockFx opens and lowers.
 export interface DockDoor { x: number; z: number; w: number; h: number; lx: number; lz: number }

@@ -23,25 +23,39 @@ export class DockFx {
   }
 
   update(j: Journey) {
-    const st = j.st, dock = st.mode === "reverse" || st.mode === "dwell" || st.mode === "drive" ? j.dock : null;
+    const st = j.st, dock = st.mode === "reverse" || st.mode === "dwell" ? j.dock : null;
     let door: DockDoor | undefined, H = 0, open = 0, lip = 0;
-    if (dock && (st.mode === "reverse" || st.mode === "dwell")) {
+    // Along the bay path, as the truck is drawn (between steps); its leading axle, a tractor's
+    // trailer's, is `trail` short of it, docked at 0.
+    const s = st.s - (1 - j.alpha) * j.lastStep;
+    if (dock) {
       door = dock.geom.door; H = dock.H;
       if (st.mode === "reverse") {
-        const d = Math.hypot(j.pose.x - dock.edge.x, j.pose.z - dock.edge.z);
-        open = THREE.MathUtils.clamp((16 - d) / 9, 0, 1);
+        open = THREE.MathUtils.clamp((13.5 - (s - dock.trail)) / 9, 0, 1);   // all the way up 4.5 m out
       } else {
         open = 1;
         const ph = j.dwellPhase();
         lip = ph.phase === "park" ? ease(ph.t / ph.len) : ph.phase === "enter" ? 1 - ease(ph.t / ph.len) : ph.phase === "startup" ? 0 : 1;
       }
-    } else if (st.mode === "drive" && st.route?.dock?.door) {
-      // Pulling out of the bay: the door comes down behind the truck.
-      door = st.route.dock.door; H = st.route.dock.H;
-      open = 1 - THREE.MathUtils.clamp(st.s / 14, 0, 1);
+    } else if (st.mode === "drive") {
+      // Waiting in the bay for the route out (dockExit), the door stays up; pulling out, it comes
+      // down behind the truck, from where the route starts in the bay (a tractor's trail along).
+      // On the way to a dock stop, its door is shut and the lip hangs ready; from one bay to
+      // another, the lip moves to the next half way there, once (the way only goes forward).
+      const k = st.dockExit?.geom ?? st.route?.dock;
+      if (k?.door) {
+        door = k.door; H = k.H;
+        open = st.dockExit ? 1 : 1 - THREE.MathUtils.clamp((s - k.trail) / 14, 0, 1);
+      }
+      const next = st.dockExit || open > 0.01 ? null : j.dock, nd = next?.geom.door;
+      if (nd && (!k?.door || s >= (k.trail + st.stopS) / 2)) {
+        door = nd; H = next!.H; open = 0;
+      }
     }
     this.hole.visible = !!door && open > 0.01;
-    this.lip.visible = !!door && (st.mode === "dwell" || st.mode === "reverse");
+    // The lip, hanging but for the stop, from when the route to the bay starts to when the route
+    // out ends: it comes and goes away from the truck, never popping in or out beside it.
+    this.lip.visible = !!door;
     if (!door) return;
     const fx = Math.cos(H), fz = -Math.sin(H), P = DOCK_PLATFORM;
     if (this.hole.visible) {
