@@ -80,8 +80,7 @@ export class FrontDoorFx {
     const d = j.st.mode === "dwell" ? j.kerbDoor : null;
     let open = 0;
     if (d) {
-      const ph = j.dwellPhase(), c = ph.chore;
-      if (c?.kind === "fetch") { const u = ph.ct / c.len; open = THREE.MathUtils.smoothstep(u, 0.05, 0.3) * (1 - THREE.MathUtils.smoothstep(u, 0.7, 0.95)); }
+      open = j.frontDoorOpen;
       if (worker?.visible) open = Math.max(open, THREE.MathUtils.clamp((2.0 - Math.hypot(worker.position.x - d.x, worker.position.z - d.z)) / 0.9, 0, 1));
       open = Math.max(open, forkOpen);
     }

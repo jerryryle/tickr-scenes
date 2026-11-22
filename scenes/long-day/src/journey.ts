@@ -788,6 +788,22 @@ export class Journey {
     return on >= 0 && off > on && tc >= on && tc < off;
   }
 
+  // How far the stop's front door (kerbDoor) stands open, 0..1, for the driver's trips through it
+  // (FrontDoorFx): opened with the truck's door (or, at a stop without one to open, as the driver
+  // reaches it the first time), held open between trips, and closed behind the driver once the
+  // last load is through (as they turn away from it at the end of the last fetch).
+  get frontDoorOpen(): number {
+    if (this.st.mode !== "dwell" || !this.chores.length) return 0;
+    const tc = this.st.modeTime - DWELL.park, ch = this.chores, S = this.choreStart;
+    const first = ch.findIndex((c) => c.kind === "fetch");
+    if (first < 0) return 0;
+    let last = first;
+    for (let i = first; i < ch.length; i++) if (ch[i].kind === "fetch") last = i;
+    const u = (i: number) => (tc - S[i]) / ch[i].len, ss = THREE.MathUtils.smoothstep;
+    const o = ch.findIndex((c, i) => i < first && (c.kind === "doorOpen" || c.kind === "doorsOpen"));
+    return (o >= 0 ? ss(u(o), 0.2, 1) : ss(u(first), 0.05, 0.3)) * (1 - ss(u(last), 0.7, 0.95));
+  }
+
   // The city's front doors (city.ts kerbDoors; set by the scene, absent in tests) and the one
   // the current kerb stop uses: on the truck's right, the nearest to its back.
   kerbDoor: KerbDoor | null = null;
