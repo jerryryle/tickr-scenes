@@ -22,7 +22,7 @@ import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, PlateSet, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
-  WEIGH_BACK, WEIGH_GREEN, GAS_SIGN, piecePaving, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W, WATER_DROP } from "./country.ts";
+  WEIGH_BACK, WEIGH_GREEN, FORECOURT, GAS_SIGN, GAS_SIGN_N, TS_SIGN_N, paveAt, piecePaving, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W, WATER_DROP } from "./country.ts";
 import type { FerryPlan } from "./country.ts";
 import { COW_GATE, herdDist, TRACTOR_B, TRACTOR_R } from "./country.ts";
 import type { CattlePlan, HerdMember } from "./country.ts";
@@ -1062,42 +1062,39 @@ export class CountryWorld {
   }
 
   // ---- set pieces ---------------------------------------------------------------------------
-  // A piece's paving (country.ts piecePaving): each convex polygon cut into 8 m strips along the
-  // road (so it follows a curve), its top at its height over the piece's ground, with a skirt down
-  // its outer edges to the land under it.
+  // A piece's paving (country.ts piecePaving): each band in quads between its stations (cut to
+  // 8 m at most, so a long one follows the road's curve), its top at its height over the piece's
+  // ground, with a skirt down its edges to the land under it.
   private pave(g: Batch, p: RoadPiece) {
     const COL = { drive: CW.asphalt, apron: CW.asphalt, lot: 0x45464b, gravel: 0x8f8778 };
     for (const v of piecePaving(p)) {
-      const y = this.pieceY + v.top, col = COL[v.kind], P = v.pts;
-      const a0 = Math.min(...P.map((q) => q[0])), a1 = Math.max(...P.map((q) => q[0]));
-      for (let a = a0; a < a1 - 1e-6; a += 8) {
-        const b = Math.min(a1, a + 8);
-        // (The polygon clipped to a <= s <= b.)
-        let poly = P as [number, number][];
-        for (const [lim, keepAbove] of [[a, true], [b, false]] as const) {
-          const out: [number, number][] = [], inside = (q: [number, number]) => keepAbove ? q[0] >= lim : q[0] <= lim;
-          for (let i = 0; i < poly.length; i++) {
-            const c = poly[i], d = poly[(i + 1) % poly.length];
-            if (inside(c)) out.push(c);
-            if (inside(c) !== inside(d)) { const f = (lim - c[0]) / (d[0] - c[0]); out.push([lim, c[1] + (d[1] - c[1]) * f]); }
-          }
-          poly = out;
-        }
-        if (poly.length < 3) continue;
-        const W = poly.map(([s, n]) => this.L(s, n));
-        for (let i = 1; i + 1 < W.length; i++) g.tri(W[0][0], y, W[0][1], W[i][0], y, W[i][1], W[i + 1][0], y, W[i + 1][1], col);
+      const y = this.pieceY + v.top, col = COL[v.kind], sk = shade(col, 0.8), sd = v.side;
+      const st: number[] = [];
+      for (let i = 0; i + 1 < v.s.length; i++) {
+        const k = Math.max(1, Math.ceil((v.s[i + 1] - v.s[i]) / 8));
+        for (let j = 0; j < k; j++) st.push(v.s[i] + (v.s[i + 1] - v.s[i]) * j / k);
       }
-      // The skirt, round the whole polygon, facing out of it.
-      const [cx, cz] = this.L(P.reduce((m, q) => m + q[0], 0) / P.length, P.reduce((m, q) => m + q[1], 0) / P.length);
-      for (let i = 0; i < P.length; i++) {
-        const c = P[i], d = P[(i + 1) % P.length], k = Math.max(1, Math.ceil(Math.abs(d[0] - c[0]) / 8));
-        for (let j = 0; j < k; j++) {
-          const u0 = j / k, u1 = (j + 1) / k;
-          const [x0, z0] = this.L(c[0] + (d[0] - c[0]) * u0, c[1] + (d[1] - c[1]) * u0), [x1, z1] = this.L(c[0] + (d[0] - c[0]) * u1, c[1] + (d[1] - c[1]) * u1);
-          const fx = (x0 + x1) / 2 - cx, fz = (z0 + z1) / 2 - cz;
-          g.tri(x0, y, z0, x1, y, z1, x1, y - 0.14, z1, shade(col, 0.8), [fx, 0, fz]);
-          g.tri(x0, y, z0, x1, y - 0.14, z1, x0, y - 0.14, z0, shade(col, 0.8), [fx, 0, fz]);
+      st.push(v.s[v.s.length - 1]);
+      const edge = st.map((a) => { const [lo, hi] = paveAt(v, a)!; return [this.L(a, sd * lo), this.L(a, sd * hi), lo, hi] as const; });
+      for (let i = 0; i + 1 < edge.length; i++) {
+        const [l0, h0, lo0, hi0] = edge[i], [l1, h1, lo1, hi1] = edge[i + 1];
+        if (hi0 - lo0 > 1e-3) g.tri(l0[0], y, l0[1], h0[0], y, h0[1], h1[0], y, h1[1], col);
+        if (hi1 - lo1 > 1e-3) g.tri(l0[0], y, l0[1], h1[0], y, h1[1], l1[0], y, l1[1], col);
+        // The skirts: down from both edges, facing out (away from the other edge).
+        for (const [a, b, o] of [[l0, l1, h0], [h0, h1, l0]] as const) {
+          const fx = (a[0] + b[0]) / 2 - o[0], fz = (a[1] + b[1]) / 2 - o[1];
+          if (Math.hypot(fx, fz) < 1e-3) continue;
+          g.tri(a[0], y, a[1], b[0], y, b[1], b[0], y - 0.14, b[1], sk, [fx, 0, fz]);
+          g.tri(a[0], y, a[1], b[0], y - 0.14, b[1], a[0], y - 0.14, a[1], sk, [fx, 0, fz]);
         }
+      }
+      // And across its ends, where it has width there.
+      for (const [i, j] of [[0, 1], [edge.length - 1, edge.length - 2]]) {
+        const [l, h, lo, hi] = edge[i], o = edge[j][0];
+        if (hi - lo < 1e-3) continue;
+        const fx = (l[0] + h[0]) / 2 - o[0], fz = (l[1] + h[1]) / 2 - o[1];
+        g.tri(l[0], y, l[1], h[0], y, h[1], h[0], y - 0.14, h[1], sk, [fx, 0, fz]);
+        g.tri(l[0], y, l[1], h[0], y - 0.14, h[1], l[0], y - 0.14, l[1], sk, [fx, 0, fz]);
       }
     }
   }
@@ -1132,23 +1129,23 @@ export class CountryWorld {
         // The apron lane beside the road, the store and canopy beyond it, Ryder trucks in the lot.
         // (Its apron and lots, and the drives off the road at either end: piecePaving.)
         this.pave(g, p);
-        for (let a = S - 100; a < S + 140; a += 6) this.rbox(g, a + 3, 17.6, 0.015, 3, 0.02, 0.14, CW.white);   // the apron's lane line
-        this.rbox(s, S + 70, 38, 2.6, 22, 5.2, 10, 0xe8e2d6); this.rbox(s, S + 70, 32.9, 2.0, 21, 4, 0.1, 0x2a3440);
-        this.rbox(s, S + 70, 38, 5.5, 22.6, 0.6, 10.6, CW.ryder);
+        for (let a = S - 100; a < S + 140; a += 6) this.rbox(g, a + 3, 24.6, 0.015, 3, 0.02, 0.14, CW.white);   // the apron's lane line
+        this.rbox(s, S + 70, 45, 2.6, 22, 5.2, 10, 0xe8e2d6); this.rbox(s, S + 70, 39.9, 2.0, 21, 4, 0.1, 0x2a3440);
+        this.rbox(s, S + 70, 45, 5.5, 22.6, 0.6, 10.6, CW.ryder);
         const uv = this.slot("RYDER TRUCK STOP", { bg: "#ce1126", fg: "#ffffff", logo: true });
-        if (uv) { const [x, z, h] = this.L(S + 70, 32.6); this.quads.push({ x, y: 5.5, z, w: 9.6, h: 1.2, rotY: Math.atan2(-Math.sin(h), -Math.cos(h)), ...uv }); }
+        if (uv) { const [x, z, h] = this.L(S + 70, 39.6); this.quads.push({ x, y: 5.5, z, w: 9.6, h: 1.2, rotY: Math.atan2(-Math.sin(h), -Math.cos(h)), ...uv }); }
         // The tall sign at the road, readable from the approach.
-        this.rbox(s, S - 59.24, 20, 7, 0.6, 14, 0.6, 0x5a5f66);   // behind the board
-        this.rbox(s, S - 59.7, 20, 14.2, 0.3, 2.2, 9.4, CW.ryder);
+        this.rbox(s, S - 59.24, TS_SIGN_N, 7, 0.6, 14, 0.6, 0x5a5f66);   // behind the board
+        this.rbox(s, S - 59.7, TS_SIGN_N, 14.2, 0.3, 2.2, 9.4, CW.ryder);
         const uv2 = this.slot("RYDER TRUCK STOP", { bg: "#ce1126", fg: "#ffffff", logo: true });
         if (uv2) this.signAt(pieceSigns(p)[0], uv2);
         // Canopy and pumps.
-        for (const a of [S + 10, S + 30]) for (const n of [24, 34]) this.rbox(s, a, n, 2.6, 0.4, 5.2, 0.4, 0xdedbd0);
-        this.rbox(s, S + 20, 29, 5.4, 26, 0.6, 14, 0xf2f2ee); this.rbox(s, S + 20, 29, 5.0, 26, 0.3, 14.2, CW.ryder);
-        for (const a of [S + 14, S + 26]) this.rbox(s, a, 29, 0.8, 1.0, 1.6, 0.8, 0x5a5f66);
+        for (const a of [S + 10, S + 30]) for (const n of [31, 41]) this.rbox(s, a, n, 2.6, 0.4, 5.2, 0.4, 0xdedbd0);
+        this.rbox(s, S + 20, 36, 5.4, 26, 0.6, 14, 0xf2f2ee); this.rbox(s, S + 20, 36, 5.0, 26, 0.3, 14.2, CW.ryder);
+        for (const a of [S + 14, S + 26]) this.rbox(s, a, 36, 0.8, 1.0, 1.6, 0.8, 0x5a5f66);
         const stalls: StallPose[] = [];
         for (let k = 0; k < 3; k++) {
-          const [x, z, h] = this.L(S + 95 + k * 9, 52);
+          const [x, z, h] = this.L(S + 95 + k * 9, 59);
           stalls.push({ model: (["box26", "box16", "tractor"] as TruckModel[])[k], x, z, h: h + Math.PI / 2 });
         }
         this.fleetJobs.push({ stalls, y: this.pieceY });
@@ -1388,15 +1385,15 @@ export class CountryWorld {
         break;
       }
       case "gas": {
-        const n = side * 22;
+        const n = side * (FORECOURT + 6);
         this.pave(g, p);   // its forecourt, and the drives in and out at either end (piecePaving)
         this.rbox(s, S + 40, n, 4.6, 20, 0.5, 10, 0xf2f2ee); this.rbox(s, S + 40, n, 4.3, 20.2, 0.3, 10.2, 0x1f6fb2);
         for (const a of [-7, 7]) this.rbox(s, S + 40 + a, n, 2.2, 0.4, 4.4, 0.4, 0xdedbd0);
         for (const a of [-4, 4]) this.rbox(s, S + 40 + a, n, 0.75, 0.8, 1.5, 0.6, 0xc0392b);
-        this.rbox(s, S + 75, side * 30, 2.2, 14, 4.4, 8, 0xe8e2d6); this.rbox(s, S + 75, side * 25.95, 1.8, 10, 2.4, 0.1, 0x2a3440);
+        this.rbox(s, S + 75, side * (FORECOURT + 14), 2.2, 14, 4.4, 8, 0xe8e2d6); this.rbox(s, S + 75, side * (FORECOURT + 9.95), 1.8, 10, 2.4, 0.1, 0x2a3440);
         const uv = this.slot(`GAS  $${(3 + p.variant * 0.17 + 0.29).toFixed(2)}`, { bg: "#1f6fb2", fg: "#ffffff", logo: false });
-        this.rbox(s, S + GAS_SIGN + 0.39, side * 7.4, 3.5, 0.3, 7, 0.3, 0x5a5f66);   // behind the board, on the island between the drives
-        this.rbox(s, S + GAS_SIGN + 0.1, side * 7.4, 7.2, 0.25, 1.4, 4.8, 0x1f6fb2);
+        this.rbox(s, S + GAS_SIGN + 0.39, side * GAS_SIGN_N, 3.5, 0.3, 7, 0.3, 0x5a5f66);   // behind the board, on the island between the drives
+        this.rbox(s, S + GAS_SIGN + 0.1, side * GAS_SIGN_N, 7.2, 0.25, 1.4, 4.8, 0x1f6fb2);
         if (uv) this.signAt(pieceSigns(p)[0], uv);
         break;
       }

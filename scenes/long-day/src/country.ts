@@ -37,62 +37,114 @@ export function pieceSigns(p: RoadPiece): RoadSign[] {
   switch (p.kind) {
     case "leave": case "distance": case "welcome": return [{ s: S, n: p.n ?? 11, y: 5.2, w: 12.8, h: 1.6 }];
     case "billboards": return [0, 1, 2].map((k) => ({ s: S + 30 + k * 110 - 0.05, n: (k % 2 ? -1 : 1) * 22, y: 9.0, w: 14.6, h: 5.0, billboard: true }));
-    case "truckstop": return [{ s: S - 60, n: 20, y: 14.2, w: 9.0, h: 1.1 }];
+    case "truckstop": return [{ s: S - 60, n: TS_SIGN_N, y: 14.2, w: 9.0, h: 1.1 }];
     case "construction": return [{ s: S, n: 9, y: 2.6, w: 5.2, h: 0.7 }];
     case "attraction": return [{ s: S, n: side * 15, y: 3.2, w: 6.8, h: 0.85 }];
     case "weigh": return [{ s: S - 80, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
     case "ferry": return [{ s: S - 150, n: 10, y: 4.0, w: 8.4, h: 1.05 }];
     case "cattle": return [{ s: S - 150, n: 9, y: 2.9, w: 4.4, h: 0.62 }];
     case "fruit": return [{ s: S, n: side * 9.5, y: 1.6, w: 4.0, h: 0.5 }];
-    case "gas": return [{ s: S + GAS_SIGN, n: side * 7.4, y: 7.2, w: 4.6, h: 0.6 }];
+    case "gas": return [{ s: S + GAS_SIGN, n: side * GAS_SIGN_N, y: 7.2, w: 4.6, h: 0.6 }];
     // A freeway's signs (freeway.ts draws them): its entrance sign by the highway, and the
     // plates over its lanes on the gantries ahead of the exit and where its lane opens.
     case "fwsign": return [p.variant === 0 ? { s: S, n: p.n ?? 8.8, y: 3.55, w: 5.6, h: 0.7 } : { s: S, n: p.n ?? 0, y: FW_TOP + 6.35, w: 6.4, h: 0.8 }];
     default: return [];
   }
 }
-// A roadside business's paving, in road coordinates (n to the right of the centre line): its lot,
-// and the drives that take it off the road and back on, each a convex polygon at a height above
-// the piece's ground. Every lot is reached from the road through its drives: a drive starts at the
-// asphalt's edge (PAVE_EDGE, just inside it, over the shoulder) and meets its lot along a shared
-// edge. Gas stations and truck stops have a tapered entrance at one end and an exit at the other
-// (the same both ways, so either side of the road reads right), a grass island between them and
-// the road; a fruit stand pulls in onto a wide gravel shoulder in front of it; an attraction has a
-// car park, a drive straight in off the road. countryworld.ts lays them; the test checks them.
+// A roadside business's paving, in road coordinates: its lot, and the drives that take it off the
+// road and back on. Each is a band along the road: at each of its stations `s` it runs across from
+// `lo` to `hi` metres out from the centre line, on the piece's side (`side`), linearly between
+// stations; its top `top` above the piece's ground. Every lot is reached from the road through its
+// drives: a drive starts at the asphalt's edge (PAVE_EDGE, just inside it, over the shoulder) and
+// meets its lot along a shared edge.
+// A gas station or a truck stop has a slip lane at each end, the same both ways so either side of
+// the road reads right: it peels off the road's edge in a long smooth taper to a lane's width,
+// runs along beside the road, and its inner edge swings out in an easy S onto the lot, leaving a
+// grass island between the lot and the road. A fruit stand pulls in onto a gravel shoulder in
+// front of it; an attraction has a car park and a drive straight in off the road.
+// countryworld.ts lays them; the test checks them.
 export const PAVE_EDGE = 4.0;
-export const GAS_SIGN = 30;   // a gas station's price sign, on the island between its drives, from its s
+export const GAS_SIGN = 55, GAS_SIGN_N = 10;   // a gas station's price sign, on the island between its drives (from its s, out)
+export const TS_SIGN_N = 27;   // the truck stop's tall sign, just past its apron
 export type PaveKind = "drive" | "lot" | "apron" | "gravel";
-export interface RoadPave { kind: PaveKind; pts: [number, number][]; top: number }
+export interface RoadPave { kind: PaveKind; top: number; side: 1 | -1; s: number[]; lo: number[]; hi: number[] }
+const BAY_STEP = 2;   // a slip lane's stations along its curves
+const slipEase = (u: number) => { const x = Math.min(1, Math.max(0, u)); return x * x * x * (x * (6 * x - 15) + 10); };   // (smootherstep: flat at both ends)
+// A slip lane onto a lot's front (n = N) whose near corner is at s = c, the lot lying beyond it in
+// direction `dir` (+1: the lot starts at c and runs on; -1: it ends at c): a lane BAY_W wide that
+// tapers off the road's edge, runs along beside it, and swings out in an easy S (its centre line
+// on a smootherstep over BAY_CURVE) to come onto the lot just past the corner, its width kept
+// square to its own heading through the curve.
+export const BAY_W = 5, BAY_TAPER = 34, BAY_RUN = 16, BAY_CURVE = 64;
+function slipLane(c: number, dir: 1 | -1, N: number, side: 1 | -1, S: number): RoadPave {
+  const E = PAVE_EDGE, W = BAY_W, n0 = E + W / 2, n1 = N + W / 2, dn = n1 - n0;
+  // (Across the road, the lane's edges at d along the curve from its start.)
+  const edges = (d: number): [number, number] => {
+    const u = Math.min(1, Math.max(0, d / BAY_CURVE)), x = u;
+    const nc = n0 + dn * slipEase(u), slope = dn / BAY_CURVE * 30 * x * x * (1 - x) * (1 - x);
+    const hw = W / 2 * Math.hypot(1, slope);
+    return [nc - hw, nc + hw];
+  };
+  // The curve starts where its outer edge then reaches the lot's front at the corner.
+  let d0 = 0;
+  for (let d = 0; d <= BAY_CURVE; d += 0.05) if (edges(d)[1] >= N) { d0 = d; break; }
+  const start = -d0 - BAY_RUN - BAY_TAPER, end = BAY_CURVE - d0;
+  const s: number[] = [], lo: number[] = [], hi: number[] = [];
+  for (let d = start; d <= end + 1e-9; d += BAY_STEP) {
+    let a: number, b: number;
+    if (d < start + BAY_TAPER) { a = E; b = E + W * slipEase((d - start) / BAY_TAPER); }
+    else if (d < -d0) { a = E; b = E + W; }
+    else { [a, b] = edges(d + d0); a = Math.max(E, a); }
+    if (d > 0) b = Math.min(b, N);           // (the lot from the corner on)
+    a = Math.min(a, b);
+    s.push(S + c + dir * d); lo.push(a); hi.push(b);
+  }
+  if (dir < 0) { s.reverse(); lo.reverse(); hi.reverse(); }
+  return { kind: "drive", top: 0, side, s, lo, hi };
+}
+// Gas stations and truck stops stand back from the road, a grass island between, their slip lanes
+// curving across it: the front of the forecourt (or the truck stop's apron) is FORECOURT out.
+export const FORECOURT = 16;
 export function piecePaving(p: RoadPiece): RoadPave[] {
   const S = p.s, sd = p.side, E = PAVE_EDGE;
-  const poly = (kind: PaveKind, top: number, pts: [number, number][]): RoadPave => ({ kind, top, pts: pts.map(([a, n]) => [S + a, sd * n] as [number, number]) });
-  const rect = (kind: PaveKind, top: number, a0: number, a1: number, n0: number, n1: number) => poly(kind, top, [[a0, n0], [a1, n0], [a1, n1], [a0, n1]]);
+  const band = (kind: PaveKind, top: number, st: [number, number, number][]): RoadPave =>
+    ({ kind, top, side: sd, s: st.map((q) => S + q[0]), lo: st.map((q) => q[1]), hi: st.map((q) => q[2]) });
+  const rect = (kind: PaveKind, top: number, a0: number, a1: number, n0: number, n1: number) => band(kind, top, [[a0, n0, n1], [a1, n0, n1]]);
   switch (p.kind) {
     case "gas": return [
-      rect("lot", 0.005, 0, p.len, 9, 27),
-      poly("drive", 0, [[-28, E], [16, E], [16, 9], [4, 9]]),                    // in (or out, from the far side)
-      poly("drive", 0, [[p.len - 16, E], [p.len + 28, E], [p.len - 4, 9], [p.len - 16, 9]]),
+      rect("lot", 0.005, 0, p.len, FORECOURT, FORECOURT + 18),
+      slipLane(0, 1, FORECOURT, sd, S),             // in (or out, from the far side)
+      slipLane(p.len, -1, FORECOURT, sd, S),
     ];
     case "truckstop": return [
-      rect("apron", 0.01, -120, 150, 9, 18),
-      rect("lot", 0.005, -40, 120, 18, 43),
-      rect("lot", 0.005, 85, 130, 43, 63),                                      // the rental trucks' lot
-      poly("drive", 0, [[-160, E], [-108, E], [-108, 9], [-120, 9]]),
-      poly("drive", 0, [[138, E], [182, E], [150, 9], [138, 9]]),
+      rect("apron", 0.01, -120, 150, FORECOURT, FORECOURT + 9),
+      rect("lot", 0.005, -40, 120, FORECOURT + 9, FORECOURT + 34),
+      rect("lot", 0.005, 85, 130, FORECOURT + 34, FORECOURT + 54),   // the rental trucks' lot
+      slipLane(-120, 1, FORECOURT, sd, S),
+      slipLane(150, -1, FORECOURT, sd, S),
     ];
-    case "fruit": return [poly("gravel", 0, [[12, E], [68, E], [58, 10.6], [22, 10.6]])];
+    case "fruit": return [band("gravel", 0, [[12, E, E], [22, E, 10.6], [58, E, 10.6], [68, E, E]])];
     case "attraction": return [
       rect("lot", 0.005, 22, 78, 18, 31),
-      poly("drive", 0, [[36, E], [64, E], [56, 9], [44, 9]]),
+      band("drive", 0, [[36, E, E], [44, E, 9], [56, E, 9], [64, E, E]]),
       rect("drive", 0, 44, 56, 9, 18),
     ];
     default: return [];
   }
 }
+// A band's extent across the road at s (null off its ends), its edges as distances out.
+export function paveAt(v: RoadPave, s: number): [number, number] | null {
+  const S = v.s;
+  if (s < S[0] - 1e-9 || s > S[S.length - 1] + 1e-9) return null;
+  let i = 0;
+  while (i < S.length - 2 && s > S[i + 1]) i++;
+  const u = S[i + 1] > S[i] ? Math.min(1, Math.max(0, (s - S[i]) / (S[i + 1] - S[i]))) : 0;
+  return [v.lo[i] + (v.lo[i + 1] - v.lo[i]) * u, v.hi[i] + (v.hi[i + 1] - v.hi[i]) * u];
+}
 // The stretch of road a piece takes up, its drives and signs included (pieces keep apart by these).
 export function pieceSpan(p: RoadPiece): [number, number] {
   let a = p.s, b = p.s + p.len;
-  for (const v of piecePaving(p)) for (const [s] of v.pts) { a = Math.min(a, s); b = Math.max(b, s); }
+  for (const v of piecePaving(p)) { a = Math.min(a, v.s[0]); b = Math.max(b, v.s[v.s.length - 1]); }
   for (const g of pieceSigns(p)) { a = Math.min(a, g.s - 1); b = Math.max(b, g.s + 1); }
   return [a, b];
 }
@@ -147,7 +199,7 @@ export interface FerryPlan { s: number; booth: number; q0: number; q1: number; b
 
 const ROAD_DS = 2;               // geometry sample spacing (m)
 export const LANE = 1.85;               // right lane centre from the centre line
-const APRON = 13;                // the truck stop's parking lane, from the centre line
+const APRON = 20.5;              // the truck stop's parking lane, from the centre line (FORECOURT + 4.5)
 const SWAP_AHEAD = 15;           // the spare waits this far ahead of where the truck stops
 const COUNTRY_VMAX = 22, COUNTRY_ACCEL = 1.0, COUNTRY_BRAKE = 1.4, ZONE_V = 12;
 const RAIL_DWELL = 24;
@@ -961,9 +1013,9 @@ export class CountryRoad {
       const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome";
       if (!stop && !isSign && hash2(i, Math.floor(p.s), this.inp.seed, 0x5a0) > 0.7) continue;
       const F: Record<PieceKind, [number, number, number]> = {
-        leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 38, 2],
+        leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
-        weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 22, 3],
+        weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 29, 3],
         tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0], cattle: [0, 0, 0], tractor: [0, 0, 0],
       };
       if (p.kind === "bridge") continue;   // its trusses hide the truck from any roadside spot; the chase shots show it
