@@ -99,6 +99,7 @@ function slipLane(c: number, dir: 1 | -1, N: number, side: 1 | -1, S: number): R
     a = Math.min(a, b);
     s.push(S + c + dir * d); lo.push(a); hi.push(b);
   }
+  if (lo[lo.length - 1] < N) { s.push(S + c + dir * end); lo.push(N); hi.push(N); }   // (closed onto the lot at its very end)
   if (dir < 0) { s.reverse(); lo.reverse(); hi.reverse(); }
   return { kind: "drive", top: 0, side, s, lo, hi };
 }
@@ -141,10 +142,16 @@ export function paveAt(v: RoadPave, s: number): [number, number] | null {
   const u = S[i + 1] > S[i] ? Math.min(1, Math.max(0, (s - S[i]) / (S[i + 1] - S[i]))) : 0;
   return [v.lo[i] + (v.lo[i + 1] - v.lo[i]) * u, v.hi[i] + (v.hi[i + 1] - v.hi[i]) * u];
 }
-// The stretch of road a piece takes up, its drives and signs included (pieces keep apart by these).
-export function pieceSpan(p: RoadPiece): [number, number] {
+// The stretch of road a piece's ground takes up: its own, and its paving's (the land is levelled
+// and kept clear of scenery over this).
+export function pieceGround(p: RoadPiece): [number, number] {
   let a = p.s, b = p.s + p.len;
   for (const v of piecePaving(p)) { a = Math.min(a, v.s[0]); b = Math.max(b, v.s[v.s.length - 1]); }
+  return [a, b];
+}
+// The stretch of road a piece takes up, its drives and signs included (pieces keep apart by these).
+export function pieceSpan(p: RoadPiece): [number, number] {
+  let [a, b] = pieceGround(p);
   for (const g of pieceSigns(p)) { a = Math.min(a, g.s - 1); b = Math.max(b, g.s + 1); }
   return [a, b];
 }
@@ -494,18 +501,18 @@ export class CountryRoad {
     // exactly at the last city's level (a whole number of hills fits between). The land beside
     // the road has hills of its own (groundAt), likewise level around the pieces.
     this.Y = new Float64Array(n); this.SM = new Float64Array(n); this.PM = new Float64Array(n);
-    const U = new Float64Array(n);
+    const U = new Float64Array(n), grounds = this.pieces.map((p) => this.groundOf(p));
     let u = 0;
     for (let i = 0; i < n; i++) {
       const s = i * ROAD_DS;
       let m = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / HILL_EASE, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - (inp.toFreeway ? FW_FLAT_IN : STRAIGHT_IN) - s) / HILL_EASE, 0, 1));
-      for (const p of this.pieces) {
-        const d = Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0);
+      for (const [g0, g1] of grounds) {
+        const d = Math.max(g0 - HILL_FLAT - s, s - (g1 + HILL_FLAT), 0);
         m = Math.min(m, smooth(Math.min(1, d / HILL_EASE)));
       }
       if (this.nearFreeways) { this.center(s, this.tmpF); m = Math.min(m, smooth(Math.min(1, Math.max(0, this.fwDist(this.tmpF.x, this.tmpF.z) - 40) / HILL_EASE))); }
       let pm = 1;
-      for (const p of this.pieces) pm = Math.min(pm, smooth(Math.min(1, Math.max(p.s - HILL_FLAT - s, s - (p.s + p.len + HILL_FLAT), 0) / HILL_EASE)));
+      for (const [g0, g1] of grounds) pm = Math.min(pm, smooth(Math.min(1, Math.max(g0 - HILL_FLAT - s, s - (g1 + HILL_FLAT), 0) / HILL_EASE)));
       U[i] = u; this.SM[i] = m; this.PM[i] = pm; u += m * ROAD_DS;
     }
     const Ut = u, hilly = 0.45 + 0.75 * h(86);
@@ -533,8 +540,8 @@ export class CountryRoad {
         // (A set piece on the way down holds level: down at the bottom with the freeway.)
         for (let more = true; more;) {
           more = false;
-          for (const p of this.pieces) {
-            const i0 = Math.max(0, Math.floor((p.s - HILL_FLAT) / ROAD_DS)), i1 = Math.min(n - 1, Math.ceil((p.s + p.len + HILL_FLAT) / ROAD_DS));
+          for (const [g0, g1] of grounds) {
+            const i0 = Math.max(0, Math.floor((g0 - HILL_FLAT) / ROAD_DS)), i1 = Math.min(n - 1, Math.ceil((g1 + HILL_FLAT) / ROAD_DS));
             let lo = Infinity, hi = 0; for (let i = i0; i <= i1; i++) { lo = Math.min(lo, along[i]); hi = Math.max(hi, along[i]); }
             if (lo < 800 && hi > 0) { for (let i = i0; i <= i1; i++) along[i] = 0; more = true; }
           }
@@ -1015,7 +1022,7 @@ export class CountryRoad {
       const F: Record<PieceKind, [number, number, number]> = {
         leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
-        weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * 29, 3],
+        weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * (FORECOURT + 6), 3],
         tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0], cattle: [0, 0, 0], tractor: [0, 0, 0],
       };
       if (p.kind === "bridge") continue;   // its trusses hide the truck from any roadside spot; the chase shots show it
@@ -1084,6 +1091,9 @@ export class CountryRoad {
     }
     return null;
   }
+  // A piece's ground (pieceGround), once.
+  private grounds = new WeakMap<RoadPiece, [number, number]>();
+  private groundOf(p: RoadPiece) { let g = this.grounds.get(p); if (!g) this.grounds.set(p, g = pieceGround(p)); return g; }
   // Is (s, n) clear of the road furniture and set pieces (for scenery)?
   clearAt(s: number, n: number) {
     if (Math.abs(n) < 11) return false;
@@ -1091,7 +1101,8 @@ export class CountryRoad {
     if (this.inp.toFreeway) { this.point(s, n, this.tmpQ); if (this.freewayFrame!.corridor(this.tmpQ.x, this.tmpQ.z)) return false; }   // under the freeway and its on-ramp
     if (this.fromFreewayFrame) { this.point(s, n, this.tmpQ); if (this.fwDist(this.tmpQ.x, this.tmpQ.z) < 11.5) return false; }   // (and the city's it leaves)
     for (const p of this.pieces) {
-      if (s < p.s - 40 || s > p.s + p.len + 40) continue;
+      const [g0, g1] = this.groundOf(p);
+      if (s < g0 - 40 || s > g1 + 40) continue;
       if (p.kind === "rail" || p.kind === "bridge") return false;
       if (p.kind === "tunnel" || p.kind === "overpass") { if (Math.abs(n) < (p.kind === "tunnel" ? 18 : 80)) return false; continue; }
       if (Math.sign(n) === p.side && Math.abs(n) < 75) return false;
