@@ -26,6 +26,9 @@ function atlasTexture(image: CanvasImageSource): THREE.Texture {
   return tex;
 }
 
+// A number as a GLSL float literal (always with a point, never in exponent form).
+const glslFloat = (v: number) => { const t = v.toFixed(40).replace(/0+$/, ""); return t.endsWith(".") ? t + "0" : t; };
+
 // (No atlas until setFacadeAtlas gives it one, on the first frame.)
 export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -42,7 +45,7 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
       .replace("#include <color_fragment>", `
   // Gradients and samples are taken unconditionally: derivatives inside non-uniform control flow
   // are undefined in GLSL, and some GPUs return garbage there.
-  const float GRID = ${FACADE_GRID}.0;
+  const float GRID = ${glslFloat(FACADE_GRID)};
   vec2 tsz = vec2(1.0 / GRID);   // one tile, in texture coordinates
   vec2 gx = dFdx(vAux.xy) * tsz, gy = dFdy(vAux.xy) * tsz;
   float tileId = floor(max(vAux.z, 0.0) + 0.5); // interpolation can turn 8.0 into 7.9999
@@ -51,7 +54,7 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
   vec2 cell = vec2(mod(tileId, GRID), GRID - 1.0 - floor(tileId / GRID));
   // Keep half a texel inside the tile so filtering never picks up the neighbour; gradients come
   // from the unwrapped coordinates, so fract() seams don't drop to the smallest mip.
-  const float INSET = ${0.5 / FACADE_TILE};
+  const float INSET = ${glslFloat(0.5 / FACADE_TILE)};
   vec2 st = (cell + clamp(fract(vAux.xy), INSET, 1.0 - INSET)) * tsz;
   vec4 msk = textureGrad(uMask, st, gx, gy);
   vec4 fac = vec4(sRGBTransferEOTF(textureGrad(uFacade, st, gx, gy)).rgb, msk.r);

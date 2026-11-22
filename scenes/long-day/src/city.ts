@@ -1527,9 +1527,13 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
 // the street, near where a truck stopping on that side has its back. The chunk draws a door
 // there (entranceDoor), the driver walks to it (journey.ts DOOR_PROBE), and FrontDoorFx opens it.
 // Cached per block: a pure function of the city.
-// `plain`: a container's cargo doors (locking bars, no windows or light).
-export interface KerbDoor { side: number; a: number; n: number; x: number; z: number; nx: number; nz: number; frame: number; panel: number; half: number; h: number; plain: boolean; y?: number }   // (y: its sill, when not at the kerb's height)   // world centre of its foot, outward normal, colours, half width and height
+// `plain`: a container's cargo doors (locking bars, no windows or light). `wide`: a service door's
+// two leaves (set as it is made: a door widened over a painted one keeps its single leaf).
+export interface KerbDoor { side: number; a: number; n: number; x: number; z: number; nx: number; nz: number; frame: number; panel: number; half: number; h: number; plain: boolean; wide: boolean; y?: number }   // (y: its sill, when not at the kerb's height)   // world centre of its foot, outward normal, colours, half width and height
 const KERB_DOORS = new Map<string, (KerbDoor | null)[]>();
+// (Tests: when `out` is set, kerbDoors adds a line for each painted door it leaves showing beside a
+// real one. Only blocks worked out while it is set: the doors are cached.)
+export const DOOR_CLASHES: { out: string[] | null } = { out: null };
 let kerbDoorsSeed = NaN;
 const DOOR_PROBE_MAT = new THREE.MeshBasicMaterial();
 // The probe's rays, all level: the same test three.js's raycaster makes against a front-side mesh
@@ -1624,7 +1628,7 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   if (fac && site.kind === "garage") {
     // On the roof: the stair tower's door, beside the lane where trucks stop.
     const [a0, n] = GARAGE_DOOR, a = a0 + plan.siteDelta(bx, bz), P = fp(site.side, a, n), [nx, nz] = outward(site.side, a), out = none.slice();
-    out[site.side] = { side: site.side, a, n, x: P.x, z: P.z, nx, nz, frame: 0xf2efe8, panel: 0x23365e, half: DOOR_HALF, h: DOOR_H, plain: false, y: GARAGE_H };
+    out[site.side] = { side: site.side, a, n, x: P.x, z: P.z, nx, nz, frame: 0xf2efe8, panel: 0x23365e, half: DOOR_HALF, h: DOOR_H, plain: false, wide: false, y: GARAGE_H };
     KERB_DOORS.set(key, out); return out;
   }
   if (!fac || (site.kind !== "kerb" && site.kind !== "stand")) { KERB_DOORS.set(key, none); return none; }
@@ -1641,7 +1645,7 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
     const P = fp(side, a, n), [nx, nz] = outward(side, a);
     const r = (salt: number) => hash2(bx * 7 + side, bz, plan.seed, salt);
     return { side, a, n, x: P.x, z: P.z, nx, nz,
-      frame: [0xf2efe8, 0x2a2b2e, 0x5b4636][Math.floor(r(1) * 3)], panel: [0x7a2b22, 0x23365e, 0x2e5a3a, 0x5b4636, 0xd8d2c4, 0x3a3c40][Math.floor(r(2) * 6)], half, h: dh, plain: false };
+      frame: [0xf2efe8, 0x2a2b2e, 0x5b4636][Math.floor(r(1) * 3)], panel: [0x7a2b22, 0x23365e, 0x2e5a3a, 0x5b4636, 0xd8d2c4, 0x3a3c40][Math.floor(r(2) * 6)], half, h: dh, plain: false, wide: half > DOOR_HALF };
   };
   // Where the truck's back is, stopped centred on a side.
   const back = (side: number) => (G.faceA0(blk.sides[side]) + G.faceA1(blk.sides[side])) / 2 - 5;
@@ -1651,14 +1655,17 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
     if (cur && Math.abs(a - back(side)) >= Math.abs(cur.a - back(side))) continue;
     const dd = out[side] = door(side, a, spots[i + 2]), [, , , h, hf, panel, frame, plain] = spots.slice(i, i + SPOT);
     if (h) dd.h = h;
-    if (hf) dd.half = hf;
+    if (hf) { dd.half = hf; dd.wide = hf > DOOR_HALF; }
     if (panel >= 0) dd.panel = panel;
     if (frame >= 0) dd.frame = frame;
     dd.plain = plain > 0;
   }
+  // The walls the tile's facades paint a door on (overPaintedDoor), taken before the probe's mesh
+  // takes the batch.
+  const walls = paintedDoorWalls(built.solid.view());
   // Elsewhere, look for a wall to put one in (a park has none).
-  const mesh = built.solid.build(DOOR_PROBE_MAT);
-  if (mesh && site.kind === "kerb" && out.some((d) => !d)) {
+  const mesh = site.kind === "kerb" && out.some((d) => !d) ? built.solid.build(DOOR_PROBE_MAT) : null;
+  if (mesh) {
     const probe = new LevelProbe(mesh.geometry.getAttribute("position").array, 24), o = new THREE.Vector3(), dir = new THREE.Vector3();
     // (In the tile's coordinates, as the probe mesh is.)
     const lp = (side: number, a: number, n: number): [number, number] => { const P = fp(side, a, n); return [P.x - ox, P.z - oz]; };
@@ -1712,38 +1719,71 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
         break;
       }
     }
-  }
-  if (mesh) {
-    for (let side = 0; side < out.length; side++) { const d = out[side]; if (d && !d.plain) out[side] = overPaintedDoor(mesh.geometry, d, fp, ox, oz); }
     mesh.geometry.dispose();
+  }
+  for (let side = 0; side < out.length; side++) { const d = out[side]; if (d && !d.plain) out[side] = overPaintedDoor(walls, d, fp, ox, oz); }
+  // (Tests: a painted door left within a metre of a door it doesn't cover. A wide door can't
+  // cover the next shop's door 3.4 m on, and doesn't try.)
+  if (DOOR_CLASHES.out) for (const d of out) {
+    if (!d || d.plain || d.wide) continue;
+    const F = d.half + 0.1;
+    for (const p of paintedDoorsAlong(walls, d, fp, ox, oz)) {
+      if (p.l >= -F - 0.01 && p.r <= F + 0.01) continue;
+      const gap = Math.max(-F - p.r, p.l - F);
+      if (gap < 1) DOOR_CLASHES.out.push(`block ${bx},${bz} side ${d.side}: a painted door ${gap.toFixed(2)} m from the real one at a=${d.a.toFixed(2)}`);
+    }
   }
   KERB_DOORS.set(key, out);
   return out;
 }
-// A door the facade paints where the real one goes (a house's front door, a shop's, a lobby's:
-// PAINTED_DOORS) would show beside or behind it. Find the nearest on the same wall's ground floor
-// (in `geo`, the block's walls in its tile's coordinates, origin (ox, oz) in the world) within
-// REACH of the real door, and move the real door over it, big enough to hide it: kept inside the
-// painted door's bay where it fits, so it covers no more of the next bay's window than it must.
-// (How far beyond the real door's frame a painted one still reads as a second door beside it.)
-const REACH = 1.5;
-function overPaintedDoor(geo: THREE.BufferGeometry, d: KerbDoor, fp: (side: number, a: number, n: number) => { x: number; z: number }, ox: number, oz: number): KerbDoor {
-  const auxA = geo.getAttribute("aAux"), pos = geo.getAttribute("position").array, aux = auxA?.array;
-  if (!aux) return d;
-  const P0 = fp(d.side, d.a, d.n), P1 = fp(d.side, d.a + 1, d.n), cx = P0.x - ox, cz = P0.z - oz;
-  const tl = Math.hypot(P1.x - P0.x, P1.z - P0.z) || 1, tx = (P1.x - P0.x) / tl, tz = (P1.z - P0.z) / tl;
-  const along = (x: number, z: number) => (x - cx) * tx + (z - cz) * tz;
-  const sill = d.y ?? CURB_H, F = d.half + 0.1;   // (F: the frame's half width)
-  let best: { l: number; r: number; top: number; b0: number; b1: number } | null = null;
+// The wall quads in a batch's vertices whose tile paints a door (PAINTED_DOORS): corners (a, b) in
+// plan, foot ay and top y1, and its tile coordinates u0..u1 across, v0..v1 up.
+interface DoorWall { ax: number; ay: number; az: number; bx: number; bz: number; y1: number; u0: number; u1: number; v0: number; v1: number; pd: readonly [number, number, number] }
+function paintedDoorWalls(v: ReturnType<Batch["view"]>): DoorWall[] {
+  const { pos, aux, count } = v, out: DoorWall[] = [];
+  if (!aux) return out;
   // (A wall is six vertices, the first three its corners (0,0), (1,0), (1,1); primitives' aux.z < 0.)
-  for (let i = 0; i < auxA.count;) {
+  for (let i = 0; i < count;) {
     const k = i * 3, tile = aux[k + 2];
     if (tile < 0) { i++; continue; }
     i += 6;
     const pd = PAINTED_DOORS[tile % 16];
-    if (!pd) continue;
-    const ax = pos[k], ay = pos[k + 1], az = pos[k + 2], bx = pos[k + 3], bz = pos[k + 5], y1 = pos[k + 7];
-    const u0 = aux[k], u1 = aux[k + 3], v0 = aux[k + 1], v1 = aux[k + 7];
+    if (pd) out.push({ ax: pos[k], ay: pos[k + 1], az: pos[k + 2], bx: pos[k + 3], bz: pos[k + 5], y1: pos[k + 7], u0: aux[k], u1: aux[k + 3], v0: aux[k + 1], v1: aux[k + 7], pd });
+  }
+  return out;
+}
+// A door the facade paints where the real one goes (a house's front door, a shop's, a lobby's:
+// PAINTED_DOORS) would show beside or behind it. Find the nearest on the same wall's ground floor
+// (in `walls`, in the block's tile's coordinates, origin (ox, oz) in the world) within REACH of
+// the real door, and move the real door over it, big enough to hide it: kept inside the
+// painted door's bay where it fits, so it covers no more of the next bay's window than it must.
+// (How far beyond the real door's frame a painted one still reads as a second door beside it.)
+const REACH = 1.5;
+function overPaintedDoor(walls: DoorWall[], d: KerbDoor, fp: FacePt, ox: number, oz: number): KerbDoor {
+  const sill = d.y ?? CURB_H, F = d.half + 0.1;   // (F: the frame's half width)
+  let best: PaintedDoor | null = null;
+  for (const p of paintedDoorsAlong(walls, d, fp, ox, oz)) {
+    if (p.r < -F - REACH || p.l > F + REACH) continue;
+    if (!best || Math.abs(p.l + p.r) < Math.abs(best.l + best.r)) best = p;
+  }
+  if (!best) return d;
+  const { l, r, top, b0, b1 } = best, G = Math.max(F, (r - l) / 2 + 0.03), pc = (l + r) / 2;
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const lo = Math.max(r - G, b0 + G), hi = Math.min(l + G, b1 - G);
+  const c = lo <= hi ? clamp(pc, lo, hi) : clamp(pc, r - G, l + G);
+  const a = d.a + c, P = fp(d.side, a, d.n);
+  return { ...d, a, x: P.x, z: P.z, half: G - 0.1, h: Math.max(d.h, top - sill - 0.1) };
+}
+// The doors painted on the ground floor of door d's wall (in `walls`): each one's span l..r along
+// the frontage from d's middle, its bay's b0..b1, and the height of its top.
+type FacePt = (side: number, a: number, n: number) => { x: number; z: number };
+interface PaintedDoor { l: number; r: number; top: number; b0: number; b1: number }
+function paintedDoorsAlong(walls: DoorWall[], d: KerbDoor, fp: FacePt, ox: number, oz: number): PaintedDoor[] {
+  const P0 = fp(d.side, d.a, d.n), P1 = fp(d.side, d.a + 1, d.n), cx = P0.x - ox, cz = P0.z - oz;
+  const tl = Math.hypot(P1.x - P0.x, P1.z - P0.z) || 1, tx = (P1.x - P0.x) / tl, tz = (P1.z - P0.z) / tl;
+  const along = (x: number, z: number) => (x - cx) * tx + (z - cz) * tz;
+  const sill = d.y ?? CURB_H, out: PaintedDoor[] = [];
+  for (const { ax, ay, az, bx, bz, y1, u0, u1, v0, v1, pd } of walls) {
     const wx = bx - ax, wz = bz - az, wl = Math.hypot(wx, wz);
     if (wl < 0.01 || u1 <= u0 || v1 <= v0) continue;
     // Facing the street as the door does, in its plane, with a row of tiles at its sill.
@@ -1756,17 +1796,10 @@ function overPaintedDoor(geo: THREE.BufferGeometry, d: KerbDoor, fp: (side: numb
       const p0 = at(m + pd[0] / FACADE_TILE), p1 = at(m + pd[1] / FACADE_TILE), q0 = at(m), q1 = at(m + 1);
       const l = Math.min(p0, p1), r = Math.max(p0, p1);
       if (m + pd[1] / FACADE_TILE <= u0 || m + pd[0] / FACADE_TILE >= u1) continue;   // (the tile's door is off this piece of wall)
-      if (r < -F - REACH || l > F + REACH) continue;
-      if (!best || Math.abs(l + r) < Math.abs(best.l + best.r)) best = { l, r, top, b0: Math.min(q0, q1), b1: Math.max(q0, q1) };
+      out.push({ l, r, top, b0: Math.min(q0, q1), b1: Math.max(q0, q1) });
     }
   }
-  if (!best) return d;
-  const { l, r, top, b0, b1 } = best, G = Math.max(F, (r - l) / 2 + 0.03), pc = (l + r) / 2;
-  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-  const lo = Math.max(r - G, b0 + G), hi = Math.min(l + G, b1 - G);
-  const c = lo <= hi ? clamp(pc, lo, hi) : clamp(pc, r - G, l + G);
-  const a = d.a + c, P = fp(d.side, a, d.n);
-  return { ...d, a, x: P.x, z: P.z, half: G - 0.1, h: Math.max(d.h, top - sill - 0.1) };
+  return out;
 }
 // A builder's own door for a block side (frontage a, n: the wall's face, and a height when it
 // can't take the usual one), for kerbDoors.
@@ -1784,7 +1817,7 @@ const doorSpot = (side: number, a: number, n: number, o: SpotLook = {}) => {
 // A front door on the wall: frame, panel with a window, a step and a light over it. A wide service
 // door: two leaves with a window each, a flush sill for the forklift instead of the step.
 function entranceDoor(s: Batch, d: KerbDoor) {
-  const side = d.side, a = d.a, n = d.n, frame = d.frame, panel = d.panel, H = d.half, DH = d.h, wide = H > DOOR_HALF;
+  const side = d.side, a = d.a, n = d.n, frame = d.frame, panel = d.panel, H = d.half, DH = d.h, wide = d.wide;
   const y0 = CURB_H;
   fspan(s, side, a - H - 0.1, a + H + 0.1, y0, y0 + DH + 0.12, n - 0.06, n + 0.01, frame);
   fspan(s, side, a - H, a + H, y0, y0 + DH, n - 0.09, n - 0.05, panel);
@@ -1803,7 +1836,11 @@ function entranceDoor(s: Batch, d: KerbDoor) {
     fspan(s, side, a - H + 0.15, a + H - 0.15, y0 + 1.25, y0 + 1.9, n - 0.1, n - 0.09, 0x2a3644);   // window
     fspan(s, side, a - H - 0.25, a + H + 0.25, 0, y0 + 0.03, n - 0.5, n, 0x9d9a91);                 // step (above a garden path's top: shared planes flicker)
   }
-  fspan(s, side, a - 0.12, a + 0.12, y0 + DH + 0.3, y0 + DH + 0.45, n - 0.2, n, 0x2a2b2e);                 // light
+  // (Off a shop's awning, 3.3 to 3.42 m up, over a door made tall to hide a painted one: just
+  // under it where the door leaves room, else just over it.)
+  let ly = y0 + DH + 0.3;
+  if (ly + 0.15 > y0 + AWNING_Y && ly < y0 + AWNING_Y + AWNING_T) ly = y0 + (DH + 0.12 + 0.15 <= AWNING_Y ? AWNING_Y - 0.15 : AWNING_Y + AWNING_T + 0.02);
+  fspan(s, side, a - 0.12, a + 0.12, ly, ly + 0.15, n - 0.2, n, 0x2a2b2e);                                 // light
 }
 export const DOOR_HALF = 0.55, DOOR_H = 2.25, WIDE_DOOR_HALF = 1.2, WIDE_DOOR_H = 2.7;
 
@@ -2416,8 +2453,9 @@ function buildCommercial(g: Batch, s: Batch, B: Rect, rnd: Rand) {
   }
 }
 
+const AWNING_Y = 3.3, AWNING_T = 0.12;   // (above the kerb)
 function awning(s: Batch, b: Rect, side: number, color: number) {
-  const y = CURB_H + 3.3, dep = 1.3, t = 0.12;
+  const y = CURB_H + AWNING_Y, dep = 1.3, t = AWNING_T;
   if (side === 0) s.span(b.x0 + 0.6, y, b.z1, b.x1 - 0.6, y + t, b.z1 + dep, color);
   else if (side === 1) s.span(b.x1, y, b.z0 + 0.6, b.x1 + dep, y + t, b.z1 - 0.6, color);
   else if (side === 2) s.span(b.x0 + 0.6, y, b.z0 - dep, b.x1 - 0.6, y + t, b.z0, color);
@@ -2544,11 +2582,13 @@ function buildRowHouses(g: Batch, s: Batch, rnd: Rand) {
       a += w;
     }
     // A step at each painted door, as entranceDoor gives the real one (its half width from the
-    // painted frame's: PAINTED_DOORS), but not at the house whose door the driver uses (its own step).
-    const pd = PAINTED_DOORS[FACADE.DOOR]!;
+    // painted frame's: PAINTED_DOORS), but not at the house whose door the driver uses, on a block
+    // that has one (kerbDoors: a facility's, at a kerb or a stand), which has its own step.
+    const pd = PAINTED_DOORS[FACADE.DOOR]!, kind = siteLayout(DC.plan, DC.cx, DC.cz).kind;
+    const real = doorAt >= 0 && !!DC.fac && (kind === "kerb" || kind === "stand");
     for (let i = 0; i < stoops.length; i += 2) {
       const sa = stoops[i], hw = stoops[i + 1] * (pd[1] - pd[0]) / 2 / FACADE_TILE + 0.15;
-      if (doorAt < 0 || Math.abs(sa - doorAt) > 0.5) fspan(s, side, sa - hw, sa + hw, 0, CURB_H + 0.03, n0 - 0.5, n0, 0x9d9a91);
+      if (!real || Math.abs(sa - doorAt) > 0.5) fspan(s, side, sa - hw, sa + hw, 0, CURB_H + 0.03, n0 - 0.5, n0, 0x9d9a91);
     }
     if (doorAt >= 0) doorSpot(side, doorAt, n0);
   }

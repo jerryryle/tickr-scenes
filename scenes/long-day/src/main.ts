@@ -954,9 +954,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (DEBUG_SCRUBTEST) t = scrubTestTime(t);
       if (DEBUG_VIEW === "scrub") { const t2 = t < 6 ? t : t - 4; dt = t2 - scrubPrev; scrubPrev = t2; t = t2; }   // test renders: a scrub back
       if (!baked) {
-        captureCanvasClass(ctx); baked = true;
-        // Canvases exist now: paint the facade atlas (the city's buildings have none until then).
+        captureCanvasClass(ctx);
+        // Canvases exist now: paint the facade atlas (the city's buildings have none until then;
+        // a failure throws, every frame).
         setFacadeAtlas(mats.solid, paintFacadeAtlas());
+        baked = true;
       }
       const target = Math.max(0, base + t);
       // The presentation runs on fixed ticks of journey time (see step); a scrub, a long jump ahead

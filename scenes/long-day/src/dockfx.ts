@@ -5,7 +5,7 @@
 // the journey state, so a scrub shows the same thing.
 import * as THREE from "three@0.187.0";
 import { ease } from "./truck.ts";
-import { DOOR_H, DOOR_HALF, shade } from "./city.ts";
+import { DOOR_H, shade } from "./city.ts";
 import { CURB_H } from "./grid.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import type { DockDoor } from "./route.ts";
@@ -86,7 +86,7 @@ export class FrontDoorFx {
     }
     const show = !!d && open > 0.01;
     this.hole.visible = show;
-    const two = !!d && d.half > DOOR_HALF;
+    const two = !!d && d.wide;
     this.leaves[0].visible = show; this.leaves[1].visible = show && two;
     if (!d || !show) return;
     const tx = -d.nz, tz = d.nx, yaw = Math.atan2(-tz, tx), y0 = d.y ?? CURB_H, W = d.half * 2, H = d.h;   // t: along the wall

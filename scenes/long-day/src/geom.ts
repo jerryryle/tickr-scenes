@@ -202,6 +202,12 @@ export class Batch {
       N[o] = c * nx + s * nz; N[o + 2] = -s * nx + c * nz;
     }
   }
+  // The vertices written so far, in place: no copy, so read it before the batch is built or
+  // written to again. `aux` is null when no wall was written.
+  view(): { pos: Float32Array; aux: Float32Array | null; count: number } {
+    const k = this.n * 3;
+    return { pos: this.pos.subarray(0, k), aux: this.auxUsed ? this.auxArr.subarray(0, k) : null, count: this.n };
+  }
   build(material: THREE.Material): THREE.Mesh | null {
     if (this.n === 0) return null;
     const g = new THREE.BufferGeometry();
