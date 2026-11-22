@@ -1184,12 +1184,13 @@ export class Journey {
   // Whether the truck has honked, and traffic has had a moment to react: it clears the truck's way
   // (street life, traffic).
   get clearing() { return (this.st.jamT ?? 0) > JAM_HONK + JAM_REACT && (this.st.mode === "drive" || this.st.mode === "reverse"); }
-  // Whether its horn sounds now (drawn: truck.ts honk): held long enough, two short blasts every
-  // HONK_EVERY s (the first before traffic moves).
+  // How far into a blast of its horn it is now, in seconds, or -1 while it is silent (drawn:
+  // truck.ts honk): held long enough, two short blasts every HONK_EVERY s (the first before
+  // traffic moves).
   get honking() {
-    if ((this.st.jamT ?? 0) <= JAM_HONK || !this.st.jamHeld || (this.st.mode !== "drive" && this.st.mode !== "reverse")) return false;
+    if ((this.st.jamT ?? 0) <= JAM_HONK || !this.st.jamHeld || (this.st.mode !== "drive" && this.st.mode !== "reverse")) return -1;
     const u = (this.st.jamT! - JAM_HONK) % HONK_EVERY;
-    return u < 0.4 || (u > 0.6 && u < 1.2);
+    return u < 0.4 ? u : u > 0.6 && u < 1.2 ? u - 0.6 : -1;
   }
 
   // Backing into the bay, gently.

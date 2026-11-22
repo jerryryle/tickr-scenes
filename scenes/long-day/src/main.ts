@@ -943,11 +943,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       crew.update(0, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);
       truck.update(0);
       placeCamera(0);
-      // Compile what only appears later too (rain, snow, stars, the country road and its cars),
-      // so its first appearance doesn't stall a frame.
-      countryWorld.group.visible = true; atmosphere.prepare(true);
+      // Compile what only appears later too (rain, snow, stars, the country road and its cars, the
+      // horn: truck.ts honk), so its first appearance doesn't stall a frame.
+      countryWorld.group.visible = true; atmosphere.prepare(true); truck.honk(0);
       engine.precompile(); engine.renderer.compile(backdrop.scene, backdrop.camera);
-      countryWorld.group.visible = false; atmosphere.prepare(false);
+      countryWorld.group.visible = false; atmosphere.prepare(false); truck.honk(-1);
     },
     render(ctx, frame) {
       let { t, dt } = frame;

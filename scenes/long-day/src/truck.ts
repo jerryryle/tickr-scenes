@@ -61,6 +61,11 @@ export const PUFF_IDLE = { color: 0x8e8e90, size: 0.26, life: 1.2 }, PUFF_HARD =
 // Where a pipe's puffs leave it, in the truck's frame: just past its tip (PIPE_MOUTH), the pipe
 // running out under the bed, ahead of the rear wheels, to a tip just past the bed's side.
 export const PIPE_MOUTH = 0.03;
+const HORN_R0 = 0.3, HORN_LEN = 0.6, HORN_W = 0.16;   // m: the horn lines' start out from their fan's origin (past the truck), their length and width (honk)
+const FLATBED_LOAD_TOP = 3.3;   // m: as high as a flatbed's load stands above its deck (a box body's roof)
+// m: a day cab's side extenders, back from its cab's back, and its stacks behind the cab: how far
+// back, their radius, out to either side, and up to (buildTractorExtras; hornBoxes clears them)
+const EXTENDER_LEN = 0.25, STACK_BACK = 0.14, STACK_R = 0.075, STACK_Z = 1.0, STACK_TOP = 4.05;
 export function pipeMouth(s: TruckSpec): [number, number, number] {
   return [Math.max(...s.rearAxles) + s.wheelR + 0.5, 0.45, (s.cargo ? s.cargo.hw : s.cabHW) + 0.03 + PIPE_MOUTH];
 }
@@ -288,12 +293,12 @@ export class Truck {
     const s = this.spec, c = s.cargo;
     if (this.trailer) {
       this.cutBoxList = [
-        { obj: this.body, x0: -1.5, x1: this.frontX, y0: 0, y1: s.exhaust === "stack" ? 4.1 : s.cabTop, hw: s.cabHW },   // (up to the stacks' tops)
+        { obj: this.body, x0: -1.5, x1: this.frontX, y0: 0, y1: s.exhaust === "stack" ? STACK_TOP + 0.05 : s.cabTop, hw: s.cabHW },   // (up to the stacks' tops)
         { obj: this.trailer, x0: TRAILER.rear, x1: TRAILER.front, y0: 0, y1: TRAILER.top, hw: TRAILER.hw },
       ];
     } else {
       // (A flatbed's load stands above its deck: as high as a box body's roof.)
-      const top = Math.max(s.cabTop, c ? (c.kind === "flatbed" ? 3.3 : c.top) : 0);
+      const top = Math.max(s.cabTop, c ? (c.kind === "flatbed" ? FLATBED_LOAD_TOP : c.top) : 0);
       this.cutBoxList = [{ obj: this.body, x0: this.rearX, x1: this.frontX, y0: 0, y1: top, hw: Math.max(s.cabHW, c?.hw ?? 0) }];
     }
     return this.cutBoxList;
@@ -383,32 +388,101 @@ export class Truck {
     this.glass.dispose();
     this.tabletMat.map?.dispose(); this.tabletMat.dispose();
     this.strapMat.dispose();
+    this.horn?.traverse((o: any) => o.material?.dispose());
   }
 
-  // The horn (journey.ts honking): Tickr has no sound, so short pale yellow lines fan out from each
-  // front corner of the cab, as a cartoon's horn does, spreading as it sounds (thick: not taken
-  // for rain).
+  // The horn (journey.ts honking): Tickr has no sound, so a cartoon's horn lines burst out from
+  // the front corners of the cab with each blast, three short pale yellow strokes a side fanned
+  // out up, level and down. They are drawn flat to the camera (sprites, placed as each is drawn:
+  // hornFan, hornStroke), out across the picture from past the whole truck's outline, so they
+  // never cross the cab, its box or its trailer, and read the same from any angle. `blast`:
+  // seconds into the blast sounding, or -1.
   private horn: THREE.Group | null = null;
-  honk(on: boolean) {
-    if (!on) { if (this.horn) this.horn.visible = false; return; }
+  private hornBlast = 0;
+  honk(blast: number) {
+    if (blast < 0) { if (this.horn) this.horn.visible = false; return; }
     if (!this.horn) {
-      const s = this.spec, g = new THREE.Group(), mat = new THREE.MeshBasicMaterial({ color: 0xfff0a0, fog: false });
-      for (const sz of [-1, 1]) for (const a of [-0.45, 0, 0.45]) {
-        const yaw = sz * 0.6 + a * 0.9, m = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.13, 0.13), mat);
-        // (Each line points out from the corner, a little above, level with or below the last.)
-        m.userData = { ox: s.noseFront + 0.15, oy: s.hoodTop + 0.3 + a * 0.9, oz: sz * s.cabHW, dx: Math.cos(yaw), dz: Math.sin(yaw) };
-        m.rotation.set(0, -yaw, a * 0.9, "YXZ");
+      const g = new THREE.Group();
+      for (const sz of [-1, 1]) for (const k of [-1, 0, 1]) {
+        const m = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xfff0a0, fog: false, depthWrite: false }));
+        m.frustumCulled = false; m.userData = { sz, k }; m.geometry.userData.shared = true;   // (three's one sprite geometry: not this truck's to dispose)
+        m.onBeforeRender = (r, _s, cam) => this.hornStroke(m, r.info.render.frame, cam);
         g.add(m);
       }
       this.horn = g; this.body.add(g);
     }
-    this.horn.visible = true;
-    const u = (this.time * 2.5) % 1;   // (spreading out, over and over)
-    for (const m of this.horn.children) {
-      const d = m.userData, r = 0.6 + 0.7 * u;
-      m.position.set(d.ox + d.dx * r, d.oy, d.oz + d.dz * r);
-    }
+    this.horn.visible = true; this.hornBlast = blast;
   }
+  // (One stroke, `k` -1, 0, 1 down to up, on side `sz`, from its side's fan (hornFan) in the
+  // render `frame` (three's count of renders); the strokes start HORN_R0 m out from the fan's
+  // origin and move on out with the blast, lengthening quickly to HORN_LEN.)
+  private hornStroke(m: THREE.Sprite, frame: number, cam: THREE.Camera) {
+    const { sz, k } = m.userData, F = this.hornFan(sz, frame, cam);
+    // (Hidden by its size: drawn now, it is too late to leave it out, and left out it is not asked again.)
+    if (!F.show) { m.scale.set(0, 0, 1); m.updateMatrixWorld(); return; }
+    const a = F.u + k * 0.7, b = this.hornBlast;
+    const len = HORN_LEN * (k === 0 ? 1.15 : 1) * Math.min(1, 0.3 + b / 0.1), r = HORN_R0 + b * 1.1 + len / 2;
+    // (In view space, then back to the body's frame, the sprite's parent.)
+    this.hornE.set(F.x + Math.cos(a) * r, F.y + Math.sin(a) * r, F.z).applyMatrix4(cam.matrixWorld);
+    m.position.copy(this.hornE).applyMatrix4(this.hornInv.copy(this.body.matrixWorld).invert());
+    m.scale.set(len, HORN_W, 1); m.material.rotation = a;
+    m.updateMatrixWorld();
+  }
+  // (A side's fan, worked out once a render for its three strokes: shown only from a front corner
+  // on the cab's outline as the camera sees it, the front facing the camera and that side not, or
+  // that side and not the front (with the front facing it, a side seen nearly edge on counts as
+  // not; from behind, backing into a bay, any side turned its way does). It points out across the
+  // picture, `u`, between sideways from the middle of the front, seen head on, and on ahead of the
+  // nose, seen from the side; its origin, in view space at the corner's depth, is out that way past
+  // the whole truck (hornBoxes), not just the corner: a box or trailer behind the cab, wider and
+  // taller, stands out past it seen from a front quarter. None with the camera right up against
+  // the truck, any of these points at or behind it: no way across.)
+  private hornFans = [-1, 1].map(() => ({ frame: -1, cam: null as THREE.Camera | null, show: false, u: 0, x: 0, y: 0, z: 0 }));
+  private hornFan(sz: number, frame: number, cam: THREE.Camera) {
+    const F = this.hornFans[sz > 0 ? 1 : 0];
+    if (F.frame === frame && F.cam === cam) return F;
+    F.frame = frame; F.cam = cam; F.show = false;
+    const s = this.spec, mw = this.body.matrixWorld, V = cam.matrixWorldInverse, y = s.hoodTop + 0.35;
+    const P = this.v3.set(s.noseFront + 0.1, y, sz * s.cabHW).applyMatrix4(mw);
+    const toCam = this.hornC.setFromMatrixPosition(cam.matrixWorld).sub(P).normalize();
+    const f = this.hornN.set(1, 0, 0).transformDirection(mw).dot(toCam), side = this.hornN.set(0, 0, sz).transformDirection(mw).dot(toCam) > (f > 0 ? 0.35 : 0);
+    if ((f > 0) === side) return F;
+    // (Across the picture, in view space less perspective: out from the middle of the front, and
+    // from 2 m back along the cab's middle to the front's.)
+    const p = P.applyMatrix4(V), n = this.hornD.set(s.noseFront + 0.1, y, 0).applyMatrix4(mw).applyMatrix4(V), bk = this.hornN.set(s.noseFront - 1.9, y, 0).applyMatrix4(mw).applyMatrix4(V);
+    if (Math.max(p.z, n.z, bk.z) > -0.1) return F;
+    const px = p.x / -p.z, py = p.y / -p.z, nx = n.x / -n.z, ny = n.y / -n.z;
+    const lx = px - nx, ly = py - ny, fx = nx - bk.x / -bk.z, fy = ny - bk.y / -bk.z;
+    const ll = Math.hypot(lx, ly) || 1, fl = Math.hypot(fx, fy) || 1, w = Math.min(1, Math.max(0, f));
+    const u = Math.atan2(ly / ll * w + fy / fl * (1 - w), lx / ll * w + fx / fl * (1 - w)), ux = Math.cos(u), uy = Math.sin(u);
+    let out = 0;
+    const E = this.hornE;
+    for (const c of this.hornBoxes) for (let i = 0; i < 8; i++) {
+      E.set(i & 1 ? c.x1 : c.x0, i & 2 ? c.y1 : c.y0, i & 4 ? c.hw : -c.hw).applyMatrix4(c.obj.matrixWorld).applyMatrix4(V);
+      if (E.z > -0.1) return F;
+      out = Math.max(out, (E.x / -E.z - px) * ux + (E.y / -E.z - py) * uy);
+    }
+    out *= -p.z;   // (across the picture to metres at the corner's depth)
+    F.show = true; F.u = u; F.x = p.x + ux * out; F.y = p.y + uy * out; F.z = p.z;
+    return F;
+  }
+  // (The truck's parts, as boxes in their own frames, for the horn to clear: the cab, its hood,
+  // a tractor's extenders and stacks behind its cab, and the box or flatbed's load, or the
+  // trailer. Closer than cutBoxes, whose one box for a box truck stands the body's roof out over
+  // the hood.)
+  private hornBoxList: CutBox[] | null = null;
+  private get hornBoxes(): CutBox[] {
+    if (this.hornBoxList) return this.hornBoxList;
+    const s = this.spec, c = s.cargo, L: CutBox[] = [
+      { obj: this.body, x0: s.cabBack, x1: s.cabFront, y0: 0, y1: s.cabTop, hw: s.cabHW },
+      { obj: this.body, x0: s.cabFront, x1: this.frontX, y0: 0, y1: s.hoodTop, hw: s.cabHW },
+    ];
+    if (s.cab === "daycab") L.push({ obj: this.body, x0: s.cabBack - Math.max(EXTENDER_LEN, STACK_BACK + STACK_R), x1: s.cabBack, y0: 0, y1: STACK_TOP, hw: Math.max(s.cabHW, STACK_Z + STACK_R) });
+    if (c) L.push({ obj: this.body, x0: c.x0, x1: c.x1, y0: 0, y1: c.kind === "flatbed" ? FLATBED_LOAD_TOP : c.top, hw: c.hw });
+    if (this.trailer) L.push({ obj: this.trailer, x0: TRAILER.rear, x1: TRAILER.front, y0: 0, y1: TRAILER.top, hw: TRAILER.hw });
+    return this.hornBoxList = L;
+  }
+  private hornD = new THREE.Vector3(); private hornC = new THREE.Vector3(); private hornN = new THREE.Vector3(); private hornInv = new THREE.Matrix4(); private hornE = new THREE.Vector3();
 
   // Air-brake hiss when parking.
   hiss() {
@@ -921,8 +995,8 @@ export class Truck {
       P.span(Math.min(x0, x1), yt, -hw + 0.1, Math.max(x0, x1), top, hw - 0.1, TC.white);
     }
     for (const z of [-1, 1]) {
-      P.span(xb - 0.25, s.cabFloor, z * (hw - 0.03), xb, yt + 0.75, z * hw, TC.white); // side extenders
-      P.cyl(xb - 0.14, (ft + 4.05) / 2, z * 1.0, 0.075, 4.05 - ft, TC.chrome, 8);       // stacks
+      P.span(xb - EXTENDER_LEN, s.cabFloor, z * (hw - 0.03), xb, yt + 0.75, z * hw, TC.white); // side extenders
+      P.cyl(xb - STACK_BACK, (ft + STACK_TOP) / 2, z * STACK_Z, STACK_R, STACK_TOP - ft, TC.chrome, 8); // stacks
       P.span(xb - 0.24, ft + 0.6, z * 0.93, xb - 0.2, ft + 1.6, z * 1.07, TC.chrome);   // heat shields
       P.span(-1.15, 2 * s.wheelR + 0.04, z * 0.72, 1.15, 2 * s.wheelR + 0.1, z * 1.28, TC.black); // quarter fenders
       this.exhaust.push(new THREE.Vector3(xb - 0.14, 4.1, z * 1.0));
