@@ -1093,7 +1093,7 @@ export class CountryRoad {
   }
   // A piece's ground (pieceGround), once.
   private grounds = new WeakMap<RoadPiece, [number, number]>();
-  private groundOf(p: RoadPiece) { let g = this.grounds.get(p); if (!g) this.grounds.set(p, g = pieceGround(p)); return g; }
+  groundOf(p: RoadPiece) { let g = this.grounds.get(p); if (!g) this.grounds.set(p, g = pieceGround(p)); return g; }
   // Is (s, n) clear of the road furniture and set pieces (for scenery)?
   clearAt(s: number, n: number) {
     if (Math.abs(n) < 11) return false;

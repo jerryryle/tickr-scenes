@@ -881,6 +881,11 @@ export class CountryWorld {
         g.dy = s.dy = 0;
       }
     }
+    // The pieces' paving: whatever of it lies in this segment, each at its piece's level.
+    for (const p of road.pieces) {
+      const [g0, g1] = road.groundOf(p);
+      if (g1 > s0 && g0 < s1) this.pave(g, p, road.baseAt(p.s), s0, s1);
+    }
     // Set pieces that start in this segment.
     // (Each on the level ground the road holds round it.)
     for (const p of road.pieces) if (p.s >= s0 && p.s < s1) {
@@ -1062,19 +1067,22 @@ export class CountryWorld {
   }
 
   // ---- set pieces ---------------------------------------------------------------------------
-  // A piece's paving (country.ts piecePaving): each band in quads between its stations (cut to
-  // 8 m at most, so a long one follows the road's curve), its top at its height over the piece's
-  // ground, with a skirt down its edges to the land under it.
-  private pave(g: Batch, p: RoadPiece) {
+  // A piece's paving (country.ts piecePaving) within this segment (s0..s1): each band in quads
+  // between its stations (cut to 8 m at most, so it follows the road's curve), its top at its
+  // height over the piece's ground (y0), with a skirt down its edges to the land under it. (Laid
+  // segment by segment, like the road, so a long slip lane comes and goes with the land under it.)
+  private pave(g: Batch, p: RoadPiece, y0: number, s0: number, s1: number) {
     const COL = { drive: CW.asphalt, apron: CW.asphalt, lot: 0x45464b, gravel: 0x8f8778 };
     for (const v of piecePaving(p)) {
-      const y = this.pieceY + v.top, col = COL[v.kind], sk = shade(col, 0.8), sd = v.side;
-      const st: number[] = [];
-      for (let i = 0; i + 1 < v.s.length; i++) {
-        const k = Math.max(1, Math.ceil((v.s[i + 1] - v.s[i]) / 8));
-        for (let j = 0; j < k; j++) st.push(v.s[i] + (v.s[i + 1] - v.s[i]) * j / k);
+      const V0 = v.s[0], V1 = v.s[v.s.length - 1], a0 = Math.max(s0, V0), a1 = Math.min(s1, V1);
+      if (a1 - a0 < 1e-6) continue;
+      const y = y0 + v.top, col = COL[v.kind], sk = shade(col, 0.8), sd = v.side;
+      const cuts = [a0, ...v.s.filter((a) => a > a0 + 1e-6 && a < a1 - 1e-6), a1], st: number[] = [];
+      for (let i = 0; i + 1 < cuts.length; i++) {
+        const k = Math.max(1, Math.ceil((cuts[i + 1] - cuts[i]) / 8));
+        for (let j = 0; j < k; j++) st.push(cuts[i] + (cuts[i + 1] - cuts[i]) * j / k);
       }
-      st.push(v.s[v.s.length - 1]);
+      st.push(a1);
       const edge = st.map((a) => { const [lo, hi] = paveAt(v, a)!; return [this.L(a, sd * lo), this.L(a, sd * hi), lo, hi] as const; });
       for (let i = 0; i + 1 < edge.length; i++) {
         const [l0, h0, lo0, hi0] = edge[i], [l1, h1, lo1, hi1] = edge[i + 1];
@@ -1088,10 +1096,10 @@ export class CountryWorld {
           g.tri(a[0], y, a[1], b[0], y - 0.14, b[1], a[0], y - 0.14, a[1], sk, [fx, 0, fz]);
         }
       }
-      // And across its ends, where it has width there.
-      for (const [i, j] of [[0, 1], [edge.length - 1, edge.length - 2]]) {
+      // And across its ends, where it has width there (its own ends, not where a segment cuts it).
+      for (const [i, j, own] of [[0, 1, a0 === V0], [edge.length - 1, edge.length - 2, a1 === V1]] as const) {
         const [l, h, lo, hi] = edge[i], o = edge[j][0];
-        if (hi - lo < 1e-3) continue;
+        if (!own || hi - lo < 1e-3) continue;
         const fx = (l[0] + h[0]) / 2 - o[0], fz = (l[1] + h[1]) / 2 - o[1];
         g.tri(l[0], y, l[1], h[0], y, h[1], h[0], y - 0.14, h[1], sk, [fx, 0, fz]);
         g.tri(l[0], y, l[1], h[0], y - 0.14, h[1], l[0], y - 0.14, l[1], sk, [fx, 0, fz]);
@@ -1127,8 +1135,7 @@ export class CountryWorld {
       }
       case "truckstop": {
         // The apron lane beside the road, the store and canopy beyond it, Ryder trucks in the lot.
-        // (Its apron and lots, and the drives off the road at either end: piecePaving.)
-        this.pave(g, p);
+        // (Its apron and lots, and the drives off the road at either end: piecePaving, laid per segment.)
         for (let a = S - 100; a < S + 140; a += 6) this.rbox(g, a + 3, 24.6, 0.015, 3, 0.02, 0.14, CW.white);   // the apron's lane line
         this.rbox(s, S + 70, 45, 2.6, 22, 5.2, 10, 0xe8e2d6); this.rbox(s, S + 70, 39.9, 2.0, 21, 4, 0.1, 0x2a3440);
         this.rbox(s, S + 70, 45, 5.5, 22.6, 0.6, 10.6, CW.ryder);
@@ -1185,7 +1192,6 @@ export class CountryWorld {
       }
       case "attraction": {
         const n = side * 40, [x, z, h] = this.L(S + 50, n);
-        this.pave(g, p);   // its car park and the drive in to it
         for (let a = S + 25; a <= S + 75; a += 3.2) this.rbox(g, a, side * 28.5, 0.015, 0.12, 0.02, 5, CW.white);   // its bays, along the far side
         const face = h + (side > 0 ? Math.PI / 2 : -Math.PI / 2);   // facing the road
         const fx = Math.cos(face), fz = -Math.sin(face);
@@ -1284,7 +1290,6 @@ export class CountryWorld {
       }
       case "fruit": {
         const n = side * 13, [x, z, h] = this.L(S + 40, n);
-        this.pave(g, p);   // the gravel pull-off in front of it
         s.box(x, 1.4, z, 6, 2.8, 3.4, 0xc8a46a, h); s.box(x, 3.0, z, 7, 0.3, 4.4, 0xe8e2d6, h);
         for (let k = 0; k < 6; k++) { const ca = Math.cos(h) * (-2.4 + k * 0.95), cz = -Math.sin(h) * (-2.4 + k * 0.95); s.box(x + ca - Math.sin(h) * side * 2.2, 0.9, z + cz - Math.cos(h) * side * 2.2, 0.8, 0.5, 0.8, [0xe8701a, 0xc0392b, 0xf2c200, 0x7ab648][k % 4], h); }
         for (let k = 0; k < 7; k++) { const ca = Math.cos(h) * (-3 + k), cz = -Math.sin(h) * (-3 + k); s.box(x + ca - Math.sin(h) * side * 2.35, 3.4, z + cz - Math.cos(h) * side * 2.35, 1, 0.12, 0.5, k % 2 ? 0xf2f2f2 : CW.red, h); }
@@ -1386,7 +1391,6 @@ export class CountryWorld {
       }
       case "gas": {
         const n = side * (FORECOURT + 6);
-        this.pave(g, p);   // its forecourt, and the drives in and out at either end (piecePaving)
         this.rbox(s, S + 40, n, 4.6, 20, 0.5, 10, 0xf2f2ee); this.rbox(s, S + 40, n, 4.3, 20.2, 0.3, 10.2, 0x1f6fb2);
         for (const a of [-7, 7]) this.rbox(s, S + 40 + a, n, 2.2, 0.4, 4.4, 0.4, 0xdedbd0);
         for (const a of [-4, 4]) this.rbox(s, S + 40 + a, n, 0.75, 0.8, 1.5, 0.6, 0xc0392b);
