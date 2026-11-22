@@ -16,7 +16,7 @@ import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { pavementFetch, ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, JACK_TURN, JACK_TURN_LOADED, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
+import { pavementFetch, ROAD_PARK, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, HT_LEAD, JACK_LEAD, JACK_PIVOT_AT, JACK_TURN, JACK_TURN_LOADED, pushGap, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
 import { buildCrewPath, EMPTY_HOLD, samplePath } from "./crewpath.ts";
 import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
 import type { Chore, ItemKind, ToolRest } from "./chores.ts";
@@ -625,7 +625,13 @@ export class Crew {
     this.feetY = y;
     this.mate.attached = false; this.wL = this.wR = 0; this.gripMate = null; this.pushLean = 0; this.hunch = 0;
     if (CARGO_BY_ID.get(stop.cargo)?.handling === "teamLift") this.teamMate(c, t, truck, stop);
-    this.props(c, t, u, truck, stop);
+    if (c.kind === "walk" && c.round) {
+      // Walking round what's held: it turns about itself where it is, whoever is how near.
+      const r = roundAt(L, c, u), sx = this.drv[0], sz = this.drv[2];
+      this.drv[0] = r.cx - Math.cos(yaw) * r.r; this.drv[2] = r.cz + Math.sin(yaw) * r.r;
+      this.props(c, t, u, truck, stop);
+      this.drv[0] = sx; this.drv[2] = sz;
+    } else this.props(c, t, u, truck, stop);
     if (c.kind === "rampOut" || c.kind === "rampIn") this.rampGrips(L, truck, c.kind, u);
     // The body for what the hands hold: stooping to it, leaning into a push.
     const w = Math.max(this.wL, this.wR);
@@ -651,6 +657,10 @@ export class Crew {
       P.hipL += hc; P.hipR += hc; P.knL += kc; P.knR += kc;
     }
     d.apply(P);
+    // The head never in what's held: leaning in less, and the head up, until it's clear.
+    if (w > 0.001 && this.load?.group.visible) {
+      for (let i = 0; i < 8 && this.headInLoad(this.load); i++) { P.bend *= 0.7; P.headP = Math.min(P.headP, 0) * 0.5 - 0.06 * (i + 1); P.twist *= 0.7; d.apply(P); }
+    }
     if (!walking && !stepping) {
       for (const [side, lat] of [["L", -0.1], ["R", 0.1]] as const) { this.footUnder(truck, x, y, z, yaw, lat, this.v3); d.step(side, this.v3, P); }
     }
@@ -658,6 +668,28 @@ export class Crew {
     if (this.wR > 0.001) d.reach("R", this.gripR, P, this.wR);
     const gm = this.gripMate as { L: THREE.Vector3; R: THREE.Vector3 } | null;   // (set by props)
     if (gm && this.helper.root.visible) { this.helper.reach("L", gm.L, this.tmpPose); this.helper.reach("R", gm.R, this.tmpPose); }
+  }
+  // Whether the driver's head (points round it) is within the load's box, 2 cm in.
+  private loadBox = new WeakMap<object, THREE.Box3>();
+  private headInLoad(load: CarriedLoad) {
+    let box = this.loadBox.get(load);
+    if (!box) {
+      box = new THREE.Box3();
+      const g = load.group, m = new THREE.Matrix4();
+      g.traverse((o: any) => {
+        if (!o.geometry || o === g) return;
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        m.identity(); for (let q: THREE.Object3D | null = o; q && q !== g; q = q.parent) { q.updateMatrix(); m.premultiply(q.matrix); }
+        box!.union(o.geometry.boundingBox.clone().applyMatrix4(m));
+      });
+      box.expandByScalar(-0.02);
+      this.loadBox.set(load, box);
+    }
+    load.group.updateMatrixWorld(true);
+    const inv = this.m4.copy(load.group.matrixWorld).invert(), head = this.driver.headNode;
+    head.updateMatrixWorld(true);
+    for (const [hx, hy] of HEAD_POINTS) if (box.containsPoint(this.v.set(hx, hy, 0).applyMatrix4(head.matrixWorld).applyMatrix4(inv))) return true;
+    return false;
   }
   private pushLean = 0;   // props: lean into a push this frame (added to the stoop)
   private hunch = 0;      // props: how far hunched down behind a tall load this frame (0..1)
@@ -670,6 +702,7 @@ export class Crew {
     const size = CARGO_MODELS[stop.cargo]?.size ?? [0.5, 0.5, 0.5], tool = STYLE[cargo.handling].tool ?? null;
     const exit = cabGround(truck.model, false), enter = cabGround(truck.model, true);
     const nominal = (c: Chore, u: number): Nominal => {
+      if (c.kind === "walk" && c.round) { const r = roundAt(L, c, u); return { x: r.x, z: r.z, yaw: r.yaw, exact: false }; }
       if (c.kind === "walk" || c.kind === "gateRide") {
         const a = c.a!, b = c.b!;
         return { x: a[0] + (b[0] - a[0]) * u, z: a[2] + (b[2] - a[2]) * u, yaw: c.kind === "gateRide" ? Math.PI : NaN, exact: c.kind === "gateRide" };
@@ -711,7 +744,7 @@ export class Crew {
       if (t === "palletJack") return { lead: JACK_LEAD, tip: JACK_PIVOT_AT, tips: JACK_TIP, square: inBed(c), from: c.kind === "toolGet" && c.rest ? { x: c.rest.at[0], z: c.rest.at[2], yaw: c.rest.yaw } : undefined, pivot: 0.85, omega: 2.2, rate: item ? JACK_TURN_LOADED : JACK_TURN };
       if (!item) return EMPTY_HOLD;
       switch (cargo.handling) {
-        case "push": return stop.cargo === "motorcycles" ? { lead: 0.3, pivot: 0.5, omega: 2.2, rate: 1.4 } : { lead: 0.4 + size[0] / 2, pivot: 0.85, omega: 2.0, rate: 1.2 };
+        case "push": return stop.cargo === "motorcycles" ? { lead: 0.3, pivot: 0.5, omega: 2.2, rate: 1.4 } : { lead: pushGap(size[1]) + size[0] / 2, pivot: 0.85, omega: 2.0, rate: 1.2 };
         case "roll": return { lead: 0.35 + size[0] / 2, pivot: 0.75, omega: 2.4, rate: 1.6 };
         case "teamLift": return { lead: 0, pivot: 0, omega: 2.4, rate: 1.4 };
         case "walkOn": return { lead: 0, pivot: 0, omega: 5, rate: 3.5 };
@@ -804,8 +837,8 @@ export class Crew {
   // How far back from a doorless fetch's spot the driver stands, so what is held lands STAGE_AHEAD
   // in front of the spot (the building is close in front of it).
   private stagedBack(cargo: string, size: number[]) {
-    const h = CARGO_BY_ID.get(cargo)!.handling, tool = STYLE[h].tool, [l, , w] = size, across = !tool && h !== "push" && h !== "roll" && l > 0.6;
-    const held = tool === "handTruck" ? HT_LEAD + 0.04 + l / 2 : tool === "palletJack" ? JACK_LEAD + 0.77 : h === "push" ? 0.4 + l / 2 : h === "roll" ? 0.35 + l / 2 : 0.22 + (across ? w : l) / 2;
+    const h = CARGO_BY_ID.get(cargo)!.handling, tool = STYLE[h].tool, [l, , w] = size, across = !tool && h !== "push" && h !== "roll" && l > 0.6 && w >= 0.3;   // (as carryLoad holds it)
+    const held = tool === "handTruck" ? HT_LEAD + 0.04 + l / 2 : tool === "palletJack" ? JACK_LEAD + 0.77 : h === "push" ? pushGap(size[1]) + l / 2 : h === "roll" ? 0.35 + l / 2 : 0.22 + (across ? w : l) / 2;
     return Math.max(0, held - STAGE_AHEAD);
   }
   private kerbFetch(c: Chore) { return c.kind === "fetch" && (this.docked || !!this.kerb) && c.face !== undefined; }
@@ -815,7 +848,7 @@ export class Crew {
   // or the road.
   private ground(L: TruckLayout, x: number, z: number): number {
     if (x >= L.bedRear - 0.02 && x <= L.bedFront && Math.abs(z) < L.hw) return L.floor;
-    if (this.docked) return x < L.rear + 0.02 ? DOCK_PLATFORM : 0;
+    if (this.docked) return x < Math.max(L.rear, L.bedRear) + 0.02 ? DOCK_PLATFORM : 0;   // (the leveller's lip over the gap at the bed's edge)
     if (L.loader === "ramp" && this.ctl.ramp > 0.999 && Math.abs(z) < RAMP_HW) { const r = rampY(L, x); if (r !== null) return r; }
     if (L.loader === "liftgate" && this.ctl.gate > 0.999 && x > L.bedRear - 1.5 && Math.abs(z) < L.hw - 0.15) return this.gateY(L, this.ctl.drop);
     return this.kerbY(x, z);
@@ -1395,8 +1428,8 @@ export class Crew {
   private carryLoad(truck: Truck, load: CarriedLoad, id: string, l: number, hh: number, w: number) {
     if (id === "trophy") { this.putLoad(truck, load, 0.1, 1.95, 0, 0); this.gripsAt(load, 0, 0.06, Math.min(0.12, w / 2), 1, 1); return; }
     if (id === "envelope") { this.putLoad(truck, load, 0.42, 1.0, 0.12, 0); this.gripsAt(load, 0, hh / 2, 0, 0, 1); return; }
-    const across = l > 0.6, depth = across ? w : l, span = across ? l : w;
-    const bottom = Math.max(0.15, 1.1 - hh / 2);
+    const across = l > 0.6 && w >= 0.3, depth = across ? w : l, span = across ? l : w;   // (a thin carton, a TV's, edgeways, by its sides)
+    const bottom = Math.max(0.15, Math.min(1.1 - hh / 2, CARRY_TOP - hh));   // (a tall one lower, its top below the chin)
     this.putLoad(truck, load, 0.22 + depth / 2, bottom, 0, across ? Math.PI / 2 : 0);
     // In the driver's frame: by the sides if they're in reach, else under the near edge.
     const near = 0.22 + Math.min(0.15, depth / 2), side = span / 2 + GLOVE;
@@ -1407,10 +1440,11 @@ export class Crew {
   // front and back, the hands on its near face (on the bike: the left grip and the tank).
   private pushLoad(L: TruckLayout, truck: Truck, load: CarriedLoad, bike: boolean) {
     const [l, hh, w] = load.size, yaw = this.drv[3];
-    const ahead = bike ? -0.1 : 0.4 + l / 2, side = bike ? 0.42 : 0, half = bike ? 0.67 : l / 2 - 0.05;
+    const ahead = bike ? -0.1 : pushGap(hh) + l / 2, side = bike ? 0.42 : 0, half = bike ? 0.67 : l / 2 - 0.05;
     const [cx, cz] = this.fromDriver(ahead, side), [fx, fz] = this.fromDriver(ahead + half, side), [bx, bz] = this.fromDriver(ahead - half, side);
-    const yf = this.ground(L, fx, fz), yb = this.ground(L, bx, bz), pitch = Math.atan2(yf - yb, 2 * half);
-    this.setTF(load.group, truck, cx, (yf + yb) / 2, cz, yaw, pitch);
+    // (Never tipped back towards the driver: up a step, a kerb, it is hopped up level.)
+    const yf = this.ground(L, fx, fz), yb = this.ground(L, bx, bz), pitch = Math.min(0, Math.atan2(yf - yb, 2 * half));
+    this.setTF(load.group, truck, cx, yf > yb ? yf : (yf + yb) / 2, cz, yaw, pitch);
     load.animate?.(this.time);
     if (bike) { this.gripsAt(load, 0.36, 1.07, -0.3, 1, 0); this.gripsAt(load, 0.18, 0.99, 0.0, 0, 1); return; }
     const gy = THREE.MathUtils.clamp(1.02 - ((yf + yb) / 2 - this.drv[1]), 0.25, hh - 0.06);
@@ -1690,6 +1724,21 @@ function springStepCrew(x: number, v: number, target: number, omega: number, dt:
   return [target + (c1 + c2 * dt) * e, (c2 - omega * (c1 + c2 * dt)) * e];
 }
 
+
+// Walking round what's held (Chore.round): it stays at the middle of a..b (cx, cz), `r` from
+// either end, turning about itself; the driver goes half way round it, facing it, from a to b
+// (on the street side), at that distance along the way and no further out to the side than
+// the bed's walls allow when in it.
+export function roundAt(L: TruckLayout, c: Chore, u: number) {
+  const a = c.a!, b = c.b!, cx = (a[0] + b[0]) / 2, cz = (a[2] + b[2]) / 2, r = Math.hypot(b[0] - a[0], b[2] - a[2]) / 2;
+  const ux = (a[0] - cx) / (r || 1), uz = (a[2] - cz) / (r || 1);
+  const inBed = cx >= L.bedRear && a[1] > 0.3, side = inBed ? Math.min(r, L.hw - 0.35) : r;
+  const th = Math.PI * ease(u), vx = -uz, vz = ux;   // (round by the street side, -z, from behind)
+  const sgn = (vz * -1 + vx * 0) >= 0 ? 1 : -1;
+  const x = cx + ux * r * Math.cos(th) + vx * sgn * side * Math.sin(th), z = cz + uz * r * Math.cos(th) + vz * sgn * side * Math.sin(th);
+  return { x, z, yaw: Math.atan2(-(cz - z), cx - x), cx, cz, r };
+}
+
 // ---- opening and closing up -------------------------------------------------------------------
 // The walk ramp's travel (Truck.ramp: 0 stowed, 0.65 slid out, 1 set down) over a rampOut chore:
 // grab, slide it out, lower its end to the ground, let go. rampIn plays the same backwards.
@@ -1734,13 +1783,16 @@ const STAGE_AHEAD = 0.5;
 // pallet jack's forks, on its dolly, on its rim, set down from the arms), trips side by side across.
 function stageLocal(cargo: string, size: number[], at: number[], face: number, k: number): [number, number, number, number] {
   const [l, hh, w] = size, h = CARGO_BY_ID.get(cargo)!.handling, tool = STYLE[h].tool;
-  const across = !tool && h !== "push" && h !== "roll" && l > 0.6;
+  const across = !tool && h !== "push" && h !== "roll" && l > 0.6 && w >= 0.3;
   const side = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * ((across ? l : w) + 0.15);
   const x = at[0] + Math.cos(face) * STAGE_AHEAD + Math.sin(face) * side, z = at[2] - Math.sin(face) * STAGE_AHEAD + Math.cos(face) * side;
   return [x, h === "roll" ? hh / 2 : 0, z, face + (across ? Math.PI / 2 : 0)];
 }
+// A load carried in the arms has its top no higher than this above the feet (below the chin).
+const CARRY_TOP = 1.36;
+// Points of the driver's head (in its frame: its middle, its face, its crown), kept out of loads.
+export const HEAD_POINTS: [number, number][] = [[0, 0.17], [0.11, 0.17], [-0.11, 0.17], [0, 0.3], [0.11, 0.29], [0.08, 0.06], [-0.1, 0.06]];
 const HT_WHEEL = 0.13, HT_GRIP: [number, number] = [0.02, 1.19], HT_PLATE = -0.115, HT_HANDS = 1.12, HT_HANDS_LOADED = 1.04;
-export const HT_LEAD = 1.15;
 // Turning with it in hand (crewpath.ts Hold): loaded, about the load more and slower.
 export const handTruckHold = (loaded: boolean): Hold => loaded ? { lead: HT_LEAD, pivot: 0.8, omega: 2.6, rate: 1.7 } : { lead: HT_LEAD, pivot: 0.5, omega: 4, rate: 3.2 };
 // What a load on it keeps clear of: the driver's face and chest, this far ahead of the feet
@@ -1752,9 +1804,8 @@ const HUNCH_DROP = 0.12, HUNCH_BEND = 0.14, HUNCH_HEAD = 0.18;
 // The pallet jack: its fork rollers ahead of the steering wheel, its handle's length and pivot,
 // the steering wheel ahead of the driver's feet and the handle's height above them.
 const JACK_FORKS = [-0.25, 0.25];   // the pallet jack's forks, either side of its middle
-const JACK_PIVOT_AT = 0.68;   // it turns about its middle, this far on from its steering wheel (crewpath.ts Hold.tip)
 
-const JACK_TIP = 1.32, JACK_HANDLE = 1.0, JACK_PIVOT: [number, number] = [-0.04, 0.2], JACK_LEAD = 1.0, JACK_HANDS = 1.0;
+const JACK_TIP = 1.32, JACK_HANDLE = 1.0, JACK_PIVOT: [number, number] = [-0.04, 0.2], JACK_HANDS = 1.0;
 // Taking a tool from its rest: where the driver goes (from the stand to close by it, to grip its
 // handle; back a step as it is tipped into the hands, to where it's held as carried; back to the
 // stand), at progress u of the chore (toolPut: the same, backwards).

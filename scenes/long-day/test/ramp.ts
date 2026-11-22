@@ -9,10 +9,10 @@ import { Journey, setDoorProbe, setParkedProbe, setPavementProbe } from "../src/
 import { kerbDoors, parkedObstacles, pavementObstacles } from "../src/city.ts";
 import { truckLayout } from "../src/truck.ts";
 import { CARGO_BY_ID } from "../src/cargo.ts";
-import { RAMP_HW, STYLE } from "../src/chores.ts";
+import { HT_LEAD, RAMP_HW, STYLE } from "../src/chores.ts";
 import type { Chore } from "../src/chores.ts";
 import { buildCrewPath, EMPTY_HOLD } from "../src/crewpath.ts";
-import { HT_LEAD, handTruckHold } from "../src/crew.ts";
+import { handTruckHold, roundAt } from "../src/crew.ts";
 import type { Hold, Nominal } from "../src/crewpath.ts";
 
 const proc = (globalThis as any).process;
@@ -38,6 +38,7 @@ for (const [minutes, envJson] of runs) {
     stops++;
     const spot = (c: Chore) => { for (let k = plan.indexOf(c) - 1; k >= 0; k--) if (plan[k].b) return plan[k].b!; return [0, 0, 0]; };
     const nominal = (c: Chore, u: number): Nominal => {
+      if (c.kind === "walk" && c.round) { const r = roundAt(L, c, u); return { x: r.x, z: r.z, yaw: r.yaw, exact: false }; }
       if (c.kind === "walk") { const a = c.a!, b = c.b!; return { x: a[0] + (b[0] - a[0]) * u, z: a[2] + (b[2] - a[2]) * u, yaw: NaN, exact: false }; }
       const at = spot(c);
       return { x: at[0], z: at[2], yaw: c.face ?? NaN, exact: c.kind === "doorOpen" || c.kind === "doorClose" };

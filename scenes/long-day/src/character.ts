@@ -169,6 +169,7 @@ export class Character {
     return miss;
   }
 
+  get headNode(): THREE.Object3D { return this.head; }
   set vestOn(v: boolean) { this.vest.visible = v; }
   // The legs spread apart (radians, each thigh out to its own side) and the shins turned back
   // under (knee): astride a horse. apply() leaves both.

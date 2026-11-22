@@ -116,14 +116,15 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       // Into a new chore: a walk back the way the driver faces away from, holding something, is
       // walked backwards.
       entered = ci; back = false;
-      if (isWalk(c) && h.pivot > 0) {
+      if (isWalk(c) && h.pivot > 0 && !c.round) {
         const dx = c.b![0] - c.a![0], dz = c.b![2] - c.a![2], len = Math.hypot(dx, dz);
         const off = Math.abs(wrap(Math.atan2(-dz, dx) - yaw));
-        back = len > 0.05 && (c.noTurn ? off > Math.PI / 2 : len <= BACK_LEN && off > BACK_TURN);
+        back = len > 0.05 && !c.forward && (c.noTurn ? off > Math.PI / 2 : len <= BACK_LEN && off > BACK_TURN);
       }
     }
     let target = nm.yaw;
     if (back) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]) + Math.PI; }
+    else if (c.round) target = nm.yaw;   // (round what's held: facing it)
     else if (c.noTurn) { const a = c.a!, b = c.b!; if (Math.hypot(b[0] - a[0], b[2] - a[2]) > 0.05) target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]); }   // (straight on, not turning early for what comes next; on no way at all, as they are)
     else if (isWalk(c) && Number.isNaN(target)) {
       target = ahead(ci, u, nm.x, nm.z);
@@ -142,8 +143,9 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       // ramp, or backing) or ahead of the spot the chore stands the driver at.
       const reach = h.lead + h.tip;
       // (Kept square, it stays the way it lies, and the driver goes the way they must behind it.)
-      const sq = jack && h.square ? (Math.abs(wrap(jth)) < Math.PI / 2 ? 0 : Math.PI) : target;
+      const sq = jack && h.square && !c.round ? (Math.abs(wrap(jth)) < Math.PI / 2 ? 0 : Math.PI) : target;
       let gx = nm.x + Math.cos(sq) * reach, gz = nm.z - Math.sin(sq) * reach;
+      if (c.round) { gx = (c.a![0] + c.b![0]) / 2; gz = (c.a![2] + c.b![2]) / 2; }   // (round it: it stays where it is)
       if (isWalk(c) && !back && !c.noTurn && !h.square && Number.isNaN(nm.yaw)) {
         // (Along the way: on from where it is, but no further on than `reach` ahead of
         // where the driver should be.)
@@ -174,8 +176,8 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       // rolled along itself; at a chore's spot, turned to its facing and rolled to and fro.
       const qx = gx - rx, qz = gz - rz, far = Math.hypot(qx, qz);
       let want = target;
-      if (isWalk(c) && far > NEAR) want = Math.atan2(-qz, qx) + (back ? Math.PI : 0);
-      if (h.square) {
+      if (isWalk(c) && far > NEAR && !c.round) want = Math.atan2(-qz, qx) + (back ? Math.PI : 0);
+      if (h.square && !c.round) {
         // (No more than a little off square, to edge across, whether it is rolled forwards or back.)
         let off = isWalk(c) && far > NEAR ? wrap(want - sq) : 0;
         if (Math.abs(off) > Math.PI / 2) off = wrap(off + Math.PI);
@@ -185,7 +187,7 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       if (Math.abs(off) > 2.8 && turnSign) off = turnSign * Math.abs(off);   // (half way round: on round the way it is going)
       turnSign = Math.abs(off) > 0.02 ? Math.sign(off) : 0;
       const turn = Math.max(-h.rate * dt, Math.min(h.rate * dt, off));
-      if (h.square && h.tips && Math.abs(wrap(jth - (Math.abs(wrap(jth)) < Math.PI / 2 ? 0 : Math.PI))) > 0.5) {
+      if (h.square && h.tips && !c.round && Math.abs(wrap(jth - (Math.abs(wrap(jth)) < Math.PI / 2 ? 0 : Math.PI))) > 0.5) {
         // (Well off square in the bed: about its fork tips.)
         const tx = rx + Math.cos(jth) * (h.tips - h.tip), tz = rz - Math.sin(jth) * (h.tips - h.tip);
         jth += turn; rx = tx - Math.cos(jth) * (h.tips - h.tip); rz = tz + Math.sin(jth) * (h.tips - h.tip);
@@ -200,6 +202,7 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       const kt = 1 - Math.exp(-dt / TILLER);
       ux = ux / um * (1 - kt) - ax * kt; uz = uz / um * (1 - kt) - az * kt; um = Math.hypot(ux, uz) || 1;
       nx = wx + ux / um * h.lead; nz = wz + uz / um * h.lead;
+      if (c.round) { nx = nm.x; nz = nm.z; }   // (round it: where the way round has them, the handle swivelled to them)
       const y1 = Math.atan2(-(wz - nz), wx - nx);
       dy = wrap(y1 - yaw); yaw = y1; v = dy / dt;
       ex = nx - nm.x; ez = nz - nm.z;   // (and when it is let go, the driver goes back to the path from there)
@@ -213,7 +216,7 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       dy = v * dt;
       const y1 = yaw + dy;
       // About the load: the driver steps round it, and so ends up off the path for a moment.
-      if (h.pivot > 0 && h.lead > 0) {
+      if (h.pivot > 0 && h.lead > 0 && !c.round) {
         const px = x + Math.cos(yaw) * h.lead, pz = z - Math.sin(yaw) * h.lead;
         ex += (px - Math.cos(y1) * h.lead - x) * h.pivot; ez += (pz + Math.sin(y1) * h.lead - z) * h.pivot;
       }

@@ -8,7 +8,8 @@
 // below the ground under them (the bed's floor, the walk ramp, the pavement), as at the ramp's
 // top edge; at a front door, it goes through the doorway, never through the wall beside it; and
 // it never slides sideways faster than a slip (it is steered, turning about its middle, not
-// swung round), nor passes through the truck's sides.
+// swung round), nor passes through the truck's sides. And the driver's head is never inside what
+// they carry or push.
 // Args (all optional): seed:minutes ... With none, a few journeys with hand trucks, pallet jacks,
 // rolled tires, ramps and docks.
 import * as THREE from "three@0.187.0";
@@ -18,7 +19,7 @@ import type { Pose } from "../src/route.ts";
 import { kerbDoors, parkedObstacles, pavementObstacles } from "../src/city.ts";
 import { Truck, TruckKit, truckLayout } from "../src/truck.ts";
 import type { TruckModel } from "../src/truck.ts";
-import { Crew } from "../src/crew.ts";
+import { Crew, HEAD_POINTS } from "../src/crew.ts";
 import { Character } from "../src/character.ts";
 
 const proc = (globalThis as any).process;
@@ -84,6 +85,18 @@ for (const run of runs) {
   const truckFor = (m: TruckModel) => { let t = trucks.get(m); if (!t) { t = new Truck(kit, m, null); scene.add(t.root); trucks.set(m, t); } return t; };
   const pose = {} as Pose, feet = [new Feet("driver"), new Feet("worker")];
   const jack = C.tools.palletJack as THREE.Object3D;
+  // The carried load's own box (its group's frame), worked out once a stop.
+  let loadBox: THREE.Box3 | null = null, boxOf: unknown = null, headBad = false;
+  const localBox = (g: THREE.Object3D) => {
+    const box = new THREE.Box3(), m = new THREE.Matrix4();
+    g.traverse((o: any) => {
+      if (!o.geometry || o === g) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      m.identity(); for (let q: THREE.Object3D | null = o; q && q !== g; q = q.parent) { q.updateMatrix(); m.premultiply(q.matrix); }
+      box.union(o.geometry.boundingBox.clone().applyMatrix4(m));
+    });
+    return box;
+  };
   let jackBad = false, wallBad = false, slipBad = false, sideBad = false, prevR: THREE.Vector3 | null = null;
   for (let i = 0, n = Math.round(minutes * 60 / SIM_DT); i < n; i++) {
     j.step();
@@ -98,6 +111,17 @@ for (const run of runs) {
     const stop = st.stops[0], ph = j.dwellPhase();
     const what = () => `seed ${seed} t${st.simTime.toFixed(1)} ${st.truck} ${stop?.kind ?? ""} ${stop?.cargo ?? ""} at ${stop?.site?.name ?? "?"} (${ph.chore ? ph.chore.kind + (ph.chore.item ? " " + ph.chore.item : "") + (ph.chore.tool ? " " + ph.chore.tool : "") : ph.phase})`;
     feet[0].see(crew.driver, what);
+    // The head (points round it, as crew.ts keeps them out) outside the load.
+    const load = C.load as { group: THREE.Object3D } | null;
+    if (load && load.group.visible) {
+      if (boxOf !== load) { boxOf = load; loadBox = localBox(load.group).expandByScalar(-0.03); }
+      load.group.updateMatrixWorld(true);
+      const inv2 = load.group.matrixWorld.clone().invert(), head = (crew.driver as any).head as THREE.Object3D;
+      head.updateMatrixWorld(true);
+      const inside = HEAD_POINTS.some(([hx, hy]) => loadBox!.containsPoint(new THREE.Vector3(hx, hy, 0).applyMatrix4(head.matrixWorld).applyMatrix4(inv2)));
+      if (inside && !headBad) { const hp = new THREE.Vector3(0.11, 0.17, 0).applyMatrix4(head.matrixWorld).applyMatrix4(inv2); headBad = true; fail(`${what()}: the driver's head is inside the load (face at ${hp.x.toFixed(2)}, ${hp.y.toFixed(2)}, ${hp.z.toFixed(2)} in its box ${loadBox!.min.x.toFixed(2)}..${loadBox!.max.x.toFixed(2)}, ${loadBox!.min.y.toFixed(2)}..${loadBox!.max.y.toFixed(2)}, ${loadBox!.min.z.toFixed(2)}..${loadBox!.max.z.toFixed(2)})`); }
+      else if (!inside) headBad = false;
+    } else headBad = false;
     feet[1].see(crew.helper, what);
     // The jack's forks: their undersides, every 10 cm along, above the ground there.
     if (jack.visible) {

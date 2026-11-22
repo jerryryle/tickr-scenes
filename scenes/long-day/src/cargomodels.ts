@@ -218,8 +218,28 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.cyl(x + 0.55, y + 0.6, z - 0.2, 0.6, 0.9, 0x0e0e10, 12);                   // the curve
     b.box(x - 0.89, y + 0.75, z, 0.04, 0.12, 1.3, CK.white);                       // keys edge
   } },
-  upright: { size: [1.5, 1.3, 0.6], build: (b, x, y, z) => {
-    b.box(x, y + 0.65, z, 1.5, 1.3, 0.6, 0x5a3420); b.box(x, y + 0.75, z + 0.32, 1.3, 0.06, 0.12, CK.white); b.box(x, y + 0.77, z + 0.38, 1.3, 0.02, 0.02, CK.black);
+  // An upright piano, its keyboard along x on the +z side: a tall, shallow upper case over a
+  // deeper lower one, the keys standing out on a shelf between the cheeks (the side arms), on
+  // legs to the floor, with a music desk, a lid, and pedals; polished ebony or mahogany.
+  upright: { size: [1.5, 1.3, 0.6], build: (b, x, y, z, i) => {
+    const wood = vpick([0x141416, 0x4a2214], i), trim = vpick([0x2a2a2e, 0x6b3a22], i);
+    b.box(x, y + 0.65, z - 0.12, 1.5, 1.3, 0.36, wood);                           // upper case, full height
+    b.box(x, y + 0.31, z + 0.01, 1.44, 0.62, 0.24, wood);                         // lower case
+    b.box(x, y + 0.33, z + 0.135, 1.2, 0.48, 0.01, trim);                         // its front panel
+    b.box(x, y + 1.315, z - 0.115, 1.54, 0.03, 0.4, trim);                        // lid
+    b.box(x, y + 0.66, z + 0.15, 1.5, 0.05, 0.3, wood);                           // keybed shelf
+    b.box(x, y + 0.705, z + 0.17, 1.3, 0.04, 0.2, CK.white);                      // white keys
+    for (let k = 0; k < 36; k++) {                                                // black keys, in twos and threes
+      const o = k % 5, oct = Math.floor(k / 5), at = oct * 7 + [0.5, 1.5, 3.5, 4.5, 5.5][o];
+      b.box(x - 0.65 + (at + 0.5) * (1.3 / 52), y + 0.735, z + 0.125, 0.012, 0.025, 0.11, CK.black);
+    }
+    b.box(x, y + 0.76, z + 0.07, 1.3, 0.08, 0.04, wood);                          // fallboard, folded back
+    b.box(x, y + 0.93, z + 0.075, 1.0, 0.18, 0.02, trim);                         // music desk
+    for (const s of [-1, 1]) {
+      b.box(x + s * 0.68, y + 0.72, z + 0.15, 0.08, 0.16, 0.3, wood);             // cheeks
+      b.box(x + s * 0.68, y + 0.32, z + 0.24, 0.07, 0.64, 0.07, wood);            // legs
+    }
+    for (const px of [-0.07, 0, 0.07]) b.box(x + px, y + 0.06, z + 0.16, 0.035, 0.02, 0.07, CK.gold);   // pedals
   } },
   arcade: { size: [0.7, 1.8, 0.85], build: (b, x, y, z, i) => {
     b.box(x, y + 0.9, z, 0.7, 1.8, 0.85, vpick([0x6c3483, 0x1f618d, 0x111111], i));
