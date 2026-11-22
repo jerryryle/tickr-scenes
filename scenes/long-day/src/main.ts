@@ -855,7 +855,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const random = cfg.seed === 0;
       // The images load meanwhile, all at once (independent of each other).
       const loading = Promise.all([
-        Promise.all(LIVERY_ASSETS.map((n) => assets[n].loadImage())), assets.facades.loadImage(),
+        Promise.all(LIVERY_ASSETS.map((n) => assets[n].loadImage())),
         assets.logoWhite.loadImage(), assets.logoColor.loadImage(), assets.batonWordmark.loadImage(),
       ]);
       loading.catch(() => {});   // (a failure surfaces at the await below, not as unhandled meanwhile)
@@ -871,10 +871,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).
       sys.log(`Long Day: seed ${cfg.seed}, starting at journey time ${base.toFixed(1)}s`);
-      const [liveries, facades, logoWhite, logoColor, batonWordmark] = await loading;
+      const [liveries, logoWhite, logoColor, batonWordmark] = await loading;
       const images = {} as Record<LiveryName, CanvasImageSource>;
       LIVERY_ASSETS.forEach((n, i) => { images[n] = uploadable(liveries[i]); });
-      const atlas = uploadable(facades);
       puffs = new PuffSystem(engine.scene);
       kit = new TruckKit(images);
       fleet = new FleetBaker(kit);
@@ -927,7 +926,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       journey.attachLife(new StreetLife(traffic, crowd, ambient));
       seekMs = performance.now() - tl;
 
-      const facadeMat = makeFacadeMaterial(atlas);
+      const facadeMat = makeFacadeMaterial();
       applyCutaway(facadeMat); applyDriverSpot(facadeMat);
       for (const m of [facadeMat, engine.mats.ground, engine.mats.solid, seaLife.surface]) applyLampLight(m);   // streetlights and headlights light the world (the sea and the harbour too: their material is the ground's clone, made before this)
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
@@ -956,8 +955,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (DEBUG_VIEW === "scrub") { const t2 = t < 6 ? t : t - 4; dt = t2 - scrubPrev; scrubPrev = t2; t = t2; }   // test renders: a scrub back
       if (!baked) {
         captureCanvasClass(ctx); baked = true;
-        // Canvases exist now: paint the full facade atlas over the asset one the city started with.
-        try { setFacadeAtlas(mats.solid, paintFacadeAtlas()); } catch { /* (painting failed: the asset's atlas stays) */ }
+        // Canvases exist now: paint the facade atlas (the city's buildings have none until then).
+        setFacadeAtlas(mats.solid, paintFacadeAtlas());
       }
       const target = Math.max(0, base + t);
       // The presentation runs on fixed ticks of journey time (see step); a scrub, a long jump ahead

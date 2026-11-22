@@ -161,13 +161,6 @@
       "configurable": false
     },
     {
-      "name": "facades",
-      "content_type": "image/png",
-      "size": 8039,
-      "type": "image",
-      "configurable": false
-    },
-    {
       "name": "batonWordmark",
       "content_type": "image/png",
       "size": 22939,

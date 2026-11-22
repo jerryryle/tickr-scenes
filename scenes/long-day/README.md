@@ -111,8 +111,7 @@ low. `DEBUG_MEMLOG` reports the cache's size and hits.
 `src/facadeart.ts` paints the facade atlas on the first frame: the 16 facade kinds in
 `src/facadetiles.ts`, four variants of each (each building gets one), at 128 px a tile, with a
 mask saying which pixels take the building's colour, which are glass lit from inside after dark,
-and how brightly. The `facades` asset (the old 16-tile atlas) is what the material starts with,
-and stays in use if painting fails. To look at the atlas, bundle a script that captures a
+and how brightly. To look at the atlas, bundle a script that captures a
 canvas class with `captureCanvasClass` and writes `paintFacadeAtlas()`'s canvases to PNG.
 
 `src/debug.ts` holds build-time debug constants (`DEBUG_SKIP_MINUTES`, `DEBUG_STYLE`,

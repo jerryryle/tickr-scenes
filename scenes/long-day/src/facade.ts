@@ -1,14 +1,13 @@
 // Building facades from one texture atlas. Walls are Batch.wall quads whose aAux holds (u, v,
 // tile): u counts bays across the wall, v counts floors up it, and the shader repeats the tile
-// with fract(). Colour tiles on the left half, a mask in the same layout on the right saying what
-// the building's vertex colour tints (wall) and what keeps its own colour (glass, frames, doors),
-// so one tile serves every wall colour.
-// Two atlases: the "facades" asset (4x4 tiles of 64 px, the 16 kinds in FACADE), which the
-// material starts with, and the one facadeart.ts paints once canvases exist (the first frame):
-// 8x8 tiles of 128 px, each kind in FACADE_VARIANTS variants (tile = kind + 16 * variant), its
-// mask also saying which pixels are glass lit from inside after dark, and how brightly. On the
-// asset atlas a variant falls back to its kind (tile mod 16). Primitives in the same batch keep aux.z = -1 and render as
-// plain vertex colour, so a chunk's buildings, roofs and trim are a single draw call.
+// with fract(). A colour atlas, and a mask in the same layout saying what the building's vertex
+// colour tints (wall) and what keeps its own colour (glass, frames, doors), so one tile serves
+// every wall colour.
+// The atlas is the one facadeart.ts paints once canvases exist (the first frame, before anything is
+// drawn: setFacadeAtlas): 8x8 tiles of 128 px, each kind in FACADE_VARIANTS variants (tile = kind
+// + 16 * variant), its mask also saying which pixels are glass lit from inside after dark, and how
+// brightly. Primitives in the same batch keep aux.z = -1 and render as plain vertex colour, so a
+// chunk's buildings, roofs and trim are a single draw call.
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { NIGHT_GLOW } from "./atmosphere.ts";
@@ -27,37 +26,34 @@ function atlasTexture(image: CanvasImageSource): THREE.Texture {
   return tex;
 }
 
-export function makeFacadeMaterial(atlas: CanvasImageSource): THREE.MeshLambertMaterial {
-  const tex = atlasTexture(atlas);
+// (No atlas until setFacadeAtlas gives it one, on the first frame.)
+export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const uFacade = { value: tex };
-  // The asset atlas's layout; setFacadeAtlas switches to the painted one.
-  // (On the asset the mask is the right half of the same image; the painted one has its own.)
-  const uMask = { value: tex }, uSpan = { value: 0.5 }, uMaskOff = { value: 0.5 };
-  const uGrid = { value: new THREE.Vector2(4, 4) }, uInset = { value: 0.5 / 64 }, uPainted = { value: 0 };
-  mat.userData.facade = { uFacade, uMask, uSpan, uMaskOff, uGrid, uInset, uPainted };
+  const uFacade = { value: null as THREE.Texture | null }, uMask = { value: null as THREE.Texture | null };
+  mat.userData.facade = { uFacade, uMask };
   mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, { uFacade, uMask, uSpan, uMaskOff, uGrid, uInset, uPainted });
+    Object.assign(shader.uniforms, { uFacade, uMask });
     shader.uniforms.uNight = NIGHT_GLOW;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec3 aAux;\nvarying vec3 vAux;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvAux = aAux;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vAux;\nuniform sampler2D uFacade;\nuniform float uNight;\nuniform sampler2D uMask;\nuniform float uSpan;\nuniform float uMaskOff;\nuniform vec2 uGrid;\nuniform float uInset;\nuniform float uPainted;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vAux;\nuniform sampler2D uFacade;\nuniform float uNight;\nuniform sampler2D uMask;")
       .replace("#include <color_fragment>", `
   // Gradients and samples are taken unconditionally: derivatives inside non-uniform control flow
   // are undefined in GLSL, and some GPUs return garbage there.
-  vec2 tsz = vec2(uSpan / uGrid.x, 1.0 / uGrid.y);   // one tile, in texture coordinates
+  const float GRID = ${FACADE_GRID}.0;
+  vec2 tsz = vec2(1.0 / GRID);   // one tile, in texture coordinates
   vec2 gx = dFdx(vAux.xy) * tsz, gy = dFdy(vAux.xy) * tsz;
   float tileId = floor(max(vAux.z, 0.0) + 0.5); // interpolation can turn 8.0 into 7.9999
-  if (uPainted < 0.5) tileId = mod(tileId, 16.0);  // the asset atlas: the kind without its variant
   float kind = mod(tileId, 16.0);
   // Tile i sits at column i % cols, row i / cols from the top of the image (flipY puts row 0 at the top of v).
-  vec2 cell = vec2(mod(tileId, uGrid.x), uGrid.y - 1.0 - floor(tileId / uGrid.x));
+  vec2 cell = vec2(mod(tileId, GRID), GRID - 1.0 - floor(tileId / GRID));
   // Keep half a texel inside the tile so filtering never picks up the neighbour; gradients come
   // from the unwrapped coordinates, so fract() seams don't drop to the smallest mip.
-  vec2 st = (cell + clamp(fract(vAux.xy), uInset, 1.0 - uInset)) * tsz;
-  vec4 msk = textureGrad(uMask, st + vec2(uMaskOff, 0.0), gx, gy);
+  const float INSET = ${0.5 / FACADE_TILE};
+  vec2 st = (cell + clamp(fract(vAux.xy), INSET, 1.0 - INSET)) * tsz;
+  vec4 msk = textureGrad(uMask, st, gx, gy);
   vec4 fac = vec4(sRGBTransferEOTF(textureGrad(uFacade, st, gx, gy)).rgb, msk.r);
   if (vAux.z < 0.0) fac = vec4(1.0);
 #ifdef USE_COLOR
@@ -66,11 +62,11 @@ export function makeFacadeMaterial(atlas: CanvasImageSource): THREE.MeshLambertM
       // After dark (atmosphere.ts): about half the windows lit, one room per bay and floor (offices
       // and lobbies: two per bay, and more of them lit), in warm lamplight, cool office light or
       // a television's blue, each a little brighter or dimmer; and the streetlight heads
-      // (aux.z = -2) glowing. On the painted atlas the mask says which pixels are glass and how
-      // brightly they glow (blinds, curtains); on the asset atlas, glass is the blue untinted part.
+      // (aux.z = -2) glowing. The mask says which pixels are glass and how brightly they glow
+      // (blinds, curtains).
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   {
-    float glass = vAux.z < 0.0 ? 0.0 : uPainted > 0.5 ? msk.g * msk.b : (1.0 - fac.a) * step(fac.r + 0.04, fac.b);
+    float glass = vAux.z < 0.0 ? 0.0 : msk.g * msk.b;
     float work = step(abs(kind - 0.0), 0.5) + step(abs(kind - 10.0), 0.5) + step(abs(kind - 15.0), 0.5) + step(abs(kind - 14.0), 0.5) + step(abs(kind - 9.0), 0.5);
     vec2 cid = floor(vAux.xy * vec2(1.0 + work, 1.0)) + vec2(tileId * 7.13, tileId * 3.7);
     float r1 = fract(sin(dot(cid, vec2(12.9898, 78.233))) * 43758.5453);
@@ -78,22 +74,20 @@ export function makeFacadeMaterial(atlas: CanvasImageSource): THREE.MeshLambertM
     float lit = step(0.5 - 0.15 * work, r1);
     vec3 warm = vec3(1.0, 0.75, 0.4), cool = vec3(0.7, 0.78, 0.9), tv = vec3(0.45, 0.55, 1.0) * 0.6;
     vec3 lc = work > 0.5 ? mix(cool, warm, step(0.8, r2)) : r2 < 0.1 ? tv : r2 < 0.28 ? mix(warm, cool, 0.5) : warm;
-    float bright = uPainted > 0.5 ? 0.7 + 0.45 * fract(r2 * 7.0) : 1.0;
+    float bright = 0.7 + 0.45 * fract(r2 * 7.0);
     totalEmissiveRadiance += uNight * glass * lit * lc * 0.85 * bright;
     if (vAux.z < -1.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.86, 0.55) * 1.3;
   }`);
   };
-  mat.customProgramCacheKey = () => "facade-v6";
+  mat.customProgramCacheKey = () => "facade-v7";
   return mat;
 }
 
-// Switch a facade material to the atlas facadeart.ts painted.
+// Give a facade material the atlas facadeart.ts painted.
 export function setFacadeAtlas(mat: THREE.Material, atlas: { colour: CanvasImageSource; mask: CanvasImageSource }) {
-  const u = mat.userData.facade, old = u.uFacade.value as THREE.Texture;
-  const colour = atlasTexture(atlas.colour), mask = atlasTexture(atlas.mask);
-  u.uFacade.value = colour; u.uMask.value = mask; old.dispose();
-  u.uSpan.value = 1; u.uMaskOff.value = 0;
-  u.uGrid.value.set(FACADE_GRID, FACADE_GRID); u.uInset.value = 0.5 / FACADE_TILE; u.uPainted.value = 1;
+  const u = mat.userData.facade;
+  u.uFacade.value?.dispose(); u.uMask.value?.dispose();
+  u.uFacade.value = atlasTexture(atlas.colour); u.uMask.value = atlasTexture(atlas.mask);
 }
 
 // Which variant of each kind a building gets (the same on all its sides and storeys): a hash of
