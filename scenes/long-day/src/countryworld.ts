@@ -1009,7 +1009,15 @@ export class CountryWorld {
   }
   private rotorGeo: THREE.BufferGeometry | null = null;
   private rotorGeometry() {
-    if (!this.rotorGeo) { const b = new Batch(); turbineRotor(b); this.rotorGeo = b.build(this.mats.solid)!.geometry; this.rotorGeo.userData.shared = true; }
+    if (!this.rotorGeo) {
+      const b = new Batch(); turbineRotor(b); const g = this.rotorGeo = b.build(this.mats.solid)!.geometry; g.userData.shared = true;
+      // (Its bounds on its axis, round every vertex: the same however far it has turned, as the
+      // segment's instanced rotors keep the bounds they were built with. Centred on its box, they
+      // were three blades' box, off the axis, and a tip turned away from it went outside.)
+      g.computeBoundingBox(); const c = new THREE.Vector3(0, (g.boundingBox!.min.y + g.boundingBox!.max.y) / 2, 0), pos = g.attributes.position, v = new THREE.Vector3();
+      let r = 0; for (let i = 0; i < pos.count; i++) r = Math.max(r, v.fromBufferAttribute(pos, i).distanceTo(c));
+      g.boundingSphere = new THREE.Sphere(c, r);
+    }
     return this.rotorGeo;
   }
   // Which way the turbines face this drive (their rotors' fronts, into the wind): one way for
