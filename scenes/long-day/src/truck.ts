@@ -36,7 +36,7 @@ const STRAP_COLOR = 0xff6a13, STRAP_GLOW = 0xb04a10;
 export interface DoorGeom { x: number; floor: number; open: number; lv: number; strap: number }
 
 interface CargoSpec { kind: "box" | "flatbed"; x0: number; x1: number; floor: number; top: number; hw: number; livery: LiveryName }
-interface TruckSpec {
+export interface TruckSpec {
   cab: "conventional" | "cabover" | "daycab";
   wheelR: number;
   frontAxle: number;           // x of the front axle
@@ -50,6 +50,19 @@ interface TruckSpec {
   fifthWheel?: number;
   loader: "ramp" | "liftgate" | "none";
   exhaust: "stack" | "pipe";
+}
+
+// The exhaust's puffs (puffs.ts PuffSystem.emit), in the truck's frame: launched at `vel` (a pipe's
+// blow out sideways from its tip, briskly enough to stay clear of the box as it swings through a
+// turn, forwards or backing into a bay; test/exhaust.ts), a light idle trickle or bigger, darker
+// ones under acceleration (or braking in reverse).
+export const PUFF_VEL = { pipe: [-0.3, 0.25, 3.6], stack: [-0.6, 1.1, 0] } as const;
+export const PUFF_IDLE = { color: 0x8e8e90, size: 0.26, life: 1.2 }, PUFF_HARD = { color: 0x4c4c4e, size: 0.42, life: 1.6 };
+// Where a pipe's puffs leave it, in the truck's frame: just past its tip (PIPE_MOUTH), the pipe
+// running out under the bed, ahead of the rear wheels, to a tip just past the bed's side.
+export const PIPE_MOUTH = 0.03;
+export function pipeMouth(s: TruckSpec): [number, number, number] {
+  return [Math.max(...s.rearAxles) + s.wheelR + 0.5, 0.45, (s.cargo ? s.cargo.hw : s.cabHW) + 0.03 + PIPE_MOUTH];
 }
 
 export const SPECS: Record<TruckModel, TruckSpec> = {
@@ -228,6 +241,7 @@ export class Truck {
   private time = 0;
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private e = new THREE.Euler();
   private v3 = new THREE.Vector3(); private s3 = new THREE.Vector3(); private tm = new THREE.Matrix4();
+  private puffVel = new THREE.Vector3();   // (scratch: PuffSystem.emit copies it)
 
   constructor(private kit: TruckKit, readonly model: TruckModel, private puffs: PuffSystem | null = null) {
     this.spec = SPECS[model];
@@ -507,9 +521,8 @@ export class Truck {
         this.root.updateMatrixWorld();
         for (const p of this.exhaust) {
           this.v3.copy(p).applyMatrix4(this.body.matrixWorld);
-          const pipe = s.exhaust === "pipe";
-          const vel = new THREE.Vector3(pipe ? -0.3 : -0.6, pipe ? 0.25 : 1.1, pipe ? 2.0 : 0).applyQuaternion(this.root.quaternion);
-          this.puffs.emit(this.v3, vel, hard ? 0x4c4c4e : 0x8e8e90, hard ? 0.42 : 0.26, hard ? 1.6 : 1.2);
+          const vel = this.puffVel.fromArray(PUFF_VEL[s.exhaust]).applyQuaternion(this.root.quaternion), k = hard ? PUFF_HARD : PUFF_IDLE;
+          this.puffs.emit(this.v3, vel, k.color, k.size, k.life);
         }
       }
     }
@@ -539,12 +552,12 @@ export class Truck {
     const mx = Math.min(...s.rearAxles) - s.wheelR - 0.12;
     for (const z of [-1, 1]) P.span(mx - 0.03, 0.18, z * 0.72, mx + 0.01, 0.9, z * 1.18, TC.mud);
     // Exhaust.
-    // The pipe runs out under the bed to a tip just past its side, so the puffs (which blow out
-    // sideways, then rise and swell) clear the floor and the wall instead of coming up through them.
+    // (Out to a tip past the bed's side, so the puffs, which blow out sideways, then rise and swell,
+    // clear the floor and the wall instead of coming up through them.)
     if (s.exhaust === "pipe") {
-      const px = Math.max(...s.rearAxles) + s.wheelR + 0.5, tip = (s.cargo ? s.cargo.hw : s.cabHW) + 0.03;
-      P.cyl(px, 0.45, tip - 0.2, 0.05, 0.4, TC.chrome, 6, Math.PI / 2);
-      this.exhaust.push(new THREE.Vector3(px, 0.45, tip + 0.03));
+      const [px, py, pz] = pipeMouth(s), end = pz - PIPE_MOUTH;
+      P.cyl(px, py, end - 0.2, 0.05, 0.4, TC.chrome, 6, Math.PI / 2);
+      this.exhaust.push(new THREE.Vector3(px, py, pz));
     }
     if (!s.cargo && s.cab === "daycab") { // tractor tail lights on the frame end
       for (const z of [-1, 1]) {

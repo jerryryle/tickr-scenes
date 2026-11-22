@@ -3,7 +3,7 @@
 // world, so it costs one draw call. Puffs live in world space, so they stay behind a moving truck.
 import * as THREE from "three@0.187.0";
 
-interface Puff { x: number; y: number; z: number; vx: number; vy: number; vz: number; age: number; life: number; size: number; color: THREE.Color }
+export interface Puff { x: number; y: number; z: number; vx: number; vy: number; vz: number; age: number; life: number; size: number; color: THREE.Color }
 
 function copyPuffs(from: Puff[], to: Puff[]): Puff[] {
   to.length = from.length;
@@ -13,6 +13,13 @@ function copyPuffs(from: Puff[], to: Puff[]): Puff[] {
     else { q.x = p.x; q.y = p.y; q.z = p.z; q.vx = p.vx; q.vy = p.vy; q.vz = p.vz; q.age = p.age; q.life = p.life; q.size = p.size; q.color.copy(p.color); }
   }
   return to;
+}
+
+// A puff's edge at `age`: it swells to 2.32 times its size over the first 60% of its life, then
+// shrinks away.
+export function puffScale(age: number, life: number, size: number) {
+  const k = age / life;
+  return size * (k < 0.6 ? 1 + k * 2.2 : (1 + 0.6 * 2.2) * (1 - (k - 0.6) / 0.4));
 }
 
 export class PuffSystem {
@@ -50,9 +57,7 @@ export class PuffSystem {
       const drag = Math.pow(0.96, dt * 60); p.vx *= drag; p.vz *= drag;
     }
     for (const p of this.puffs) {
-      const k = p.age / p.life;
-      const scale = p.size * (k < 0.6 ? 1 + k * 2.2 : (1 + 0.6 * 2.2) * (1 - (k - 0.6) / 0.4));
-      this.m.compose(this.v.set(p.x, p.y, p.z), this.q, this.s.setScalar(Math.max(scale, 0.001)));
+      this.m.compose(this.v.set(p.x, p.y, p.z), this.q, this.s.setScalar(Math.max(puffScale(p.age, p.life, p.size), 0.001)));
       this.mesh.setMatrixAt(n, this.m);
       this.mesh.setColorAt(n, p.color);
       n++;
