@@ -922,7 +922,8 @@ export class Crew {
       const w = THREE.MathUtils.clamp(ph.t / (ph.len * 0.85), 0, 1);
       const sx = marshal[0] + (A[0] - 1.2 - marshal[0]) * w, sz = marshal[2] + (A[2] + 0.9 - marshal[2]) * w;
       this.placeChar(hp, truck, sx, P, sz, Math.atan2(-(A[2] + 0.9 - marshal[2]), A[0] - 1.2 - marshal[0]));
-      hp.apply(w < 1 ? walkPose(w * 6 / STRIDE, idlePose(this.time, this.tmpPose)) : idlePose(this.time, this.tmpPose));
+      const far = Math.hypot(A[0] - 1.2 - marshal[0], A[2] + 0.9 - marshal[2]);   // (the cycle by the ground covered, so the feet don't slide)
+      hp.apply(w < 1 ? walkPose(w * far / STRIDE, idlePose(this.time, this.tmpPose)) : idlePose(this.time, this.tmpPose));
     } else {
       fl.updateMatrixWorld();
       this.v.set(-1.2, 1.06 - CHARACTER_HIP_Y, 0).applyMatrix4(fl.matrixWorld);
