@@ -10,7 +10,10 @@
 // truck's lane just ahead of it, to turn. Seed 2539665337's city 16: a car turning beside it, its
 // tail swinging out into the truck. Seed 11's city 24: a car crossing the truck's nose as it pulled
 // out of a bay (pulling out, it looked for nothing short of where it waits for a gap). Every car
-// now never steps into the truck, whatever else it misjudges (traffic.ts truckGap).
+// now never steps into the truck, whatever else it misjudges (traffic.ts truckGap). Seed
+// 3442198800's city 63 again, with more traffic about: a tractor's trailer swinging across a box
+// truck waiting in the oncoming lane for it to go through (the truck looked out for those waiting
+// on it with its cab, not its trailer: life.ts truckStop).
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";

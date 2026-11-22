@@ -30,6 +30,7 @@ const CAR_BRAKE = 5;   // m/s^2: the hardest a car ahead could brake (how far on
 export class StreetLife implements LifeHook {
   private obs: Obstacle[] = [];
   private spare: Pose = { x: 0, z: 0, h: 0, k: 0 };
+  private setDown = "";   // (the other truck where it was last set down: dropInside)
   private busy = new Set<string>();
   private truckPath = { path: null as unknown as Path, s: 0, v: 0, front: 0, rear: 0, yaw: 0, fw: undefined as number | undefined };
   private truckGate = { node: 0, street: 0 };
@@ -124,9 +125,12 @@ export class StreetLife implements LifeHook {
       if (q) truckObstacles(other, q.x, q.z, q.h, 0, obs);
       for (let k = n0; k < obs.length; k++) obs[k].still = true;
       // (Set down where a car already stood, the spare at a lot, say: that car is gone, turned off
-      // somewhere, rather than left standing inside it.)
-      this.traffic.dropInside(obs, n0, obs.length);
-    }
+      // somewhere, rather than left standing inside it. Only as it is set down: one found inside it
+      // after that, standing there since, goes only out of sight (traffic.ts dropInside).)
+      const key = q ? `${other}@${q.x.toFixed(1)},${q.z.toFixed(1)}` : "";
+      this.traffic.dropInside(j.plan.graph, obs, n0, obs.length, key !== this.setDown, p);
+      this.setDown = key;
+    } else this.setDown = "";
     const prs = st.preempt ?? [];
     // For the vignettes: the truck parked at a kerb stop (its cab), and the blocks it is to stop at.
     let parkedAt: KerbParked | null = null;
@@ -255,9 +259,12 @@ export class StreetLife implements LifeHook {
           const ex = C[k].x - kx, ez = C[k].z - kz;
           if (Math.abs(ex) > 20 || Math.abs(ez) > 20) continue;
           if (this.traffic.speedOf(C[k].owner) > 0.5 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz <= E.front + 0.5) continue;
-          if (this.traffic.waitsForTruck(C[k].owner)) continue;
+          // (One waiting at its line for the truck by its junction booking: only if the trailer would
+          // touch it, not merely pass close, as for the cab below; a trailer swinging across a car
+          // waiting in the oncoming lane would hit it all the same.)
+          const pad = this.traffic.waitsForTruck(C[k].owner) ? -0.02 : 0.3;
           const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
-          hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + C[k].r + 0.3;
+          hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + C[k].r + pad;
         }
         for (let k = 0; k < TP.length && !hit; k++) {
           const ex = TP[k].x - kx, ez = TP[k].z - kz;
@@ -347,10 +354,10 @@ export class StreetLife implements LifeHook {
     }
     return false;
   }
-  save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp() }); }
+  save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp(), d: this.setDown }); }
   load(s: string, j: Journey) {
     const o = JSON.parse(s);
-    this.traffic.load(o.t, j.plan); this.crowd.load(o.c); this.ambient.loadBlimp(o.b);
+    this.traffic.load(o.t, j.plan); this.crowd.load(o.c); this.ambient.loadBlimp(o.b); this.setDown = o.d ?? "";
   }
 }
 

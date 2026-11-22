@@ -12,12 +12,18 @@
 // still in the street (not at its stop) longer than HELD_MAX, or if anything making way for it
 // comes further into it, deeper than OVERLAP_MAX (seed 659803215's city 15: a cable car once made
 // way through it, forward along its tracks being the shorter way out; seed 2539665337's city 4:
-// the truck came on into an SUV still backing out of its way).
+// the truck came on into an SUV still backing out of its way), or if anything making way for it
+// vanishes where the truck could see it go (seeds 2539665337's city 4, 659803215's 15 and 7's 7:
+// cars boxed in against its side, every way along their lanes closing in on it at first, and a
+// cable car backed up to the junction it had come through, given up and taken away in plain view;
+// traffic.ts clearWay and extendBack). Seed 659803215's city 15 again: a van boxed in against its
+// side, every way along its lane touching it, given up and kept in sight (seen by a corner), stood
+// there for good, the truck held 928 s (traffic.ts intoB, clearFloor).
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey, SIM_DT } from "../src/journey.ts";
 import { StreetLife } from "../src/life.ts";
-import { Traffic } from "../src/traffic.ts";
+import { Traffic, vehicleUnseen } from "../src/traffic.ts";
 import { Crowd } from "../src/crowd.ts";
 import { Ambient } from "../src/ambient.ts";
 import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
@@ -49,8 +55,13 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
     j.attachLife(new StreetLife(traffic, new Crowd(scene, mat), new Ambient(scene, mat)));
     let held = 0, most = 0, at = 0, deep = 0, deepAt = 0;
     const was = new Map<number, number>();   // (how deep each vehicle making way came into it last step)
+    let making = new Map<any, { x: number; z: number; h: number }>(), vanished = 0;   // (those making way last step, and where)
     while (j.st.simTime < (city + 1) * period - 1) {
       j.step();
+      // (One making way gone since, where the truck could see it go: it should stand, or back out.)
+      const cars = new Set((traffic as any).cars as any[]);
+      for (const [c, p] of making) if (!cars.has(c) && !vehicleUnseen(j.plan.graph, j.pose, p.x, p.z, p.h, c.kind.len, c.kind.width)) { vanished++; if (errs.length < 10) errs.push(`seed ${seed} city ${city}: a ${c.kind.id} making way for the truck vanished in sight of it (at ${(j.st.simTime - city * period).toFixed(0)} s)`); }
+      making = new Map([...cars].filter((c) => c.clearHold).map((c) => [c, { x: c.x, z: c.z, h: c.h }]));
       held = Math.abs(j.st.v) < 0.05 && ((j.st.mode === "drive" && j.st.stopS - j.st.s > 1) || (j.st.mode === "reverse" && j.st.s - j.st.backS > 0.05)) ? held + SIM_DT : 0;
       if (held > most) { most = held; at = j.st.simTime - city * period; }
       // (Coming further into it while making way: as it backs out, or as the truck comes on. Not
@@ -61,7 +72,7 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
         was.set(c.id, d);
       }
     }
-    console.log(`gridlock: seed ${seed} city ${city}, longest stand ${most.toFixed(0)} s (to ${at.toFixed(0)} s into the city), deepest into it making way ${deep.toFixed(2)} m`);
+    console.log(`gridlock: seed ${seed} city ${city}, longest stand ${most.toFixed(0)} s (to ${at.toFixed(0)} s into the city), deepest into it making way ${deep.toFixed(2)} m, ${vanished} vanished making way`);
     if (deep > OVERLAP_MAX) errs.push(`seed ${seed} city ${city}: a vehicle making way came ${deep.toFixed(2)} m into the truck (at ${deepAt.toFixed(0)} s)`);
     if (most > HELD_MAX) errs.push(`seed ${seed} city ${city}: the truck stood still in the street ${most.toFixed(0)} s (to ${at.toFixed(0)} s)`);
   }

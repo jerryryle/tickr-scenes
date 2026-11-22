@@ -39,7 +39,7 @@ interface Car {
   stopFor: number;                     // the signal (index on the path) it is stopping for, -1: none
   blockedBy: number; slowT: number; pedT: number; acc: number;   // acc: current acceleration (eased)
   passId?: number; passT?: number;      // a car it was let through past out of a deadlock, and for how much longer
-  clearHold?: boolean; clearT?: number; clearDir?: number;   // making way for the truck out of a gridlock (clearWay), holding there; how long it has been stuck in its way; which way along its lane it goes
+  clearHold?: boolean; clearT?: number; clearDir?: number; clearFlip?: boolean; clearGaveUp?: boolean; clearRegive?: boolean; clearFloor?: number; clearStuck?: number;   // making way for the truck out of a gridlock (clearWay), holding there; how long it has been stuck in its way; which way along its lane it goes; whether it has turned to go the other way (once only); given up, in sight, standing (no longer waited on); given up once and moving again since (gives up sooner: CLEAR_FLIP); its gap to the truck's body as it gave up (the deepest it may come, but CLEAR_SLIDE); how long it has made no way at all while making way (in its way or another's), from nothing each spell
   held?: boolean;                      // holding at a junction's line last step (for a car with priority, or the way out blocked)
   truckHold?: boolean;                 // holding last step for the truck to go by (giveWay, landingWay)
   stopOk?: number;                     // the all-way stop it has stopped at and may now go on from
@@ -67,7 +67,9 @@ const STUCK_GONE = 55;   // s a vehicle may stand before it is gone (longer than
 // how long one can stay stuck in its way.
 const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 12, CLEAR_LOOK = 30;
 const CLEAR_FINE = 0.25, CLEAR_FINE_NEAR = 6;   // m: how finely the truck's way ahead is looked at near its nose, and how far (clearWay)
-const CLEAR_WOBBLE = 0.05;   // m: how much circles' gaps to the truck wobble along a lane beside it (clearWay)
+const CLEAR_FLIP = 2;   // s: stuck its way that long, a vehicle making way tries the other way (clearWay)
+const CABLE_LAYOVER = 8;   // s: how long a cable car stands at the end of its line before it turns round (turnRound)
+const CLEAR_SLIDE = 0.15, CLEAR_OUT = 8;   // m: how much deeper one already against the truck may slide along it, for how far, to come clear (clearWay)
 const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
 const DROP_DEEP = 0.6;   // m: how deep inside a parked truck's circles a car is dropped (dropInside)
 const SLIDE_LOOK = 6;     // m on along its way a car beside the truck may slide by it to come clear (slidesBy)
@@ -146,7 +148,9 @@ export class Traffic {
   }
   load(o: ReturnType<Traffic["save"]>, plan: CityPlan) {
     this.rng.s = o.rng; this.nextId = o.id; this.bookSeq = o.seq ?? 0; this.truckBk = o.truckBk ?? null; this.truckStillT = o.truckStill ?? 0; this.truckYieldsAt = o.truckYields ?? -1; this.clearPending = o.clearPending ?? false; this.truckCar = null;
-    this.cars = o.cars.map((c) => ({ ...c, kind: this.kinds.find((k) => k.id === c.kind)!, path: new Path(plan.graph, c.path), next: c.next ? new Path(plan.graph, c.next) : null }));   // (`next` absent in older saves: null)
+    // (`next` absent in older saves, from before cars planned ahead: planned now. A saved null is a
+    // dead end, no way on: drive.)
+    this.cars = o.cars.map((c) => { const path = new Path(plan.graph, c.path); return { ...c, kind: this.kinds.find((k) => k.id === c.kind)!, path, next: c.next ? new Path(plan.graph, c.next) : (c as { next?: unknown }).next === undefined ? this.planOn(plan.graph, path, !!c.cable, path.endA) : null }; });
     for (const c of this.cars) c.path.eval(c.s, this.pose);   // the path remembers its last lane offset
     this.obstacles.length = 0;
   }
@@ -164,7 +168,7 @@ export class Traffic {
   private landingAt = 0;   // (where on the way the ramp meets the street)
   private landingS: number[] = [];
   step(plan: CityPlan, simTime: number, prs: SignalPreempt[], focus: { x: number; z: number }, truck: Obstacle[], truckHeading: number, peds: Obstacle[], truckPath: { path: Path; s: number; v: number; front: number; rear: number; yaw?: number; fw?: number } | null = null, truckGate: { node: number; street: number } | null = null, landing: { path: Path; s0: number; s1: number; at: number } | null = null, crossers: number[] = [], waiters: number[] = [], clear = 0, eye: { x: number; z: number; h: number } | null = null) {
-    this.truckPath = truckPath; this.truckGate = truckGate; this.crossers = crossers; this.waiters = waiters;
+    this.truckPath = truckPath; this.truckGate = truckGate; this.crossers = crossers; this.waiters = waiters; this.eye = eye;
     // (Its body at each place on that way, from rear to nose along its heading every 1.5 m: pulling
     // out of a bay or off a ramp, its nose swings wide of the way its rear wheels take. landingS:
     // each point's place on the way.)
@@ -184,17 +188,23 @@ export class Traffic {
     if (truckPath) for (const tn of truckPath.path.nodes) if (tn.sOut > truckPath.s) { if (tn.sLine - truckPath.s < 70 && tn.move !== "S") this.truckTurn = tn.move === "L" ? 1 : -1; break; }
     const dt = SIM_DT;
     for (const c of this.cars) { c.px = c.x; c.pz = c.z; c.ph = c.h; }
-    // Despawn far vehicles; top up near the truck.
+    // Despawn far vehicles; top up near the truck. (Never where it would be seen going: a far one
+    // still in sight down a long street goes once it is out of sight, past the view distance at most.)
     for (let i = this.cars.length - 1; i >= 0; i--) {
-      const c = this.cars[i];
-      if (Math.hypot(c.x - focus.x, c.z - focus.z) > TRAFFIC_DESPAWN) this.cars.splice(i, 1);
-      // (And one stuck for good, in a knot of traffic nothing undoes: gone, turned off somewhere.)
-      else if (c.stillT > STUCK_GONE) this.cars.splice(i, 1);
+      const c = this.cars[i], far = Math.hypot(c.x - focus.x, c.z - focus.z);
+      if (far > TRAFFIC_DESPAWN && this.unseen(plan.graph, c)) this.cars.splice(i, 1);
+      // (And one stuck for good, in a knot of traffic nothing undoes: gone, turned off somewhere,
+      // once it is out of sight. In sight it stands on in the knot.)
+      else if (c.stillT > STUCK_GONE && this.unseen(plan.graph, c)) this.cars.splice(i, 1);
     }
     const bx = Math.floor(focus.x / BLOCK), bz = Math.floor(focus.z / BLOCK);
     const d = plan.district(bx, bz);
     const want = d === "downtown" ? 30 : d === "commercial" ? 26 : d === "residential" ? 15 : 12;
-    for (let tries = 0; tries < 3 && this.cars.length < want; tries++) this.spawn(plan, focus, truck, simTime, prs, peds, eye);
+    // (Counting only those within reach: far ones kept on in sight down a long street aren't round
+    // the truck, and mustn't stop it being topped up.)
+    let near = 0;
+    for (const c of this.cars) if (Math.hypot(c.x - focus.x, c.z - focus.z) <= TRAFFIC_DESPAWN) near++;
+    for (let tries = 0; tries < 3 && near < want; tries++) { const n = this.cars.length; this.spawn(plan, focus, truck, simTime, prs, peds, eye); if (this.cars.length > n) near++; }
     // Drive.
     this.obstacles.length = 0;
     for (const c of this.cars) this.carCircles(c, this.obstacles);
@@ -222,7 +232,7 @@ export class Traffic {
     for (const c of bks) this.listAt(c.bk!.node).push(c);
     this.truckBook(plan.graph, simTime, plan.seed, prs);
     // (Making way for the truck out of a gridlock: those that have hold where they are, clearWay.)
-    if (!clear) { this.clearPending = false; for (const c of this.cars) { c.clearHold = undefined; c.clearDir = undefined; } }
+    if (!clear) { this.clearPending = false; for (const c of this.cars) { c.clearHold = undefined; c.clearDir = undefined; c.clearFlip = undefined; c.clearGaveUp = undefined; c.clearRegive = undefined; c.clearFloor = undefined; c.clearStuck = undefined; } }
     // (One holding where it is for the truck stands there all the same: its time standing counts
     // towards STUCK_GONE, unless it moved making way last step: clearWay, after.)
     for (let i = this.cars.length - 1; i >= 0; i--) { const c = this.cars[i]; if (!c.clearHold) this.drive(c, dt, plan, simTime, prs, truck, truckHeading, peds, i, ignore[i]); else c.stillT = this.clearMoved.has(c) ? 0 : c.stillT + dt; }
@@ -276,9 +286,12 @@ export class Traffic {
     let zx = 0, zz = 0;
     for (const o of Z) { zx += o.x; zz += o.z; }
     zx /= Z.length; zz /= Z.length;
-    // (Car c's circles were it at s along its lane, into `out`.)
+    // (Car c's circles were it at s along its lane, into `out`: past the end of its way, on along the
+    // next one, which begins there, as it would drive on into it.)
+    const reach = (c: Car) => c.path.length + (c.next ? c.next.length : 0);
     const at = (c: Car, s: number, out: number[]) => {
-      c.path.peek(Math.max(0, s), this.pose);   // (looking: the path's cursor and lane offset left as they are)
+      if (s > c.path.length && c.next) c.next.peek(s - c.path.length, this.pose);
+      else c.path.peek(Math.max(0, s), this.pose);   // (looking: the path's cursor and lane offset left as they are)
       const h = this.pose.h, x = this.pose.x + Math.sin(h) * c.dodge, z = this.pose.z + Math.cos(h) * c.dodge;
       const fx = Math.cos(h), fz = -Math.sin(h), L = c.kind.len, n = Math.max(2, Math.ceil(L / (c.kind.width * 1.1))), step = L / n, r = Math.max(c.kind.width * 0.55, step * 0.55);
       out.length = 0;
@@ -290,14 +303,32 @@ export class Traffic {
     const gapZ = (P: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (const o of Z) m = Math.min(m, Math.hypot(P[i] - o.x, P[i + 1] - o.z) - P[i + 2] - o.r - CLEAR_ROOM); return m; };
     // (And of the truck's body where it stands: none makes way through it, only away from it.)
     const gapB = (P: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (const o of Bd) m = Math.min(m, Math.hypot(P[i] - o.x, P[i + 1] - o.z) - P[i + 2] - o.r - CLEAR_ROOM); return m; };
-    // (Whether car c at s1, going way w, gap g1 to the truck's body (from g0), is coming on into it:
-    // deeper than it was, unless only by the few centimetres the circles' gaps wobble by along a lane
-    // beside it, the gap back again within a little on, and never touching it.)
+    // (Whether car c at s1, going way w, gap g1 to the truck's body (from g0), is coming on into it.
+    // Not if the gap holds or opens; nor if it closes by no more than CLEAR_SLIDE and opens out again
+    // within CLEAR_OUT (sliding along the truck's side its circles' gaps wobble, and every way along
+    // its lane can close in a little at first); nor if, closing no further than that, that way takes
+    // it out of the truck's way within CLEAR_LOOK. Stuck for CLEAR_FLIP s, boxed in where every way
+    // closes in on it, any way that takes it out of the truck's way so, however close it comes on
+    // the way. Never coming to touch it (one already against it, no deeper than CLEAR_SLIDE): held
+    // to never closing at all, a car up beside it could never move, and the truck would wait on it
+    // for good; let close in by a little every step, it would creep on into it.)
     const W = this.clearW;
     const intoB = (c: Car, s1: number, w: number, g1: number, g0: number) => {
       if (g1 >= g0 - 1e-6) return false;
-      if (g1 < g0 - CLEAR_WOBBLE || g1 + CLEAR_ROOM < 0) return true;
-      for (let k = 0.5; k <= 2; k += 0.5) if (gapB(at(c, s1 + w * k, W)) >= g0 - 1e-6) return false;
+      // (Given up in sight, boxed in against the truck where every way along its lane would touch
+      // it: no deeper than CLEAR_SLIDE past where it gave up, held to that one gap so it never creeps
+      // on into it, as one already touching: else it would stand there in the truck's way for good,
+      // the truck held by it.)
+      const F = c.clearFloor, touching = F !== undefined || g0 + CLEAR_ROOM < 0, stuck = !touching && (c.clearStuck ?? 0) > CLEAR_FLIP;
+      const closes = (g: number) => touching ? g < (F ?? g0) - CLEAR_SLIDE : g + CLEAR_ROOM < 0 || (!stuck && g < g0 - CLEAR_SLIDE);
+      if (closes(g1)) return true;
+      if (!stuck) for (let k = 0.5; k <= CLEAR_OUT; k += 0.5) { const s2 = s1 + w * k; if (s2 < 0 || s2 > reach(c)) break; const g = gapB(at(c, s2, W)); if (closes(g)) return true; if (g >= g0 - 1e-6) return false; }
+      for (let k = 0; k <= CLEAR_LOOK; k += 0.5) {
+        const s2 = s1 + w * k;
+        if (s2 < 0 || s2 > reach(c)) return true;
+        if (k > 0 && closes(gapB(at(c, s2, W)))) return true;
+        if (gapZ(at(c, s2, W)) >= 0) return false;
+      }
       return true;
     };
     const gapQ = (P: number[], Q: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (let k = 0; k < Q.length; k += 3) m = Math.min(m, Math.hypot(P[i] - Q[k], P[i + 1] - Q[k + 1]) - P[i + 2] - Q[k + 2]); return m; };
@@ -310,9 +341,9 @@ export class Traffic {
       const b0 = Math.min(0, gapB(at(c, c.s, A)));
       for (const w of [-1, 1]) for (let m = 1; m <= CLEAR_LOOK; m += 1) {
         const s1 = c.s + w * m;
-        if (s1 >= 0 && s1 <= c.path.length && intoB(c, s1, w, gapB(at(c, s1, A)), b0)) break;   // (that way runs into the truck)
-        if (s1 < 0 || s1 > c.path.length) {
-          const g = gapZ(at(c, Math.max(0, Math.min(c.path.length, s1)), A));
+        if (s1 >= 0 && s1 <= reach(c) && intoB(c, s1, w, gapB(at(c, s1, A)), b0)) break;   // (that way runs into the truck)
+        if (s1 < 0 || s1 > reach(c)) {
+          const g = gapZ(at(c, Math.max(0, Math.min(reach(c), s1)), A));
           if (bestM === Infinity && g > bestG) { bestG = g; best = w; }
           break;
         }
@@ -327,58 +358,143 @@ export class Traffic {
       if (Math.hypot(c.x - zx, c.z - zz) > 50) continue;
       if (gapZ(at(c, c.s, A)) >= 0) continue;
       c.clearHold = true;
+      // (Its way begun far enough back first to look back along it as far as on, extendBack: else
+      // the start of its way would seem a dead stop backing up, and it would pick on for good.)
+      if (c.clearDir === undefined && c.s < CLEAR_LOOK) this.extendBack(G, c, CLEAR_LOOK - c.s);
       c.clearDir ??= way(c);
       R.set(c, c.clearDir);
     }
     // Then each makes its way, if it can this step; if another vehicle is in the way, that one makes
     // way too, away from it (a few rounds: down a queue).
     const moved = this.clearMoved; moved.clear();
-    for (let round = 0; round < 6; round++) for (const [c, w] of R) {
+    const extended = this.clearExtended; extended.clear();
+    for (let round = 0; round < 6; round++) for (const [c, w0] of R) {
       if (moved.has(c)) continue;
-      const s1 = c.s + w * d;
-      if (s1 < 0) continue;
-      // (Never into the truck, nor deeper into it.)
-      if (intoB(c, s1, w, gapB(at(c, s1, A)), Math.min(0, gapB(at(c, c.s, B))))) continue;
-      // (Another vehicle where it would go, that it isn't moving away from already.)
-      at(c, s1, A);
-      const C0 = at(c, c.s, this.clearC);
-      let blocker: Car | null = null;
-      for (const o of this.cars) {
-        if (o === c || Math.abs(o.x - c.x) > 20 || Math.abs(o.z - c.z) > 20) continue;
-        const Q = at(o, o.s, B), g1 = gapQ(A, Q);
-        if (g1 < 0.3 && gapQ(C0, Q) >= g1) { blocker = o; break; }
-      }
-      if (blocker) {
-        if (!R.has(blocker)) {
-          // (Away from it: whichever way along its own lane opens the gap between them.)
-          if (blocker.clearDir === undefined) { at(blocker, blocker.s + 3, B); const f = gapQ(A, B); at(blocker, blocker.s - 3, B); blocker.clearDir = f >= gapQ(A, B) || blocker.s < 3 ? 1 : -1; }
-          R.set(blocker, blocker.clearDir); blocker.clearHold = true;
+      // (Its way, kept; or, stuck that way for CLEAR_FLIP s (backed up to the start of its way, the
+      // truck moved on behind it since it picked, or face to face with another making way), the
+      // other way, if that one is open: once only, so it never rocks back and forth for good, the
+      // truck waiting on it. (Given up, boxed in (clearFloor): again each time it is stuck so, never
+      // sooner, so it can't rock back and forth a step at a time.)
+      let w = 0, s1 = 0, now: Path | null | undefined;
+      for (const t of (c.clearStuck ?? 0) > CLEAR_FLIP && (!c.clearFlip || c.clearFloor !== undefined) ? [w0, -w0] : [w0]) {
+        let t1 = c.s + t * d;
+        // (Backing up near the start of its way: its way begun further back, extendBack, far enough
+        // to look along it for a way out of the truck's way (intoB, CLEAR_LOOK).)
+        // (Once a step: not again each round it is still held.)
+        if (t < 0 && t1 < CLEAR_LOOK && !extended.has(c)) { extended.add(c); if (this.extendBack(G, c, CLEAR_LOOK - t1) > 0) t1 = c.s + t * d; }
+        if (t1 < 0) continue;
+        // (Never into the truck, nor deeper into it.)
+        if (intoB(c, t1, t, gapB(at(c, t1, A)), Math.min(0, gapB(at(c, c.s, B))))) continue;
+        // (Another vehicle where it would go, that it isn't moving away from already.)
+        at(c, t1, A);
+        const C0 = at(c, c.s, this.clearC);
+        let blocker: Car | null = null;
+        for (const o of this.cars) {
+          if (o === c || Math.abs(o.x - c.x) > 20 || Math.abs(o.z - c.z) > 20) continue;
+          const Q = at(o, o.s, B), g1 = gapQ(A, Q);
+          if (g1 < 0.3 && gapQ(C0, Q) >= g1) { blocker = o; break; }
         }
-        continue;
+        if (blocker) {
+          if (!R.has(blocker)) {
+            // (Away from it: whichever way along its own lane opens the gap between them.)
+            // (Its own way begun further back first, as for those in the truck's way: else backing up
+            // near its start would seem a dead stop.)
+            if (blocker.clearDir === undefined) { if (blocker.s < CLEAR_LOOK) this.extendBack(G, blocker, CLEAR_LOOK - blocker.s); at(blocker, blocker.s + 3, B); const f = gapQ(A, B); at(blocker, blocker.s - 3, B); blocker.clearDir = f >= gapQ(A, B) || blocker.s < 3 ? 1 : -1; }
+            R.set(blocker, blocker.clearDir); blocker.clearHold = true;
+          }
+          continue;
+        }
+        // (Pulling on past the end of its way: on into the next street, as it would have driven.
+        // With no way on there, not that way.)
+        const p = c.path;
+        const n = t1 < p.length - 0.5 ? undefined : c.next ? this.planOn(G, p, c.cable, p.endA - (p.length - t1), c.next.route.edges[0]) : null;
+        if (n === null) continue;
+        w = t; s1 = t1; now = n;
+        break;
       }
+      if (!w) continue;
+      if (w !== w0) { c.clearDir = w; c.clearFlip = true; R.set(c, w); }
       moved.add(c);
       c.s = s1; c.v = 0; c.bk = null;
-      // (Pulling on past the end of its way: on into the next street, as it would have driven.)
-      if (c.s >= c.path.length - 0.5) {
-        const p = c.path, now = this.planOn(G, p, c.cable, p.endA - (p.length - c.s), c.next ? c.next.route.edges[0] : undefined);
-        if (!now) { this.cars.splice(this.cars.indexOf(c), 1); R.delete(c); continue; }
-        c.path = now; c.next = this.planOn(G, now, c.cable, now.endA); c.s = 0; c.committed = -1; c.stopFor = -1;
-      }
+      if (now) { c.path = now; c.next = this.planOn(G, now, c.cable, now.endA); c.s = 0; c.committed = -1; c.stopFor = -1; }
       c.path.eval(c.s, this.pose);
       const h = this.pose.h;
       c.x = this.pose.x + Math.sin(h) * c.dodge; c.z = this.pose.z + Math.cos(h) * c.dodge; c.h = h;
     }
-    // (Still in the way, and not able to move at all, for long: gone.)
+    // (Still in the way, and not able to move at all, for long: gone, out of sight. In sight it gives
+    // up and stands where it is, no longer waited on: the truck goes on past it if it can, short of
+    // anything it would touch (life.ts truckStop), as it does any standing vehicle.)
     this.clearPending = false;
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const c = this.cars[i];
+      // (Stuck counted only while making way, from nothing each time it is back at it; and one that
+      // gave up, moving again, waited on again.)
+      c.clearStuck = !R.has(c) ? undefined : moved.has(c) ? 0 : (c.clearStuck ?? 0) + dt;
+      // (Given up once, it is waited on again only CLEAR_FLIP s stuck: else each step it can make, as
+      // the truck edges on past it, would hold the truck the whole CLEAR_GIVE_UP again.)
+      if (moved.has(c) && c.clearGaveUp) { c.clearGaveUp = undefined; c.clearRegive = true; }
       const inWay = R.has(c) && gapZ(at(c, c.s, A)) < 0;
-      if (inWay) this.clearPending = true;
+      if (inWay && !c.clearGaveUp) this.clearPending = true;
+      // (Clear of its way, a later spell in it begins afresh: the whole CLEAR_GIVE_UP again, held to
+      // never closing on the truck at all.)
+      if (!inWay) { c.clearRegive = undefined; c.clearFloor = undefined; }
       if (!inWay || moved.has(c)) { c.clearT = 0; continue; }
-      if ((c.clearT = (c.clearT ?? 0) + dt) > CLEAR_GIVE_UP) this.cars.splice(i, 1);
+      if ((c.clearT = (c.clearT ?? 0) + dt) > (c.clearRegive ? CLEAR_FLIP : CLEAR_GIVE_UP)) { if (this.unseen(G, c)) this.cars.splice(i, 1); else { c.clearGaveUp = true; c.clearFloor ??= Math.min(0, gapB(at(c, c.s, A))); } }
     }
   }
-  private clearA: number[] = []; private clearB: number[] = []; private clearC: number[] = []; private clearW: number[] = []; private clearMoved = new Set<Car>();
+  // Begins car c's way up to `want` m further back (backing up out of the truck's way): along the
+  // street it starts on, as far as the junction's mouth there; and past that, back across the
+  // junction onto the street it would have come from (straight on, where it can be: a cable car's
+  // tracks only). The same way on from there, c.s moved on to where c is on it. How far it was
+  // begun further back.
+  private extendBack(G: CityGraph, c: Car, want: number): number {
+    const r = c.path.route;
+    if (r.dock || r.garageIn || r.garageOut) return 0;
+    const room = G.faceLen(r.d) - r.before - (G.faceA0(r.d) + 1);
+    if (room >= 0.05) {
+      const extra = Math.min(want, room);
+      c.path = new Path(G, { ...r, before: r.before + extra });
+      c.s += extra;
+      // (Evaluated where it is, as drive reads its lane and heading there (lastOffset) before its own.)
+      c.path.eval(c.s, this.gw0);
+      // (Short of `want` there: on back across the junction for the rest.)
+      return extra + (extra < want - 0.05 ? this.extendBack(G, c, want - extra) : 0);
+    }
+    // (Back across the junction: the street into it that goes on into this one, straight on first.)
+    const N = G.nodes[G.dedgeTo(r.d ^ 1)], ok = (e: number) => G.streets[e >> 1].inCity && (!c.cable || !!G.streets[e >> 1].tags.cable);
+    let from = -1, best = 9;
+    for (const a of N.arms) {
+      const q = (a.street * 2 + a.end) ^ 1;
+      if (q === (r.d ^ 1) || !ok(q) || G.faceLen(q) - G.faceA0(q) - G.faceEndMouth(q) < 6) continue;
+      const m = G.movesFrom(q).find((x) => x.to === r.d);
+      const rank = !m ? 9 : m.move === "S" ? 0 : c.cable ? 9 : m.move === "R" ? 1 : 2;
+      if (rank < best) { best = rank; from = q; }
+    }
+    if (from < 0) return 0;
+    const before = Math.min(want, G.faceLen(from) - G.faceA0(from) - G.faceEndMouth(from) - 1);
+    const old = c.path, p = new Path(G, { ...r, d: from, before: before + G.faceEndMouth(from), edges: [r.d, ...r.edges] });
+    // (Where c is on the new way: the nearest point to where it is on the old one, looking back from
+    // the old one's start as far as the new one reaches.)
+    old.peek(c.s, this.gw0);
+    const x0 = this.gw0.x, z0 = this.gw0.z, span = p.length - old.length;
+    let bs = 0, bd = Infinity;
+    for (let s = Math.max(0, span + c.s - 3); s <= Math.min(p.length, span + c.s + 3); s += 0.05) { p.peek(s, this.gw0); const d = Math.hypot(this.gw0.x - x0, this.gw0.z - z0); if (d < bd) { bd = d; bs = s; } }
+    if (bd > 0.5) return 0;
+    // (Moved over across the new way's lane by as far as it is from it, so as not to jump across to
+    // it: no further than the next lane over, as straightOn.)
+    p.peek(bs, this.gw0);
+    const dodge = c.dodge + (x0 - this.gw0.x) * Math.sin(this.gw0.h) + (z0 - this.gw0.z) * Math.cos(this.gw0.h);
+    if (dodge < -3.05 || dodge > 0.05) return 0;
+    c.dodge = Math.min(0, Math.max(-3, dodge)); c.dodgeV = 0;
+    // (Its lights' indices on its way moved on by any the junction behind adds at its start.)
+    const add = p.signals.length - old.signals.length;
+    if (c.committed >= 0) c.committed += add;
+    if (c.stopFor >= 0) c.stopFor += add;
+    c.path = p; c.s = bs;
+    c.path.eval(c.s, this.gw0);
+    return before;
+  }
+  private clearA: number[] = []; private clearB: number[] = []; private clearC: number[] = []; private clearW: number[] = []; private clearMoved = new Set<Car>(); private clearExtended = new Set<Car>();
 
   private spawn(plan: CityPlan, focus: { x: number; z: number }, truck: Obstacle[], simTime: number, prs: SignalPreempt[], peds: Obstacle[], eye: { x: number; z: number; h: number } | null) {
     const r = this.rnd;
@@ -389,7 +505,7 @@ export class Traffic {
     const G = plan.graph, fwd = r() < 0.5, before0 = 15 + r() * 35;
     let kind = this.pickKind(plan);
     let cable = false;
-    if (plan.style.cableCar && r() < 0.25 && this.count("cablecar") < 2) { kind = this.kinds.find((k) => k.id === "cablecar")!; cable = true; }
+    if (plan.style.cableCar && r() < 0.25 && this.count("cablecar", focus) < 2) { kind = this.kinds.find((k) => k.id === "cablecar")!; cable = true; }
     if (!kind || this.count(kind.id) >= kind.cap) return;
     const sid = nearestStreet(G, px, pz, cable);
     // Only on the city's own streets (none out of town).
@@ -408,7 +524,7 @@ export class Traffic {
     for (const o of this.obstacles) if (Math.hypot(o.x - this.pose.x, o.z - this.pose.z) < 14) return;
     for (const c of this.cars) if (Math.hypot(c.x - this.pose.x, c.z - this.pose.z) < 14) return;
     // Nor where it would be seen appearing: nose, middle or tail.
-    if (eye) for (const u of [-0.5, 0, 0.5]) { const q = u * kind.len; if (!outOfSight(G, eye, this.pose.x + Math.cos(this.pose.h) * q, this.pose.z - Math.sin(this.pose.h) * q)) return; }
+    if (eye && !vehicleUnseen(G, eye, this.pose.x, this.pose.z, this.pose.h, kind.len, kind.width)) return;
     // (Nor on anyone in the road, nor just short of someone crossing it.)
     const fx = Math.cos(this.pose.h), fz = -Math.sin(this.pose.h);
     for (const o of peds) { const dx = o.x - this.pose.x, dz = o.z - this.pose.z, a = dx * fx + dz * fz; if (a > -8 && a < 14 && Math.abs(dx * fz - dz * fx) < 4) return; }
@@ -429,6 +545,9 @@ export class Traffic {
       if (dist < v * v / 9 + 1) v = 0;
     }
     const next = this.planOn(G, path, cable, path.endA);
+    // (Not on a way that leads nowhere, nor on into one: it would only drive on into sight and stand
+    // at its end. A cable car, at the end of its line, turns round: turnRound.)
+    if (!cable && (!next || !this.wayOn(G, next.endEdge, cable, 1))) return;
     const color = kind.colors ? pick(r, kind.colors) : 0xffffff;
     // The driver: one number for how bold, and a little of each on its own.
     const bold = r(), mix = (a: number, b: number) => a + (b - a) * (0.7 * bold + 0.3 * r());
@@ -438,7 +557,9 @@ export class Traffic {
     this.cars.push({ kind, path, next, s: 0, v, dodge: cable ? -3 : 0, dodgeTarget: cable ? -3 : 0, dodgeV: 0, holdT: 0, stillT: 0, committed: -1, stopFor: -1, blockedBy: -1, slowT: 0, pedT: 0, acc: 0,
       color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model, dT, dS0, dA, dB, dV, gapT });
   }
-  private count(id: string) { let n = 0; for (const c of this.cars) if (c.kind.id === id) n++; return n; }
+  // How many of kind `id` there are (within TRAFFIC_DESPAWN of `near`, if given: not far ones kept on
+  // in sight down a long street).
+  private count(id: string, near: { x: number; z: number } | null = null) { let n = 0; for (const c of this.cars) if (c.kind.id === id && (!near || Math.hypot(c.x - near.x, c.z - near.z) <= TRAFFIC_DESPAWN)) n++; return n; }
   private pickKind(plan: CityPlan): VehicleKind | null {
     const pool = this.kinds.filter((k) => k.weight > 0 && (k.id !== "icecream" || plan.style.id !== "port"));
     let t = this.rnd() * pool.reduce((a, k) => a + k.weight, 0);
@@ -806,9 +927,13 @@ export class Traffic {
   // Car c's way through the junction on its path, replanned straight on (and the plan after it),
   // if there is one: whether it was.
   private straightOn(c: Car, G: CityGraph): boolean {
-    const r = c.path.route, d = r.edges.length ? r.d : -1;
+    // (A way through one junction only: one begun further back across the junction behind (extendBack)
+    // has two, and straight on from the first would undo the way it came.)
+    const r = c.path.route, d = r.edges.length === 1 ? r.d : -1;
     if (d < 0) return false;
-    const mv = G.movesFrom(d).find((x) => x.move === "S" && G.streets[x.to >> 1].inCity && (!c.cable || !!G.streets[x.to >> 1].tags.cable));
+    const ok = (e: number) => G.streets[e >> 1].inCity && (!c.cable || !!G.streets[e >> 1].tags.cable);
+    // (Not into a street with no way on from its far end, two streets deep: validMove.)
+    const mv = G.movesFrom(d).find((x) => x.move === "S" && ok(x.to) && this.wayOn(G, x.to, c.cable, 2));
     if (!mv) return false;
     const path = new Path(G, { ...r, edges: [mv.to], after: Math.min(30, G.faceLen(mv.to) / 2) });
     if (Math.abs(path.length - c.path.length) > 200) return false;
@@ -1073,15 +1198,37 @@ export class Traffic {
   }
   // The dedge on from the end of dedge d, by a move picked at random, that stays on the city's
   // streets (a cable car: straight on along its tracks), or -1.
+  // (Into a street with a way on again from its far end, where there is one: a street with none, a
+  // dead end or one leading out of town, leaves a car nowhere to go but out of the world.)
   private validMove(G: CityGraph, d: number, cable: boolean): number {
     const ok = (e: number) => G.streets[e >> 1].inCity && (!cable || !!G.streets[e >> 1].tags.cable);
-    const moves = G.movesFrom(d);
+    const moves = G.movesFrom(d).filter((x) => ok(x.to));
+    // (A way on two streets deep where there is one: one street deep only, a street whose only way
+    // on is into a dead end would pass.)
+    const on2 = moves.filter((x) => this.wayOn(G, x.to, cable, 2)), on1 = on2.length ? on2 : moves.filter((x) => this.wayOn(G, x.to, cable, 1));
+    const from = on1.length ? on1 : moves;
     for (let k = 0; k < 4; k++) {
-      const m = this.pickMove(cable), o = moves.filter((x) => x.move === m && ok(x.to));
+      const m = this.pickMove(cable), o = from.filter((x) => x.move === m);
       if (o.length) return o[Math.floor(this.rnd() * o.length)].to;
     }
-    if (!cable) for (const m of ["S", "R", "L"] as Move[]) { const o = moves.find((x) => x.move === m && ok(x.to)); if (o) return o.to; }
+    if (!cable) for (const m of ["S", "R", "L"] as Move[]) { const o = from.find((x) => x.move === m); if (o) return o.to; }
     return -1;
+  }
+  // Whether there is a way on from the far end of dedge e, `depth` streets deep, on the city's
+  // streets (a cable car: straight on along its tracks).
+  private wayOn(G: CityGraph, e: number, cable: boolean, depth: number): boolean {
+    for (const y of G.movesFrom(e)) {
+      const s = G.streets[y.to >> 1];
+      if (s.inCity && (!cable || (!!s.tags.cable && y.move === "S")) && (depth <= 1 || this.wayOn(G, y.to, cable, depth - 1))) return true;
+    }
+    return false;
+  }
+  // Whether vehicle c is out of the truck's sight (vehicleUnseen), all of it:
+  // where it may go without being seen to vanish. (No truck given, as in tests: always.)
+  private eye: { x: number; z: number; h: number } | null = null;
+  private unseen(G: CityGraph, c: Car, eye = this.eye) {
+    if (!eye) return true;
+    return vehicleUnseen(G, eye, c.x, c.z, c.h, c.kind.len, c.kind.width);
   }
   private pickMove(cable: boolean): Move {
     if (cable) return "S";
@@ -1116,16 +1263,18 @@ export class Traffic {
     }
     return false;
   }
-  // Drops any vehicle deep inside obstacles o[i0..i1) (a parked truck set down where it stood).
+  // Drops any vehicle deep inside obstacles o[i0..i1) (a parked truck set down where it stood):
+  // `fresh`, as it is set down; after that, only one out of the sight of `eye` (the truck where it is
+  // now: this runs before step, which keeps its own), never seen to go.
   private dropC: Obstacle[] = [];
-  dropInside(o: Obstacle[], i0: number, i1: number) {
+  dropInside(G: CityGraph, o: Obstacle[], i0: number, i1: number, fresh = true, eye: { x: number; z: number; h: number } | null = null) {
     for (let i = this.cars.length - 1; i >= 0; i--) {
       const c = this.cars[i], C = this.dropC;
       let near = false;
       for (let k = i0; k < i1 && !near; k++) near = Math.hypot(o[k].x - c.x, o[k].z - c.z) < o[k].r + c.kind.len;
       if (!near) continue;
       C.length = 0; this.carCircles(c, C);
-      if (C.some((p) => { for (let k = i0; k < i1; k++) if (Math.hypot(p.x - o[k].x, p.z - o[k].z) < p.r + o[k].r - DROP_DEEP) return true; return false; })) this.cars.splice(i, 1);
+      if (C.some((p) => { for (let k = i0; k < i1; k++) if (Math.hypot(p.x - o[k].x, p.z - o[k].z) < p.r + o[k].r - DROP_DEEP) return true; return false; }) && (fresh || this.unseen(G, c, eye))) this.cars.splice(i, 1);
     }
   }
   // A vehicle as a row of circles about its own width, so long ones block their whole length
@@ -1161,6 +1310,9 @@ export class Traffic {
     const sa = c.s + c.v * 0.6;
     let limit = Math.min(c.kind.vmax * (c.dV ?? 1), p.speedLimit(c.s, 2.5), p.speedLimit(sa, 2.5), c.next ? c.next.speedLimit(sa - p.length, 2.5) : Infinity);
     let hardStop = Infinity, signalBrake = 0;
+    // (No way on past the end of its way, a rare dead end (validMove): it stops there, braking to
+    // it, not driving on into nothing.)
+    if (!c.next) { const end = p.length - 0.5, dist = end - c.s; limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = end; }
     // Signals (the same rule as the truck: right on red after a pause). The next one ahead on this
     // path, or past its end the next node's: a path ends 30 m beyond its last node, so the next
     // stop line is only ~12 m into the next path, too late to stop from city speed. (Key
@@ -1185,7 +1337,7 @@ export class Traffic {
         // mind and runs it.
         else if (c.stopFor === key || dist >= c.v * c.v / 9 - 0.5) {
           c.stopFor = key;
-          limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = target;
+          limit = Math.min(limit, Math.sqrt(5 * Math.max(0, dist))); hardStop = Math.min(hardStop, target);
           signalBrake = c.v * c.v / (2 * Math.max(dist, 0.1));
         } else c.committed = key;   // too close to stop: go through
       }
@@ -1230,9 +1382,16 @@ export class Traffic {
       let busy = false;
       for (const o of this.cars) {
         if (o === c || o.v <= 1 || Math.hypot(o.x - N.x, o.z - N.z) >= 16) continue;
-        const r = o.path.route, onRing = !!G.streets[r.d >> 1].ring, joining = r.edges.length > 0 && !!G.streets[r.edges[0] >> 1].ring;
+        // (By the junction it is at or coming to: on a way begun further back across the one behind
+        // (extendBack), not necessarily its first.)
+        const r = o.path.route, ns = o.path.nodes;
+        let k = ns.findIndex((q) => q.sOut > o.s);
+        if (k < 0) k = ns.length - 1;
+        const from = k > 0 ? ns[k].from : r.d, to = k > 0 ? ns[k].to : r.edges.length ? r.edges[0] : -1;
+        const into = k > 0 ? ns[k].sLine + (r.before - ns[0].sLine) : r.before;   // (where it is into the junction: as far past its line as the first's mouth is)
+        const onRing = !!G.streets[from >> 1].ring, joining = to >= 0 && !!G.streets[to >> 1].ring;
         if (!onRing && !joining) continue;                       // out on an approach street
-        if (G.dedgeTo(r.d) === y.node && (!joining || o.s > r.before)) continue;   // coming off the ring here, or gone on past
+        if (G.dedgeTo(from) === y.node && (!joining || o.s > into)) continue;   // coming off the ring here, or gone on past
         busy = true; break;
       }
       if (!busy) for (const o of truck) if (!o.still && Math.hypot(o.x - N.x, o.z - N.z) < 14) { busy = true; break; }   // (not parked)
@@ -1370,7 +1529,7 @@ export class Traffic {
       else if ((sameDir && truckBehind < 40 && this.truckTurn !== 1) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } }
       else if ((c.holdT -= dt) <= 0 && (c.dodge > -1.5 || !otherLaneBlocked)) c.dodgeTarget = 0;
     }
-    if ((globalThis as any).TRAFFIC_DEBUG && gap < 4 && gapOwner < 0 && !gapPed && c.stillT > 4 && Math.floor(c.stillT * 10) % 20 === 0) (globalThis as any).TRAFFIC_DEBUG({ id: c.id, stillT: c.stillT, stillAhead, rightSoon, laneChanging, turning, merging, otherLaneBlocked, dodge: c.dodge, dodgeTarget: c.dodgeTarget, cable: c.cable, signal: hardStop < Infinity, gap, cx: c.x, cz: c.z, ch: c.h, v: c.v, s: c.s, plen: p.length });
+    if ((globalThis as any).TRAFFIC_DEBUG && gap < 4 && gapOwner < 0 && !gapPed && c.stillT > 4 && Math.floor(c.stillT * 10) % 20 === 0) (globalThis as any).TRAFFIC_DEBUG({ id: c.id, stillT: c.stillT, stillAhead, rightSoon, laneChanging, turning, merging, otherLaneBlocked, dodge: c.dodge, dodgeTarget: c.dodgeTarget, cable: c.cable, signal: hardStop < (c.next ? Infinity : p.length - 0.5), gap, cx: c.x, cz: c.z, ch: c.h, v: c.v, s: c.s, plen: p.length });
     // Speed, as a driver keeps it (the Intelligent Driver Model): towards the limit (the road's, a
     // turn's, a stop ahead's), easing off as it nears it, and behind whatever is ahead keeping its
     // own time gap and standing gap, closing slower on one going slower. Each driver has their own
@@ -1426,26 +1585,59 @@ export class Traffic {
       c.dodgeV += THREE.MathUtils.clamp(want - c.dodgeV, -1.2 * dt, 1.2 * dt);
       const d0 = c.dodge;
       c.dodge += c.dodgeV * dt;
-      if (c.dodge <= -3 || c.dodge >= 0) { c.dodge = THREE.MathUtils.clamp(c.dodge, -3, 0); c.dodgeV = 0; }   // in a lane: settled
+      // (In a lane: settled. One coming over from beyond the next lane, a cable car crossing over to
+      // its own track turned round at the end of its line (turnRound), settles as it gets there.)
+      if ((d0 >= -3 && c.dodge <= -3) || (d0 <= 0 && c.dodge >= 0) || (d0 < -3 && c.dodge >= -3)) { c.dodge = THREE.MathUtils.clamp(c.dodge, -3, 0); c.dodgeV = 0; }
       // (Not sideways into the truck, or anything of it standing: moving back over with the truck
       // alongside, it waits till there is room.)
       if (c.dodge !== d0 && this.truckGap(c, c.s, c.dodge, truck) < Math.min(TRUCK_ROOM, this.truckGap(c, c.s, d0, truck))) { c.dodge = d0; c.dodgeV = 0; }
     }
     // Next intersection: plan on from the end of this path.
-    if (c.s >= p.length - 0.5) {
+    let turned = false;
+    if (c.s >= p.length - 0.5 - 1e-6) {
       // (From where the car is, by the move already picked for the next plan; then the one after.)
       const past = p.endA - (p.length - c.s);
-      // (A car saved before cars planned ahead has none: its move is picked now.)
-      const now = this.planOn(G, p, c.cable, past, c.next ? c.next.route.edges[0] : undefined);
-      if (!now) { this.cars.splice(index, 1); return; }
-      const next = p.signals.length;   // the next node's signal, already judged from this path
-      c.path = now; c.next = this.planOn(G, now, c.cable, now.endA);
-      c.s = 0; c.committed = c.committed === next ? 0 : -1; c.stopFor = c.stopFor === next ? 0 : -1;
+      // (With no next plan there is no way on: validMove found none from this street's end, and
+      // would find none again.)
+      const now = c.next ? this.planOn(G, p, c.cable, past, c.next.route.edges[0]) : null;
+      // (No way on, a rare dead end: gone, out of sight; in sight, it stands at the end of its way,
+      // where it braked to a stop (drive, endStop), till it is out of sight.)
+      // (A cable car, after a layover there (CABLE_LAYOVER), turns round to go back along its line on
+      // the other track: turnRound.)
+      if (!now) {
+        if (this.unseen(G, c)) { this.cars.splice(index, 1); return; }
+        c.v = 0; c.acc = 0;
+        // (Tried again every couple of seconds where it can't, not every step.)
+        if (c.cable && c.stillT > CABLE_LAYOVER && Math.floor((c.stillT - CABLE_LAYOVER) / 2) !== Math.floor((c.stillT - dt - CABLE_LAYOVER) / 2) && this.turnRound(G, c)) turned = true;
+      } else {
+        const next = p.signals.length;   // the next node's signal, already judged from this path
+        c.path = now; c.next = this.planOn(G, now, c.cable, now.endA);
+        c.s = 0; c.committed = c.committed === next ? 0 : -1; c.stopFor = c.stopFor === next ? 0 : -1;
+      }
     }
     c.path.eval(c.s, this.pose);
     const h = this.pose.h;
     c.x = this.pose.x + Math.sin(h) * c.dodge; c.z = this.pose.z + Math.cos(h) * c.dodge;   // negative dodge: to the left
     c.h = h;
+    // (Turned round, its two ends alike: drawn so from this step on, not swung round between them.)
+    if (turned) { c.px = c.x; c.pz = c.z; c.ph = c.h; }
+  }
+  // Cable car c, standing at the end of its line, turned round to go back along it on the other
+  // track (its two ends alike): its way from where it stands back along the street it is on, the
+  // way it came, crossing over to that track as it pulls away (from the next lane over and more).
+  // Whether it could be.
+  private turnRound(G: CityGraph, c: Car): boolean {
+    const p = c.path, e = p.endEdge, a = p.endA - (p.length - c.s), back = e ^ 1;
+    const mv = this.validMove(G, back, true);
+    if (mv < 0) return false;
+    const path = new Path(G, { d: back, before: a, edges: [mv], after: Math.min(30, G.faceLen(mv) / 2), lane: p.endLane });
+    const o = p.peek(c.s, this.gw0), ox = o.x, oz = o.z, q = path.peek(0, this.gw1);
+    // (Where it stands, across the new way's lane: its sideways turned round with it.)
+    const dodge = -c.dodge + (ox - q.x) * Math.sin(q.h) + (oz - q.z) * Math.cos(q.h);
+    if (dodge < -9 || dodge > 0.05 || Math.abs(Math.cos(q.h - o.h) + 1) > 0.05) return false;
+    c.path = path; c.next = this.planOn(G, path, true, path.endA); c.s = 0; c.bk = null; c.committed = -1; c.stopFor = -1;
+    c.dodge = Math.min(0, dodge); c.dodgeTarget = -3; c.dodgeV = 0; c.stillT = 0;
+    return true;
   }
 
   // Headlight patches on the road ahead of the vehicles nearest `at` (atmosphere.ts HEAD_LIGHTS),
@@ -1575,6 +1767,15 @@ function cableCarBody(b: Batch) {
 
 // The truck's body as circles for traffic and pedestrians: along the box, and along a trailer at
 // its articulation.
+// Whether a vehicle `len` by `width` at x, z heading h is out of the truck's sight from `eye`
+// (citygraph.ts outOfSight): its middle, nose and tail, and its four corners (its centre line
+// hidden behind a block's corner, a corner of it can still show past it).
+const SIGHT_AT = [[0, 0], [0.5, 0], [-0.5, 0], [0.5, 0.5], [0.5, -0.5], [-0.5, 0.5], [-0.5, -0.5]];
+export function vehicleUnseen(G: CityGraph, eye: { x: number; z: number; h: number }, x: number, z: number, h: number, len: number, width: number): boolean {
+  const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+  for (const [u, v] of SIGHT_AT) { const a = u * len, b = v * width; if (!outOfSight(G, eye, x + fx * a + rx * b, z + fz * a + rz * b)) return false; }
+  return true;
+}
 export function truckObstacles(model: TruckModel, x0: number, z0: number, h: number, trailerYaw: number, out: Obstacle[]) {
   const spec = SPECS[model], fx = Math.cos(h), fz = -Math.sin(h);
   const trailer = spec.fifthWheel !== undefined;

@@ -1,7 +1,8 @@
 // Test: people cross the road and no vehicle runs into them. Runs journeys with their street life
 // and fails if a moving vehicle's box (widened 0.2 m) takes in a pedestrian, if a vehicle stands
-// still for a minute (but for waiting out the truck parked at a stop), or if nobody crosses at all
-// (people waiting for a gap that never comes).
+// still for a minute (but for waiting out the truck parked at a stop, or at a dead end, or queued
+// behind one doing so, however far back), or if nobody crosses at all (people waiting for a gap
+// that never comes).
 // Args (all optional): minutes
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
@@ -22,6 +23,11 @@ import { Ambient } from "../src/ambient.ts";
       j.step();
       if (j.st.mode === "country" || j.st.mode === "inbound") continue;
       for (const p of crowd.peds) { if (p.state === "cross" && was.get(p) === "wait") crossings++; was.set(p, p.state); }
+      // (Those waiting out the truck unloading, parked across the lanes, or standing at the end of
+      // their way with no way on; and those queued behind them, however far back.)
+      const ends = new Set<number>(), dwell = j.st.mode === "dwell";
+      for (const c of traffic.cars) if ((!c.next && c.s >= c.path.length - 0.6) || (dwell && Math.hypot(c.x - j.pose.x, c.z - j.pose.z) < 45)) ends.add(c.id);
+      for (let k = 0; k < 8; k++) for (const c of traffic.cars) if (c.v < 0.1 && ends.has(c.blockedBy)) ends.add(c.id);
       for (const c of traffic.cars) {
         const fx = Math.cos(c.h), fz = -Math.sin(c.h), rx = Math.sin(c.h), rz = Math.cos(c.h);
         for (const p of crowd.peds) {
@@ -32,8 +38,10 @@ import { Ambient } from "../src/ambient.ts";
             if (errs.length < 10) errs.push(`seed ${seed} at ${(j.st.simTime / 60).toFixed(2)} min: a ${c.kind.id} runs into a pedestrian (${p.state})`);
           }
         }
-        // (Not waiting out the truck unloading, parked across the lanes, or the queue behind that.)
-        const t = c.v < 0.1 && !(j.st.mode === "dwell" && Math.hypot(c.x - j.pose.x, c.z - j.pose.z) < 45) ? (still.get(c.id) ?? 0) + SIM_DT : 0;
+        // (Not waiting out the truck unloading, parked across the lanes, or the queue behind that;
+        // nor standing at the end of its way with no way on, a cable car at the end of its line,
+        // till it is out of the truck's sight (traffic.ts validMove), or queued behind one: ends.)
+        const t = c.v < 0.1 && !ends.has(c.id) ? (still.get(c.id) ?? 0) + SIM_DT : 0;
         still.set(c.id, t);
         if (t > 60 && t <= 60 + SIM_DT) { stuck++; if (errs.length < 10) errs.push(`seed ${seed} at ${(j.st.simTime / 60).toFixed(2)} min: a ${c.kind.id} has stood still a minute`); }
       }
