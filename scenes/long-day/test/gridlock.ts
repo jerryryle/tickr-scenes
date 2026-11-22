@@ -8,7 +8,9 @@
 // seed 7's city 7, cars pulling on out of its way past the end of their own streets (and so never
 // out of it); and seed 11's city 10, a street vendor in its way back into a bay.
 // Held by traffic (journey.ts JAM_HONK) the truck honks and the traffic in its way backs up or
-// pulls on out of it; held by someone crossing, they step back to the kerb. Fails if it stands
+// pulls on out of it; held by someone crossing, they step back to the kerb; held by a walker its
+// way is ahead of both ways (seed 2539665337's city 9 again, pacing to and fro between the two),
+// they step into a doorway, as anyone boxed in by it does. Fails if it stands
 // still in the street (not at its stop) longer than HELD_MAX, or if anything making way for it
 // comes further into it, deeper than OVERLAP_MAX (seed 659803215's city 15: a cable car once made
 // way through it, forward along its tracks being the shorter way out; seed 2539665337's city 4:

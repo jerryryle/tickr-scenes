@@ -31,6 +31,7 @@ interface Ped {
   crossN?: number;   // where across the crossing lands, in the side's frame (default -0.85)
   back?: boolean;    // giving the crossing up, held up out in the road: back to the kerb it set out from
   boxT?: number;     // how long it has been held up while the truck honks for its way (it turns this way and that, boxed in)
+  turnT?: number;    // turned back out of the truck's way this long ago, counting down from TURN_BOXED
   shirt: number; pants: number; skin: number; hair: number;
   x: number; z: number; h: number; px: number; pz: number; ph: number; pphase: number;   // and one step ago
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
@@ -44,7 +45,8 @@ export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: 
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
-const BOXED_GONE = 6, BOXED_NEAR = 18;   // s boxed in by the honking truck before stepping into a doorway (walk), and how near it (m)
+const BOXED_GONE = 6, BOXED_NEAR = 18;
+const TURN_BOXED = 3;   // s after turning back out of the truck's way that they still count as boxed in by it   // s boxed in by the honking truck before stepping into a doorway (walk), and how near it (m)
 const CROSS_TRUCK_T = 3;   // s: how far off, at the speed it comes, the truck must be before they step off the kerb across its way
 const BELLE = 0xf4ead8;
 const _pt: GPt = { x: 0, z: 0, h: 0 };
@@ -309,7 +311,8 @@ export class Crowd {
       // (The truck coming over the walkway, cutting a corner or turning in across it.)
       let sp = this.truckPace(G, f, p, truck);
       // (Out of its way back the way they came: turned round, not stepping backwards.)
-      if (sp < 0) { p.dir = p.dir > 0 ? -1 : 1; sp = -sp; }
+      if (sp < 0) { p.dir = p.dir > 0 ? -1 : 1; sp = -sp; p.turnT = TURN_BOXED; }
+      else p.turnT = Math.max(0, (p.turnT ?? 0) - dt);
       if (!blocked && !held) { p.a += p.dir * sp * dt; p.phase += sp * dt; }
       // (Held up a while by the truck, standing across the pavement or swinging over it: they turn
       // back and go another way, rather than stand waiting on it as it waits on them.)
@@ -317,7 +320,9 @@ export class Crowd {
       // (Only by the truck: a walker held up anywhere else in town while it honks is no matter of its.)
       const byTruck = this.truckHonks && !!truck[0] && Math.hypot(truck[0].x - p.x, truck[0].z - p.z) < BOXED_NEAR;
       p.waitT = blocked || sp === 0 || (held && byTruck) ? p.waitT + dt : 0;
-      p.boxT = byTruck ? Math.max(0, (p.boxT ?? 0) + (blocked || sp === 0 || held ? dt : -dt * 0.5)) : 0;
+      // (Turned back by it lately counts too: with its way ahead of them both ways they pace to and
+      // fro between the two, never standing, as it waits on them.)
+      p.boxT = byTruck ? Math.max(0, (p.boxT ?? 0) + (blocked || sp === 0 || held || (p.turnT ?? 0) > 0 ? dt : -dt * 0.5)) : 0;
       if (p.waitT > 4) { p.dir = p.dir > 0 ? -1 : 1; p.waitT = 0; }
       p.n += (nT - p.n) * Math.min(1, dt * 2);
       // (The corner ahead the way they face now: turned round, it's the one behind them before.)
