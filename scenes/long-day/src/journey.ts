@@ -123,6 +123,7 @@ interface JourneyState {
   route: Route | null; s: number; v: number; at: { d: number; before: number; lane?: number };   // the dedge the truck is on, how far short of its end, and its lane (kerb unless said)
   stopS: number; backS: number;     // where the truck stops, and where it reverses to (dock stops)
   dockExit: { geom: DockGeom; s: number } | null;   // leaving a bay: the next route starts in it
+  lastDock?: DockGeom | null;                      // the bay last docked at in this city (dockfx.ts: its leveller's lip stays there till the next)
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
@@ -1290,6 +1291,7 @@ export class Journey {
         // Out of the bay next: the route starts in it and joins the street after the turn.
         st.at = { d: dock.face, before: this.plan.graph.faceLen(dock.face) - (dock.pa + dock.R) };
         st.dockExit = { geom: dock.geom, s: dock.trail };
+        st.lastDock = dock.geom;
       } else if (this.path?.route.garageIn) {
         // Down off the roof next: the route starts there and comes out across the street, in the
         // kerb lane back towards the node the truck came in past.
@@ -1416,7 +1418,7 @@ export class Journey {
     const st = this.st;
     st.mode = "country"; st.modeTime = 0; st.departAt = st.cityTime; st.departTruck = st.truck;
     st.departV = st.v; st.departS0 = s0;
-    st.spare = null; st.parked = null; st.dockExit = null; st.garageExit = null; st.intercity = true;
+    st.spare = null; st.parked = null; st.dockExit = null; st.lastDock = null; st.garageExit = null; st.intercity = true;
     st.stops = st.stops.filter((s) => s.kind !== "depart");
     this.path = null; st.route = null;
     this.log(`leaving for the country: ${(this.period - st.departAt).toFixed(0)} s to the next city's road`);

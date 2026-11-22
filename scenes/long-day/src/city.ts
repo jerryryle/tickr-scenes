@@ -3010,10 +3010,10 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
     fspan(s, side, b - dw - 0.12, b + dw + 0.12, P, P + doorH + 0.15, L.wall - 0.05, L.wall + 0.01, frameC);   // frame
     if (open > 0) fspan(s, side, b - dw, b + dw, P, y0, L.wall - 0.07, L.wall - 0.04, 0x121416);              // dark inside
     fspan(s, side, b - dw, b + dw, y0, P + doorH, L.wall - 0.09, L.wall - 0.05, doorC);
-    // (A window strip is on the ribs' plane, so no rib crosses it: on a door part way up they would.)
-    const win = windows && P + 1.6 >= y0;
-    if (ribs) for (let y = y0 + 0.45; y < P + doorH - 0.1; y += 0.5) if (!win || y + 0.04 < P + 1.6 || y > P + 1.85) fspan(s, side, b - dw, b + dw, y, y + 0.04, L.wall - 0.1, L.wall - 0.09, shade(doorC, 0.75));
-    if (win) fspan(s, side, b - dw + 0.2, b + dw - 0.2, P + 1.6, P + 1.85, L.wall - 0.1, L.wall - 0.09, 0x2a3644);
+    // (The window strip is on a panel of the door, so it rides up with it, between two ribs; on a
+    // door part way up it may have rolled away into the head.)
+    if (ribs) for (let y = y0 + 0.45; y < P + doorH - 0.1; y += 0.5) fspan(s, side, b - dw, b + dw, y, y + 0.04, L.wall - 0.1, L.wall - 0.09, shade(doorC, 0.75));
+    if (windows && y0 + 1.85 < P + doorH - 0.1) fspan(s, side, b - dw + 0.2, b + dw - 0.2, y0 + 1.6, y0 + 1.85, L.wall - 0.1, L.wall - 0.09, 0x2a3644);
     if (shelter) {
       fspan(s, side, b - dw - 0.5, b - dw - 0.12, P, P + doorH + 0.4, L.wall - 0.55, L.wall, 0x232426);
       fspan(s, side, b + dw + 0.12, b + dw + 0.5, P, P + doorH + 0.4, L.wall - 0.55, L.wall, 0x232426);
