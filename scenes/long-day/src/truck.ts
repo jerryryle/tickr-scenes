@@ -507,8 +507,8 @@ export class Truck {
         this.root.updateMatrixWorld();
         for (const p of this.exhaust) {
           this.v3.copy(p).applyMatrix4(this.body.matrixWorld);
-          const up = s.exhaust === "stack" ? 1.1 : 0.35;
-          const vel = new THREE.Vector3(-0.6, up, s.exhaust === "pipe" ? 0.5 : 0).applyQuaternion(this.root.quaternion);
+          const pipe = s.exhaust === "pipe";
+          const vel = new THREE.Vector3(pipe ? -0.3 : -0.6, pipe ? 0.25 : 1.1, pipe ? 2.0 : 0).applyQuaternion(this.root.quaternion);
           this.puffs.emit(this.v3, vel, hard ? 0x4c4c4e : 0x8e8e90, hard ? 0.42 : 0.26, hard ? 1.6 : 1.2);
         }
       }
@@ -539,10 +539,12 @@ export class Truck {
     const mx = Math.min(...s.rearAxles) - s.wheelR - 0.12;
     for (const z of [-1, 1]) P.span(mx - 0.03, 0.18, z * 0.72, mx + 0.01, 0.9, z * 1.18, TC.mud);
     // Exhaust.
+    // The pipe runs out under the bed to a tip just past its side, so the puffs (which blow out
+    // sideways, then rise and swell) clear the floor and the wall instead of coming up through them.
     if (s.exhaust === "pipe") {
-      const px = Math.max(...s.rearAxles) + s.wheelR + 0.5;
-      P.cyl(px, 0.45, 0.95, 0.05, 0.4, TC.chrome, 6, Math.PI / 2);
-      this.exhaust.push(new THREE.Vector3(px, 0.45, 1.18));
+      const px = Math.max(...s.rearAxles) + s.wheelR + 0.5, tip = (s.cargo ? s.cargo.hw : s.cabHW) + 0.03;
+      P.cyl(px, 0.45, tip - 0.2, 0.05, 0.4, TC.chrome, 6, Math.PI / 2);
+      this.exhaust.push(new THREE.Vector3(px, 0.45, tip + 0.03));
     }
     if (!s.cargo && s.cab === "daycab") { // tractor tail lights on the frame end
       for (const z of [-1, 1]) {
