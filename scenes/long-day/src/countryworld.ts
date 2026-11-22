@@ -134,6 +134,89 @@ export function ferryModel(b: Batch, u: Batch, glow: Batch) {
   glow.box(0, 11.8, 0, 0.25, 0.25, 0.25, 0xfff6e0);
 }
 
+// A wind turbine, after a modern three-blade one (its hub at TURBINE_HUB, its rotor TURBINE_R
+// across a blade), in two parts: `turbineTower` the still parts, standing at the origin with its
+// nacelle facing along +x (the rotor's side), and `turbineRotor` the part that turns, centred on
+// the hub, its axis along +y towards the wind (turbineRotorAt puts it on a tower).
+export const TURBINE_HUB = 42, TURBINE_R = 22;
+const TURB = { white: 0xe6e9ea, blade: 0xf2f4f4, grey: 0x9aa0a4, pad: 0xa8a49a, door: 0x5a6066, box: 0x6f7f6a };
+const NAC_FWD = 3.0;   // the hub, ahead of the tower's axis
+// The tower: a tapered tube (faceted), on a concrete pad, a door at its foot; a transformer
+// beside it; the nacelle on top, longer behind than ahead, the spinner's base its front, an
+// anemometer mast and the aviation light's housing at its back.
+export const TURBINE_BOX: [number, number] = [4.4, -2.8];   // the transformer, in the tower's frame
+// (`boxY`: the ground under the transformer, from the ground under the tower.)
+export function turbineTower(b: Batch, boxY = 0) {
+  const H = TURBINE_HUB - 1.5, r0 = 2.1, r1 = 1.2, N = 14, dy = b.dy;
+  for (let k = 0; k < N; k++) {
+    const a0 = (k / N) * Math.PI * 2, a1 = ((k + 1) / N) * Math.PI * 2, am = (a0 + a1) / 2;
+    const p = (a: number, r: number, y: number): [number, number, number] => [Math.cos(a) * r, y + dy, Math.sin(a) * r];
+    const face: [number, number, number] = [Math.cos(am), (r0 - r1) / H, Math.sin(am)];
+    b.tri(...p(a0, r0, -0.5), ...p(a1, r0, -0.5), ...p(a1, r1, H), TURB.white, face);
+    b.tri(...p(a0, r0, -0.5), ...p(a1, r1, H), ...p(a0, r1, H), TURB.white, face);
+  }
+  b.cyl(0, 0.1, 0, 3.4, 0.5, TURB.pad, 12);                  // the foundation's pad
+  b.cyl(0, 0.55, 0, 2.15, 0.5, TURB.grey, 14);                // the flange at the foot
+  b.box(2.06, 1.3, 0, 0.12, 2.2, 1.0, TURB.door);             // the door, under the rotor
+  b.box(2.7, 0.45, 0, 1.2, 0.12, 1.4, TURB.grey);             // its step
+  b.box(TURBINE_BOX[0], boxY + 0.95, TURBINE_BOX[1], 1.4, 1.6, 1.6, TURB.box);             // the transformer
+  b.box(TURBINE_BOX[0], boxY + 0.0, TURBINE_BOX[1], 1.8, 0.4, 2.0, TURB.pad);              // on its plinth
+  // The nacelle: a long box, a little narrower at the top, its back rounded off, on the yaw
+  // bearing atop the tower (it bridges the tube's top to the nacelle's floor, 10 cm up).
+  const yN = H + 1.7;
+  b.cyl(0, H + 0.05, 0, r1 + 0.05, 0.12, TURB.grey, N);
+  b.box(-1.4, yN, 0, 8.4, 3.2, 3.3, TURB.white);
+  b.box(-1.4, yN + 1.75, 0, 7.6, 0.3, 2.7, TURB.white);
+  b.box(-5.75, yN, 0, 0.5, 2.6, 2.8, TURB.white);
+  b.cyl(NAC_FWD - 0.1, yN, 0, 1.2, 0.6, TURB.white, 12, 0, Math.PI / 2);   // the bearing collar the spinner turns on (narrower: its front end is inside the spinner, which turns)
+  b.box(-4.6, yN + 2.6, 0.6, 0.1, 1.4, 0.1, TURB.grey);       // the anemometer mast
+  b.box(-4.6, yN + 3.3, 0.6, 0.5, 0.06, 0.06, TURB.grey);
+  b.box(-4.6, yN + 2.0, -0.5, 0.4, 0.2, 0.4, TURB.grey);      // the beacon's housing
+}
+// The red aviation light on the housing (in the tower's frame), lit after dark: sat on its top.
+export const TURBINE_BEACON: [number, number, number] = [-4.6, TURBINE_HUB - 1.5 + 1.7 + 2.1 + 0.175, -0.5];
+// The rotor: the spinner (a rounded nose, pointing +y), three slender blades round it in the
+// x-z plane, widest a little out from the root and tapering to a narrow tip, twisted (pitched
+// most at the root). Viewed from upwind (+y) it turns clockwise: rotate it by -angle about y.
+export function turbineRotor(b: Batch) {
+  b.cyl(0, 0, 0, 1.35, 1.4, TURB.white, 12);
+  b.cone(0, 1.55, 0, 1.35, 1.7, TURB.white, 12);
+  // Stations along a blade: r out from the hub, chord, thickness, pitch. The root is round-ish
+  // (as thick as it is wide), the chord widest at the shoulder, then tapering to the tip.
+  const ST: [number, number, number, number][] = [
+    [0.9, 0.9, 0.85, 0.5], [2.4, 1.0, 0.75, 0.46], [4.6, 1.8, 0.5, 0.34], [8, 1.62, 0.36, 0.23],
+    [12, 1.28, 0.26, 0.14], [16, 0.92, 0.18, 0.08], [19.5, 0.6, 0.13, 0.04], [TURBINE_R, 0.24, 0.07, 0.02],
+  ];
+  type V = [number, number, number];
+  const q = (P: V, Q: V, R: V, S: V, n: V) => { b.tri(...P, ...Q, ...R, TURB.blade, n); b.tri(...P, ...R, ...S, TURB.blade, n); };
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2, er: V = [Math.sin(a), 0, Math.cos(a)];
+    // Each station's corners: the leading edge (a third of the chord ahead of the pitch axis)
+    // full thickness, the trailing edge thin; chord and thickness twisted out of the rotor's
+    // plane by the pitch, the leading edge upwind (+y) of the trailing one, as the air meets it.
+    const at = ([r, c, t, p]: [number, number, number, number]) => {
+      const ec: V = [Math.cos(a) * Math.cos(p), -Math.sin(p), -Math.sin(a) * Math.cos(p)];
+      const et: V = [Math.cos(a) * Math.sin(p), Math.cos(p), -Math.sin(a) * Math.sin(p)];
+      const pt = (cc: number, tt: number): V => [er[0] * r + ec[0] * cc + et[0] * tt, -0.15 + ec[1] * cc + et[1] * tt, er[2] * r + ec[2] * cc + et[2] * tt];
+      return { lt: pt(-0.33 * c, t / 2), lb: pt(-0.33 * c, -t / 2), tt: pt(0.67 * c, t * 0.12), tb: pt(0.67 * c, -t * 0.12), ec, et };
+    };
+    for (let i = 0; i + 1 < ST.length; i++) {
+      const A = at(ST[i]), B = at(ST[i + 1]), { ec, et } = A, neg = (v: V): V => [-v[0], -v[1], -v[2]];
+      q(A.lt, A.tt, B.tt, B.lt, et); q(A.lb, A.tb, B.tb, B.lb, neg(et));
+      q(A.lt, A.lb, B.lb, B.lt, neg(ec)); q(A.tt, A.tb, B.tb, B.tt, ec);
+      if (i + 2 === ST.length) q(B.lt, B.tt, B.tb, B.lb, er);
+    }
+  }
+}
+// Where the rotor turns on a tower at (x, y, z) facing `yaw` (the nacelle's +x turned by yaw, as
+// Batch.box turns it), tilted up a little as real rotors are: put its mesh in this, spin the mesh.
+export function turbineRotorAt(o: THREE.Object3D, x: number, y: number, z: number, yaw: number) {
+  o.position.set(x + Math.cos(yaw) * (NAC_FWD + 0.6), y + TURBINE_HUB - 1.5 + 1.7, z - Math.sin(yaw) * (NAC_FWD + 0.6));
+  o.rotation.set(0, yaw, -Math.PI / 2 + 0.09, "YZX");
+}
+
+interface TurbineSpin { pivot: THREE.Group; mesh: THREE.Mesh; beacon: THREE.Mesh; w: number; ph: number }
+
 export class CountryWorld {
   readonly group = new THREE.Group();
   private road: CountryRoad | null = null;
@@ -327,6 +410,16 @@ export class CountryWorld {
     this.updateWeigh(road, u);
     this.updateFerry(road, u, sTruck);
     this.updateFarm(road, u);
+    this.updateTurbines(u);
+  }
+  // The turbines' rotors turn (a pure function of the time, for a timeline that scrubs); their
+  // beacons flash together after dark, 0.8 s on in every two.
+  private updateTurbines(u: number) {
+    const lit = LAMPS_ON.value > 0.5 && u - 2 * Math.floor(u / 2) < 0.8;
+    for (const g of this.segs.values()) for (const t of g.userData.spins as TurbineSpin[]) {
+      if (t.w) t.mesh.rotation.y = -((t.ph + t.w * u) % (Math.PI * 2));
+      t.beacon.visible = lit;
+    }
   }
 
   // Headlight patches ahead of the oncoming cars nearest `at` (atmosphere.ts HEAD_LIGHTS).
@@ -589,7 +682,7 @@ export class CountryWorld {
     road.center(s0, this.p);
     this.ox = this.p.x; this.oz = this.p.z;
     this.quads = []; this.slots = []; this.ads = false; this.plates = new PlateSet();
-    const g = new Batch(), s = new Batch(), glow = this.glow;
+    const g = new Batch(), s = new Batch(), glow = this.glow, spins: TurbineSpin[] = [];
     const rnd = mulberry32(Math.floor(hash3(i, road.inp.city, 7, road.inp.seed, 0x5e9) * 4294967296));
     // Land: a mesh over the ground's heights, in rows across the road, coloured by cell: by
     // biome, in bands (fields in farm country), sand and sea on a coast.
@@ -714,7 +807,19 @@ export class CountryWorld {
       }
       if (bio.turbines && Math.floor(a / 6) % 25 === 0 && side > 0) {
         const n = 70 + rnd() * 70, sa = a;
-        if (road.clearAt(sa, n)) { const [x, z, h] = this.L(sa, n); s.dy = this.foot(sa, n, 2); this.turbine(s, x, z, h, rnd); }
+        if (road.clearAt(sa, n)) {
+          const ph = rnd() * 6.3;
+          // Facing the wind, the same way all along the drive (windYaw). In a breeze it turns, 9
+          // to 17 rpm with the wind (each a little different); in a calm, or one in a dozen
+          // stopped for service, it stands still.
+          const [x, z] = this.L(sa, n), c = road.climateAt(sa, n), wind = this.windIn(road, c), yaw = this.windYaw(road);
+          const tk = Math.floor(a / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.seed, 0x3ab3) < 0.08;
+          const rpm = wind < 0.3 || stopped ? 0 : (9 + 8 * Math.min(1, (wind - 0.3) / 0.6)) * (0.94 + 0.12 * hash3(tk, road.inp.city, 8, road.inp.seed, 0x3ab4));
+          // (The transformer stands on the ground at its own spot, beside the tower's foot.)
+          const [bx, bz] = TURBINE_BOX, cy = Math.cos(yaw), sy = Math.sin(yaw), dx = cy * bx + sy * bz, dz = -sy * bx + cy * bz;
+          const h = this.L(sa, n)[2], bs = sa + dx * Math.cos(h) - dz * Math.sin(h), bn = n + dx * Math.sin(h) + dz * Math.cos(h);
+          s.dy = this.foot(sa, n, 3.5); this.turbine(s, x, z, yaw, rpm * Math.PI / 30, ph, spins, this.foot(bs, bn, 1) - s.dy);
+        }
       }
       if (bio.pylons && Math.floor(a / 6) % 30 === 0 && side < 0) { const [x, z, h] = this.L(a, -60); s.dy = this.foot(a, -60, 2); this.pylon(s, x, z, h); }
       if (bio.barns && Math.floor(a / 6) % 60 === 17 && rnd() < 0.7) {
@@ -775,6 +880,8 @@ export class CountryWorld {
     const group = new THREE.Group();
     group.position.set(this.ox, 0, this.oz);
     for (const [b, m] of [[g, this.mats.ground], [s, this.mats.solid], [glow, this.lightMat]] as const) { const mesh = b.build(m); if (mesh) group.add(mesh); }
+    for (const t of spins) group.add(t.pivot, t.beacon);
+    group.userData.spins = spins;
     const slots = this.slots;
     let sm: SignMesh | null = null;
     if (this.quads.length) {
@@ -861,11 +968,50 @@ export class CountryWorld {
     const [, , h] = this.L(a + 3, N), ox = Math.sin(h) * side * 0.35, oz = Math.cos(h) * side * 0.35;
     s.box((x0 + x1) / 2 + ox, 0.04, (z0 + z1) / 2 + oz, len * 0.96, 0.06, 0.08, CW.wood, yaw + (hash3(i, side, city, seed, 0x10e) - 0.5) * 0.2);
   }
-  private turbine(s: Batch, x: number, z: number, _h: number, rnd: Rand) {
-    s.cyl(x, 17, z, 0.7, 34, 0xeef0f0, 8);
-    s.box(x, 34.3, z, 2.6, 1.2, 1.2, 0xeef0f0);
-    const a0 = rnd() * 6.3;
-    for (let k = 0; k < 3; k++) { const a = a0 + k * 2.094; s.boxR(x + 1.4, 34.3 + Math.sin(a) * 7, z + Math.cos(a) * 7, 0.15, 14, 0.8, 0xf4f6f6, a, 0, 0); }
+  // A wind turbine (turbineTower) facing `yaw`; its rotor (turbineRotor, one geometry shared by
+  // all of them) in `out`, turning at w rad/s from phase ph (or still, in a calm or stopped).
+  private turbine(s: Batch, x: number, z: number, yaw: number, w: number, ph: number, out: TurbineSpin[], boxY = 0) {
+    const n0 = s.mark(), dy = s.dy;
+    turbineTower(s, boxY);
+    s.transformFrom(n0, { ox: x, oz: z, rot: yaw });
+    const pivot = new THREE.Group(), mesh = new THREE.Mesh(this.rotorGeometry(), this.mats.solid);
+    turbineRotorAt(pivot, x, dy, z, yaw);
+    pivot.add(mesh); mesh.rotation.y = -ph;
+    const [bx, by, bz] = TURBINE_BEACON, c = Math.cos(yaw), sn = Math.sin(yaw);
+    const beacon = new THREE.Mesh(this.beaconGeometry(), this.lightMat);
+    beacon.position.set(x + c * bx + sn * bz, dy + by, z - sn * bx + c * bz); beacon.visible = false;
+    out.push({ pivot, mesh, beacon, w, ph });
+  }
+  private beaconGeo: THREE.BufferGeometry | null = null;
+  private beaconGeometry() {
+    if (!this.beaconGeo) { const b = new Batch(); b.box(0, 0, 0, 0.45, 0.35, 0.45, 0xff2a18); this.beaconGeo = b.build(this.lightMat)!.geometry; this.beaconGeo.userData.shared = true; }
+    return this.beaconGeo;
+  }
+  private rotorGeo: THREE.BufferGeometry | null = null;
+  private rotorGeometry() {
+    if (!this.rotorGeo) { const b = new Batch(); turbineRotor(b); this.rotorGeo = b.build(this.mats.solid)!.geometry; this.rotorGeo.userData.shared = true; }
+    return this.rotorGeo;
+  }
+  // Which way the turbines face this drive (their rotors' fronts, into the wind): one way for
+  // the whole drive, as one wind blows over it, chosen across the road's overall direction (its
+  // ends' chord) towards it from the right, where they stand, and turned by up to 30 degrees, so
+  // from the road the rotors are mostly seen face on, more side on round the bends.
+  private windFor: CountryRoad | null = null; private windYawV = 0;
+  private windYaw(road: CountryRoad) {
+    if (this.windFor !== road) {
+      road.point(road.landFrom, 0, this.q); const x0 = this.q.x, z0 = this.q.z;
+      road.point(road.landTo, 0, this.q);
+      const H = Math.atan2(-(this.q.z - z0), this.q.x - x0);
+      this.windFor = road; this.windYawV = H + Math.PI / 2 + (hash2(road.inp.city, 5, road.inp.seed, 0x3ab2) - 0.5) * 1.05;
+    }
+    return this.windYawV;
+  }
+  // How windy it is in a climate, this drive (0 calm .. 1 a gale): by the weather, and a draw of
+  // its own for each place (a clear day may be breezy or still; fog comes with still air).
+  windIn(road: CountryRoad, c: Climate) {
+    const base = { clear: 0.45, cloudy: 0.6, overcast: 0.6, rain: 0.7, storm: 1.0, snow: 0.55, fog: 0.08 }[c.weather];
+    const r = hash3(road.inp.city, c === road.inp.fromClimate ? 0 : 1, 3, road.inp.seed, 0x3ab1);
+    return THREE.MathUtils.clamp(base * (0.25 + r * 1.1), 0, 1);
   }
   private pylon(s: Batch, x: number, z: number, h: number) {
     for (const [dx, dz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) s.boxR(x + dx * 1.6, 9, z + dz * 1.6, 0.25, 18.5, 0.25, 0x9aa0a6, dz * 0.08, 0, -dx * 0.08);
