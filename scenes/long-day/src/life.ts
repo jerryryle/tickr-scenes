@@ -6,8 +6,11 @@
 import { hash2 } from "./rng.ts";
 import { SPECS, TRAILER, truckExtents, truckLayout } from "./truck.ts";
 import { KINGPIN_TO_AXLES } from "./hitch.ts";
+import type { TruckModel } from "./truck.ts";
+import { LANE_INNER, LANE_KERB } from "./route.ts";
 import type { Path, Pose } from "./route.ts";
 import { Journey } from "./journey.ts";
+import { JAM_HONK } from "./journey.ts";
 import type { LifeHook } from "./journey.ts";
 import { Traffic, truckObstacles } from "./traffic.ts";
 import type { Obstacle } from "./traffic.ts";
@@ -21,6 +24,9 @@ import { RAMP_HOLD, RAMP_LINEUP } from "./chores.ts";
 // its body would come into it (truckStop): standing, coming to a stop, or one it would close on
 // moving over into its lane (one coming to a stop for a light ahead of it doesn't drop back).
 const SLOW_BESIDE = 2;
+const OUT_SHORT = 3;   // m: how far short of the street the truck pulling out of a bay waits for a gap (outWait)
+const OUT_NOSE = 2;   // s: how long before the gridlock's honk (journey.ts JAM_HONK) the truck waiting to pull out of a bay noses out (outWait)
+const OUT_CRAWL = 0.3;   // m/s: slower than this, pulling out, it stops where it is for a gap rather than braking on (outWait)
 // How far ahead the truck looks along the way of a car moving its way, for one easing over into its
 // lane in front of it (s; truckStop), and how finely it looks at its way near its nose (m, the first
 // FINE_NEAR m) so that where it stops short of something comes on smoothly, not a metre at a time.
@@ -38,21 +44,62 @@ export class StreetLife implements LifeHook {
   private landing = { path: null as unknown as Path, s0: 0, s1: 0, at: 0 };
   // Where the truck pulling out of a dock bay is to wait for a gap in the traffic it joins (its rear
   // axle's s), or null: its nose 3 m short of the street (or where it stands, if that is past), as
-  // a driver pulls up to the street and looks; with the street clear for 6 s there, it goes, and
-  // after 15 s of waiting it noses out and the traffic stops for it. (From the traffic as it
-  // stands: the same played on as when scrubbed to.)
+  // a driver pulls up to the street and looks; with the street clear for 6 s there (where it joins
+  // the lane, and where its nose comes out across it), it goes, and after OUT_NOSE s short of the
+  // gridlock's honk (journey.ts JAM_HONK) of waiting it noses out and the traffic stops for it:
+  // gone, it keeps going (outGo), else, crawling off from standing, the wait would begin again.
+  // (From the traffic as it stands: the same played on as when scrubbed to.)
+  private outGo = false;
+  gapHeld = false;   // (this step: held where it waits for that gap, truckStop; not a gridlock, journey.ts jam)
   private outWait(j: Journey): number | null {
     const st = j.st, out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
-    if (!(out > 0) || st.redWait >= 15) return null;
+    if (!(out > 0)) { this.outGo = false; return null; }
+    if (this.outGo) return null;
     let E = this.extents.get(st.truck);
     if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck)));
-    const at = out - E.front - 3;
+    const at = this.outAt(j.path!, st.truck, E.front);
+    // (Waited long enough: standing at its wait point, by its own count or the gridlock's (which
+    // carries on from a hold just before, journey.ts jam, and would honk first), it noses out, for
+    // good. Held standing anywhere else (someone crossing the drive, say), it is still to pull up
+    // to its wait point and look: the traffic doesn't give way for a pull-out it isn't making.
+    // Never on the gridlock's count moving: rolling up past its wait point after a hold short of
+    // it, it would never stop to look.)
+    const waiting = st.s >= at - 0.5 && st.v < 0.05, nose = JAM_HONK - OUT_NOSE;
+    if (waiting && Math.max(st.redWait, st.jamT ?? 0) >= nose) { this.outGo = true; return null; }
     if ((st.s > at + 0.5 && st.v > 0.3) || st.s + E.front > out) return null;   // (out already, or too close to stop)
     if (at - st.s > 25) return null;                  // (nowhere near yet)
-    const q = j.path!.peek(out, this.spare);
+    const q = j.path!.peek(out, this.spare), C = this.outAtFor;
     // (Rolling already, the gap closing as it comes: where it can stop, braking firmly, short of the
-    // road all the same if it can.)
-    return this.traffic.gapAt(q.x, q.z, 6) ? null : Math.max(at, st.s + (st.v * st.v) / (2 * 4));
+    // road all the same if it can. At a crawl, there or where it is: a stop point always just ahead
+    // of it would have it creep on at journey.ts HOLD_CREEP for good, out across the lane, never
+    // standing long enough to nose out.)
+    if (this.traffic.gapAt(q.x, q.z, 6) && this.traffic.gapAt(C.cx, C.cz, 6)) return null;
+    return st.v < OUT_CRAWL ? Math.max(at, st.s) : Math.max(at, st.s + (st.v * st.v) / (2 * 4));
+  }
+  // (Where that is, on bay path P: OUT_SHORT m along the path short of where it joins the kerb lane,
+  // and further back as need be to keep its nose's corners OUT_SHORT short of the lane's near
+  // edge, sideways. Swinging round into the lane, its nose comes out across it well before the
+  // path's last metres: seed 1399257032's at 185 s, its nose 0.5 m off the lane's middle
+  // as it waited there, an SUV driving into it side on. Once per path and truck.)
+  // (And where its nose, there, comes out into the lane: as far along the lane as its nose is.)
+  private outAtFor: { path: Path | null; truck: TruckModel | null; at: number; cx: number; cz: number } = { path: null, truck: null, at: 0, cx: 0, cz: 0 };
+  private outAt(P: Path, truck: TruckModel, front: number): number {
+    const C = this.outAtFor;
+    if (C.path === P && C.truck === truck) return C.at;
+    const q = P.peek(P.dockOut, this.spare), qx = q.x, qz = q.z, nx = Math.sin(q.h), nz = Math.cos(q.h);
+    const hw = SPECS[truck].cabHW, keep = (LANE_KERB - LANE_INNER) / 2 + OUT_SHORT;
+    let at = P.dockOut - front - OUT_SHORT;
+    for (; at > 0; at -= 0.25) {   // (its nose's corners, either side, sideways from the lane's middle)
+      const p = P.peek(at, this.spare), fx = Math.cos(p.h), fz = -Math.sin(p.h);
+      let near = Infinity;
+      for (const w of [-hw, hw]) { const x = p.x + fx * front + fz * w, z = p.z + fz * front - fx * w; near = Math.min(near, Math.abs((x - qx) * nx + (z - qz) * nz)); }
+      if (near >= keep) break;
+    }
+    C.path = P; C.truck = truck; C.at = at;   // (below 0, as before: its nose that close to the lane where it stands)
+    const p = P.peek(Math.max(0, at), this.spare), dx = Math.cos(q.h), dz = -Math.sin(q.h);
+    const a = (p.x + Math.cos(p.h) * front - qx) * dx + (p.z - Math.sin(p.h) * front - qz) * dz;
+    C.cx = qx + dx * a; C.cz = qz + dz * a;
+    return C.at;
   }
   private sweep = { path: null as Path | null, obs: [] as Obstacle[], at: [] as number[] };   // (a bay path's sweep, and the s of each obstacle's pose)
 
@@ -63,6 +110,7 @@ export class StreetLife implements LifeHook {
     const s = j.st.citySeed;
     this.traffic.reset(Math.floor(hash2(s, 1, 0, 0x7a4f) * 2 ** 32));
     this.crowd.reset(Math.floor(hash2(s, 2, 0, 0xc40d) * 2 ** 32));
+    this.outGo = false;
     this.ambient.resetBlimp();
   }
 
@@ -171,7 +219,7 @@ export class StreetLife implements LifeHook {
     // (Pulling out of a dock bay, swinging across the street into the kerb lane: likewise, from the
     // truck to 25 m on from where it joins the lane, until it is 10 m into it.)
     // (Before it moves off, it waits for a gap in the traffic there, as a driver pulling out does,
-    // rather than have everyone stop for it; after 15 s of waiting, it noses out and they do.)
+    // rather than have everyone stop for it; after a while waiting (OUT_NOSE), it noses out and they do.)
     const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!landing && this.outWait(j) === null && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
     this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, j.clearing ? (st.mode === "reverse" ? -1 : 1) : 0, p);
@@ -185,6 +233,7 @@ export class StreetLife implements LifeHook {
   // before it (traffic.truckZoneStop).
   truckStop(j: Journey): number | null {
     const st = j.st, P = j.path;
+    this.gapHeld = false;
     if (st.mode !== "drive" || !P) return null;
     // (Pulling out of a bay, where it waits for a gap in the traffic: and short of anything in its
     // way before that, all the same.)
@@ -318,6 +367,7 @@ export class StreetLife implements LifeHook {
       // (Short of it by the step it was found in too: it began somewhere since the last sample.)
       if (hit) { stop = Math.min(stop ?? Infinity, s - 1.5 - came + shift); if (!shift) break; }
     }
+    this.gapHeld = ow !== null && stop === ow;
     return stop;
   }
   private cutIn: { x: number; z: number; r: number }[] = [];
@@ -354,10 +404,10 @@ export class StreetLife implements LifeHook {
     }
     return false;
   }
-  save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp(), d: this.setDown }); }
+  save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp(), d: this.setDown, g: this.outGo }); }
   load(s: string, j: Journey) {
     const o = JSON.parse(s);
-    this.traffic.load(o.t, j.plan); this.crowd.load(o.c); this.ambient.loadBlimp(o.b); this.setDown = o.d ?? "";
+    this.traffic.load(o.t, j.plan); this.crowd.load(o.c); this.ambient.loadBlimp(o.b); this.setDown = o.d ?? ""; this.outGo = o.g ?? false;
   }
 }
 

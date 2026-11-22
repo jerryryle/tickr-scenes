@@ -69,7 +69,7 @@ import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 // short of someone or something in its way (a crosser, a car ahead, a car with the junction before
 // it), or null; reverseBlocked, whether someone is in the way of its next metres back into a bay.
 // Without street life (tests of the bare journey) the way is always clear.
-export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; reverseBlocked?(j: Journey): boolean }
+export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; gapHeld?: boolean; reverseBlocked?(j: Journey): boolean }   // gapHeld: truckStop's stop is a wait for a gap to pull out (no gridlock)
 type StopKind = "pickup" | "drop" | "swap" | "depart";
 interface Site { bx: number; bz: number; fac: FacilityId; name: string }
 export interface Stop { kind: StopKind; site: Site | null; job: number; cargo: string; units: number; truck?: TruckModel; slot?: number }   // slot: where its loads go in the bed (set when the stop begins)
@@ -1091,8 +1091,9 @@ export class Journey {
       // (Only while it is still ahead: overrun, braking as hard as it could, it is behind it.)
       else if ((st.holdT ?? 0) > 0 && (st.v < 1 || (st.holdT! > 1 - HOLD_KEEP && st.holdS! > st.s))) { st.holdT! -= dt; ys = st.holdS!; }
       else st.holdT = 0;
-      // (Held standing by it, its own light not red nor turning: the jam's clock runs.)
-      this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && this.lightAhead !== "red" && this.lightAhead !== "yellow");
+      // (Held standing by it, its own light not red nor turning: the jam's clock runs. Not waiting
+      // for a gap to pull out of a bay: that ends in its nosing out (life.ts outWait), not a honk.)
+      this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && this.lightAhead !== "red" && this.lightAhead !== "yellow" && !this.life?.gapHeld);
       // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
       if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));
       // (The last metre in to it at a crawl, slowing as it closes: where it stands to is only known to

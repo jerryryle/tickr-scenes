@@ -69,7 +69,7 @@ const CLEAR_AHEAD = 20, CLEAR_ROOM = 0.3, CLEAR_V = 1.5, CLEAR_GIVE_UP = 12, CLE
 const CLEAR_FINE = 0.25, CLEAR_FINE_NEAR = 6;   // m: how finely the truck's way ahead is looked at near its nose, and how far (clearWay)
 const CLEAR_FLIP = 2;   // s: stuck its way that long, a vehicle making way tries the other way (clearWay)
 const CABLE_LAYOVER = 8;   // s: how long a cable car stands at the end of its line before it turns round (turnRound)
-const CLEAR_SLIDE = 0.15, CLEAR_OUT = 8;   // m: how much deeper one already against the truck may slide along it, for how far, to come clear (clearWay)
+const CLEAR_SLIDE = 0.15, CLEAR_OUT = 8, CLEAR_CHAIN = 0.5;   // m: how much deeper one already against the truck may slide along it, for how far, to come clear; how far apart its circles are measured there (clearWay)
 const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
 const DROP_DEEP = 0.6;   // m: how deep inside a parked truck's circles a car is dropped (dropInside)
 const SLIDE_LOOK = 6;     // m on along its way a car beside the truck may slide by it to come clear (slidesBy)
@@ -289,15 +289,27 @@ export class Traffic {
     // (Car c's circles were it at s along its lane, into `out`: past the end of its way, on along the
     // next one, which begins there, as it would drive on into it.)
     const reach = (c: Car) => c.path.length + (c.next ? c.next.length : 0);
-    const at = (c: Car, s: number, out: number[]) => {
+    // (Measured against the truck's body, finely: half a metre apart, each as wide as the car, from
+    // a quarter width in from either end (its corners within 0.1 m of the end ones, its ends rounded
+    // half a metre out past them). Its few big circles, slid along the truck's side, would have
+    // the gap wobble by up to a third of a metre as each passes it, closing in on it by more than
+    // CLEAR_SLIDE whichever way it goes, one up against the truck held there for good.)
+    const at = (c: Car, s: number, out: number[], fine = false) => {
       if (s > c.path.length && c.next) c.next.peek(s - c.path.length, this.pose);
       else c.path.peek(Math.max(0, s), this.pose);   // (looking: the path's cursor and lane offset left as they are)
       const h = this.pose.h, x = this.pose.x + Math.sin(h) * c.dodge, z = this.pose.z + Math.cos(h) * c.dodge;
-      const fx = Math.cos(h), fz = -Math.sin(h), L = c.kind.len, n = Math.max(2, Math.ceil(L / (c.kind.width * 1.1))), step = L / n, r = Math.max(c.kind.width * 0.55, step * 0.55);
+      const fx = Math.cos(h), fz = -Math.sin(h), L = c.kind.len, W2 = c.kind.width / 2;
       out.length = 0;
+      if (fine) {
+        const a0 = Math.max(0, L / 2 - W2 / 2), n = Math.max(1, Math.ceil((2 * a0) / CLEAR_CHAIN)), step = (2 * a0) / n, r = Math.hypot(W2, step / 2);
+        for (let i = 0; i <= n; i++) { const q = -a0 + step * i; out.push(x + fx * q, z + fz * q, r); }
+        return out;
+      }
+      const n = Math.max(2, Math.ceil(L / (c.kind.width * 1.1))), step = L / n, r = Math.max(c.kind.width * 0.55, step * 0.55);
       for (let i = 0; i < n; i++) { const q = -L / 2 + step * (i + 0.5); out.push(x + fx * q, z + fz * q, r); }
       return out;
     };
+    const atB = (c: Car, s: number, out: number[]) => at(c, s, out, true);
     const A = this.clearA, B = this.clearB;
     // (How far circles `P` stand clear of the truck's zone, and of car o's circles `Q`.)
     const gapZ = (P: number[]) => { let m = Infinity; for (let i = 0; i < P.length; i += 3) for (const o of Z) m = Math.min(m, Math.hypot(P[i] - o.x, P[i + 1] - o.z) - P[i + 2] - o.r - CLEAR_ROOM); return m; };
@@ -322,11 +334,11 @@ export class Traffic {
       const F = c.clearFloor, touching = F !== undefined || g0 + CLEAR_ROOM < 0, stuck = !touching && (c.clearStuck ?? 0) > CLEAR_FLIP;
       const closes = (g: number) => touching ? g < (F ?? g0) - CLEAR_SLIDE : g + CLEAR_ROOM < 0 || (!stuck && g < g0 - CLEAR_SLIDE);
       if (closes(g1)) return true;
-      if (!stuck) for (let k = 0.5; k <= CLEAR_OUT; k += 0.5) { const s2 = s1 + w * k; if (s2 < 0 || s2 > reach(c)) break; const g = gapB(at(c, s2, W)); if (closes(g)) return true; if (g >= g0 - 1e-6) return false; }
+      if (!stuck) for (let k = 0.5; k <= CLEAR_OUT; k += 0.5) { const s2 = s1 + w * k; if (s2 < 0 || s2 > reach(c)) break; const g = gapB(atB(c, s2, W)); if (closes(g)) return true; if (g >= g0 - 1e-6) return false; }
       for (let k = 0; k <= CLEAR_LOOK; k += 0.5) {
         const s2 = s1 + w * k;
         if (s2 < 0 || s2 > reach(c)) return true;
-        if (k > 0 && closes(gapB(at(c, s2, W)))) return true;
+        if (k > 0 && closes(gapB(atB(c, s2, W)))) return true;
         if (gapZ(at(c, s2, W)) >= 0) return false;
       }
       return true;
@@ -338,10 +350,10 @@ export class Traffic {
     // Kept once picked, so it doesn't turn back and forth.)
     const way = (c: Car) => {
       let best = 0, bestM = Infinity, bestG = -Infinity;
-      const b0 = Math.min(0, gapB(at(c, c.s, A)));
+      const b0 = Math.min(0, gapB(atB(c, c.s, A)));
       for (const w of [-1, 1]) for (let m = 1; m <= CLEAR_LOOK; m += 1) {
         const s1 = c.s + w * m;
-        if (s1 >= 0 && s1 <= reach(c) && intoB(c, s1, w, gapB(at(c, s1, A)), b0)) break;   // (that way runs into the truck)
+        if (s1 >= 0 && s1 <= reach(c) && intoB(c, s1, w, gapB(atB(c, s1, A)), b0)) break;   // (that way runs into the truck)
         if (s1 < 0 || s1 > reach(c)) {
           const g = gapZ(at(c, Math.max(0, Math.min(reach(c), s1)), A));
           if (bestM === Infinity && g > bestG) { bestG = g; best = w; }
@@ -384,7 +396,7 @@ export class Traffic {
         if (t < 0 && t1 < CLEAR_LOOK && !extended.has(c)) { extended.add(c); if (this.extendBack(G, c, CLEAR_LOOK - t1) > 0) t1 = c.s + t * d; }
         if (t1 < 0) continue;
         // (Never into the truck, nor deeper into it.)
-        if (intoB(c, t1, t, gapB(at(c, t1, A)), Math.min(0, gapB(at(c, c.s, B))))) continue;
+        if (intoB(c, t1, t, gapB(atB(c, t1, A)), Math.min(0, gapB(atB(c, c.s, B))))) continue;
         // (Another vehicle where it would go, that it isn't moving away from already.)
         at(c, t1, A);
         const C0 = at(c, c.s, this.clearC);
@@ -439,7 +451,7 @@ export class Traffic {
       // never closing on the truck at all.)
       if (!inWay) { c.clearRegive = undefined; c.clearFloor = undefined; }
       if (!inWay || moved.has(c)) { c.clearT = 0; continue; }
-      if ((c.clearT = (c.clearT ?? 0) + dt) > (c.clearRegive ? CLEAR_FLIP : CLEAR_GIVE_UP)) { if (this.unseen(G, c)) this.cars.splice(i, 1); else { c.clearGaveUp = true; c.clearFloor ??= Math.min(0, gapB(at(c, c.s, A))); } }
+      if ((c.clearT = (c.clearT ?? 0) + dt) > (c.clearRegive ? CLEAR_FLIP : CLEAR_GIVE_UP)) { if (this.unseen(G, c)) this.cars.splice(i, 1); else { c.clearGaveUp = true; c.clearFloor ??= Math.min(0, gapB(atB(c, c.s, A))); } }
     }
   }
   // Begins car c's way up to `want` m further back (backing up out of the truck's way): along the

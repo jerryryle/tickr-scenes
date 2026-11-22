@@ -82,7 +82,8 @@ before stepping out (at a light, on their green, for cars turning across), and s
 walk into a vehicle stops. The journey's driving asks street life
 (`src/life.ts`, `truckStop`) where to stop: short of people, vehicles in its body's way ahead
 (its trailer's too), its booking's zones, and, pulling out of a dock, a gap in the traffic it
-joins (after 15 s it noses out and the traffic stops for it). So the journey depends on the
+joins, waiting with its nose 3 m clear of the lane (after 12 s, before a gridlock would honk, it
+noses out and the traffic stops for it; that wait is no gridlock). So the journey depends on the
 street life, and scrubbing replays both together.
 
 `src/boats.ts` holds the boat models in the same way (a motor cruiser, a narrowboat, a sailing

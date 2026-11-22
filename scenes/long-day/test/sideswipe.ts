@@ -13,7 +13,11 @@
 // now never steps into the truck, whatever else it misjudges (traffic.ts truckGap). Seed
 // 3442198800's city 63 again, with more traffic about: a tractor's trailer swinging across a box
 // truck waiting in the oncoming lane for it to go through (the truck looked out for those waiting
-// on it with its cab, not its trailer: life.ts truckStop).
+// on it with its cab, not its trailer: life.ts truckStop). Seed 1399257032's city 0: the truck
+// pulling out of a bay, waiting for a gap with its nose already out across the lane it joins (the
+// wait measured along its path, which swings round into the lane), an SUV driving into it side on
+// and the two stuck so (life.ts outAt; the SUV, stuck, could not back out either, which
+// traffic.ts clearWay's finer circles against the truck fix, but which this no longer reaches).
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
@@ -43,7 +47,7 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
     }
     return deep;
   };
-  for (const [seed, city] of [[7, 7], [11, 5], [3, 20], [3442198800, 63], [7, 20], [11, 6], [2539665337, 16], [11, 24]]) {
+  for (const [seed, city] of [[7, 7], [11, 5], [3, 20], [3442198800, 63], [7, 20], [11, 6], [2539665337, 16], [11, 24], [1399257032, 0]]) {
     const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial(), traffic = new Traffic(scene, mat, null);
     const period = new Journey(readConfig({ seed } as any), 0, "autumn").period;
     const j = new Journey(readConfig({ seed } as any), city * period, "autumn");
