@@ -215,7 +215,11 @@ export function turbineRotorAt(o: THREE.Object3D, x: number, y: number, z: numbe
   o.rotation.set(0, yaw, -Math.PI / 2 + 0.09, "YZX");
 }
 
-interface TurbineSpin { pivot: THREE.Group; mesh: THREE.Mesh; beacon: THREE.Mesh; w: number; ph: number }
+// A turbine's rotor where it turns (turbineRotorAt), at w rad/s from phase ph, and its beacon.
+interface TurbineSpin { at: THREE.Matrix4; w: number; ph: number; beacon: THREE.Vector3 }
+// A segment's turbines: their rotors and beacons, one instanced mesh each (a draw call apiece,
+// however many stand in it).
+interface SegTurbines { spins: TurbineSpin[]; rotors: THREE.InstancedMesh; beacons: THREE.InstancedMesh }
 
 export class CountryWorld {
   readonly group = new THREE.Group();
@@ -265,6 +269,8 @@ export class CountryWorld {
     scene.add(this.base);   // under the city's countryside too (main.ts colours it there)
     // Never seen: keeps the crossing lights' material in the setup precompile.
     for (const m of [this.lightMat, this.boatMat, this.boatTopMat, this.animMat]) { const keep = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), m); keep.position.y = -5; this.group.add(keep); }   // (and the ferry boat's)
+    // (And the instanced programs of the turbines' rotors and beacons.)
+    for (const m of [this.mats.solid, this.lightMat]) { const keep = new THREE.InstancedMesh(new THREE.BoxGeometry(0.01, 0.01, 0.01), m, 1); keep.position.y = -5; this.group.add(keep); }
   }
   private base: THREE.Mesh;
 
@@ -416,10 +422,18 @@ export class CountryWorld {
   // beacons flash together after dark, 0.8 s on in every two.
   private updateTurbines(u: number) {
     const lit = LAMPS_ON.value > 0.5 && u - 2 * Math.floor(u / 2) < 0.8;
-    for (const g of this.segs.values()) for (const t of g.userData.spins as TurbineSpin[]) {
-      if (t.w) t.mesh.rotation.y = -((t.ph + t.w * u) % (Math.PI * 2));
-      t.beacon.visible = lit;
+    for (const g of this.segs.values()) {
+      const T = g.userData.turbines as SegTurbines | undefined;
+      if (!T) continue;
+      T.beacons.visible = lit;
+      let moved = false;
+      for (let i = 0; i < T.spins.length; i++) { const t = T.spins[i]; if (t.w) { this.rotorMatrix(t, u); T.rotors.setMatrixAt(i, this.m4); moved = true; } }
+      if (moved) T.rotors.instanceMatrix.needsUpdate = true;
     }
+  }
+  // A rotor's matrix at time u, in m4: where it turns, spun about its axis (-angle about y).
+  private rotorMatrix(t: TurbineSpin, u: number) {
+    this.m4.makeRotationY(-((t.ph + t.w * u) % (Math.PI * 2))).premultiply(t.at);
   }
 
   // Headlight patches ahead of the oncoming cars nearest `at` (atmosphere.ts HEAD_LIGHTS).
@@ -880,8 +894,16 @@ export class CountryWorld {
     const group = new THREE.Group();
     group.position.set(this.ox, 0, this.oz);
     for (const [b, m] of [[g, this.mats.ground], [s, this.mats.solid], [glow, this.lightMat]] as const) { const mesh = b.build(m); if (mesh) group.add(mesh); }
-    for (const t of spins) group.add(t.pivot, t.beacon);
-    group.userData.spins = spins;
+    let turbines: SegTurbines | null = null;
+    if (spins.length) {
+      const rotors = new THREE.InstancedMesh(this.rotorGeometry(), this.mats.solid, spins.length);
+      const beacons = new THREE.InstancedMesh(this.beaconGeometry(), this.lightMat, spins.length);
+      spins.forEach((t, i) => { this.rotorMatrix(t, 0); rotors.setMatrixAt(i, this.m4); beacons.setMatrixAt(i, this.m4.makeTranslation(t.beacon)); });
+      // (Bounds for culling, once: each rotor turns about its own centre, inside its sphere.)
+      rotors.computeBoundingSphere(); beacons.computeBoundingSphere(); beacons.visible = false;
+      group.add(rotors, beacons);
+      group.userData.turbines = turbines = { spins, rotors, beacons };
+    }
     const slots = this.slots;
     let sm: SignMesh | null = null;
     if (this.quads.length) {
@@ -892,7 +914,7 @@ export class CountryWorld {
     this.fleetJobs = [];
     const pm = this.plates.build(); if (pm) group.add(pm.mesh);
     const hf = OCCLUSION.add(group, this.ox + this.group.position.x, this.oz + this.group.position.z, [this.mats.ground], "road");   // for the camera (occlusion.ts)
-    group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (sm) signAtlas.detach(sm); pm?.dispose(); OCCLUSION.remove(hf); };
+    group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (sm) signAtlas.detach(sm); pm?.dispose(); OCCLUSION.remove(hf); turbines?.rotors.dispose(); turbines?.beacons.dispose(); };
     return group;
   }
   private fleetJobs: { stalls: StallPose[]; y: number }[] = [];
@@ -969,18 +991,16 @@ export class CountryWorld {
     s.box((x0 + x1) / 2 + ox, 0.04, (z0 + z1) / 2 + oz, len * 0.96, 0.06, 0.08, CW.wood, yaw + (hash3(i, side, city, seed, 0x10e) - 0.5) * 0.2);
   }
   // A wind turbine (turbineTower) facing `yaw`; its rotor (turbineRotor, one geometry shared by
-  // all of them) in `out`, turning at w rad/s from phase ph (or still, in a calm or stopped).
+  // all of them, instanced per segment) and beacon in `out`, the rotor turning at w rad/s from
+  // phase ph (or still, in a calm or stopped).
   private turbine(s: Batch, x: number, z: number, yaw: number, w: number, ph: number, out: TurbineSpin[], boxY = 0) {
     const n0 = s.mark(), dy = s.dy;
     turbineTower(s, boxY);
     s.transformFrom(n0, { ox: x, oz: z, rot: yaw });
-    const pivot = new THREE.Group(), mesh = new THREE.Mesh(this.rotorGeometry(), this.mats.solid);
-    turbineRotorAt(pivot, x, dy, z, yaw);
-    pivot.add(mesh); mesh.rotation.y = -ph;
+    const pivot = new THREE.Object3D();
+    turbineRotorAt(pivot, x, dy, z, yaw); pivot.updateMatrix();
     const [bx, by, bz] = TURBINE_BEACON, c = Math.cos(yaw), sn = Math.sin(yaw);
-    const beacon = new THREE.Mesh(this.beaconGeometry(), this.lightMat);
-    beacon.position.set(x + c * bx + sn * bz, dy + by, z - sn * bx + c * bz); beacon.visible = false;
-    out.push({ pivot, mesh, beacon, w, ph });
+    out.push({ at: pivot.matrix.clone(), w, ph, beacon: new THREE.Vector3(x + c * bx + sn * bz, dy + by, z - sn * bx + c * bz) });
   }
   private beaconGeo: THREE.BufferGeometry | null = null;
   private beaconGeometry() {
@@ -1008,7 +1028,7 @@ export class CountryWorld {
   }
   // How windy it is in a climate, this drive (0 calm .. 1 a gale): by the weather, and a draw of
   // its own for each place (a clear day may be breezy or still; fog comes with still air).
-  windIn(road: CountryRoad, c: Climate) {
+  private windIn(road: CountryRoad, c: Climate) {
     const base = { clear: 0.45, cloudy: 0.6, overcast: 0.6, rain: 0.7, storm: 1.0, snow: 0.55, fog: 0.08 }[c.weather];
     const r = hash3(road.inp.city, c === road.inp.fromClimate ? 0 : 1, 3, road.inp.seed, 0x3ab1);
     return THREE.MathUtils.clamp(base * (0.25 + r * 1.1), 0, 1);
