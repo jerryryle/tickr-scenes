@@ -5,7 +5,8 @@
 // out are slip lanes at either end: each a lane's width all the way from its taper onto the lot,
 // with no kink in it (its edges never turning more steeply than 1 in 2 from the road), a long one,
 // with a grass island between the lot and the road. And the price sign stands on that island.
-// Checked on the pieces of real drives, and on each kind on both sides of the road.
+// On real drives, the paving lies on level ground (the road's level at the piece) that scenery
+// keeps off. Checked on the pieces of real drives, and on each kind on both sides of the road.
 // Args (all optional): seed
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
@@ -86,7 +87,21 @@ for (const kind of ["gas", "truckstop", "fruit", "attraction"] as const)
       const road = new Journey(readConfig({ seed } as SceneEnv), m * 60, "autumn").country;
       if (!road || seen.has(road.key)) continue;
       seen.add(road.key);
-      for (const p of road.pieces) if (p.kind === "gas" || p.kind === "truckstop" || p.kind === "fruit" || p.kind === "attraction") { check(p, `seed ${seed} city ${road.inp.city} s${p.s.toFixed(0)}`); n++; }
+      for (const p of road.pieces) if (p.kind === "gas" || p.kind === "truckstop" || p.kind === "fruit" || p.kind === "attraction") {
+        const where = `seed ${seed} city ${road.inp.city} s${p.s.toFixed(0)}`;
+        check(p, where); n++;
+        // Its paving on level ground, the road's own level, with no scenery on it.
+        let bad = 0, clear = 0;
+        for (const v of piecePaving(p)) for (let s = v.s[0]; s <= v.s[v.s.length - 1]; s += 4) {
+          const x = paveAt(v, s)!;
+          for (let m = x[0]; m <= x[1]; m += 2) {
+            if (Math.abs(road.groundAt(s, v.side * m) - road.baseAt(p.s)) > 0.05) bad++;
+            if (Math.abs(m) >= 11 && road.clearAt(s, v.side * m)) clear++;
+          }
+        }
+        if (bad) errs.push(`${where}: ${p.kind}'s paving on uneven ground at ${bad} points`);
+        if (clear) errs.push(`${where}: ${p.kind}'s paving open to scenery at ${clear} points`);
+      }
       const biz = road.pieces.filter((p) => piecePaving(p).length);
       for (const p of biz) for (const o of road.pieces) if (o !== p) {
         const [a, b] = pieceSpan(p), [c, d] = pieceSpan(o);

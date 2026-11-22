@@ -454,7 +454,7 @@ export class CountryRoad {
       for (const [kind, len] of more) {
         for (let tries = 0; tries < 10 && hi - len > lo; tries++) {
           const s = lo + h(110 + k * 9 + tries) * (hi - len - lo);
-          if (this.pieces.some((p) => s < p.s + p.len + 200 && s + len + 200 > p.s)) continue;
+          if (this.pieces.some((p) => { const [g0, g1] = this.groundOf(p); return s < g1 + 200 && s + len + 200 > g0; })) continue;
           if (kind === "tunnel" && !(hillyAt(s - CUT_RUN) && hillyAt(s + len + CUT_RUN))) continue;
           if (kind === "overpass" && (this.blendAt(s) < 0.5 ? this.fromBiome : this.toBiome) === "coastal") continue;
           this.pieces.push({ kind, s, side: 1, len, variant: Math.floor(h(120 + k) * (kind === "tunnel" ? 3 : 2)) });
