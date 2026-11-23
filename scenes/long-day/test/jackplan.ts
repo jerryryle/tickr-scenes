@@ -3,7 +3,7 @@
 // pavement, the loads in the bed), the driver never leaps, and each move takes at least as long as
 // rolling it, turning it or walking round it does. And where there is no way, it says so.
 import { truckLayout } from "../src/truck.ts";
-import { RAMP_HW } from "../src/chores.ts";
+import { fetchSpots, planChores, RAMP_HW, tripCount } from "../src/chores.ts";
 import { jackArc, jackBedJoin, jackDoorWays, jackDriverAt, jackJoin, jackMoveClear, jackMoveLen, jackPivot, jackPoseAt, jackReverse } from "../src/jackplan.ts";
 import type { JackWorld, JMove, JPose } from "../src/jackplan.ts";
 import { readConfig } from "../src/env.ts";
@@ -93,6 +93,20 @@ function check(name: string, w: JackWorld, ms: JMove[] | null, a: JPose, b: JPos
   if (!same(m.p1, { x: -2, z: 2, h: Math.PI / 2 })) errs.push(`arc ends at ${JSON.stringify(m.p1)}`);
   const r = jackReverse([m])[0];
   for (const u of [0.25, 0.5, 0.75]) if (!same(jackPoseAt(r, u), jackPoseAt(m, 1 - u))) errs.push(`arc reversed differs at ${u}`);
+}
+
+// A doorless drop of several pallets: each trip's set down on its own spot on the pavement, side
+// by side, as far apart as the load is across its corners (so one turned to be set down clears
+// the next).
+{
+  const stop = { kind: "drop" as const, site: null, job: 0, cargo: "pumpkins", units: 4, slot: 0 }, trips = tripCount(L, stop.cargo, stop.units);
+  const spots = fetchSpots(planChores("box26", stop)), sz = CARGO_MODELS[stop.cargo].size, gap = Math.hypot(sz[0], sz[2]);
+  if (trips < 2) errs.push(`doorless drop: ${trips} trip(s), wanted several`);
+  if (spots.length !== trips || spots.some((s) => !s)) errs.push(`doorless drop: ${spots.length} fetch spots for ${trips} trips`);
+  for (let a = 0; a < spots.length; a++) for (let b = a + 1; b < spots.length; b++) {
+    const p = spots[a], q = spots[b];
+    if (p && q && Math.hypot(p.spot[0] - q.spot[0], p.spot[2] - q.spot[2]) < gap) errs.push(`doorless drop: trips ${a} and ${b} set down ${Math.hypot(p.spot[0] - q.spot[0], p.spot[2] - q.spot[2]).toFixed(2)} m apart`);
+  }
 }
 
 // Whole stops (chores.ts jackLegs): a pallet jack's walks all planned or none, and on the walk

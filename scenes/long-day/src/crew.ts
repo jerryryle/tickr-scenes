@@ -15,7 +15,7 @@ import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
-import { pavementFetch, ROAD_PARK, FL_MID, LONG_TINES, fvec, stackGeom, stackTripLegs, TEAM_CLEAR, ON_EDGE, HIGH_CARRY, teamSpan, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, HT_LEAD, JACK_LEAD, JACK_PIVOT_AT, JACK_TURN, JACK_TURN_LOADED, pushGap, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
+import { fetchSpots, pavementFetch, ROAD_PARK, FL_MID, LONG_TINES, fvec, stackGeom, stackTripLegs, TEAM_CLEAR, ON_EDGE, HIGH_CARRY, teamSpan, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, HT_LEAD, JACK_LEAD, JACK_PIVOT_AT, JACK_TURN, JACK_TURN_LOADED, pushGap, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
 import { buildCrewPath, EMPTY_HOLD, samplePath } from "./crewpath.ts";
 import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
 import type { Chore, ItemKind, StackGeom, ToolRest, YLeg } from "./chores.ts";
@@ -825,7 +825,9 @@ export class Crew {
   // where it is held (on the hand truck's nose plate stood upright, on the pallet jack's forks, on
   // its dolly, on its rim, set down from the arms), trips side by side across.
   private stagedPose(L: TruckLayout, truck: Truck, stop: Stop, f: Chore, k: number, load: CarriedLoad, pos: THREE.Vector3, q: THREE.Quaternion) {
-    const [x, y, z, yaw] = stageLocal(stop.cargo, load.size, this.spotFor(f), f.face ?? 0, k);
+    // (A pallet jack's trips each have their own spot already: planChores facilityFor.)
+    const jack = STYLE[CARGO_BY_ID.get(stop.cargo)!.handling].tool === "palletJack";
+    const [x, y, z, yaw] = stageLocal(stop.cargo, load.size, this.spotFor(f), f.face ?? 0, jack ? 0 : k);
     pos.set(x, this.ground(L, x, z) + y, z).applyMatrix4(truck.root.matrixWorld);
     q.setFromEuler(this.eu.set(0, truck.heading + yaw, 0, "YXZ"));
   }
@@ -836,11 +838,13 @@ export class Crew {
   private pave: { key: string; city: number; x: number; z: number; cargo: string; items: { n: number; u0: number; x: number; y: number; z: number; yaw: number }[] }[] = [];
   private pavePath: object | null = null;
   private static paveKey(stop: Stop) { return `${stop.job}|${stop.kind}|${stop.cargo}`; }
-  private paveFor(stop: Stop, model: TruckModel, px: number, py: number, pz: number, h: number, city: number, pave = 0, fetch: { spot: number[]; face: number } | null = null) {
-    const L = truckLayout(model), f = fetch ?? pavementFetch(L, pave), trips = tripCount(L, stop.cargo, stop.units), key = Crew.paveKey(stop), items = [];
+  // (`fetches`: the stop's chores' fetches, when known: a pallet jack's each where its own is.)
+  private paveFor(stop: Stop, model: TruckModel, px: number, py: number, pz: number, h: number, city: number, pave = 0, fetches: ({ spot: number[]; face: number } | null)[] | null = null) {
+    const L = truckLayout(model), f = fetches?.[0] ?? pavementFetch(L, pave), trips = tripCount(L, stop.cargo, stop.units), key = Crew.paveKey(stop), items = [];
+    const jack = STYLE[CARGO_BY_ID.get(stop.cargo)!.handling].tool === "palletJack";
     for (let k = 0; k < trips; k++) {
-      const [u0, u1] = tripUnits(stop, trips, k), n = Math.max(1, u1 - u0), load = this.loadFor(stop.cargo, n, u0, key);
-      const [x, y, z, yaw] = stageLocal(stop.cargo, load.size, f.spot, f.face, k);
+      const [u0, u1] = tripUnits(stop, trips, k), n = Math.max(1, u1 - u0), load = this.loadFor(stop.cargo, n, u0, key), own = jack ? fetches?.[k] : null;
+      const [x, y, z, yaw] = own ? stageLocal(stop.cargo, load.size, own.spot, own.face, 0) : stageLocal(stop.cargo, load.size, f.spot, f.face, k);
       items.push({ n, u0, x: px + Math.cos(h) * x + Math.sin(h) * z, y: py + y, z: pz - Math.sin(h) * x + Math.cos(h) * z, yaw: h + yaw });
     }
     return { key, city, x: px, z: pz, cargo: stop.cargo, items };
@@ -855,7 +859,7 @@ export class Crew {
     if (st.mode === "drive" && j.path && j.path !== this.pavePath && j.path.length - st.s <= 150) {
       this.pavePath = j.path;   // (checked once a drive, door or none)
       const a = j.doorlessAhead();
-      if (a && stop.kind === "pickup" && this.stageable(stop.cargo)) this.paveSet(Crew.paveKey(stop), this.paveFor(stop, st.truck, a.pose.x, a.y, a.pose.z, a.pose.h, st.city, a.pave, a.fetch));
+      if (a && stop.kind === "pickup" && this.stageable(stop.cargo)) this.paveSet(Crew.paveKey(stop), this.paveFor(stop, st.truck, a.pose.x, a.y, a.pose.z, a.pose.h, st.city, a.pave, a.fetches));
     }
     const p = truck.root.position;
     this.pave = this.pave.filter((P) => P.city === st.city && Math.hypot(p.x - P.x, p.z - P.z) <= 250);
@@ -881,8 +885,7 @@ export class Crew {
     const key = Crew.paveKey(stop);
     if (stop.kind === "drop" && !this.pave.some((q) => q.key === key)) {
       // (Where the chores set it down: the walk to the first fetch ends at its spot.)
-      const ch = j.chores, fi = ch.findIndex((q) => q.kind === "fetch"), fetch = fi > 0 && ch[fi - 1].b ? { spot: ch[fi - 1].b!, face: ch[fi].face ?? 0 } : null;
-      this.paveSet(key, this.paveFor(stop, truck.model, tp.x, tp.y, tp.z, truck.heading, j.st.city, 0, fetch));
+      this.paveSet(key, this.paveFor(stop, truck.model, tp.x, tp.y, tp.z, truck.heading, j.st.city, 0, fetchSpots(j.chores)));
     }
     else this.paveSet(key, null);
     const ph = j.dwellPhase(), ch = j.chores, idx = ph.chore ? ch.indexOf(ph.chore) : ph.phase === "startup" ? ch.length : -1;
@@ -1867,7 +1870,7 @@ const stageAhead = (tool: string | null | undefined) => tool === "palletJack" ? 
 function stageLocal(cargo: string, size: number[], at: number[], face: number, k: number): [number, number, number, number] {
   const [l, hh, w] = size, h = CARGO_BY_ID.get(cargo)!.handling, tool = STYLE[h].tool;
   const across = !tool && h !== "push" && h !== "roll" && l > 0.6 && w >= 0.3;
-  const side = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * ((across ? l : w) + 0.15);
+  const side = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * ((across ? l : tool === "palletJack" ? Math.hypot(l, w) : w) + 0.15);   // (a pallet jack's as chores.ts facilityFor)
   const ahead = stageAhead(tool);
   const x = at[0] + Math.cos(face) * ahead + Math.sin(face) * side, z = at[2] - Math.sin(face) * ahead + Math.cos(face) * side;
   return [x, h === "roll" ? hh / 2 : 0, z, face + (across ? Math.PI / 2 : 0)];

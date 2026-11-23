@@ -61,7 +61,7 @@ export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null
 // the way down ends 36 m along the frontage, in the far kerb lane).
 const GARAGE_OUT_BEFORE = 36;
 import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from "./country.ts";
-import { bedRearX, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, swapChores } from "./chores.ts";
+import { bedRearX, fetchSpots, RAMP_HOLD, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
 // Street life is stepped and saved with the journey (keyframes), so the truck may answer to it and a
@@ -829,13 +829,11 @@ export class Journey {
     if (siteLayout(this.plan, stop.site.bx, stop.site.bz).kind === "garage" && !this.garageStop(stop)) return null;   // (its door is up on the roof)
     const h = pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
     const cands: [number, KerbDoor][] = [];   // anywhere along the block side: a longer walk beats no door
-    let front: KerbDoor | null = null;   // (the nearest on that side at all, for where the building's front is)
     for (const d of DOOR_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
       if (!d) continue;
       const px = d.x - pose.x, pz = d.z - pose.z, ax = px * fx + pz * fz, az = px * rx + pz * rz;
       if (az < L.hw + 1.5 || d.nx * rx + d.nz * rz > -0.7) continue;   // on the truck's right, facing it
       const dd = Math.hypot(ax - L.bedRear, az);
-      if (dd < 45 && !front) front = d;
       if (dd < 45 && this.doorTakes(stop.site, d, stop.cargo)) cands.push([dd, d]);
     }
     cands.sort((p, q) => p[0] - q[0]);
@@ -846,7 +844,7 @@ export class Journey {
     const key = this.pickKey(stop, pose);
     const got = this.doorPick.get(key);
     if (got) return got.door;
-    let pick: { door: KerbDoor | null; chores: Chore[] | null; pave: number; front?: KerbDoor | null } = { door: null, chores: null, pave: 0 };
+    let pick: { door: KerbDoor | null; chores: Chore[] | null; pave: number } = { door: null, chores: null, pave: 0 };
     const planned = (ch: Chore[]) => { const walks = ch.filter((c) => c.kind === "walk" && c.tool === "palletJack"); return walks.length > 0 && walks.every((c) => c.jack); };
     for (const [, d] of cands.slice(0, 2)) {
       const ch = this.kerbChores(stop, d, pose, true);
@@ -854,15 +852,30 @@ export class Journey {
     }
     // (No door: a spot on the pavement behind the truck it can be planned to, further back if need be.)
     for (let k = 0; !pick.chores && k < PAVE_SPOTS; k++) {
-      const ch = this.kerbChores(stop, null, pose, true, k, front);
-      if (planned(ch)) pick = { door: null, chores: ch, pave: k, front };
+      const ch = this.kerbChores(stop, null, pose, true, k);
+      if (planned(ch)) pick = { door: null, chores: ch, pave: k };
     }
     this.doorPick.set(key, pick);
     return pick.door;
   }
   private pickKey(stop: Stop, pose: Pose) { return `${stop.job}|${stop.kind}|${stop.site ? siteKey(stop.site) : ""}|${pose.x.toFixed(1)},${pose.z.toFixed(1)},${pose.h.toFixed(2)}`; }   // (as looked ahead to, as stood at: the same)
+  // The nearest door on the truck's side of the site at all, square to it and near its back (where
+  // the building's front is: a line through it, so not one round a bend).
+  private frontDoor(stop: Stop, pose: Pose): KerbDoor | null {
+    if (!DOOR_PROBE || !stop.site) return null;
+    const L = truckLayout(this.st.truck), h = pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+    let best: KerbDoor | null = null, bd = 45;
+    for (const d of DOOR_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
+      if (!d) continue;
+      const px = d.x - pose.x, pz = d.z - pose.z, ax = px * fx + pz * fz, az = px * rx + pz * rz;
+      if (az < L.hw + 1.5 || d.nx * rx + d.nz * rz > -0.97) continue;
+      const dd = Math.hypot(ax - L.bedRear, az);
+      if (dd < bd) { bd = dd; best = d; }
+    }
+    return best;
+  }
   // (The chores planned through the door picked, kept for the stop itself.)
-  private doorPick = new Map<string, { door: KerbDoor | null; chores: Chore[] | null; pave: number; front?: KerbDoor | null }>();
+  private doorPick = new Map<string, { door: KerbDoor | null; chores: Chore[] | null; pave: number }>();
   // Whether a site can take a cargo through a door (or has a dock), whichever side it is reached from.
   private siteTakes(site: Site, cargo: string, model: TruckModel = this.st.truck): boolean {
     if (this.makeDockPlan({ kind: "pickup", site, job: 0, cargo, units: 1 }, model)) return true;   // (not through dockPlan: its cache is the stop's)
@@ -888,7 +901,7 @@ export class Journey {
   }
   // A stop's chores, the truck standing at `pose`, through door `kd` (or none). `trial`: only to
   // see whether they can be planned (nothing aboard changes: its slots worked out on a copy).
-  private kerbChores(stop: Stop, kd: KerbDoor | null, pose: Pose, trial: boolean, pave = 0, front: KerbDoor | null = null): Chore[] {
+  private kerbChores(stop: Stop, kd: KerbDoor | null, pose: Pose, trial: boolean, pave = 0): Chore[] {
     const st = this.st, others = trial ? this.othersAt(stop).map((a) => ({ ...a })) : this.othersAt(stop);
     const slot = stop.slot ?? this.slotFor(stop, others);
     // The back of the loads before and after (where the hand truck or pallet jack rests), from
@@ -909,6 +922,21 @@ export class Journey {
         const px = o.x - pose.x, pz = o.z - pose.z, x = px * fx + pz * fz, z = px * rx + pz * rz;
         if (Math.abs(x - L.bedRear) < 30 && Math.abs(z) < 25) obstacles.push({ x, z, r: o.r, kind: o.kind });
       }
+      // (And vehicles parked at the kerb near its back: a row of discs along each, none where the
+      // truck itself stands.)
+      const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - 0.75;   // (nor on its ramp or lift gate)
+      for (const o of PARKED_PROBE?.(this.plan, stop.site.bx, stop.site.bz) ?? []) {
+        // (Each a little wider than the box, its ends' centres in enough that its corners are inside.)
+        const long = Math.max(o.hx, o.hz), short = Math.min(o.hx, o.hz), alongX = o.hx >= o.hz, r = short * 1.25, end = Math.max(0, long - short * 0.9);
+        const n = Math.max(1, Math.ceil(2 * end / short) + 1);
+        for (let i = 0; i < n; i++) {
+          const t = n > 1 ? -end + (2 * end * i) / (n - 1) : 0;
+          const wx = o.x + (alongX ? t : 0), wz = o.z + (alongX ? 0 : t), px = wx - pose.x, pz = wz - pose.z, x = px * fx + pz * fz, z = px * rx + pz * rz;
+          if (Math.abs(x - L.bedRear) >= 30 || Math.abs(z) >= 25) continue;
+          if (x > foot - r - 0.5 && x < L.front + r + 0.5 && Math.abs(z) < L.hw + r + 0.5) continue;
+          obstacles.push({ x, z, r });
+        }
+      }
     }
     // At a dock, the vehicles parked in the yard and the truck itself (walks round its nose
     // to steps on the far side), as boxes in its frame.
@@ -920,7 +948,9 @@ export class Journey {
       }
       if (boxes.length) boxes.push({ x: (L.front + L.rear) / 2, z: 0, hx: (L.front - L.rear) / 2, hz: L.hw, ax: 1, az: 0 });
     }
-    const plan = () => planChores(st.truck, stop, dp ? dp.stair : null, slot, before, after, door, obstacles, boxes, kd && !dp ? this.stackKind(stop) : null, others, true, pave, !kd && !dp && front ? frame(front) : null);
+    // (No door: the building's front from the nearest one there at all, whatever its use, all wall.)
+    const fr = !kd && !dp ? this.frontDoor(stop, pose) : null;
+    const plan = () => planChores(st.truck, stop, dp ? dp.stair : null, slot, before, after, door, obstacles, boxes, kd && !dp ? this.stackKind(stop) : null, others, true, pave, fr ? frame(fr) : null, dp?.geom.door ? dp.geom.door.w / 2 : null);
     return trial ? jackTrial(plan) : plan();
   }
   // Whether a door can take a cargo at all: not one with something big stood just before it, a
@@ -944,16 +974,15 @@ export class Journey {
   // the forklift are there before the truck arrives), or null.
   // The kerb stop ahead, as the truck nears it, when its building has no front door to be found
   // (crew.ts stages its loads on the pavement): where the truck will stand.
-  doorlessAhead(): { pose: Pose; y: number; pave?: number; fetch?: { spot: number[]; face: number } | null } | null {
+  doorlessAhead(): { pose: Pose; y: number; pave?: number; fetches?: ({ spot: number[]; face: number } | null)[] | null } | null {
     const st = this.st, stop = st.stops[0];
     if (!stop || !stop.site || (stop.kind !== "pickup" && stop.kind !== "drop") || st.mode !== "drive" || !this.path || this.path.length - st.s > 150) return null;
     if (this.dockPlan(stop)) return null;
     const pose = this.path.peek(this.path.length, this.tmpPose);
     if (this.findKerbDoor(stop, pose)) return null;
     // (Where on the pavement, and facing which way: as the stop's chores will have it.)
-    const pick = this.doorPick.get(this.pickKey(stop, pose)), ch = pick?.chores, fi = ch ? ch.findIndex((c) => c.kind === "fetch") : -1;
-    const fetch = fi > 0 && ch![fi - 1].b ? { spot: ch![fi - 1].b!, face: ch![fi].face ?? 0 } : null;
-    return { pose: { ...pose }, y: this.path.yAt(this.path.length), pave: pick?.pave ?? 0, fetch };
+    const pick = this.doorPick.get(this.pickKey(stop, pose));
+    return { pose: { ...pose }, y: this.path.yAt(this.path.length), pave: pick?.pave ?? 0, fetches: pick?.chores ? fetchSpots(pick.chores) : null };
   }
   stackAhead(): { pose: Pose; y: number; door: KerbDoor; mode: "yard" | "road" } | null {
     const st = this.st, stop = st.stops[0];
@@ -981,7 +1010,7 @@ export class Journey {
       this.stackMode = this.kerbDoor ? this.stackKind(stop) : null;
       const pick = this.doorPick.get(this.pickKey(stop, this.pose));
       this.doorPick.clear();   // (asked again only for stops still to come)
-      this.chores = pick?.chores ?? this.kerbChores(stop, this.kerbDoor, this.pose, false, pick?.pave ?? 0, pick?.front ?? null);
+      this.chores = pick?.chores ?? this.kerbChores(stop, this.kerbDoor, this.pose, false, pick?.pave ?? 0);
     }
     this.choreStart = [];
     let t = 0;

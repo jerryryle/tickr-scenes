@@ -1597,7 +1597,7 @@ export function pavementObstacles(plan: CityPlan, bx: number, bz: number): Pavem
   for (const f of blk.faces) { const p = G.streetPt(f >> 1, G.streets[f >> 1].len / 2, 0), t = [Math.floor(p.x / BLOCK), Math.floor(p.z / BLOCK)]; if (!tiles.some((q) => q[0] === t[0] && q[1] === t[1])) tiles.push(t); }
   for (const [cx, cz] of tiles) {
     const rec: number[] = [], boxes: number[] = [];
-    PAVEMENT.out = rec; PAVEMENT.boxes = cx === own[0] && cz === own[1] ? boxes : null; BATCH.dry = true;   // placement only: no geometry
+    PAVEMENT.out = rec; PAVEMENT.boxes = boxes; BATCH.dry = true;   // placement only: no geometry (its yard's vehicles, and those parked in its streets)
     try { cityBatches(plan, cx, cz, null); } finally { PAVEMENT.out = PAVEMENT.boxes = null; BATCH.dry = false; }
     for (let i = 0; i < rec.length; i += 4) out.push({ x: cx * BLOCK + rec[i], z: cz * BLOCK + rec[i + 1], r: rec[i + 2], kind: rec[i + 3] });
     for (let i = 0; i < boxes.length; i += 4)
@@ -1989,6 +1989,9 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
       // (Parked facing the traffic's way: +along.)
       const kind: CarKind = i % 3 === 1 ? "van" : carKindAt(r * 7 % 1, false), [x, z] = axis === 0 ? [p, lane] : [lane, p];
       parkedCar(s, kind, x, 0.005, z, axis === 0 ? 0 : -Math.PI / 2, carPaintAt(r));
+      // (For a driver's walk across the street to go round, the far kerb's: its footprint, a little over.)
+      const hl = kind === "van" ? 2.6 : 2.3, hw = 1.0;
+      if (axis === 0) parkedObstacle(x - hl, z - hw, x + hl, z + hw); else parkedObstacle(x - hw, z - hl, x + hw, z + hl);
     }
   }
 }
