@@ -45,8 +45,8 @@ export interface CrowdMore { cars: Obstacle[]; parked: KerbParked | null; busy: 
 interface Flock { cx: number; cz: number; y: number; r: number; w: number; a: number; pa: number; gull: boolean; n: number }
 
 const PED_SPAWN = [35, 105], PED_DESPAWN = 130;
-const BOXED_GONE = 6, BOXED_NEAR = 18;
-const TURN_BOXED = 3;   // s after turning back out of the truck's way that they still count as boxed in by it   // s boxed in by the honking truck before stepping into a doorway (walk), and how near it (m)
+const BOXED_GONE = 6, BOXED_NEAR = 18;   // s boxed in by the honking truck before stepping into a doorway (walk), and how near it (m)
+const TURN_BOXED = 3;   // s after turning back out of the truck's way that they still count as boxed in by it
 const CROSS_TRUCK_T = 3;   // s: how far off, at the speed it comes, the truck must be before they step off the kerb across its way
 const BELLE = 0xf4ead8;
 const _pt: GPt = { x: 0, z: 0, h: 0 };
@@ -272,6 +272,7 @@ export class Crowd {
   private sweepPts: number[] = new Array(64).fill(0);
 
   private walk(G: CityGraph, p: Ped, dt: number, plan: CityPlan, simTime: number, prs: SignalPreempt[], truck: Obstacle[]) {
+    if (p.state !== "walk") p.turnT = 0;   // (turned back by the truck only counts while walking on)
     if (p.kind === "vendor" || p.kind === "musician") {
       // (Set up where the truck is to come over the pavement, into a driveway or out of one: they
       // move their pitch along out of its way.)

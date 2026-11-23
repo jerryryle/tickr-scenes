@@ -249,11 +249,11 @@ function canoe(b: Batch, kayak: boolean) {
   ];
   if (kayak) {
     hull(b, st, { top: ACCENT, stripe: ACCENT, s0: 0, s1: 0, rail: RUB, bottom: ACCENT, deck: ACCENT });
-    b.box(-0.1, 0.33, 0, 0.8, 0.05, 0.46, RUB); b.box(-0.1, 0.34, 0, 0.66, 0.02, 0.34, BLACK);   // cockpit
+    b.box(0, 0.33, 0, 0.8, 0.05, 0.46, RUB); b.box(0, 0.34, 0, 0.66, 0.02, 0.34, BLACK);   // cockpit (amidships: the same either end to end, crew.ts sets it down either way round)
     return;
   }
   hull(b, st, { top: ACCENT, stripe: ACCENT, s0: 0, s1: 0, rail: RUB, bottom: ACCENT, deck: ACCENT, open: 0.24, inside: 0xd2cec4 });
-  for (const x of [-1.3, 1.1]) b.box(x, 0.2, 0, 0.18, 0.03, 2 * deckW(st, x) - 0.08, WOOD);
+  for (const x of [-1.2, 1.2]) b.box(x, 0.2, 0, 0.18, 0.03, 2 * deckW(st, x) - 0.08, WOOD);   // (seats either end alike: see the kayak's cockpit)
   b.box(0, 0.29, 0, 0.08, 0.03, 0.74, WOOD);
 }
 

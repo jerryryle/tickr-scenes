@@ -347,8 +347,8 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     for (const k of [-0.24, 0.24]) { b.ico(x + 0.22, y + 1.36, z + k, 0.1, cream); b.cone(x, y + 1.68, z + k * 1.3, 0.12, 0.22, fur, 5); b.ico(x + 0.36, y + 1.36, z + k * 0.5, 0.035, 0x111111); }
     for (let i = 0; i < 5; i++) b.ico(x - 0.5 - i * 0.08, y + 0.2 + i * 0.16, z - 0.35, 0.2, i % 2 ? cream : fur);
   } },
-  capybara: { size: [1.5, 1.3, 0.9], build: (b, x, y, z) => {   // giant plush: a placid barrel with a square head
-    const fur = 0x8a6a48, dark = 0x5a4430;
+  capybara: { size: [1.5, 1.3, 0.9], build: (b, x0, y, z) => {   // giant plush: a placid barrel with a square head
+    const fur = 0x8a6a48, dark = 0x5a4430, x = x0 - 0.1;   // (centred on its length: its head out no further than its size says)
     b.ico(x - 0.15, y + 0.55, z, 0.6, fur, 0.95);
     b.box(x + 0.5, y + 0.85, z, 0.6, 0.5, 0.5, fur); b.box(x + 0.82, y + 0.78, z, 0.08, 0.32, 0.42, dark);
     for (const k of [-0.2, 0.2]) { b.ico(x + 0.42, y + 1.14, z + k, 0.08, dark); b.ico(x + 0.7, y + 0.95, z + k, 0.035, 0x111111); }

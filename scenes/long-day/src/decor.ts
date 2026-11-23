@@ -23,7 +23,13 @@ interface RoofSpot { r: Rect; top: number }
 export const PAVEMENT: { out: number[] | null; boxes: number[] | null } = { out: null, boxes: null };
 export function pavementObstacle(x: number, z: number, r: number, kind = 0) { PAVEMENT.out?.push(x, z, r, kind); }
 // What a pavement obstacle is, for the street life that uses it (vignettes.ts): 0 anything else.
-export const PK = { hydrant: 1, trash: 2, bench: 3, mailbox: 4, news: 5, meter: 6, shelter: 7, rack: 8, lamp: 9 } as const;
+export const PK = { hydrant: 1, trash: 2, bench: 3, mailbox: 4, news: 5, meter: 6, shelter: 7, rack: 8, lamp: 9, tree: 10 } as const;
+// How far out what stands on the pavement reaches at hand height (what two carry between them,
+// chores.ts): a street tree only its trunk, over its pit; the rest as for the feet. Carried at the
+// shoulder (`high`, chores.ts HIGH_CARRY): over what is lower, a bin, a bench, nothing.
+export const TRUNK_R = 0.2;
+const LOW = new Set<number>([PK.hydrant, PK.trash, PK.bench, PK.news, PK.rack]);
+export const handR = (r: number, kind?: number, high = false) => kind === PK.tree ? TRUNK_R : high && kind !== undefined && LOW.has(kind) ? NaN : r;   // (NaN: passed over)
 // A vehicle parked off the street (in a dock's yard), axis-aligned from (x0, z0) to (x1, z1).
 export function parkedObstacle(x0: number, z0: number, x1: number, z1: number) { PAVEMENT.boxes?.push(x0, z0, x1, z1); }
 export const DC = {
@@ -200,7 +206,16 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   const place = (half: number, f: (p: number) => void, kind = 0) => {
     for (let t = 0; t < 12; t++) {
       const p = range(rnd, a0 + 3, a1 - 3);
-      if (free(p, half)) { f(p); busy.push([p - half - 0.4, p + half + 0.4]); rec(p, ac, half + 0.15, kind); return true; }
+      if (free(p, half)) {
+        f(p); busy.push([p - half - 0.4, p + half + 0.4]);
+        // (A bus shelter, long and set back: as a row of circles along its roof, not one as wide as
+        // it is long out into the road.)
+        if (kind === PK.shelter) for (const k of [-1.425, -0.475, 0.475, 1.425]) rec(p + k, kerbAcross + inward * 1.05, 0.8, kind);
+        // (A bench, long and shallow: a row of circles along it, not one as wide as it is long.)
+        else if (kind === PK.bench) for (const k of [-0.6, 0, 0.6]) rec(p + k, ac + inward * 0.2, 0.42, kind);
+        else rec(p, ac, half + 0.15, kind);
+        return true;
+      }
     }
     return false;
   };

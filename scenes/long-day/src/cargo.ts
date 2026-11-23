@@ -74,7 +74,7 @@ export const CARGO: CargoType[] = [
   cargoType("ducks", "Rubber ducks", "humorous", "palletJack", ["toyImporter"], ["toyStore"], "box26", [1, 1], 2),
   cargoType("gnomes", "Garden gnomes (40)", "humorous", "palletJack", ["gardenDC"], ["gardenCenter"], "box26", [1, 1], 1),
   cargoType("bowling", "Bowling balls", "humorous", "roll", ["bowlingSupply"], ["bowlingAlley"], "box16", [1, 2], 1),
-  cargoType("penguin", "Penguin crate", "humorous", "palletJack", ["aquariumTransfer"], ["aquarium"], "reefer", [1, 1], 1),
+  cargoType("penguin", "Penguin crate", "humorous", "handTruck", ["aquariumTransfer"], ["aquarium"], "reefer", [1, 1], 1),   // (on the hand truck: the reefer's lift gate is too short for a pallet jack and the driver)
   cargoType("trophy", "World's Best Driver trophy", "humorous", "carry", ["trophyShop"], ["ryderOffice"], "box16", [1, 1], 0.25),
   cargoType("envelope", "One tiny envelope", "humorous", "carry", ["lawOffice"], ["courthouse"], "box26", [1, 1], 12),
   cargoType("sailboat", "Sailboat", "humorous", "tow", ["boatyard"], ["marina"], "flatbed", [1, 1], 4),
@@ -107,9 +107,10 @@ export function slotEnd(spu: number, units: number, start: number) {
   return s;
 }
 // First free run from the front wall for `units` of size `spu`, among `aboard`; -1 if none.
-export function slotFind(aboard: { slot: number; slotsPerUnit: number; units: number }[], spu: number, units: number, slots: number) {
+// (`from`: no nearer the front than this slot.)
+export function slotFind(aboard: { slot: number; slotsPerUnit: number; units: number }[], spu: number, units: number, slots: number, from = 0) {
   const used = aboard.map((a) => [a.slot, Math.ceil(slotEnd(a.slotsPerUnit, a.units, a.slot) - 1e-6)]).sort((p, q) => p[0] - q[0]);
-  for (const c of [0, ...used.map((u) => u[1])].sort((p, q) => p - q)) {
+  for (const c of [from, ...used.map((u) => u[1]).filter((u) => u >= from)].sort((p, q) => p - q)) {
     const k = slotAlign(spu, c), e = slotEnd(spu, units, k);
     if (e > slots + 1e-6) continue;
     if (used.every(([a, b]) => e <= a + 1e-6 || k >= b - 1e-6)) return k;

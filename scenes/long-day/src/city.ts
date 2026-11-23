@@ -1639,7 +1639,8 @@ export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | n
   let built: ReturnType<typeof cityBatches>;
   try { built = cityBatches(plan, tx, tz, null); } finally { DOOR_SPOTS.out = null; }
   const out = none.slice();
-  // A facility that loads flatbeds by forklift has wide double service doors.
+  // A facility that loads flatbeds by forklift, or takes pallets in and out on the pallet jack,
+  // has wide double service doors (facilities.ts wideDoor).
   const [half, dh] = wideDoor(fac) ? [WIDE_DOOR_HALF, WIDE_DOOR_H] : [DOOR_HALF, DOOR_H];
   const door = (side: number, a: number, n: number): KerbDoor => {
     const P = fp(side, a, n), [nx, nz] = outward(side, a);
@@ -2266,7 +2267,7 @@ function tree(s: Batch, x: number, y: number, z: number, h: number, r: number, c
 // A tree of the city's kind: broadleaf, conifer or palm.
 export function cityTree(s: Batch, x: number, y: number, z: number, h: number, r: number, color: number, rnd: Rand) {
   const kind = pick(rnd, CS.trees.kinds);
-  pavementObstacle(x, z, 0.45);   // the trunk (and a street tree's pit), for the driver's walks
+  if (kind !== "conifer") pavementObstacle(x, z, 0.45, PK.tree);   // the trunk (and a street tree's pit), for the driver's walks (a conifer's own, its boughs low)
   if (kind === "palm") palm(s, x, y, z, h * 1.25, rnd);
   else if (kind === "conifer") conifer(s, x, y, z, h, BARE.includes(color) ? 0x2c4a34 : shade(color, 0.8), BARE.includes(color));
   else tree(s, x, y, z, h, r, color);
@@ -2838,7 +2839,8 @@ function buildContainer(s: Batch, L: StandLayout, look: StandLook) {
     fspan(s, side, a0 + 0.1, a1 - 0.1, p, q, n1 - 0.1, n1 + 0.04, look.trim);
   }
   // Ribs on both long sides; the street side's stop short of the door and the window.
-  // (A wide service door, for the forklift, is lower than usual: the light over it stays under the roof.)
+  // (A wide service door, for the forklift or the pallet jack, is lower than usual: the light over it
+  // stays under the roof.)
   const wide = wideDoor(DC.fac), dHalf = wide ? WIDE_DOOR_HALF : DOOR_HALF;
   const door0 = L.a - dHalf - 0.2, door1 = L.a + dHalf + 0.2, w0 = door1 + 0.35, w1 = Math.min(w0 + 1.3, a1 - 0.5);
   for (let a = a0 + 0.35; a < a1 - 0.3; a += 0.3) {

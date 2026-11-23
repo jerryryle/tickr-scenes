@@ -63,7 +63,7 @@ const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH = 3;   // ENTRY_PREFETCH: blocks on in from the gate built coming in to town
-const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam" && !DEBUG_VIEW.startsWith("crew");   // test renders with a tour camera
+const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam" && DEBUG_VIEW !== "top" && !DEBUG_VIEW.startsWith("crew");   // test renders with a tour camera
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const cfg = readConfig(env);
@@ -534,6 +534,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       }
       if (jamShot) { engine.camera.position.set(jamShot.x, jamShot.y, jamShot.z); engine.camera.lookAt(jamShot.lx, 1.8, jamShot.lz); }
       else { const h = truck.heading; engine.camera.position.set(p.x + Math.cos(h) * 30, 7, p.z - Math.sin(h) * 30); engine.camera.lookAt(p.x, 1.5, p.z); }
+      focus.copy(p); updateDriverSpot(engine.camera, null); return;
+    }
+    if (DEBUG_VIEW === "top") {   // test renders: straight down over the back of the truck and the pavement beside it, the truck along the frame, the pavement below it
+      const L = truckLayout(truck.model), h = truck.heading, p = truck.root.position;
+      const cx = p.x + Math.cos(h) * (L.bedRear - 3) + Math.sin(h) * 2.4, cz = p.z - Math.sin(h) * (L.bedRear - 3) + Math.cos(h) * 2.4;
+      engine.camera.fov = 40; engine.camera.updateProjectionMatrix();
+      engine.camera.position.set(cx, 15, cz); engine.camera.up.set(-Math.sin(h), 0, -Math.cos(h)); engine.camera.lookAt(cx, 0, cz);
       focus.copy(p); updateDriverSpot(engine.camera, null); return;
     }
     if (DEBUG_VIEW.startsWith("crew") && !crew.inSeat) {   // test renders: close on the driver (crewSide, crewBack, crewFront, crewQ: from the street side, behind the truck, ahead, a rear quarter), a long lens

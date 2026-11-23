@@ -4,6 +4,7 @@
 // the rest are kerb stops. siteLayout() is the single description of that street side, read by
 // the chunk builder (city.ts) to build it and by the journey to drive to it.
 import { hash2 } from "./rng.ts";
+import { CARGO } from "./cargo.ts";
 import type { TruckModel } from "./truck.ts";
 import { CityPlan } from "./city.ts";
 import type { District } from "./city.ts";
@@ -312,6 +313,17 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
 // goes back in through it, so these facilities have wide double service doors (city.ts kerbDoors).
 const WIDE_DOOR = new Set<FacilityId>(["lumberYard", "plumbingSupply", "construction", "signShop", "doughnutShop", "sanitationDepot",
   "treeFarm", "treeLot", "boatyard", "marina"]);
-export const wideDoor = (id: FacilityId) => WIDE_DOOR.has(id);
+// And where loads go in and out on the pallet jack, through the front door with a pallet on its
+// forks (not a house: a hot tub delivered there is no less wide for a wide door, and every house
+// in town would have one).
+let PALLET_DOOR: Set<FacilityId> | null = null;
+const palletDoor = (id: FacilityId) => {
+  if (!PALLET_DOOR) {
+    PALLET_DOOR = new Set();
+    for (const c of CARGO) if (c.handling === "palletJack") for (const f of [...c.from, ...c.to]) if (f !== "residence") PALLET_DOOR.add(f);
+  }
+  return PALLET_DOOR.has(id);
+};
+export const wideDoor = (id: FacilityId) => WIDE_DOOR.has(id) || palletDoor(id);
 export const isRyderFacility = (id: FacilityId) => id === "rentalLot" || id === "ryderWarehouse" || id === "ryderService" || id === "ryderOffice";
 export const hasSign = (id: FacilityId) => id !== "residence" && id !== "apartment";
