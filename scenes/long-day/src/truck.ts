@@ -849,7 +849,7 @@ export class Truck {
     P.span(x1 - 0.06, yfl, -hw, x1, yt, hw, TC.white);                          // front wall
     for (const z of [-1, 1]) P.span(x0 - 0.04, yfl - 0.12, z * (hw - 0.12), x0 + 0.06, yt, z * hw, TC.white); // rear posts
     P.span(x0 - 0.04, yt - 0.28, -hw, x0 + 0.06, yt, hw, TC.white);             // rear header
-    P.span(x0 - 0.06, yfl - 0.12, -hw + 0.125, x0 + 0.06, yfl + 0.02, hw - 0.125, TC.alu);   // rear sill, between the posts
+    P.span(x0 - 0.055, yfl - 0.13, -hw + 0.125, x0 + 0.06, yfl + 0.02, hw - 0.125, TC.alu);   // rear sill, between the posts (its foot and back off the floor plate's and the doors' planes)
     for (let x = x0 + 0.3; x < x1; x += 0.6) P.span(x, yfl - 0.3, -hw + 0.06, x + 0.08, yfl - 0.12, hw - 0.06, TC.frame);
     // Under-ride guard.
     P.span(x0 + 0.05, 0.42, -hw + 0.12, x0 + 0.16, 0.58, hw - 0.12, TC.black);
@@ -1022,7 +1022,7 @@ export class Truck {
 
   private buildLiftgate(c: CargoSpec) {
     const G = new Batch(), len = 1.5;
-    G.span(-len, -0.08, -c.hw + 0.15, 0, 0, c.hw - 0.15, TC.alu);
+    G.span(-len, -0.085, -c.hw + 0.15, 0, -0.005, c.hw - 0.15, TC.alu);   // (5 mm off the planes of the chassis it folds under)
     for (let x = -len + 0.1; x < -0.05; x += 0.2) G.span(x, 0, -c.hw + 0.18, x + 0.06, 0.01, c.hw - 0.18, TC.hub);
     for (const z of [-1, 1]) G.span(-0.08, -0.08, z * (c.hw - 0.2), 0, 0.12, z * (c.hw - 0.12), TC.black);
     this.liftGroup = new THREE.Group();
@@ -1045,7 +1045,7 @@ export class Truck {
       P.span(-3.4, 0.48, z * (t.hw - 0.05), -11.4, t.floor - 0.12, z * (t.hw - 0.02), TC.skirt);
       P.span(-14.3, 0.62, z * 0.5, -11.8, t.floor - 0.12, z * 0.6, TC.frame);
     }
-    P.span(-0.6, t.floor - 0.18, -0.9, 0.9, t.floor - 0.12, 0.9, TC.frame);
+    P.span(-0.58, t.floor - 0.18, -0.9, 0.9, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
     P.span(-0.05, t.floor - 0.3, -0.05, 0.05, t.floor - 0.18, 0.05, TC.chrome);   // kingpin
     this.trailerBody.add(P.build(this.kit.paint)!);
     this.addLights(this.trailerBody, L);

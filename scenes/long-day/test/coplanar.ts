@@ -1,11 +1,13 @@
-// Test: no two front faces of a city's static geometry share a plane where they overlap. Faces
-// that do z-fight: the depth buffer can't tell which is in front, so the board shows a shimmer of
-// both as the camera moves. Every chunk of every city (city.ts makeCityChunkBuilder: blocks,
-// streets, the outskirts ring, freeways, elevated lines) is built here, with each triangle tagged
-// with the functions that drew it (wrapping Batch's primitives), and every pair of triangles
-// facing the same way is checked across the whole city, neighbouring chunks included: if they lie
-// within GAP of one plane and overlap by more than AREA, and differ in colour or material (two
-// alike look the same whichever wins), that is a clash. Faces facing each other on one plane
+// Test: no two front faces of Long Day's geometry share a plane where they overlap. Faces that do
+// z-fight: the depth buffer can't tell which is in front, so the board shows a shimmer of both as
+// the camera moves. Built here, with each triangle tagged with the functions that drew it
+// (wrapping Batch's primitives): every chunk of every city (city.ts makeCityChunkBuilder: blocks,
+// streets, the outskirts ring, freeways, elevated lines); the models not built into chunks, each
+// on its own (cars, boats, the trucks, the people and animals, the traffic, the trains, the ships
+// and harbour at sea); and the country roads between the cities (countryworld.ts), a stretch at a
+// time. Every pair of triangles facing the same way is checked, neighbouring chunks included: if
+// they lie within GAP of one plane and overlap by more than AREA, and differ in colour or material
+// (two alike look the same whichever wins), that is a clash. Faces facing each other on one plane
 // don't count: the materials draw front faces only, so one of the two is always culled; nor do
 // faces turned down near the ground (the bottoms of things standing on it).
 // A clash shut inside something solid (a box's face against the next box, the underside of a cap
@@ -14,9 +16,10 @@
 // planes are, and a place (world x, y, z) to look.
 // Args (all optional): seed (default 1), cities (default 6: one of each style), gap in metres
 // (default 0.001: flush; larger lists near-coplanar faces too, for review, without failing),
-// a city's index to sweep just that one (-1: all), and a piece of a clash's description
-// ("buildPark", "#f2c200") to print the triangles of the first few such clashes ("each": the
-// first in sight of each pair of functions; with a description, also what each ray met)
+// a city's index to sweep just that one (-1 or "": all; given, the models and roads are left
+// out), a piece of a clash's description ("buildPark", "#f2c200") to print the triangles of the
+// first few such clashes ("each": the first in sight of each pair of functions; with a
+// description, also what each ray met), and how many country roads (default 3)
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
@@ -28,6 +31,15 @@ import { CAR_KINDS, carModel } from "../src/cars.ts";
 import { boatAt } from "../src/boats.ts";
 import type { BoatKind } from "../src/boats.ts";
 import { BLOCK, RING } from "../src/grid.ts";
+import { Truck, TruckKit } from "../src/truck.ts";
+import type { TruckModel } from "../src/truck.ts";
+import { Character, DRIVER_LOOK, WORKER_LOOK } from "../src/character.ts";
+import { Cow, Horse, Tractor } from "../src/farm.ts";
+import { Figures } from "../src/figure.ts";
+import { Traffic } from "../src/traffic.ts";
+import { Ambient } from "../src/ambient.ts";
+import { SeaLife } from "../src/sealife.ts";
+import { CountryWorld } from "../src/countryworld.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const SEED = argv[0] ? Number(argv[0]) : 1, CITIES = argv[1] ? Number(argv[1]) : 6;
@@ -178,7 +190,31 @@ function insideCount(tris: Tri[], grid: Map<string, number[]>, o: number[], d: n
   let c = 0; for (const v of hits.values()) c += v;
   return c;
 }
+// How far below `o` the nearest face turned up is (Infinity: none within RAY).
+function groundBelow(tris: Tri[], grid: Map<string, number[]>, o: number[]): number {
+  const d = [0, -1, 0], tested = new Set<number>();
+  let best = Infinity;
+  for (let s = 0; s <= 4; s += CELL / 2) {
+    for (const i of grid.get(`${Math.floor(o[0] / CELL)},${Math.floor((o[1] - s) / CELL)},${Math.floor(o[2] / CELL)}`) ?? []) {
+      if (tested.has(i)) continue; tested.add(i);
+      const t = tris[i]; if (t.n[1] < 0.3) continue;
+      const p = t.p, e1 = [p[3] - p[0], p[4] - p[1], p[5] - p[2]], e2 = [p[6] - p[0], p[7] - p[1], p[8] - p[2]];
+      const h = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+      const det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2]; if (Math.abs(det) < 1e-12) continue;
+      const f = 1 / det, sv = [o[0] - p[0], o[1] - p[1], o[2] - p[2]];
+      const u = f * (sv[0] * h[0] + sv[1] * h[1] + sv[2] * h[2]); if (u < 0 || u > 1) continue;
+      const q = [sv[1] * e1[2] - sv[2] * e1[1], sv[2] * e1[0] - sv[0] * e1[2], sv[0] * e1[1] - sv[1] * e1[0]];
+      const v = f * (d[0] * q[0] + d[1] * q[1] + d[2] * q[2]); if (v < 0 || u + v > 1) continue;
+      const tt = f * (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]);
+      if (tt > 1e-4 && tt < best) best = tt;
+    }
+  }
+  return best;
+}
 function hidden(tris: Tri[], grid: Map<string, number[]>, at: number[], n: number[]): boolean {
+  // (A face turned down with ground under it within DOWN_LOW is seen only from below that
+  // ground's level, where no camera goes: the country's land is not at y = 0.)
+  if (n[1] < -0.5 && groundBelow(tris, grid, [at[0], at[1] - 0.003, at[2]]) < DOWN_LOW) return true;
   const o = [at[0] + n[0] * 0.003, at[1] + n[1] * 0.003, at[2] + n[2] * 0.003];
   let shut = 0, rays = 0;
   for (const d of [n, ...RAYS]) {
@@ -263,6 +299,56 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
     const boats: BoatKind[] = ["cruiser", "narrowboat", "sailboat", "rowboat", "canoe", "kayak", "jetski"], bt: Tri[] = [];
     boats.forEach((k, i) => { boatAt(b, k, i * 30, 2, 0, 0, 0x2f4f3a); const m = b.build(mat.solid)!; trianglesOf(m, bt); });
     sweep(bt, "boats", clashes);
+  }
+  // Everything else that isn't built into a chunk, each thing on its own, spread out and up off
+  // the ground: the trucks, the people and animals, the traffic and the trains (each kind's model:
+  // the meshes as built, instanced ones once), and the ships and boats at sea.
+  if (ONLY < 0) {
+    const objs = (label: string, list: THREE.Object3D[]) => {
+      const tris: Tri[] = [];
+      list.forEach((o, i) => { const g = new THREE.Group(); g.add(o); o.visible = true; g.position.set(i * 60, 2, 0); trianglesOf(g, tris); g.remove(o); });
+      sweep(tris, label, clashes);
+      console.log(`${label}: ${list.length} things, ${tris.length} triangles`);
+    };
+    const fresh = (make: (sc: THREE.Scene) => unknown) => { const sc = new THREE.Scene(); make(sc); return [...sc.children]; };
+    const kit = new TruckKit(new Proxy({}, { get: () => ({ width: 1, height: 1 }) }) as any);
+    objs("trucks", (["box16", "box26", "reefer", "tractor", "flatbed"] as TruckModel[]).map((m) => new Truck(kit, m, null).root));
+    objs("people", [new Character(mat.solid, DRIVER_LOOK).root, new Character(mat.solid, WORKER_LOOK, true).root,
+      ...([0, 1, 2] as const).map((c) => new Cow(mat.solid, c).root), new Horse(mat.solid).root, new Tractor(mat.solid, mat.lamp).root,
+      ...fresh((sc) => new Figures(sc, mat.solid, 1))]);
+    objs("traffic", fresh((sc) => new Traffic(sc, mat.solid, null)));
+    objs("trains", fresh((sc) => new Ambient(sc, mat.solid)));
+    // (A town on the sea's: the first of the journey's that is.)
+    for (let N = 0; N < 12; N++) {
+      const plan = new CityPlan(citySeedOf(SEED, N), journeyStyle(SEED, N));
+      if (plan.outline.sea === null) continue;
+      const w = new THREE.Group(), sl = new SeaLife(w, mat.solid); sl.build(plan);
+      objs("sea", [...w.children]); break;
+    }
+  }
+  // The country roads between the cities (countryworld.ts): each of the journey's first drives,
+  // built a stretch at a time along its length as the truck would see it, and swept a stretch at
+  // a time.
+  if (ONLY < 0) {
+    const sc = new THREE.Scene(), world = new CountryWorld(sc, mat, null), seen = new Set<string>();
+    world.exact = true;
+    let n = 0;
+    for (let m = 5; m < 400 && n < (argv[5] ? Number(argv[5]) : 3); m += 7) {
+      const road = new Journey(readConfig({ seed: SEED } as SceneEnv), m * 60, "autumn").country;
+      if (!road || seen.has(road.key)) continue;
+      seen.add(road.key); n++;
+      world.setRoad(road);
+      let segs = 0, tris0 = 0;
+      for (let s = 0; s < road.length; s += 300) {
+        world.update(0, s, true, false);
+        const tris: Tri[] = [];
+        sc.updateMatrixWorld(true);
+        trianglesOf(sc, tris);
+        sweep(tris, `road${n}`, clashes); segs++; tris0 += tris.length;
+      }
+      console.log(`road ${n} (${road.key}): ${Math.round(road.length)} m, ${segs} stretches, ${tris0} triangles`);
+    }
+    world.setRoad(null);
   }
   for (const c of clashes.values()) c.seen = c.seen * 4 > c.looked ? c.seen : 0;
   const list = [...clashes.values()].sort((a, b) => (b.seen ? 1 : 0) - (a.seen ? 1 : 0) || b.area - a.area);

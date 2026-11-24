@@ -269,7 +269,7 @@ export class SeaLife {
       for (const da of [-5, 5]) for (const n of [2, 14]) { [x, z] = pt(ca + da, n); b.box(x, top + 15, z, 0.9, 30, 0.9, 0xd8a01c, yaw); }
       for (const n of [2, 14]) { [x, z] = pt(ca, n); b.box(x, top + 26, z, 10.9, 1, 1, 0xd8a01c, yaw); b.box(x, top + 1.5, z, 10.9, 0.8, 0.9, 0xd8a01c, yaw); }
       for (const da of [-2, 2]) { [x, z] = pt(ca + da, 15); b.box(x, top + 31, z, 1, 1.2, 54, 0xd8a01c, yaw); }
-      [x, z] = pt(ca, -6); b.box(x, top + 32.5, z, 5, 3, 6, 0xe8e6de, yaw);
+      [x, z] = pt(ca, -6); b.box(x, top + 32.5, z, 4.96, 3, 6, 0xe8e6de, yaw);   // (its sides 2 cm inside the boom girders' outer faces: shared planes flicker)
       [x, z] = pt(ca, 42); l.box(x, top + 31.8, z, 0.5, 0.5, 0.5, RED_LIGHT);
       const part = (bb: Batch) => { const g = bb.build(this.surface)!; this.world.add(g); return g; };
       const tb = new Batch(); tb.box(0, 0, 0, 5, 1.6, 2.4, 0x5a5a58);

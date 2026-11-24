@@ -346,7 +346,7 @@ export class CountryWorld {
       for (const [q, dir] of [[F.q0, 1], [F.q1, -1]] as const) {
         const b = new Batch();
         b.box(dir * 2.1, 0.09, 0, 4.2, 0.12, 7, 0x6a6e72);
-        for (const k of [-3.4, 3.4]) b.box(dir * 2.1, 0.2, k, 4.2, 0.12, 0.2, CW.yellow);
+        for (const k of [-3.41, 3.41]) b.box(dir * 2.1, 0.2, k, 4.18, 0.12, 0.2, CW.yellow);   // (a cm proud of the plate's sides, short of its ends: shared planes flicker)
         const pivot = new THREE.Group(); pivot.add(b.build(this.mats.solid)!); pivot.userData.dir = dir;
         const outer = new THREE.Group(); outer.add(pivot);
         road.center(q, this.p); outer.position.set(this.p.x, y, this.p.z); outer.rotation.y = this.p.h;
@@ -529,8 +529,8 @@ export class CountryWorld {
   // lanes and the terminal building on the right, the quay with the ramp's gantry and fenders.
   private ferryNear(g: Batch, s: Batch, F: FerryPlan, y: number) {
     const Q = F.q0, S = F.s, CON = CW.concrete, WALL = 0x8a867c;
-    this.rbox(g, Q - 15, 0, -0.1, 30, 0.1, 80, CON);   // (5 cm under the road)
-    this.rbox(s, Q - 0.59, 0, -1.9, 1.22, 3.6, 80, WALL);   // (its top under the apron's, its face 2 cm proud of the apron's edge)
+    this.rbox(g, Q - 14.995, 0, -0.1, 30.01, 0.1, 80, CON);   // (5 cm under the road, and a cm past its end)
+    this.rbox(s, Q - 0.59, 0, -1.9, 1.22, 3.6, 80.02, WALL);   // (a cm past the apron's sides)   // (its top under the apron's, its face 2 cm proud of the apron's edge)
     for (const n of [-7.6, 7.6]) this.rbox(s, Q + 0.15, n, -0.9, 0.3, 1.4, 1.0, 0x222222);
     for (const n of [-30, -18, 18, 30]) { const [x, z] = this.L(Q - 1.2, n); s.cyl(x, 0.3, z, 0.25, 0.6, 0x2a2b2e, 8); }
     for (const n of [-5.2, 5.2]) this.rbox(s, Q - 1.2, n, 3.2, 0.5, 6.4, 0.5, CW.yellow);
@@ -553,8 +553,8 @@ export class CountryWorld {
   // The far terminal: the quay and its ramp's gantry, a small building on the left.
   private ferryFar(g: Batch, s: Batch, F: FerryPlan, y: number) {
     const Q = F.q1, CON = CW.concrete, WALL = 0x8a867c;
-    this.rbox(g, Q + 15, 0, -0.1, 30, 0.1, 80, CON);
-    this.rbox(s, Q + 0.59, 0, -1.9, 1.22, 3.6, 80, WALL);
+    this.rbox(g, Q + 14.995, 0, -0.1, 30.01, 0.1, 80, CON);   // (as at the near terminal)
+    this.rbox(s, Q + 0.59, 0, -1.9, 1.22, 3.6, 80.02, WALL);
     for (const n of [-7.6, 7.6]) this.rbox(s, Q - 0.15, n, -0.9, 0.3, 1.4, 1.0, 0x222222);
     for (const n of [-30, -18, 18, 30]) { const [x, z] = this.L(Q + 1.2, n); s.cyl(x, 0.3, z, 0.25, 0.6, 0x2a2b2e, 8); }
     for (const n of [-5.2, 5.2]) this.rbox(s, Q + 1.2, n, 3.2, 0.5, 6.4, 0.5, CW.yellow);
@@ -693,6 +693,7 @@ export class CountryWorld {
 
   private buildSegment(road: CountryRoad, i: number): THREE.Group {
     const s0 = i * SEG, s1 = s0 + SEG;
+    this.treesHere.length = 0;
     road.center(s0, this.p);
     this.ox = this.p.x; this.oz = this.p.z;
     this.quads = []; this.slots = []; this.ads = false; this.plates = new PlateSet();
@@ -858,7 +859,10 @@ export class CountryWorld {
         for (let k = 0; k < n; k++) {
           const a = w0 + 3 + wr() * Math.max(0.1, w1 - w0 - 6), nn = (wr() - 0.5) * 520, ln = 2 + wr() * 6;
           if (Math.abs(nn) < 9 && wr() < 0.8) continue;   // (fewer in the boat's path)
-          this.rbox(g, a, nn, wy + 0.02 + (k % 6) * 0.012, ln, 0.012, 0.25 + wr() * 0.35, wr() < 0.6 ? 0x5a9ad2 : 0x245f98, (wr() - 0.5) * 0.3);
+          // (The two colours on heights of their own: one over another of the other colour at
+          // the same height flickered.)
+          const w = 0.25 + wr() * 0.35, light = wr() < 0.6;
+          this.rbox(g, a, nn, wy + 0.02 + (k % 6) * 0.012 + (light ? 0 : 0.006), ln, 0.012, w, light ? 0x5a9ad2 : 0x245f98, (wr() - 0.5) * 0.3);
         }
       }
       for (const [q, near] of [[Fy.q0, true], [Fy.q1, false]] as const) if (q >= s0 && q < s1) {
@@ -945,7 +949,15 @@ export class CountryWorld {
   }
 
   // ---- scenery ------------------------------------------------------------------------------
-  private tree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand) { landTree(s, x, z, kind, green, rnd); }
+  // (Not within 1.6 m of a tree already in this segment: trees placed at random stood in each other,
+  // their faces sharing planes.)
+  private treesHere: number[] = [];
+  private tree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand) {
+    const T = this.treesHere;
+    for (let i = 0; i < T.length; i += 2) if (Math.hypot(T[i] - x, T[i + 1] - z) < 1.6) return;
+    T.push(x, z);
+    landTree(s, x, z, kind, green, rnd);
+  }
   // A post-and-rail fence along the land, 14.5 m out, in 6 m bays: bay i runs from 6i to 6i + 6.
   // Whether a bay stands is hashed from its index, so a segment can see its neighbours' bays and
   // every rail ends on a post. Now and then a bay has come down: its top rail has dropped to the
@@ -1088,10 +1100,14 @@ export class CountryWorld {
         const [l0, h0, lo0, hi0] = edge[i], [l1, h1, lo1, hi1] = edge[i + 1];
         if (hi0 - lo0 > 1e-3) g.tri(l0[0], y, l0[1], h0[0], y, h0[1], h1[0], y, h1[1], col);
         if (hi1 - lo1 > 1e-3) g.tri(l0[0], y, l0[1], h1[0], y, h1[1], l1[0], y, l1[1], col);
-        // The skirts: down from both edges, facing out (away from the other edge).
-        for (const [a, b, o] of [[l0, l1, h0], [h0, h1, l0]] as const) {
-          const fx = (a[0] + b[0]) / 2 - o[0], fz = (a[1] + b[1]) / 2 - o[1];
-          if (Math.hypot(fx, fz) < 1e-3) continue;
+        // The skirts: down from both edges, facing out (away from the other edge). (A drive's at its
+        // edges, anything else's a cm in under its top: where a drive and a lot run along the same
+        // edge, their skirts shared a plane and flickered.)
+        for (const [a0, b0, o] of [[l0, l1, h0], [h0, h1, l0]] as const) {
+          const fx = (a0[0] + b0[0]) / 2 - o[0], fz = (a0[1] + b0[1]) / 2 - o[1], fl = Math.hypot(fx, fz);
+          if (fl < 1e-3) continue;
+          const d = v.kind === "drive" ? 0 : Math.min(0.01, fl / 4), ix = -fx / fl * d, iz = -fz / fl * d;
+          const a = [a0[0] + ix, a0[1] + iz], b = [b0[0] + ix, b0[1] + iz];
           g.tri(a[0], y, a[1], b[0], y, b[1], b[0], y - 0.14, b[1], sk, [fx, 0, fz]);
           g.tri(a[0], y, a[1], b[0], y - 0.14, b[1], a[0], y - 0.14, a[1], sk, [fx, 0, fz]);
         }
@@ -1148,7 +1164,7 @@ export class CountryWorld {
         if (uv2) this.signAt(pieceSigns(p)[0], uv2);
         // Canopy and pumps.
         for (const a of [S + 10, S + 30]) for (const n of [31, 41]) this.rbox(s, a, n, 2.6, 0.4, 5.2, 0.4, 0xdedbd0);
-        this.rbox(s, S + 20, 36, 5.4, 26, 0.6, 14, 0xf2f2ee); this.rbox(s, S + 20, 36, 5.0, 26, 0.3, 14.2, CW.ryder);
+        this.rbox(s, S + 20, 36, 5.4, 26, 0.6, 14, 0xf2f2ee); this.rbox(s, S + 20, 36, 5.0, 26.02, 0.3, 14.2, CW.ryder);   // (a cm round the fascia's ends too: shared planes flicker)
         for (const a of [S + 14, S + 26]) this.rbox(s, a, 36, 0.8, 1.0, 1.6, 0.8, 0x5a5f66);
         const stalls: StallPose[] = [];
         for (let k = 0; k < 3; k++) {
@@ -1202,7 +1218,7 @@ export class CountryWorld {
           const at = (a: number, y: number, b: number): [number, number, number] => [x + Math.cos(yaw) * a + Math.sin(yaw) * b, y, z - Math.sin(yaw) * a + Math.cos(yaw) * b];
           s.box(...at(0, 6, 0), 11, 5, 4.5, 0xf4f4f0, yaw);
           for (const [a, b, w] of [[-2.5, 2.27, 3], [2, 2.27, 2.4], [0.5, -2.27, 3.4]] as const) s.box(...at(a, 6.5, b), w, 2.4, 0.08, 0x1e1e1e, yaw);
-          s.box(...at(6.5, 7.5, 0), 3, 3, 3, 0xf4f4f0, yaw); s.box(...at(8.1, 6.8, 0), 0.4, 1.6, 2.2, 0xf2a8b0, yaw);
+          s.box(...at(6.5, 7.5, 0), 3, 3, 3, 0xf4f4f0, yaw); s.box(...at(8.1, 6.81, 0), 0.4, 1.6, 2.2, 0xf2a8b0, yaw);   // (its foot off the cab's underside's plane)
           for (const b of [-1.2, 1.2]) s.box(...at(6.4, 9.3, b), 0.4, 0.6, 0.4, 0xe8e0c8, yaw);
           for (const a of [-4, 4]) for (const b of [-1.6, 1.6]) s.box(...at(a, 1.8, b), 1, 3.6, 1, 0xf4f4f0, yaw);
           s.box(...at(0, 3.4, 0), 2, 0.9, 1.6, 0xf2a8b0, yaw);
@@ -1319,21 +1335,25 @@ export class CountryWorld {
       case "bridge": {
         // A river across the land, and a red covered bridge over it.
         const [x, z, h] = this.L(S + 60, 0);
-        g.box(x, -0.065, z, 24, 0.1, 2 * SIDE_W + 40, CW.water, h);
-        for (const k of [-13, 13]) g.box(x + Math.cos(h) * k, -0.075, z - Math.sin(h) * k, 4, 0.1, 2 * SIDE_W + 40, 0x6a5a3a, h);
+        g.box(x, -0.065, z, 24, 0.1, 2 * SIDE_W + 39.98, CW.water, h);   // (its ends a cm short of the banks')
+        for (const k of [-13, 13]) g.box(x + Math.cos(h) * k, -0.085, z - Math.sin(h) * k, 4, 0.1, 2 * SIDE_W + 40, 0x6a5a3a, h);   // (a cm under the road's shoulders: shared planes flicker)
         for (let k = 0; k < 10; k++) { const n = (k - 4.5) * 30 + (hash2(k, S, 3) - 0.5) * 10; if (Math.abs(n) < 20) continue; const [tx, tz] = this.L(S + 60 + (k % 2 ? 16 : -16), n); this.tree(s, tx, tz, "broad", 0x3c7a46, rnd); }
         for (const n of [-4.8, 4.8]) this.rbox(s, S + 60, n, 2.4, 30, 4.8, 0.25, 0xa83a2a);
         this.rbox(s, S + 60, -2.5, 6.0, 30.8, 1.9, 5.6, 0x4a4f57, 0); this.rbox(s, S + 60, 2.5, 6.0, 30.8, 1.9, 5.6, 0x4a4f57, 0);
         this.rbox(s, S + 60, 0, 6.6, 30.8, 0.6, 10.2, 0x4a4f57);
-        for (const a of [-15.2, 15.2]) { this.rbox(s, S + 60 + a, 0, 5.4, 0.4, 1.2, 10, 0xa83a2a); this.rbox(s, S + 60 + a, -4.6, 2.6, 0.4, 5.2, 0.6, 0xf2ede0); this.rbox(s, S + 60 + a, 4.6, 2.6, 0.4, 5.2, 0.6, 0xf2ede0); }
+        // (The portals' faces short of the roof's ends, and the white posts' short of the portals':
+        // shared planes flicker.)
+        for (const a of [-15.2, 15.2]) { this.rbox(s, S + 60 + a, 0, 5.4, 0.38, 1.2, 10, 0xa83a2a); this.rbox(s, S + 60 + a, -4.6, 2.6, 0.34, 5.2, 0.6, 0xf2ede0); this.rbox(s, S + 60 + a, 4.6, 2.6, 0.34, 5.2, 0.6, 0xf2ede0); }
         for (let a = -14; a <= 14; a += 7) for (const n of [-4.8, 4.8]) this.rbox(s, S + 60 + a, n * 1.02, 2.2, 1.2, 0.9, 0.1, 0x2a2020);
         break;
       }
       case "tunnel": {
         // The bore: tiled walls with a walkway along each, a dark vault, a line of lamps along
         // each side of it; a concrete portal at each end, under the hill.
+        // (Each stretch overlapping the next by 10 cm, but not out past the bore's ends into the
+        // portals: there their faces shared the portals' planes and flickered.)
         for (let a = S; a < S + p.len - 0.01; a += 6) {
-          const l = Math.min(6, S + p.len - a) + 0.1, am = a + l / 2 - 0.05;
+          const a0 = a === S ? S : a - 0.05, a1 = Math.min(a + 6, S + p.len) + (a + 6 < S + p.len - 0.01 ? 0.05 : 0), l = a1 - a0, am = (a0 + a1) / 2;
           for (const k of [-1, 1]) {
             this.rbox(s, am, k * (BORE_HALF + 0.15), 0.7, l, 1.4, 0.3, 0xcfcabb);
             this.rbox(s, am, k * (BORE_HALF + 0.15), 1.4 + (BORE_H - 1.4) / 2, l, BORE_H - 1.4, 0.3, 0x4f4d49);
@@ -1347,8 +1367,9 @@ export class CountryWorld {
         for (const [e, f] of [[S - 0.5, -1], [S + p.len + 0.5, 1]] as const) {
           for (const k of [-1, 1]) this.rbox(s, e, k * (BORE_HALF + 4), (top + 0.8) / 2, 1.0, top + 0.8, 8, CW.concrete);
           this.rbox(s, e, 0, BORE_H + (top + 0.8 - BORE_H) / 2, 1.0, top + 0.8 - BORE_H, 2 * BORE_HALF + 0.1, CW.concrete);
-          this.rbox(s, e + f * 0.55, 0, BORE_H + 0.35, 0.12, 0.7, 2 * BORE_HALF + 1.4, 0x6f6c64);   // the lintel's band
-          for (const k of [-1, 1]) this.rbox(s, e + f * 0.55, k * (BORE_HALF + 0.35), BORE_H / 2, 0.12, BORE_H, 0.7, 0x6f6c64);
+          // (The band a cm clear of the opening's edges, which the portal's own faces line.)
+          this.rbox(s, e + f * 0.55, 0, BORE_H + 0.36, 0.12, 0.7, 2 * BORE_HALF + 1.4, 0x6f6c64);   // the lintel's band
+          for (const k of [-1, 1]) this.rbox(s, e + f * 0.55, k * (BORE_HALF + 0.36), BORE_H / 2, 0.12, BORE_H, 0.7, 0x6f6c64);
           this.rbox(s, e, 0, top + 1.0, 1.4, 0.4, 2 * BORE_HALF + 9, 0x8d8a82);   // its coping
         }
         break;
@@ -1394,7 +1415,7 @@ export class CountryWorld {
         this.rbox(s, S + 40, n, 4.6, 20, 0.5, 10, 0xf2f2ee); this.rbox(s, S + 40, n, 4.3, 20.2, 0.3, 10.2, 0x1f6fb2);
         for (const a of [-7, 7]) this.rbox(s, S + 40 + a, n, 2.2, 0.4, 4.4, 0.4, 0xdedbd0);
         for (const a of [-4, 4]) this.rbox(s, S + 40 + a, n, 0.75, 0.8, 1.5, 0.6, 0xc0392b);
-        this.rbox(s, S + 75, side * (FORECOURT + 14), 2.2, 14, 4.4, 8, 0xe8e2d6); this.rbox(s, S + 75, side * (FORECOURT + 9.95), 1.8, 10, 2.4, 0.1, 0x2a3440);
+        this.rbox(s, S + 75, side * (FORECOURT + 14), 2.2, 13.96, 4.4, 7.96, 0xe8e2d6);   // (2 cm in from the paving's edges, and its skirts a cm in from them: shared planes flicker) this.rbox(s, S + 75, side * (FORECOURT + 9.95), 1.8, 10, 2.4, 0.1, 0x2a3440);
         const uv = this.slot(`GAS  $${(3 + p.variant * 0.17 + 0.29).toFixed(2)}`, { bg: "#1f6fb2", fg: "#ffffff", logo: false });
         this.rbox(s, S + GAS_SIGN + 0.39, side * GAS_SIGN_N, 3.5, 0.3, 7, 0.3, 0x5a5f66);   // behind the board, on the island between the drives
         this.rbox(s, S + GAS_SIGN + 0.1, side * GAS_SIGN_N, 7.2, 0.25, 1.4, 4.8, 0x1f6fb2);
@@ -1419,7 +1440,7 @@ function freightTrain(b: Batch) {
   const BLUE = 0x1f4f8f, NAVY = 0x173c6c, YEL = 0xf2c200, GREY = 0x3a3d42;
   const deckY = 1.45, top = 4.25;
   b.box(-L / 2, 1.24, 0, L - 0.6, 0.38, 3.0, DARK);                         // frame (its top under the deck's: shared planes flicker)
-  b.box(-L / 2, deckY - 0.03, 0, L - 0.6, 0.06, 3.04, GREY);                // walkway deck
+  b.box(-L / 2, deckY - 0.03, 0, L - 0.62, 0.06, 3.04, GREY);               // walkway deck (its ends a cm short of the frame's)
   b.box(-L / 2, 1.18, 0, L - 0.64, 0.16, 3.06, YEL);                        // sill safety stripe (short of the frame's ends)
   truck(-3.6, 3); truck(-L + 3.6, 3);
   for (const x of [-3.6, -L + 3.6]) for (const z of [-1, 1]) b.box(x, 0.7, z * 1.16, 3.8, 0.45, 0.08, 0x2e3034);   // truck side frames
@@ -1473,7 +1494,7 @@ function freightTrain(b: Batch) {
       b.box(x, 2.75, 0, len, 2.9, 2.9, col);
       for (let r = -len / 2 + 0.6; r < len / 2; r += 0.75) b.box(x + r, 2.75, 0, 0.08, 2.85, 2.94, shade(col, 0.82));
       for (const z of [-1, 1]) { b.box(x, 2.6, z * 1.48, 2.6, 2.5, 0.06, shade(col, 0.7)); b.box(x, 4.0, z * 1.47, 3.6, 0.08, 0.06, 0x3a3d42); }
-      b.box(x, 4.25, 0, len, 0.12, 2.6, shade(col, 0.9));
+      b.box(x, 4.25, 0, len - 0.02, 0.12, 2.6, shade(col, 0.9));   // roof walk (its ends a cm in from the body's: shared planes flicker)
       for (const e of [-1, 1]) for (let k = 0; k < 6; k++) b.box(x + e * (len / 2 - 0.3), 1.6 + k * 0.42, 1.48, 0.5, 0.04, 0.05, 0xd0d0d0);
     } else if (kind === 1) {   // tank car: barrel, end caps, dome, walkway
       const col = c % 2 ? 0x1c1c1e : 0xd8d8d0;
@@ -1495,7 +1516,9 @@ function freightTrain(b: Batch) {
 // A tree (or cactus or shrub) of a biome's kind, on the ground at (x, z): the road's land and the
 // countryside round a city (city.ts) share it.
 export function landTree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand) {
-  const k = 0.8 + rnd() * 0.6;
+  // (Its size a little by where it stands too: neighbours that came out the same size, as in a
+  // row planted from one stream, had their boughs' undersides in one plane, and flickered.)
+  const k = 0.8 + rnd() * 0.6 + (Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1) * 0.03;
   if (BARE.includes(green) && (kind === "broad" || kind === "cypress" || kind === "palm" || kind === "shrub")) {
     if (kind === "shrub") s.ico(x, 0.35 * k, z, 0.7 * k, 0x6e5a48, 0.6, rnd() * 6); else bareTree(s, x, 0, z, 4.6 * k, rnd() * 6);
     return;

@@ -284,8 +284,9 @@ export function iceCreamTruck(b: Batch, paint = 0xf490b8) {
   // Street side: a painted cone, two scoops and a cherry (over the icing's drips).
   const cx = -1.0, dz = -Z - 0.002;
   b.tri(cx - 0.24, 1.56, dz, cx + 0.24, 1.56, dz, cx, 1.06, dz, CONE, [0, 0, -1]);
-  for (const [y, c] of [[1.66, MINT], [1.95, CHOC]] as [number, number][]) { b.box(cx, y, dz - 0.002, 0.52, 0.28, 0.012, c); b.box(cx, y, dz - 0.004, 0.38, 0.4, 0.012, c); }
-  b.box(cx, 2.2, dz - 0.006, 0.1, 0.1, 0.012, 0xd0202a);
+  // (The top scoop 4 mm out from the bottom one, which it overlaps: shared planes flicker.)
+  for (const [y, c, o] of [[1.66, MINT, 0], [1.95, CHOC, 0.004]] as [number, number, number][]) { b.box(cx, y, dz - 0.002 - o, 0.52, 0.28, 0.012, c); b.box(cx, y, dz - 0.004 - o, 0.38, 0.4, 0.012, c); }
+  b.box(cx, 2.2, dz - 0.01, 0.1, 0.1, 0.012, 0xd0202a);
   // Back: window, caution plate, amber lamps up at the corners.
   b.box(-f - 0.006, 2.08, 0, 0.012, 0.42, 0.9, GLASS);
   b.box(-f - 0.006, 1.6, 0, 0.012, 0.3, 1.3, 0x222222); b.box(-f - 0.012, 1.6, 0, 0.012, 0.24, 1.24, 0xf2c200);

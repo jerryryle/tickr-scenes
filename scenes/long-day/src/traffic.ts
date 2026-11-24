@@ -1727,7 +1727,7 @@ function busBody(b: Batch) {
   const L = 11.5, W = 2.5, H = 3.05, F = L / 2, R = -L / 2;
   const BODY = 0xf2f2ee, BLUE = 0x1f5fa8, SKIRT = 0x2a2d33, PILLAR = 0x1c2128;
   b.box(0, 0.62, 0, L, 0.7, W, SKIRT);                                     // skirt with the wheel wells
-  b.box(0, 1.25, 0, L, 0.56, W, BLUE);                                     // livery band
+  b.box(0, 1.25, 0, L, 0.55, W, BLUE);                                     // livery band (up to the body's foot, not into it: shared planes flicker)
   b.box(-0.2, 2.25, 0, L - 0.4, 1.45, W, BODY);                            // upper body
   b.box(0.15, 2.18, 0, L - 2.0, 1.0, W + 0.02, GLASS);                     // side windows
   for (let x = R + 1.6; x < F - 1.2; x += 1.45) b.box(x, 2.18, 0, 0.14, 1.02, W + 0.04, PILLAR);
@@ -1736,7 +1736,7 @@ function busBody(b: Batch) {
   // Front: windscreen, destination sign, bumper, lamps.
   b.box(F - 0.055, 1.95, 0, 0.12, 1.45, W - 0.18, GLASS);   // (5 mm proud of the livery band: shared planes flicker)
   b.box(F - 0.04, 2.83, 0, 0.1, 0.28, W - 0.5, 0x101010); b.box(F + 0.005, 2.83, 0, 0.02, 0.16, W - 0.8, 0xffb000);
-  b.box(F - 0.05, 0.5, 0, 0.14, 0.32, W, 0x1a1a1a);
+  b.box(F - 0.05, 0.5, 0, 0.14, 0.32, W + 0.02, 0x1a1a1a);   // bumper (wrapping a cm round the skirt's sides: shared planes flicker)
   for (const z of [-W / 2 + 0.3, W / 2 - 0.3]) headLamp(b, F + 0.01, 0.95, z, 0.04, 0.16, 0.34);
   // Rear: engine grille, tail lamps.
   b.box(R + 0.03, 1.3, 0, 0.08, 0.5, W - 0.5, 0x3a3d42);
