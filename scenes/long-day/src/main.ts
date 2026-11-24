@@ -544,7 +544,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (DEBUG_VIEW === "jam") {
       // Test renders, a gridlock clearing: one fixed shot, set up at about head height 14 m out in
       // front of the cab and a little to its right once the truck has stood held 5 s (journey.ts
-      // jam), looking back at its front across the street ahead, where the traffic makes way; held
+      // jam), looking back at its front across the street ahead that holds it up; held
       // there, not following it. (Before that, from out ahead of it: trim it off.)
       const p = truck.root.position;
       // (Where the truck will stand held, given (DEBUG_JAM_SHOT): from the first frame. Else as it

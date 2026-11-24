@@ -4,6 +4,7 @@
 // start and checks, for each car gone that step, where it last stood. (Seed 1511948805 stood cars
 // waiting behind the truck at its stops and took them away there after 55 s, 11 to 37 m off; seed
 // 13's cable cars reach the end of their line in sight, 128 and 156 m off, in its first 5 min in autumn.)
+// (Not one the clowns carry off, out of a gridlock: they lift it in plain sight, clowns.ts.)
 // Args (all optional): seed, seconds, season (one journey instead of the cases)
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
@@ -24,7 +25,7 @@ import { Ambient } from "../src/ambient.ts";
       j.step();
       const now = new Set<any>(traffic.cars);
       for (const [c, p] of last) {
-        if (now.has(c)) continue;
+        if (now.has(c) || c.taken) continue;
         gone++;
         const seen = !vehicleUnseen(j.plan.graph, j.pose, p.x, p.z, p.h, c.kind.len, c.kind.width);
         if (seen && errs.length < 10) errs.push(`seed ${seed} t=${j.st.simTime.toFixed(1)} (${j.st.mode}): a ${c.kind.id} vanished in sight of the truck, ${Math.hypot(p.x - j.pose.x, p.z - j.pose.z).toFixed(0)} m off, standing ${c.stillT.toFixed(0)} s`);

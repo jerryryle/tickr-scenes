@@ -15,3 +15,9 @@ DEBUG_SCRUBTEST=20 DEBUG_SEED=659803215 DEBUG_HOUR=12 DEBUG_CLIMATE=autumn/clear
 # TICK lines (their last field is the trucks; the bare journey test runs without the scene's street
 # probes, so its times differ) and move the skip.
 DEBUG_SCRUBTEST=30 DEBUG_SEED=1 DEBUG_SKIP_MINUTES=12.92 DEBUG_HOUR=10.3 DEBUG_CLIMATE=autumn/clear swap
+
+# The clowns out of a gridlock (clowns.ts): seed 11's truck, pulling out of a grocery's lot, held by
+# someone on the pavement; the clowns set out about 15 s into this run, and the scrub point (25 s)
+# lands while they run in and lift them. If the journey changes and this stops covering it, find the
+# rescue again in a longer DEBUG_CAMLOG render (TICK lines whose shot is clowns/clowns) and move the skip.
+DEBUG_SCRUBTEST=50 DEBUG_SEED=11 DEBUG_SKIP_MINUTES=309.9 DEBUG_HOUR=18 DEBUG_CLIMATE=autumn/clear

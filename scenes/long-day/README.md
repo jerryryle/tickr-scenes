@@ -86,6 +86,15 @@ joins, waiting with its nose 3 m clear of the lane (after 12 s, before a gridloc
 noses out and the traffic stops for it; that wait is no gridlock). So the journey depends on the
 street life, and scrubbing replays both together.
 
+Nothing tries to untie a gridlock. Held standing in the street 14 s the truck honks, to no avail;
+held 30 s, `src/clowns.ts` sends in a troupe of clowns. They run in along its way from out of sight,
+crowd round whatever holds it up (a car, a bus, someone on foot: what comes into its way first, or
+the car its junction booking waits for), lift it over their heads and carry it off along the
+pavement and out of sight, where it is gone; still held, they come back for the next thing. They
+and their load go through anything in their way. The director films the rescue in one held shot
+(`director.ts`, beat "clowns"). `test/gridlock.ts` replays cities that once held the truck for good;
+`DEBUG_CLOWN_AFTER` brings them sooner in a test render.
+
 `src/boats.ts` holds the boat models in the same way (a motor cruiser, a narrowboat, a sailing
 yacht, a rowing boat, a canoe, a kayak and a jet ski, their hulls lofted through stations): the
 boats moored along a river town's quays, the upturned rowboat by a bait shack, and the boats

@@ -20,8 +20,9 @@
 //            long load cuts once more, half way. A gag insert for humorous cargo.
 //   swap     one shot over the driver's shoulder from the old cab to the new one
 //   jam      held up in the street a while (a gridlock: journey.ts JAM_HONK), one shot locked off
-//            out ahead of the cab, up over the street, looking back at its front: its horn and
-//            the traffic making way, held till it is on its way again
+//            out ahead of the cab, up over the street, looking back at its front: its horn, held
+//            till it is on its way again (or the clowns come)
+//   clowns   held for good, the clowns come to carry off what holds it (clowns.ts), one shot locked off
 //   depart   the stop's camera watches the truck pull away, then glides off with it into the follow
 //
 // So a cut means something changed: the truck reaches its stop, goes into the cab, passes a set
@@ -58,7 +59,7 @@ import { hasSign, siteLayout } from "./facilities.ts";
 import { DWELL, JAM_SHOT, Journey } from "./journey.ts";
 import type { DockPlan } from "./journey.ts";
 
-type Beat = "drive" | "arrive" | "curb" | "backup" | "load" | "swap" | "depart" | "country" | "roadside" | "jam";
+type Beat = "drive" | "arrive" | "curb" | "backup" | "load" | "swap" | "depart" | "country" | "roadside" | "jam" | "clowns";
 
 interface Shot {
   pos: THREE.Vector3;
@@ -117,6 +118,14 @@ const DEPART_HOLD = 3;          // seconds the stop's camera watches the truck p
 // its left (the street side, as the coverage keeps to), JAM_UP m up, and held till it has gone
 // JAM_OFF m on again, before it comes up to the camera; then the road coverage glides on from it.
 const JAM_AHEAD = 18, JAM_SIDE = 5, JAM_UP = 6, JAM_OFF = 6;
+// The clowns' rescue (clowns.ts focus): from CLOWN_AHEAD m on from what they came for, the way they
+// take it off, CLOWN_CAM_SIDE m to the other side of it from their way (the street), CLOWN_UP m up,
+// looking back at it and the truck's front behind it; they run into the frame past the camera, lift
+// it, and carry it off out of the frame past the camera again. Held till they are well off with it.
+const CLOWN_AHEAD = 12, CLOWN_CAM_SIDE = 5, CLOWN_UP = 7, CLOWN_FOV = 46;   // (up over the signals' arms, 6.2 m, and their heads)
+// (Where else, should that be in or behind a building: [on along their way, aside, up], in order.)
+const CLOWN_SPOTS: [number, number, number][] = [[CLOWN_AHEAD, CLOWN_CAM_SIDE, CLOWN_UP], [9, 4, 7.5], [CLOWN_AHEAD, 2, 9], [16, CLOWN_CAM_SIDE, 9], [6, 9, 8]];
+const CLOWN_NEAR = 7;   // m: the truck's nose this near the camera along their way (going on, freed), what they came for up over their heads, the shot ends
 // The road coverage, and how long each setup runs (seconds, min and max).
 type RoadShot = "chase" | "high" | "lead" | "track" | "aerial";
 const ROAD_LEN: Record<RoadShot, [number, number]> = {
@@ -190,10 +199,11 @@ export class Director {
   private holdPos = new THREE.Vector3(); private pushPos = new THREE.Vector3(); private holdFov = FOV;
   private backSpot = new THREE.Vector3();
   private jamPos = new THREE.Vector3(); private jamLook = new THREE.Vector3();   // (the jam's shot)
+  private clownPos = new THREE.Vector3(); private clownLook = new THREE.Vector3(); private clownId = -1; private clownH = 0; private clownDone = -1;   // (the clowns' shot, and the lot it was set up on)
   // The world moved by (dx, dz) under the camera (main.ts: the next city takes over out on the
   // road): move with it, so nothing on screen changes.
   rebase(dx: number, dz: number) {
-    for (const v of [this.pos, this.anchorPos, this.anchorLook, this.signPos, this.signLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.curbCam, this.curbAim, this.curbOpen, this.backLook, this.backDocked, this.jamPos, this.jamLook]) { v.x += dx; v.z += dz; }
+    for (const v of [this.pos, this.anchorPos, this.anchorLook, this.signPos, this.signLook, this.loadPos, this.loadLook, this.backSpot, this.holdPos, this.pushPos, this.curbSignPos, this.curbCam, this.curbAim, this.curbOpen, this.backLook, this.backDocked, this.jamPos, this.jamLook, this.clownPos, this.clownLook]) { v.x += dx; v.z += dz; }
   }
   // The director's whole state and the camera's (main.ts: preview snapshots and part-ticks).
   // (`into`: an earlier save, filled again in place.)
@@ -283,10 +293,29 @@ export class Director {
       if (f && id !== this.skipFeature) { if (this.beat !== "roadside" || id !== this.featureKey) { this.feature = f; this.pendingKey = id; } return "roadside"; }
       return "country";
     }
-    // (Till it has gone JAM_OFF m in all: stopping again behind traffic still making way after
-    // that, the road coverage holds on it, rather than cutting back to a shot of it from a step on.
+    // (The clowns come for what holds it: their rescue, from setting out to well off with it. A next
+    // lot coming for something near the last: the same shot, else a new one on it.)
+    const cf = j.life?.rescue?.() ?? null;
+    // (Not once the truck, freed, comes on up to the camera.)
+    // (Then on to the road coverage: not back to the jam's shot.)
+    if (this.beat === "clowns" && this.clownId >= 0 && cf?.up && Math.abs(st.v) > 0.3) {
+      const nose = truckExtents(st.truck).front, nx = j.pose.x + Math.cos(j.pose.h) * nose, nz = j.pose.z - Math.sin(j.pose.h) * nose;
+      if ((this.clownPos.x - nx) * Math.cos(this.clownH) - (this.clownPos.z - nz) * Math.sin(this.clownH) < CLOWN_NEAR) this.clownDone = this.clownId;
+    }
+    if (!st.jamT && !cf) this.clownDone = -1;   // (a new jam: its own shots; not while the lot just filmed is still about, off with theirs)
+    const rolling = st.mode === "drive" || st.mode === "reverse", ended = this.clownDone >= 0 && this.clownDone === this.clownId;
+    // (Between one lot and the next, the truck still held in the same jam: still the clowns' shot,
+    // rather than back to the jam's and on to the clowns' again.)
+    if (rolling && !cf && this.beat === "clowns" && this.clownId >= 0 && !ended && (st.jamT ?? 0) > 0 && (st.jamMoved ?? 0) < JAM_OFF + 6) return "clowns";
+    if (rolling && cf && cf.id !== this.clownDone) {
+      if (this.beat !== "clowns" || (cf.id !== this.clownId && Math.hypot(cf.x - this.clownLook.x, cf.z - this.clownLook.z) > 10)) this.clownId = -1;
+      else if (cf.id !== this.clownId) this.clownId = cf.id;   // (the same shot kept for the next lot: theirs now, so it ends on them)
+      return "clowns";
+    }
+    // (Till it has gone JAM_OFF m in all: stopping again behind the traffic after that, the road
+    // coverage holds on it, rather than cutting back to a shot of it from a step on.
     // From the journey's own state, so a seek frames it the same.)
-    if (st.mode === "drive" && (st.jamT ?? 0) > JAM_SHOT && (st.jamMoved ?? 0) < JAM_OFF) return "jam";
+    if (st.mode === "drive" && !ended && (st.jamT ?? 0) > JAM_SHOT && (st.jamMoved ?? 0) < JAM_OFF) return "jam";
     if (st.mode === "reverse") return "backup";
     if (st.mode === "dwell") {
       // Parking: still the shot that brought the truck in (backing into a dock, or the kerb).
@@ -332,6 +361,7 @@ export class Director {
         this.variant = "jam";
         break;
       }
+      case "clowns": this.variant = "clowns"; break;
       case "backup": {
         this.variant = "bay"; this.backSpot.copy(this.backupSpot(inp));
         // The settled frame: the docked truck and the bay, and the name sign readable over them.
@@ -388,6 +418,8 @@ export class Director {
         // looking back), with the truck as it gets going; after anything else it starts afresh
         // with a cut.
         if (this.lastBeat === "roadside") this.roadsideEnd = this.time;
+        // (Not out of the clowns' shot: that ends with the truck coming on up to its camera, and a glide
+        // from there would sit beside it as it passes, all trailer. A cut instead.)
         if (this.lastBeat === "jam" && this.started) { this.startRoad(inp, this.roadOptions(inp).includes("lead") ? "lead" : null, GLIDE); break; }
         if (!(this.lastBeat === "depart" || this.lastBeat === "drive" || this.lastBeat === "country") || !this.started) this.road = "";
         break;
@@ -417,7 +449,7 @@ export class Director {
       [this.refYaw, this.refYawV] = springStep(this.refYaw, this.refYawV, target, 3.5, dt);
     }
     const beat = this.chooseBeat(inp);
-    const beatChanged = beat !== this.beat || !this.started || (beat === "roadside" && this.pendingKey !== this.featureKey);
+    const beatChanged = beat !== this.beat || !this.started || (beat === "roadside" && this.pendingKey !== this.featureKey) || (beat === "clowns" && this.clownId < 0);
     if (beatChanged) this.enterBeat(beat, inp);
     this.beatTime = Math.max(0, this.time - this.beatStart);   // journey time, so a scrub lands on the same frame
 
@@ -425,7 +457,7 @@ export class Director {
     // A new beat is a new shot only where the camera has to be somewhere else: into the cab, to
     // the stop's camera, to a set piece by the road, to the driver's walk. The load holds the
     // stop's camera (or cuts once, itself); depart and the road coverage carry on from it.
-    if (beatChanged && (beat === "arrive" || beat === "curb" || beat === "backup" || beat === "roadside" || beat === "swap" || beat === "jam")) shot.cut = true;
+    if (beatChanged && (beat === "arrive" || beat === "curb" || beat === "backup" || beat === "roadside" || beat === "swap" || beat === "jam" || beat === "clowns")) shot.cut = true;
     this.keepInView(shot, inp);
     // Never under the hills, nor through a tunnel's walls (main.ts knows where they are).
     if (this.confine && !this.interior) this.confine(shot.pos);
@@ -497,8 +529,26 @@ export class Director {
       case "country":
         return this.roadCoverage(inp, s);
 
+      case "clowns": {
+        // Locked off on the rescue, set up as the lot sets out (or on the next lot, somewhere else).
+        const cf = inp.journey.life?.rescue?.() ?? null;
+        if (cf && this.clownId < 0) {
+          this.clownId = cf.id; this.clownH = cf.h;
+          const fx = Math.cos(cf.h), fz = -Math.sin(cf.h), rx = Math.sin(cf.h), rz = Math.cos(cf.h), y = this.T.y;
+          this.clownLook.set(cf.x + fx * 2 + rx * cf.side * 1.5, y + 1.6, cf.z + fz * 2 + rz * cf.side * 1.5);
+          // (The first of these clear of buildings, with a clear look at it (occlusion.ts); else the first.)
+          for (let i = 0; i < CLOWN_SPOTS.length; i++) {
+            const [a, b, u] = CLOWN_SPOTS[i], c = this.v4.set(cf.x + fx * a - rx * cf.side * b, y + u, cf.z + fz * a - rz * cf.side * b);
+            if (i === 0) this.clownPos.copy(c);
+            if (OCCLUSION.clearance(c, 1.5) >= 1.5 && OCCLUSION.blocked(c, this.clownLook, [], 0.5) <= 0.2) { this.clownPos.copy(c); break; }
+          }
+        }
+        s.pos.copy(this.clownPos); s.look.copy(this.clownLook); s.fov = CLOWN_FOV;
+        return s;
+      }
+
       case "jam":
-        // Locked off: the truck's front, and the street ahead of it where the traffic makes way.
+        // Locked off: the truck's front, and the street ahead of it that holds it up.
         s.pos.copy(this.jamPos); s.look.copy(this.jamLook); s.fov = 40;
         return s;
 

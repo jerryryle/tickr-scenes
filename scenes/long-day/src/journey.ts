@@ -69,7 +69,7 @@ import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 // short of someone or something in its way (a crosser, a car ahead, a car with the junction before
 // it), or null; reverseBlocked, whether someone is in the way of its next metres back into a bay.
 // Without street life (tests of the bare journey) the way is always clear.
-export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; gapHeld?: boolean; reverseBlocked?(j: Journey): boolean }   // gapHeld: truckStop's stop is a wait for a gap to pull out (no gridlock)
+export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; gapHeld?: boolean; reverseBlocked?(j: Journey): boolean; rescue?(): { id: number; x: number; z: number; h: number; side: number; up: boolean } | null }   // gapHeld: truckStop's stop is a wait for a gap to pull out (no gridlock)
 type StopKind = "pickup" | "drop" | "swap" | "depart";
 interface Site { bx: number; bz: number; fac: FacilityId; name: string }
 export interface Stop { kind: StopKind; site: Site | null; job: number; cargo: string; units: number; truck?: TruckModel; slot?: number }   // slot: where its loads go in the bed (set when the stop begins)
@@ -154,13 +154,13 @@ const JERK = 4, BRAKE_JERK = 20, LIM_TAU = 0.4;
 // HOLD_KEEP (s): how long, moving, it keeps a hold street life stops seeing (one passing close).
 const HOLD_CREEP = 0.15, HOLD_KEEP = 0.5;
 // Gridlock: held standing by street life JAM_HONK s (its own light not red, its own way back into a
-// bay not clear of traffic), the truck honks; JAM_REACT s after (its first two blasts over), the
-// traffic in its way backs up or pulls on out of it (traffic.ts clearWay) and holds there until it
-// has gone JAM_CLEAR m. It never moves into anyone itself: it waits, honking every HONK_EVERY s,
-// until the way is clear.
+// bay not clear of traffic), the truck honks, every HONK_EVERY s. Nobody pays it any mind. It never
+// moves into anyone itself: held on, the clowns come for what holds it up (clowns.ts). A jam it has
+// honked in is over once it has gone JAM_CLEAR m (stopping again behind the next thing in its way, a
+// car length on, it is still the same jam: the clowns come back for that).
 export const JAM_HONK = 14;
 export const JAM_SHOT = 8;   // (director.ts: its shot of the jam, from this far into it; jamMoved counts on from here)
-const JAM_REACT = 1.5, JAM_CLEAR = 15, JAM_CREEP = 3, HONK_EVERY = 6;
+const JAM_CLEAR = 15, JAM_CREEP = 3, HONK_EVERY = 6;
 const SEARCH = 12;           // blocks searched around a point for facilities
 const LOT_SEARCH = 40;
 const SWAP_SEARCH = 14;      // blocks searched for a source of another truck's cargo when a swap is due
@@ -1281,8 +1281,8 @@ export class Journey {
   }
 
   // The gridlock clock (JAM_HONK): `held`, standing held by street life this step. Its time adds
-  // up while held; once the truck has gone on since, it is cleared: JAM_CLEAR m once traffic is
-  // making way for it (it holds there till the truck is through), else JAM_CREEP m (stop-and-go
+  // up while held; once the truck has gone on since, it is cleared: JAM_CLEAR m once it has honked,
+  // else JAM_CREEP m (stop-and-go
   // traffic, creeping on a car length at a time, is not a gridlock: it adds up only standing).
   private jam(dt: number, held: boolean) {
     const st = this.st;
@@ -1291,11 +1291,8 @@ export class Journey {
     if (!st.jamT) return;
     st.jamGo = (st.jamGo ?? 0) + Math.abs(st.v) * dt;
     if (st.jamT > JAM_SHOT) st.jamMoved = (st.jamMoved ?? 0) + Math.abs(st.v) * dt;
-    if (st.jamGo > (st.jamT > JAM_HONK + JAM_REACT ? JAM_CLEAR : JAM_CREEP)) { st.jamT = 0; st.jamGo = 0; st.jamMoved = 0; }
+    if (st.jamGo > (st.jamT > JAM_HONK ? JAM_CLEAR : JAM_CREEP)) { st.jamT = 0; st.jamGo = 0; st.jamMoved = 0; }
   }
-  // Whether the truck has honked, and traffic has had a moment to react: it clears the truck's way
-  // (street life, traffic).
-  get clearing() { return (this.st.jamT ?? 0) > JAM_HONK + JAM_REACT && (this.st.mode === "drive" || this.st.mode === "reverse"); }
   // How far into a blast of its horn it is now, in seconds, or -1 while it is silent (drawn:
   // truck.ts honk): held long enough, two short blasts every HONK_EVERY s (the first before
   // traffic moves).

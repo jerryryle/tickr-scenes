@@ -103,7 +103,9 @@ export class StreetLife implements LifeHook {
   }
   private sweep = { path: null as Path | null, obs: [] as Obstacle[], at: [] as number[] };   // (a bay path's sweep, and the s of each obstacle's pose)
 
-  constructor(private traffic: Traffic, private crowd: Crowd, private ambient: Ambient) {}
+  constructor(private traffic: Traffic, private crowd: Crowd, private ambient: Ambient) {
+    traffic.liftedAt = (alpha, out) => crowd.clowns.lifted(alpha, out);
+  }
   private carsClear = (x0: number, z0: number, x1: number, z1: number, secs: number) => this.traffic.crossingClear(x0, z0, x1, z1, secs);
 
   reset(j: Journey) {
@@ -207,7 +209,7 @@ export class StreetLife implements LifeHook {
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
     if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
-    this.crowd.step(j.plan, st.simTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt, truckHonks: j.clearing });
+    this.crowd.step(j.plan, st.simTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt });
     const g = st.mode === "inbound" && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[0] : null;
     const gate = g ? this.truckGate : null;
     if (gate) { gate.node = g!.node; gate.street = g!.street; }
@@ -222,7 +224,10 @@ export class StreetLife implements LifeHook {
     // rather than have everyone stop for it; after a while waiting (OUT_NOSE), it noses out and they do.)
     const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!landing && this.outWait(j) === null && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
-    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, j.clearing ? (st.mode === "reverse" ? -1 : 1) : 0, p);
+    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, p);
+    // (Held for good: the clowns, clowns.ts.)
+    this.crowd.clowns.step(j, this.traffic, this.crowd, obs);
+    this.crowd.refreshClowns();
     this.ambient.stepBlimp(p, st.simTime);
   }
 
@@ -246,14 +251,8 @@ export class StreetLife implements LifeHook {
     // journey.ts hitchStep and truck.ts draw it.)
     let ax = 0, az = 0;
     if (fw !== undefined) { const th0 = j.pose.h + j.hitchYaw, kx0 = j.pose.x + pfx * fw, kz0 = j.pose.z + pfz * fw; ax = kx0 - Math.cos(th0) * KINGPIN_TO_AXLES; az = kz0 + Math.sin(th0) * KINGPIN_TO_AXLES; }
-    // (Out of a gridlock, honking (journey.ts JAM_HONK): not waiting its turn through the junction
-    // for a car booked before it, which waits there on the truck in turn; only for what is in its
-    // way, which makes way, traffic.ts clearWay.)
-    // (And while traffic is still making way, it waits where it is till all of it has: it never
-    // comes on into one backing out of its way.)
-    // (Where it can stop, braking firmly, from the speed it has: it may be pulling away already.)
-    if (j.clearing && this.traffic.clearPending) return st.s + (st.v * st.v) / (2 * 4);
-    const zs = j.clearing ? null : this.traffic.truckZoneStop();
+    // (Held for good, out of a gridlock, the clowns come for what holds it up: clowns.ts.)
+    const zs = this.traffic.truckZoneStop();
     let stop = ow === null ? zs : zs === null ? ow : Math.min(ow, zs);
     // (A car moving its way, on along its own way CUT_IN_LOOK s: easing over into its lane in front
     // of it, say, or turning in ahead of it. Its circles moved on with it; seen while it begins, so the truck
@@ -347,9 +346,7 @@ export class StreetLife implements LifeHook {
       // into, swinging round a corner into the lane where it waits, say: a standing one doesn't
       // drop back out of the way. Only nearer than it is now, so it slides on past one it is
       // already alongside. A tractor's cab: its trailer,
-      // which follows the kingpin rather than the cab's line, is looked after above. With a little
-      // less room than traffic leaves it out of a gridlock (traffic.ts CLEAR_ROOM), so whatever it
-      // waits for here, honking, is made way for.)
+      // which follows the kingpin rather than the cab's line, is looked after above.)
       const cabRear = fw !== undefined ? -1.5 : E!.rear;
       for (let k = 0; k < C.length && !hit; k++) {
         const c = C[k];
@@ -404,6 +401,8 @@ export class StreetLife implements LifeHook {
     }
     return false;
   }
+  // The clowns' rescue under way, for the director to film (clowns.ts focus).
+  rescue() { return this.crowd.clowns.focus; }
   save() { return JSON.stringify({ t: this.traffic.save(), c: this.crowd.save(), b: this.ambient.saveBlimp(), d: this.setDown, g: this.outGo }); }
   load(s: string, j: Journey) {
     const o = JSON.parse(s);
