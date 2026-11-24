@@ -9,7 +9,7 @@ import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { CURB_H, KERB } from "./grid.ts";
 import { loadFields, saveFields } from "./snap.ts";
-import { ease, SPECS, Truck, truckLayout } from "./truck.ts";
+import { ease, GATE_LEN, SPECS, Truck, truckLayout } from "./truck.ts";
 import type { DoorGeom, TruckLayout, TruckModel } from "./truck.ts";
 import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
@@ -768,7 +768,7 @@ export class Crew {
       if (c.kind === "walk" && c.round) { const r = roundAt(L, c, u); return { x: r.x, z: r.z, yaw: r.yaw, exact: false }; }
       if (c.kind === "walk" || c.kind === "gateRide") {
         const a = c.a!, b = c.b!;
-        return { x: a[0] + (b[0] - a[0]) * u, z: a[2] + (b[2] - a[2]) * u, yaw: c.kind === "gateRide" ? Math.PI : NaN, exact: c.kind === "gateRide" };
+        return { x: a[0] + (b[0] - a[0]) * u, z: a[2] + (b[2] - a[2]) * u, yaw: c.kind === "gateRide" ? (c.dir === "up" ? 0 : Math.PI) : NaN, exact: c.kind === "gateRide" };
       }
       if (c.kind === "climbDown") return { x: exit[0], z: exit[2], yaw: exit[3], exact: true };
       if (c.kind === "climbUp") return { x: enter[0], z: enter[2], yaw: enter[3], exact: true };
@@ -916,7 +916,7 @@ export class Crew {
     if (x >= L.bedRear - 0.02 && x <= L.bedFront && Math.abs(z) < L.hw) return L.floor;
     if (this.docked) return x < Math.max(L.rear, L.bedRear) + 0.02 ? DOCK_PLATFORM : 0;   // (the leveller's lip over the gap at the bed's edge)
     if (L.loader === "ramp" && this.ctl.ramp > 0.999 && Math.abs(z) < RAMP_HW) { const r = rampY(L, x); if (r !== null) return r; }
-    if (L.loader === "liftgate" && this.ctl.gate > 0.999 && x > L.bedRear - 1.5 && Math.abs(z) < L.hw - 0.15) return this.gateY(L, this.ctl.drop);
+    if (L.loader === "liftgate" && this.ctl.gate > 0.999 && x > L.bedRear - GATE_LEN && Math.abs(z) < L.hw - 0.15) return this.gateY(L, this.ctl.drop);
     return this.kerbY(x, z);
   }
   private kerbY(x: number, z: number) {

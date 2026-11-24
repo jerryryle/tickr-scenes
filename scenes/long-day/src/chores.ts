@@ -11,7 +11,7 @@
 // climbs the dock stairs, works from the platform through the open door, and a tractor-trailer
 // is loaded by a dock worker's forklift. Forklift trips (`forklift` waits) also load flatbeds.
 import * as THREE from "three@0.187.0";
-import { truckLayout } from "./truck.ts";
+import { GATE_LEN, truckLayout } from "./truck.ts";
 import type { TruckLayout, TruckModel } from "./truck.ts";
 import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID, slotAlign, slotEnd, TRUCK_SLOTS } from "./cargo.ts";
@@ -69,6 +69,9 @@ const JACK_DOOR_IN = 1.2, JACK_DOOR_OUT = 2.6;
 // The driver turns a pallet jack about its middle no faster than this (rad/s: crew.ts, empty
 // and loaded); a walk with one starts with the time that takes.
 export const JACK_TURN = 1.3, JACK_TURN_LOADED = 1.0;
+// The lift gate: where the driver stands on it, in from its end (m); and where they line up for
+// it behind it, and walk on to off it.
+export const GATE_STAND = 0.3, GATE_LINEUP = 1.0, GATE_OFF = 0.6;
 // What the driver holds ahead of them, as crew.ts places it: the hand truck's wheels this far
 // ahead of the feet; the pallet jack's steering wheel this far, its middle (which it turns
 // about) this far on from that; and the near end of a pushed load this far (pushGap: further
@@ -583,7 +586,7 @@ export function fetchSpots(ch: Chore[]): ({ spot: number[]; face: number } | nul
 }
 export function pavementFetch(L: TruckLayout, k = 0) {
   const spot: [number, number, number] = [L.bedRear - 2.2 - (k ? 3.6 : 0), 0, L.hw + 3.2 - (k === 2 ? 0.7 : 0)];
-  const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - 0.75;
+  const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - GATE_LEN - GATE_OFF;
   return { spot, face: Math.atan2(-spot[2], spot[0] - foot) };
 }
 
@@ -1176,15 +1179,25 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     let foot: [number, number, number];
     // Walk ramp: at the back, pull the ramp out from under the floor and set it down (the
     // driver ends at its foot), walk up it and open the roll-up door from the top of the ramp.
-    // Lift gate: open the door from the ground, then lower the gate.
+    // Lift gate: open the door from the ground, then step aside to the gate's controls at the
+    // body's rear corner and lower it (no one on it as it comes out and down). Up it, the driver
+    // steps on at its outer end facing the truck, what they push ahead of them on it too; down it,
+    // they stand at its inner end facing out, it ahead of them; off it, on out past its end.
+    // (The controls on the side away from the kerb, off the pavement and what stands on it.)
+    const gateCtl: [number, number, number] = [rear - 0.35, 0, -(Math.sign(facility[2]) || 1) * (L.hw + 0.35)];
+    const gateFace = Math.atan2(gateCtl[2], rear - GATE_LEN / 2 - gateCtl[0]);   // (towards the platform's middle)
+    const gateTop: [number, number, number] = [rear - GATE_STAND, L.floor, 0], gateLow: [number, number, number] = [rear - GATE_STAND, 0, 0];
+    const gateUp: [number, number, number] = [rear - GATE_LEN + GATE_STAND, L.floor, 0];
+    const lineup: [number, number, number] = [rear - GATE_LEN - GATE_LINEUP, 0, 0], offGate: [number, number, number] = [rear - GATE_LEN - GATE_OFF, 0, 0];
     const grab: [number, number, number] = [rear - RAMP_HOLD, 0, 0];   // holding the stowed ramp's end
     const onRamp: [number, number, number] = [rear - 0.45, ((L.rampRun - 0.45) / L.rampRun) * (L.floor - 0.12), 0];   // at the door, on the ramp
     if (!ramp) {
       walk("load", side, atRear, WALK);
       add({ kind: "doorOpen", group: "load", len: DOOR_OPEN, face: FACE_FRONT });
-      add({ kind: "gateOut", group: "load", len: 2.2, face: FACE_FRONT });
-      foot = [rear - 0.75, 0, 0];   // on the lowered platform
-      walk("load", atRear, foot, WALK);
+      walk("load", atRear, gateCtl, WALK);
+      add({ kind: "gateOut", group: "load", len: 2.2, face: gateFace });
+      foot = [rear - GATE_LEN + GATE_STAND, 0, 0];   // on the lowered platform's outer end
+      walk("load", gateCtl, lineup, WALK);
     } else {
       foot = [rear - L.rampRun - RAMP_HOLD, 0, 0];
       walk("load", side, grab, WALK);
@@ -1261,7 +1274,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     }
     uZ = bestU;
     const teamOn: [number, number, number] = [teamX, 0, uZ], teamSwing: [number, number, number] = [teamX, 0, swingZ];
-    const upFrom = (item: ItemKind | null, t: Chore["tool"] = st.tool): [number, number, number] => drawnBy(item, t) ? [foot[0] - RAMP_LINEUP, 0, 0] : team(item) ? teamIn : foot;
+    const upFrom = (item: ItemKind | null, t: Chore["tool"] = st.tool): [number, number, number] => !ramp ? lineup : drawnBy(item, t) ? [foot[0] - RAMP_LINEUP, 0, 0] : team(item) ? teamIn : foot;
     // Into the bed. Drawn up the ramp, on in backing until it is all aboard with room behind it to
     // go round it (no further in than `free`, where the bed is taken: by the loads, or the front
     // wall), then round it to push it on: where the driver is then.
@@ -1269,8 +1282,9 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
       const speed = item ? st.speed : WALK, ex = { item, tool: t, helper: st.helper && !!item };
       if (atDoor) { atDoor = false; walk("load", onRamp, sill, WALK, { linear: true, tool: t }); return sill; }
       if (!ramp) {
-        add({ kind: "gateRide", group: "load", len: 2.0, dir: "up", a: foot, b: [foot[0], L.floor, 0], ...ex });
-        walk("load", [foot[0], L.floor, 0], sill, speed, ex);
+        walk("load", lineup, foot, speed, ex);
+        add({ kind: "gateRide", group: "load", len: 2.0, dir: "up", a: foot, b: gateUp, ...ex });
+        walk("load", gateUp, sill, speed, ex);
         return sill;
       }
       if (!drawnBy(item, t)) { walk("load", upFrom(item, t), sill, speed * 0.95, ex); return sill; }
@@ -1287,13 +1301,15 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     // Out of the bed from `from` (where the driver stands, facing in, what's held ahead). Drawn,
     // first drawn back clear of what's in front of it (the bed is free up to `free` ahead of
     // it), round it, and out forwards behind it, down the ramp and on until it is off it.
-    let street = foot;
+    let street = ramp ? foot : lineup;   // (where the driver is when a pickup sets off for the door: at the gate, lined up behind it)
     const outOfBed = (from: [number, number, number], item: ItemKind | null, t: Chore["tool"] = st.tool, free = from[0] + heldAt(t) + 0.1) => {
       const speed = item ? st.speed : WALK, ex = { item, tool: t, helper: st.helper && !!item };
       if (!ramp) {
         if (from !== sill) walk("load", from, sill, speed, { ...ex, linear: true });
-        walk("load", sill, [foot[0], L.floor, 0], speed, ex);
-        add({ kind: "gateRide", group: "load", len: 2.0, dir: "down", a: [foot[0], L.floor, 0], b: foot, ...ex });
+        walk("load", sill, gateTop, speed, ex);
+        add({ kind: "gateRide", group: "load", len: 2.0, dir: "down", a: gateTop, b: gateLow, ...ex });
+        walk("load", gateLow, offGate, speed, ex);
+        street = offGate;
         return;
       }
       if (!drawnBy(item, t)) {
@@ -1381,8 +1397,9 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
       add({ kind: "rampIn", group: "close", len: RAMP_MOVE, face: FACE_FRONT, a: foot, b: grab });
       walk("close", grab, side, WALK);
     } else {
-      walk("close", foot, atRear, WALK);
-      add({ kind: "gateIn", group: "close", len: 1.6, face: FACE_FRONT });
+      walk("close", out[out.length - 1].b ?? street, gateCtl, WALK);   // (from where the driver is)
+      add({ kind: "gateIn", group: "close", len: 1.6, face: gateFace });
+      walk("close", gateCtl, atRear, WALK);
       add({ kind: "doorClose", group: "close", len: doorCloseLen(L, atRear[1]), face: FACE_FRONT });
       walk("close", atRear, side, WALK);
     }

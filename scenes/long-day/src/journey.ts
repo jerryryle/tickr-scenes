@@ -36,7 +36,7 @@ import { hash2, hash3 } from "./rng.ts";
 import { journeyPeriod } from "./env.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
-import { truckExtents, truckLayout } from "./truck.ts";
+import { GATE_LEN, truckExtents, truckLayout } from "./truck.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import type { TruckModel } from "./truck.ts";
@@ -957,7 +957,7 @@ export class Journey {
       }
       // (And vehicles parked at the kerb near its back: a row of discs along each, none where the
       // truck itself stands.)
-      const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - 0.75;   // (nor on its ramp or lift gate)
+      const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - GATE_LEN;   // (nor on its ramp or lift gate)
       for (const o of PARKED_PROBE?.(this.plan, stop.site.bx, stop.site.bz) ?? []) {
         // (Each a little wider than the box, its ends' centres in enough that its corners are inside.)
         const long = Math.max(o.hx, o.hz), short = Math.min(o.hx, o.hz), alongX = o.hx >= o.hz, r = short * 1.25, end = Math.max(0, long - short * 0.9);

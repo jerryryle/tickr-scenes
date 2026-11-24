@@ -193,6 +193,12 @@ export function truckLayout(m: TruckModel) {
   };
 }
 export type TruckLayout = ReturnType<typeof truckLayout>;
+// The lift gate's platform, from the bed's back to its outer end when out (m): deep enough for the
+// driver and a loaded hand truck ahead of them (a penguin's crate on it too) to ride it together.
+// Its last GATE_FLAP is a flip-over end, hinged to the deck and folded under it when stowed, so the
+// deck that slides in under the floor stays clear of the mudflaps behind the rear wheels; out, the
+// deck stops GATE_GAP short of the body, clear of the tail lamps and the sill.
+export const GATE_LEN = 2.4, GATE_FLAP = 0.5, GATE_GAP = 0.075;
 
 type TruckSave = { f: Record<string, unknown>; x: number; z: number };
 // The straps over a load (each truck its own: it glows with the truck's headlights). One kept
@@ -233,6 +239,7 @@ export class Truck {
   private driverDoor = new THREE.Group();
   private rampGroup: THREE.Group | null = null;
   private liftGroup: THREE.Group | null = null;
+  private liftFlap: THREE.Group | null = null;
   private trailer: THREE.Group | null = null;
   private trailerBody: THREE.Group | null = null;
   private trailerLeaves: THREE.Group[] = [];
@@ -566,9 +573,14 @@ export class Truck {
     }
     if (this.liftGroup && s.cargo) {
       const a = THREE.MathUtils.clamp(this.liftgate / 0.6, 0, 1), b = THREE.MathUtils.clamp((this.liftgate - 0.6) / 0.4, 0, 1);
-      const len = 1.5, stowY = s.cargo.floor - 0.32;
+      // (Stowed low enough that the deck, its brackets and the folded end slide out under the tail
+      // lamps and the frame rails.)
+      const len = GATE_LEN - GATE_FLAP - GATE_GAP, stowY = s.cargo.floor - 0.5;
       const y = stowY + (s.cargo.floor - stowY) * ease(b);
-      this.liftGroup.position.set(s.cargo.x0 + len * (1 - ease(a)), y + (0.06 - y) * ease(this.liftgateDrop), 0);
+      this.liftGroup.position.set(s.cargo.x0 + len * (1 - ease(a)) - GATE_GAP * ease(a), y + (0.06 - y) * ease(this.liftgateDrop), 0);
+      // (The flip-over end swings down and out from under the deck once it is clear of the body,
+      // before the deck rises; folded back under it last of all.)
+      if (this.liftFlap) this.liftFlap.rotation.z = Math.PI * (1 - ease((this.liftgate - 0.4) / 0.2));
     }
     if (this.trailer) {
       const open = ease(this.trailerDoors) * 4.55; // ~260 degrees, folded back against the sides
@@ -1027,12 +1039,22 @@ export class Truck {
   }
 
   private buildLiftgate(c: CargoSpec) {
-    const G = new Batch(), len = 1.5;
+    const G = new Batch(), len = GATE_LEN - GATE_FLAP - GATE_GAP;
     G.span(-len, -0.085, -c.hw + 0.15, 0, -0.005, c.hw - 0.15, TC.alu);   // (5 mm off the planes of the chassis it folds under)
     for (let x = -len + 0.1; x < -0.05; x += 0.2) G.span(x, 0, -c.hw + 0.18, x + 0.06, 0.01, c.hw - 0.18, TC.hub);
     for (const z of [-1, 1]) G.span(-0.08, -0.08, z * (c.hw - 0.2), 0, 0.12, z * (c.hw - 0.12), TC.black);
     this.liftGroup = new THREE.Group();
     this.liftGroup.add(G.build(this.kit.paint)!);
+    // The flip-over end: hinged at the deck's outer bottom edge (5 mm off its end), level with it
+    // when out and folded flat under it when stowed.
+    const F = new Batch(), f = GATE_FLAP - 0.005;
+    F.span(-f, 0, -c.hw + 0.15, 0, 0.08, c.hw - 0.15, TC.alu);
+    for (let x = -f + 0.08; x < -0.05; x += 0.2) F.span(x, 0.085, -c.hw + 0.18, x + 0.06, 0.095, c.hw - 0.18, TC.hub);
+    this.liftFlap = new THREE.Group();
+    this.liftFlap.position.set(-len - 0.005, -0.085, 0);
+    this.liftFlap.rotation.z = Math.PI;
+    this.liftFlap.add(F.build(this.kit.paint)!);
+    this.liftGroup.add(this.liftFlap);
     this.body.add(this.liftGroup);
   }
 
