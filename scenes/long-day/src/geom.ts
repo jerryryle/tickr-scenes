@@ -283,3 +283,16 @@ export function quadGeometry(quads: Quad[]): THREE.BufferGeometry {
   g.computeBoundingSphere();
   return g;
 }
+
+// A speck of a material drawn with this geometry's vertex layout (instanced, with per-instance
+// colours, if `instanced`), far under the ground and drawn every frame: keeps that shader and
+// layout compiled and warm from the start, so the first time the real thing is drawn isn't a long
+// frame, which on a board shows as the truck skipping ahead (sealife.ts keeps the sea's the same
+// way). The geometry is shared, not copied: pass one that lives as long as `parent`.
+export function keepWarm(parent: THREE.Object3D, geometry: THREE.BufferGeometry, material: THREE.Material, instanced = false): THREE.Mesh {
+  const k = instanced ? new THREE.InstancedMesh(geometry, material, 1) : new THREE.Mesh(geometry, material);
+  if (k instanceof THREE.InstancedMesh) { k.setMatrixAt(0, new THREE.Matrix4()); k.setColorAt(0, new THREE.Color(0xffffff)); }
+  k.position.y = -60; k.scale.setScalar(1e-3); k.frustumCulled = false;
+  parent.add(k);
+  return k;
+}

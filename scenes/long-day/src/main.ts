@@ -19,7 +19,7 @@ import { Engine } from "./engine.ts";
 import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, HEAD_Y, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
 import { Hud } from "./hud.ts";
 import { PuffSystem } from "./puffs.ts";
-import { LIVERY_ASSETS, Truck, TruckKit, truckLayout } from "./truck.ts";
+import { keepStrapsWarm, LIVERY_ASSETS, Truck, TruckKit, truckLayout } from "./truck.ts";
 import type { LiveryName, TruckModel } from "./truck.ts";
 import { makeFacadeMaterial, setFacadeAtlas } from "./facade.ts";
 import { paintFacadeAtlas } from "./facadeart.ts";
@@ -910,6 +910,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       fleet = new FleetBaker(kit);
       signAtlas.logo = logoWhite; signAtlas.logoColor = logoColor; signAtlas.batonMark = batonWordmark;
       truck = newTruck(journey.st.truck);
+      keepStrapsWarm(engine.scene);
       placeTruck(0, true);
       syncTrucks();
       director = new Director(engine.camera, cfg.seed);

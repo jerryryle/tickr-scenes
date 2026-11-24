@@ -262,6 +262,7 @@ export class CountryWorld {
       carMat.onBeforeCompile = (shader, r) => { prev(shader, r); shader.fragmentShader = shader.fragmentShader.replace("#include <emissivemap_fragment>", "#ifdef USE_COLOR\n  totalEmissiveRadiance *= vColor.rgb;\n#endif\n#include <emissivemap_fragment>"); };
       carMat.customProgramCacheKey = () => prevKey() + "|cartint-v1"; }
     this.cars = new CarFleet(this.group, carMat, 10);
+    this.cars.keepWarm(scene);   // (in the scene: the road's group is hidden in town, where the first oncoming car's frame would come)
     // A wide plane under everything, following the truck, for the far land under the fog.
     // (Subdivided: fog is computed per vertex.)
     this.base = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000, 40, 40).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x6e9e44 }));

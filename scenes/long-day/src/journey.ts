@@ -403,19 +403,31 @@ export class Journey {
   // Blocks with one of `types` within `radius` blocks of (bx, bz), nearest first, skipping `avoid`.
   private findNear(types: FacilityId[], bx: number, bz: number, radius: number, avoid: Set<string>, minDist = 1): Site[] {
     const out: { s: Site; d: number }[] = [];
-    for (let dz = -radius; dz <= radius; dz++)
-      for (let dx = -radius; dx <= radius; dx++) {
-        const d = Math.abs(dx) + Math.abs(dz);
-        if (d < minDist || d > radius) continue;
-        const x = bx + dx, z = bz + dz;
-        // (Nor the plaza, with no building to deliver to, nor a block whose every kerb is the wrong
-        // way up a one-way street.)
-        const blk = this.plan.blockOf(x, z), G = this.plan.graph;
-        if (!blk?.inCity || avoid.has(`${x},${z}`) || this.plan.interchangeAt(x, z) || blk.id === this.plan.plaza || !blk.faces.some((f) => G.drivable(f))) continue;
-        if (types.includes(this.facility(x, z))) out.push({ s: this.site(x, z), d });
-      }
+    for (const [x, z] of this.deliverable()) {
+      const d = Math.abs(x - bx) + Math.abs(z - bz);
+      if (d < minDist || d > radius || avoid.has(`${x},${z}`)) continue;
+      if (types.includes(this.facility(x, z))) out.push({ s: this.site(x, z), d });
+    }
     out.sort((a, b) => a.d - b.d);
     return out.map((o) => o.s);
+  }
+  // The city's blocks a stop may be at, by key, north to south and west to east (findNear's order
+  // among blocks as near as each other): in town, not the plaza (with no building to deliver to),
+  // nor an interchange's, nor one whose every kerb is the wrong way up a one-way street. (Fixed
+  // for the city, so worked out once: job planning asks it over and over.)
+  private delivCache: { plan: CityPlan; keys: [number, number][] } | null = null;
+  private deliverable(): [number, number][] {
+    const P = this.plan;
+    if (this.delivCache?.plan !== P) {
+      const G = P.graph, keys: [number, number][] = [];
+      for (const b of G.blocks) {
+        if (!b.inCity || b.id === P.plaza || P.blockOf(b.kx, b.kz) !== b || P.interchangeAt(b.kx, b.kz) || !b.faces.some((f) => G.drivable(f))) continue;
+        keys.push([b.kx, b.kz]);
+      }
+      keys.sort((p, q) => p[1] - q[1] || p[0] - q[0]);
+      this.delivCache = { plan: P, keys };
+    }
+    return this.delivCache.keys;
   }
   private truckBlock(): [number, number] {
     return [Math.floor(this.pose.x / BLOCK), Math.floor(this.pose.z / BLOCK)];

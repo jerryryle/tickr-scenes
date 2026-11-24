@@ -8,7 +8,7 @@
 // lamps and plates. Paint is pure white unless given, so instanceColor can tint it (Batch.stamp
 // repaints it the same way); glass, tyres and trim stay dark.
 import * as THREE from "three@0.187.0";
-import { Batch, BATCH } from "./geom.ts";
+import { Batch, BATCH, keepWarm } from "./geom.ts";
 import type { BatchModel } from "./geom.ts";
 
 export const GLASS = 0x26313d, TYRE = 0x161616;
@@ -233,6 +233,9 @@ export class CarFleet {
     }
   }
   begin() { for (const m of this.meshes.values()) m.count = 0; }
+  // Its material and instanced layout kept warm under `parent` (geom.ts keepWarm): every kind
+  // shares them, so one speck does for all.
+  keepWarm(parent: THREE.Object3D) { const m = this.meshes.values().next().value!; keepWarm(parent, m.geometry, m.material as THREE.Material, true); }
   add(kind: CarKind, matrix: THREE.Matrix4, paint: number) {
     const m = this.meshes.get(kind) ?? this.meshes.values().next().value!;
     if (m.count >= m.instanceMatrix.count) return;

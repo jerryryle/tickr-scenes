@@ -622,13 +622,28 @@ export class CountryRoad {
     const end = (m: { S: Float64Array }) => m.S[m.S.length - 1];
     // A short drive gets a brisker pull-away too.
     const acc = this.simulate(this.planStops, 32, D, v0, s0).S.at(-1)! < target ? 1.7 : COUNTRY_ACCEL;
-    let lo = 6, hi = 34, best = this.simulate(this.planStops, COUNTRY_VMAX, D, v0, s0, acc);
+    let best = this.simulate(this.planStops, COUNTRY_VMAX, D, v0, s0, acc);
     if (Math.abs(end(best) - target) > 0.01) {
-      for (let it = 0; it < 40; it++) {
-        const mid = (lo + hi) / 2, m = this.simulate(this.planStops, mid, D, v0, s0, acc);
-        best = m;
-        if (Math.abs(end(m) - target) < 1e-4) break;
-        if (end(m) < target) lo = mid; else hi = mid;
+      // The cruising speed that ends the drive there: regula falsi (Illinois) between 6 and 34 m/s,
+      // the distance growing with the speed (a handful of drives simulated, where halving took up
+      // to 40, in one journey step). The distance can jump (a stop made or not), with the target in
+      // the jump: then, once the speed is pinned down (halving every other time), the drive that
+      // ended nearest. Out of reach
+      // either side: the nearer end. Whatever is left is eased in below.
+      const mlo = this.simulate(this.planStops, 6, D, v0, s0, acc), mhi = this.simulate(this.planStops, 34, D, v0, s0, acc);
+      let lo = 6, hi = 34, flo = end(mlo) - target, fhi = end(mhi) - target, side = 0;
+      if (flo >= 0) best = mlo;
+      else if (fhi <= 0) best = mhi;
+      else {
+        best = -flo < fhi ? mlo : mhi;
+        let bf = Math.min(-flo, fhi);
+        for (let it = 0; it < 40 && hi - lo > 1e-4; it++) {
+          const v = it % 2 === 1 ? (lo + hi) / 2 : (lo * fhi - hi * flo) / (fhi - flo), m = this.simulate(this.planStops, v, D, v0, s0, acc), f = end(m) - target;
+          if (Math.abs(f) < bf) { best = m; bf = Math.abs(f); }
+          if (bf < 0.01) break;   // (as near as the first drive needs to be to keep: above)
+          if (f < 0) { lo = v; flo = f; if (side === -1) fhi /= 2; side = -1; }
+          else { hi = v; fhi = f; if (side === 1) flo /= 2; side = 1; }
+        }
       }
     }
     // Whatever is left (a drive that can't quite make it): eased in over the drive, so it lands

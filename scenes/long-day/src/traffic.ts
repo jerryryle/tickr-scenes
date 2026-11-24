@@ -7,7 +7,7 @@
 // instanceColor; a Ryder truck is a baked copy of the real model.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
-import { Batch } from "./geom.ts";
+import { Batch, keepWarm } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { SPECS, TRAILER } from "./truck.ts";
@@ -125,6 +125,7 @@ export class Traffic {
     this.beacons.count = 0; this.beacons.frustumCulled = false;
     for (let i = 0; i < 4; i++) this.beacons.setColorAt(i, this.col.set(0xffffff));
     scene.add(this.beacons);
+    keepWarm(scene, this.beacons.geometry, bm, true);
   }
 
   private release(g: THREE.Object3D) {

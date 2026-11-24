@@ -7,7 +7,7 @@
 // merged into one vertex-coloured mesh; only moving parts and lights are separate meshes.
 import * as THREE from "three@0.187.0";
 import { canBakeTextures, makeCanvas } from "./canvas.ts";
-import { Batch, quadGeometry } from "./geom.ts";
+import { Batch, keepWarm, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { applyDriverSpot } from "./cutaway.ts";
@@ -195,6 +195,12 @@ export function truckLayout(m: TruckModel) {
 export type TruckLayout = ReturnType<typeof truckLayout>;
 
 type TruckSave = { f: Record<string, unknown>; x: number; z: number };
+// The straps over a load (each truck its own: it glows with the truck's headlights). One kept
+// warm in the scene from the start (keepStrapsWarm; geom.ts keepWarm): the first load strapped
+// down would otherwise draw them for the first time.
+function strapMaterial() { const m = new THREE.MeshLambertMaterial({ color: STRAP_COLOR }); applyDriverSpot(m); applyLampLight(m); return m; }
+export function keepStrapsWarm(scene: THREE.Object3D) { const b = new Batch(), m = strapMaterial(); b.box(0, 0, 0, 1, 1, 1, 0xffffff); keepWarm(scene, b.build(m)!.geometry, m); }
+
 export class Truck {
   readonly spec: TruckSpec;
   readonly root = new THREE.Group();   // world pose
@@ -239,7 +245,7 @@ export class Truck {
   private freshener = new THREE.Group();
   private bob = { x: 0, z: 0, vx: 0, vz: 0 };
   private tabletMat = new THREE.MeshBasicMaterial({ map: placeholderTexture() });
-  private strapMat = (() => { const m = new THREE.MeshLambertMaterial({ color: STRAP_COLOR }); applyDriverSpot(m); applyLampLight(m); return m; })();
+  private strapMat = strapMaterial();
   private tabletCanvas: { canvas: any; g: CanvasRenderingContext2D } | null = null;
   private exhaust: THREE.Vector3[] = [];
   private puffTimer = 0;
