@@ -22,6 +22,8 @@
 // out), a piece of a clash's description ("buildPark", "#f2c200") to print the triangles of the
 // first few such clashes ("each": the first in sight of each pair of functions; with a
 // description, also what each ray met), and how many country roads (default 3).
+// The parts (each city, the models, the vignettes a few kinds at a time, each road) run side by
+// side in worker threads, up to half the cores (COPLANAR_SERIAL: one after another, here).
 // The street vignettes (vignettes.ts) are placed in one city (COPLANAR_VIG_CITIES for more),
 // run through their first minute, and swept at moments through it.
 // COPLANAR_SEASON in the environment ("winter/snow") builds the cities and roads in that season;
@@ -304,13 +306,18 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
   }
 }
 
-{
-  const clashes = new Map<string, Clash>();
+// ---- the parts, run side by side ------------------------------------------------------------
+// Each part (a city, the models, a city's vignettes a handful of kinds at a time, a country road)
+// builds and sweeps on its own; they run in worker threads, as many at once as the machine has
+// cores and memory for, and their clashes are put together after. (With a city named, or
+// COPLANAR_SERIAL, all in this thread: for looking closer.)
+const mat = { ground: new THREE.MeshLambertMaterial({ vertexColors: true }), solid: new THREE.MeshLambertMaterial({ vertexColors: true }), lamp: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+const VIG_GROUP = 6;   // vignette kinds a part
+function runPart(part: string, clashes: Map<string, Clash>) {
   void new Journey(readConfig({ seed: SEED } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
-  const mat = { ground: new THREE.MeshLambertMaterial({ vertexColors: true }), solid: new THREE.MeshLambertMaterial({ vertexColors: true }), lamp: new THREE.MeshLambertMaterial({ vertexColors: true }) };
-  const VIG_ONLY = !!proc.env.COPLANAR_ONLY_VIG;   // (just the vignettes: for working on them)
-  for (let N = 0; N < CITIES; N++) {
-    if (VIG_ONLY || (ONLY >= 0 && N !== ONLY)) continue;
+  const [what, a, b] = part.split(":"), N = Number(a);
+  if (what === "city") {
+  {
     const style = journeyStyle(SEED, N), plan = new CityPlan(citySeedOf(SEED, N), style), sid = (style as any).id ?? `city${N}`;
     plan.climate = { season: SEASON[0], weather: SEASON[1] as any, snowCover: /snow/.test(SEASON[1]) };
     const build = makeCityChunkBuilder(mat, plan);
@@ -325,6 +332,7 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
     sweep(tris, sid, clashes);
     console.log(`city ${N} (${sid}): ${chunks} chunks, ${tris.length} triangles`);
   }
+  } else if (what === "models") {
   // The car models (cars.ts: traffic, and parked ones stamped into chunks), each on its own, apart,
   // and up off the ground (a parked car on a garage deck shows its underside).
   {
@@ -339,7 +347,7 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
   // Everything else that isn't built into a chunk, each thing on its own, spread out and up off
   // the ground: the trucks, the people and animals, the traffic and the trains (each kind's model:
   // the meshes as built, instanced ones once), and the ships and boats at sea.
-  if (ONLY < 0 && !VIG_ONLY) {
+  {
     const objs = (label: string, list: THREE.Object3D[]) => {
       const tris: Tri[] = [];
       list.forEach((o, i) => { const g = new THREE.Group(); g.add(o); o.visible = true; g.position.set(i * 60, 2, 0); trianglesOf(g, tris); g.remove(o); });
@@ -384,17 +392,17 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
       objs("sea", [...w.children]); break;
     }
   }
+  } else if (what === "vig") {
+    const kinds = VIG_KINDS.slice(Number(b) * VIG_GROUP, (Number(b) + 1) * VIG_GROUP);
   // The street vignettes (vignettes.ts): each kind placed on a block of the first city of each
   // style where it can be (at a few hours and in a few weathers, as it needs), run through its
   // first VIG_T seconds and drawn every VIG_DT, each moment swept with the chunks round it.
-  if (ONLY < 0 && !proc.env.COPLANAR_NO_VIG) {
+  {
     const VIG_T = 70, VIG_DT = 2.5, sc = new THREE.Scene();
     const F = new Figures(sc, mat.solid, 2400, 0, { material: mat.solid, cap: 64 }), V = new Vignettes(F);
     const ctxs = [{ hour: 12, weather: "clear" }, { hour: 16, weather: "rain" }, { hour: 22, weather: "clear" }, { hour: 9, weather: "snow" }, { hour: 7.5, weather: "clear" }, { hour: 15.2, weather: "clear" }];
     const placed = new Map<string, number>();
-    // (In one city by default, a couple of minutes; COPLANAR_VIG_CITIES for more, one style each.)
-    const VN = Number(proc.env.COPLANAR_VIG_CITIES ?? 1);
-    for (let N = 0; N < VN; N++) {
+    {
       const style = journeyStyle(SEED, N), plan = new CityPlan(citySeedOf(SEED, N), style), G = plan.graph, sid = (style as any).id ?? `city${N}`;
       const chunks = new Map<string, Tri[]>(), build = makeCityChunkBuilder(mat, plan);
       const chunkTris = (cx: number, cz: number) => {
@@ -403,7 +411,7 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
         return t;
       };
       const r = mulberry32(SEED * 977 + N), blocks = G.blocks.filter((b) => b.inCity);
-      for (const k of VIG_KINDS) for (const cx of ctxs) {
+      for (const k of kinds) for (const cx of ctxs) {
         const snow = cx.weather === "snow";
         plan.climate = { season: snow ? "winter" : "summer", weather: cx.weather as any, snowCover: snow };
         const c = { plan, hour: cx.hour, w: weatherMix(cx.weather as any), season: plan.climate.season, snow };
@@ -460,19 +468,22 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
       }
       void sid;
     }
-    console.log(`vignettes: ${[...placed.entries()].map(([k, n]) => `${k} ${n}`).join(", ")}; never placed: ${VIG_KINDS.filter((k) => !placed.has(k)).join(", ") || "none"}`);
+    console.log(`vignettes in city ${N}: ${[...placed.entries()].map(([k, n]) => `${k} ${n}`).join(", ")}; never placed: ${kinds.filter((k) => !placed.has(k)).join(", ") || "none"}`);
   }
+  } else if (what === "road") {
+    const R = N;
   // The country roads between the cities (countryworld.ts): each of the journey's first drives,
   // built a stretch at a time along its length as the truck would see it, and swept a stretch at
   // a time.
-  if (ONLY < 0 && !VIG_ONLY) {
+  {
     const sc = new THREE.Scene(), world = new CountryWorld(sc, mat, null), seen = new Set<string>();
     world.exact = true;
     let n = 0;
-    for (let m = 5; m < 1500 && n < (argv[5] ? Number(argv[5]) : 3); m += 7) {
+    for (let m = 5; m < 1500 && n < R; m += 7) {
       const road = new Journey(readConfig({ seed: SEED } as SceneEnv), m * 60, SEASON[0]).country;
       if (!road || seen.has(road.key)) continue;
       seen.add(road.key); n++;
+      if (n < R) continue;
       world.setRoad(road);
       let segs = 0, tris0 = 0;
       for (let s = 0; s < road.length; s += 300) {
@@ -485,6 +496,48 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
       console.log(`road ${n} (${road.key}): ${Math.round(road.length)} m, ${segs} stretches, ${tris0} triangles`);
     }
     world.setRoad(null);
+  }
+  }
+}
+function mergeClash(into: Map<string, Clash>, q: Clash) {
+  const o = into.get(q.key);
+  if (!o) { into.set(q.key, { ...q }); return; }
+  o.area += q.area; o.n += q.n; o.gap = Math.min(o.gap, q.gap); if (!o.seen && q.seen) o.at = q.at; o.seen += q.seen; o.looked += q.looked;
+}
+
+const wt: any = await import("node:" + "worker_threads"), os: any = await import("node:" + "os");
+if (!wt.isMainThread) {
+  // A worker: one part, its clashes back.
+  const clashes = new Map<string, Clash>();
+  runPart(wt.workerData as string, clashes);
+  wt.parentPort.postMessage([...clashes.values()]);
+} else {
+  const clashes = new Map<string, Clash>();
+  const VIG_ONLY = !!proc.env.COPLANAR_ONLY_VIG;   // (just the vignettes: for working on them)
+  const parts: string[] = [];
+  if (!VIG_ONLY) for (let N = 0; N < CITIES; N++) if (ONLY < 0 || N === ONLY) parts.push(`city:${N}`);
+  if (ONLY < 0 && !VIG_ONLY) parts.push("models");
+  // (The vignettes in one city by default; COPLANAR_VIG_CITIES for more, one style each.)
+  if (ONLY < 0 && !proc.env.COPLANAR_NO_VIG) for (let N = 0; N < Number(proc.env.COPLANAR_VIG_CITIES ?? 1); N++) for (let g = 0; g * VIG_GROUP < VIG_KINDS.length; g++) parts.push(`vig:${N}:${g}`);
+  if (ONLY < 0 && !VIG_ONLY) for (let R = 1; R <= (argv[5] ? Number(argv[5]) : 3); R++) parts.push(`road:${R}`);
+  if (ONLY >= 0 || DETAIL || proc.env.COPLANAR_SERIAL) for (const p of parts) runPart(p, clashes);
+  else {
+    // (A city's build takes a few GB: no more at once than memory allows, nor than half the cores,
+    // leaving the rest to make check's other tests and its scrub renders, which have a start budget.)
+    const width = Math.max(1, Math.min(parts.length, Math.floor((os.availableParallelism?.() ?? os.cpus().length) / 2), Math.floor(os.totalmem() / 2 ** 32)));
+    const queue = parts.slice();   // (cities first: the longest)
+    await new Promise<void>((done, fail) => {
+      let running = 0;
+      const next = () => {
+        if (!queue.length) { if (!running) done(); return; }
+        const part = queue.shift()!; running++;
+        const w = new wt.Worker(new URL((import.meta as any).url), { workerData: part, argv: proc.argv.slice(2) });
+        w.on("message", (list: Clash[]) => { for (const q of list) mergeClash(clashes, q); });
+        w.on("error", (e: unknown) => fail(e));
+        w.on("exit", (code: number) => { running--; if (code !== 0) { fail(new Error(`part ${part} exited ${code}`)); return; } next(); });
+      };
+      for (let i = 0; i < width; i++) next();
+    });
   }
   for (const c of clashes.values()) c.seen = c.seen * 4 > c.looked ? c.seen : 0;
   const list = [...clashes.values()].sort((a, b) => (b.seen ? 1 : 0) - (a.seen ? 1 : 0) || b.area - a.area);
