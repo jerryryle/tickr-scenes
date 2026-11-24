@@ -22,6 +22,9 @@ import { seaSide } from "./outline.ts";
 import { CityPlan } from "./city.ts";
 import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 import type { FwCurve } from "./freeway.ts";
+import { drain } from "./slices.ts";
+import type { Steps } from "./slices.ts";
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
 
 export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
@@ -285,16 +288,16 @@ export class CountryRoad {
   readonly fromBiome: BiomeId; readonly toBiome: BiomeId;
   readonly pieces: RoadPiece[] = [];
   stops: CountryStop[] = [];
-  readonly length: number;         // to the next city's gate street (on into town, along a freeway the truck takes)
-  readonly gateS: number;          // where the next city's gate street begins
-  readonly SB: number;             // where the next city takes over (the arrival straight begins)
+  readonly length!: number;         // to the next city's gate street (on into town, along a freeway the truck takes)
+  readonly gateS!: number;          // where the next city's gate street begins
+  readonly SB!: number;             // where the next city takes over (the arrival straight begins)
   readonly swapU: number = -1;     // drive time of a truck change (none: trucks change in town)
   readonly swapS: number = 0;
-  readonly landFrom: number; readonly landTo: number;   // the road's own land (the city rings' outside)
-  private X: Float64Array; private Z: Float64Array; private H: Float64Array;
-  private Y: Float64Array;          // the road's height at each geometry sample
-  private SM: Float64Array;         // how far the land beside the road may rise and fall there (0..1)
-  private PM: Float64Array;         // 0 at the set pieces (the land level round them), 1 clear of them
+  readonly landFrom!: number; readonly landTo!: number;   // the road's own land (the city rings' outside)
+  private X!: Float64Array; private Z!: Float64Array; private H!: Float64Array;
+  private Y!: Float64Array;          // the road's height at each geometry sample
+  private SM!: Float64Array;         // how far the land beside the road may rise and fall there (0..1)
+  private PM!: Float64Array;         // 0 at the set pieces (the land level round them), 1 clear of them
   private S: Float64Array = new Float64Array(1); private V: Float32Array = new Float32Array(1);   // per motion step, to the hand-over
   private zone: [number, number] | null = null;
   ferry: FerryPlan | null = null;   // this drive's ferry, if it has one
@@ -308,12 +311,27 @@ export class CountryRoad {
   private kAt(s: number) { const f = Math.min(Math.max(s / ROAD_DS, 0), this.H.length - 2), i = Math.floor(f); return Math.abs(this.H[i + 1] - this.H[i]) / ROAD_DS; }
   private fc: number; private fs: number;   // the frame's rotation
 
-  constructor(readonly inp: CountryInput) {
+  constructor(readonly inp: CountryInput, ahead = false) {
     const { seed, city } = inp;
     this.key = `${inp.kind}/${seed}/${city}/${inp.frame.x.toFixed(2)},${inp.frame.z.toFixed(2)},${inp.frame.h.toFixed(4)}/${inp.dEst.toFixed(1)}`;
     this.fc = Math.cos(inp.frame.h); this.fs = Math.sin(inp.frame.h);
     const arrival = inp.kind === "arrival";
     this.toBiome = BIOME_OF[inp.toStyle.id]; this.fromBiome = arrival ? this.toBiome : BIOME_OF[inp.fromStyle.id];
+    this.job = this.build();
+    if (!ahead) this.finish();
+  }
+  // The rest of the road (its pieces, motion, geometry and heights): built at once, or (`ahead`) a
+  // piece at a time as the journey goes on (slices.ts; Journey.exitRoadAhead), and the rest at
+  // first use. Nothing else of it may be asked before it is built.
+  private job: Steps<void> | null;
+  get built() { return !this.job; }
+  prepare(pieces: number): boolean {
+    for (let i = 0; i < pieces && this.job; i++) if (this.job.next().done) this.job = null;
+    return !this.job;
+  }
+  finish() { if (this.job) { drain(this.job); this.job = null; } }
+  private *build(): Steps<void> {
+    const inp = this.inp, { seed, city } = inp, arrival = inp.kind === "arrival", self = this as Writable<CountryRoad>;
     const h = (k: number) => hash3(city, k, 0, seed, 0xc0a7);
     let SB = 0;
     if (!arrival) {
@@ -323,6 +341,7 @@ export class CountryRoad {
       if (dur > 200 && h(1) < 0.45) { const z0 = Math.max(900, estL * (0.15 + 0.1 * h(2))); if (z0 + 220 < estL - 700) this.zone = [z0, z0 + 220]; }
       // First pass: no stops, to see how far the drive goes.
       let m = this.simulate([], COUNTRY_VMAX, dur, 9, 0);
+      yield;
       const L1 = m.S[m.S.length - 1];
       const at = (k: number) => m.S[Math.min(m.S.length - 1, Math.floor(k * (m.S.length - 1)))];
       const truckstopS = dur > 70 ? Math.max(900, at(0.3 + 0.2 * h(3))) : -1;
@@ -348,6 +367,7 @@ export class CountryRoad {
       if (this.zone) this.pieces.push({ kind: "construction", s: this.zone[0] - 60, side: 1, len: this.zone[1] - this.zone[0] + 140, variant: 0 });
       m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
       if (this.ferry && this.ferry.s + FERRY_LEN > m.S[m.S.length - 1] - 700) {
+        yield;
         this.pieces.splice(this.pieces.findIndex((p) => p.kind === "ferry"), 1);
         this.planStops = this.planStops.filter((x) => x.kind !== "ferry"); this.ferry = null;
         m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
@@ -355,6 +375,7 @@ export class CountryRoad {
       SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
       // Into a freeway city, nothing that stops the truck or sprawls by the road out where the
       // freeway and the flyover are (the drive is replanned without it: it only gets longer).
+      yield;
       const fwClash = (p: RoadPiece) => inp.toFreeway && p.s + p.len > SB - 1150;
       if (this.pieces.some(fwClash)) {
         for (const p of this.pieces.filter(fwClash)) {
@@ -368,10 +389,11 @@ export class CountryRoad {
       }
       this.S = m.S; this.V = m.V; this.D = dur; this.stops = m.stops;
     }
-    this.SB = SB;
-    const L = this.gateS = SB + ARRIVE_LEN;
-    this.length = L + (inp.toFreewayMerge ? FW_OFF_D : 0);
-    this.landFrom = arrival ? 0 : LAND_SEAM; this.landTo = L - LAND_SEAM;
+    yield;
+    self.SB = SB;
+    const L = self.gateS = SB + ARRIVE_LEN;
+    self.length = L + (inp.toFreewayMerge ? FW_OFF_D : 0);
+    self.landFrom = arrival ? 0 : LAND_SEAM; self.landTo = L - LAND_SEAM;
     // Signs and the rest of the set pieces, wherever there is room (never near the cities, so
     // nothing the cities' ends can see depends on how long the drive turns out to be).
     if (!arrival) {
@@ -424,6 +446,7 @@ export class CountryRoad {
       extras.unshift(["billboards", 320]);   // billboards on every drive long enough for them
       let k = 0;
       for (const [kind, len] of extras) {
+        yield;
         for (let tries = 0; tries < 8 && hi - len > lo; tries++) {
           const s = lo + h(40 + k * 9 + tries) * (hi - len - lo);
           const [a, b] = pieceSpan({ kind, s, side: 1, len, variant: 0 });
@@ -464,6 +487,7 @@ export class CountryRoad {
       }
       if (moved) { const m = this.simulate(this.planStops, COUNTRY_VMAX, this.D, 9, 0); this.S = m.S; this.V = m.V; this.stops = m.stops; this.tractorRun = m.tractor; }
     }
+    yield;
     this.pieces.sort((a, b) => a.s - b.s);
     this.shapes = this.pieces.filter((p) => p.kind === "tunnel" || p.kind === "overpass");
     // Geometry: straight out of town, gentle curves, straight into the hand-over and the arrival
@@ -475,6 +499,7 @@ export class CountryRoad {
     const A = [0.0011 + 0.0011 * h(80), 0.0007 * h(81)], W = [2 * Math.PI / (700 + 500 * h(82)), 2 * Math.PI / (260 + 200 * h(83))], P = [h(84) * 6.3, h(85) * 6.3];
     let base = 0, wsum = 0;
     for (let i = 0; i < n; i++) {
+      if (i % 256 === 255) yield;
       const s = i * ROAD_DS;
       let mask = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / 120, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - (inp.toFreeway ? FW_STRAIGHT_IN : STRAIGHT_IN) - s) / 120, 0, 1));
       for (const p of this.pieces) {
@@ -489,6 +514,7 @@ export class CountryRoad {
     const turn = arrival ? 0 : Math.atan2(Math.sin(inp.endH - inp.frame.h), Math.cos(inp.endH - inp.frame.h));
     const corr = wsum > 1 ? (turn - base) / wsum : 0;
     let x = 0, z = 0, hd = 0;
+    yield;
     for (let i = 0; i < n; i++) {
       this.X[i] = x; this.Z[i] = z; this.H[i] = hd;
       hd += (kap[i] + corr * msk[i]) * ROAD_DS;
@@ -504,6 +530,7 @@ export class CountryRoad {
     const U = new Float64Array(n), grounds = this.pieces.map((p) => this.groundOf(p));
     let u = 0;
     for (let i = 0; i < n; i++) {
+      if (i % 128 === 127) yield;
       const s = i * ROAD_DS;
       let m = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / HILL_EASE, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - (inp.toFreeway ? FW_FLAT_IN : STRAIGHT_IN) - s) / HILL_EASE, 0, 1));
       for (const [g0, g1] of grounds) {
@@ -521,6 +548,7 @@ export class CountryRoad {
       const A1 = 16 * hilly, A2 = (4 + 4 * h(89)) * hilly;
       const a0 = HILLS[this.fromBiome], a1 = HILLS[this.toBiome];
       let steep = 0;
+      yield;
       for (let i = 0; i < n; i++) {
         const w = U[i] / Ut, amp = a0 + (a1 - a0) * smooth(THREE.MathUtils.clamp((w - 0.35) / 0.3, 0, 1));
         this.Y[i] = amp * (A1 * (1 - Math.cos(2 * Math.PI * k1 * w)) / 2 + A2 * (1 - Math.cos(2 * Math.PI * k2 * w)) / 2);
@@ -532,6 +560,7 @@ export class CountryRoad {
       if (this.nearFreeways) {
         const along = new Float64Array(n).fill(Infinity);
         for (let i = 0; i < n; i++) { this.center(i * ROAD_DS, this.tmpF); if (this.fwDist(this.tmpF.x, this.tmpF.z) < 45) along[i] = 0; }
+        yield;
         const spread = () => {
           for (let i = 1; i < n; i++) along[i] = Math.min(along[i], along[i - 1] + ROAD_DS);
           for (let i = n - 2; i >= 0; i--) along[i] = Math.min(along[i], along[i + 1] + ROAD_DS);

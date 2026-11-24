@@ -107,7 +107,10 @@ export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Ch
 const STOP_SIGN_PAUSE = 1.5;     // s the truck stands at a stop sign's line before going on
 const SWAP_GAP = 2.5;          // metres between the old truck's nose and the new truck's tail
 const WALK_SPEED = 1.35;
-const GATE_TRIM = STREET / 2;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
+const GATE_TRIM = STREET / 2;
+// The road out, built ahead over the steps after the way out is planned: EXIT_PIECES pieces a step
+// for EXIT_AHEAD steps (exitRoadAhead), whatever is left at its first use.
+const EXIT_AHEAD = 30, EXIT_PIECES = 6;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
 // The goals on faces long enough to stop along (CityGraph.hasFrontage), or all of them if none is.
 const fronted = (G: CityGraph, all: Goal[]) => { const f = all.filter((g) => G.hasFrontage(g.d)); return f.length ? f : all; };
 
@@ -118,6 +121,7 @@ interface JourneyState {
   departAt: number;                 // city time the truck left town (the end of its gate street), or -1
   departV: number; departS0: number; departTruck: TruckModel;   // its speed, how far onto the road it already was, and its truck
   exit: { gate: number; dEst: number } | null;   // the gate it is leaving by (its graph's gates) and the planned drive to the hand-over
+  exitStep?: number;   // the step the way out was planned on (its road is built from the next: exitRoadAhead)
   prev?: { gate: number; dEst: number; fromTruck: TruckModel; departAt: number; departV: number; departS0: number } | null;   // the last city's road out, to keep drawing it after the hand-over
   truck: TruckModel; mode: Mode; modeTime: number; dwellTotal: number; dwellDone: boolean;
   route: Route | null; s: number; v: number; at: { d: number; before: number; lane?: number };   // the dedge the truck is on, how far short of its end, and its lane (kerb unless said)
@@ -641,7 +645,7 @@ export class Journey {
       // city (never straight away from it), without stopping; the country road starts there.
       const plan = this.planExit();
       if (!plan) { this.log("no way out of town"); this.forceLeave(); return; }
-      st.route = plan.route; st.exit = { gate: plan.gate, dEst: plan.dEst };
+      st.route = plan.route; st.exit = { gate: plan.gate, dEst: plan.dEst }; st.exitStep = st.step;
       this.log(`leaving by gate ${plan.gate}, ${plan.route.edges.length} blocks, planned ${plan.dEst.toFixed(0)} s of road`);
     } else {
       // A dock stop pulls past its bay, ready to reverse in; a swap's path ends at the spare
@@ -1037,7 +1041,7 @@ export class Journey {
   // One fixed step of the simulation, then street life.
   step() {
     const x0 = this.pose.x, z0 = this.pose.z, h0 = this.pose.h, city = this.st.city;
-    this.stepJourney(); this.hitchStep(x0, z0, h0, city); this.life?.step(this); this.prefetch();
+    this.stepJourney(); this.hitchStep(x0, z0, h0, city); this.life?.step(this); this.prefetch(); this.exitAhead();
   }
   // A tractor's trailer, as it swings behind on a turn (the same tractrix truck.ts draws: its
   // axles dragged along the line to the kingpin), stepped with the journey so that street life
@@ -1540,22 +1544,40 @@ export class Journey {
   // the motion it actually has once the truck is on it.
   private exitCache: { key: string; road: CountryRoad; motion: string } | null = null;
   get exitRoad(): CountryRoad | null {
-    const st = this.st;
-    if (!st.exit) return null;
-    const key = `${this.cfg.seed}/${st.city}/${st.exit.gate}/${st.exit.dEst}`;
-    if (!this.exitCache || this.exitCache.key !== key) this.exitCache = { key, road: this.makeExitRoad(st.city, st.exit.gate, st.exit.dEst, st.truck), motion: "" };
-    const c = this.exitCache;
+    const c = this.exitEntry(false), st = this.st;
+    if (!c) return null;
+    c.road.finish();   // (whatever is left of it, built ahead: exitAhead)
     if (st.departAt >= 0) {
       const m = `${st.departAt.toFixed(1)}/${st.departV}/${st.departS0}`;
       if (c.motion !== m) { c.road.setMotion(this.period - st.departAt, st.departV, st.departS0); c.motion = m; }
     }
     return c.road;
   }
+  private exitEntry(ahead: boolean) {
+    const st = this.st;
+    if (!st.exit) return null;
+    const key = `${this.cfg.seed}/${st.city}/${st.exit.gate}/${st.exit.dEst}`;
+    if (!this.exitCache || this.exitCache.key !== key) this.exitCache = { key, road: this.makeExitRoad(st.city, st.exit.gate, st.exit.dEst, st.truck, ahead), motion: "" };
+    return this.exitCache;
+  }
+  // The road out for what is drawn ahead of the drive: EXIT_AHEAD steps after the way out is
+  // planned (or once the truck is on it). In the steps between, the journey builds it a few pieces
+  // a step (exitAhead), so neither planning the way nor building its road takes one frame long.
+  // (From the journey's state, so a scrub finds it the same.)
+  get exitRoadAhead(): CountryRoad | null {
+    const st = this.st;
+    return st.exit && (st.departAt >= 0 || st.step > (st.exitStep ?? -1) + EXIT_AHEAD) ? this.exitRoad : null;
+  }
+  private exitAhead() {
+    const st = this.st;
+    if (!st.exit || st.departAt >= 0 || st.step <= (st.exitStep ?? Infinity) || st.step > st.exitStep! + EXIT_AHEAD) return;
+    this.exitEntry(true)!.road.prepare(EXIT_PIECES);
+  }
   // The last city's road out, while it is still at hand (continuous playback: main.ts keeps drawing
   // it behind the truck after the hand-over).
   // City N's road out by gate `gate` (a pure function of the seed and these: the gate is its graph's,
   // so the city's plan is built for it, the last city's too after a seek).
-  private makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel): CountryRoad {
+  private makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel, ahead = false): CountryRoad {
     const gt = this.planOf(N).graph.gates[gate], e = gt ? gateEnd(gt) : gateEndSlot(entryGateOf(citySeedOf(this.cfg.seed, N))), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
     const toStyle = this.styleOf(N1), fromStyle = this.styleOf(N);
     const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
@@ -1567,7 +1589,7 @@ export class Journey {
       seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
-    });
+    }, ahead);
   }
   // The last city's road out, while it is still at hand: main.ts keeps drawing it behind the truck
   // after the hand-over. From the journey state, so a seek within this city finds it too.

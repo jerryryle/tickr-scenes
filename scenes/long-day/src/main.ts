@@ -625,7 +625,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return { ...r, dx: 0, dz: 0 };
   }
   function pickRoad0(): { road: CountryRoad; u: number; s: number } | null {
-    const st = journey.st, ex = journey.exitRoad, p = journey.pose;
+    const st = journey.st, ex = journey.exitRoadAhead, p = journey.pose;
     if (ex) {
       if (st.mode === "country") { const u = journey.countryU + journey.frac; return { road: ex, u, s: ex.sAt(Math.max(0, u)) }; }
       ex.center(0, tmpPose);
@@ -780,7 +780,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
     // A metro city's elevated lines out of town, clear of these roads.
     {
-      const rr = [{ road: journey.arrivalRoad, dx: 0, dz: 0 }], ex = journey.exitRoad, pv = journey.previousExit;
+      const rr = [{ road: journey.arrivalRoad, dx: 0, dz: 0 }], ex = journey.exitRoadAhead, pv = journey.previousExit;
       if (ex) rr.push({ road: ex, dx: 0, dz: 0 });
       if (pv && pv !== ex) { pv.center(pv.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2); rr.push({ road: pv, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }); }
       elevatedReach.update(journey.plan, rr);
@@ -793,7 +793,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       freewayReach.cover(inbound ? (roadShown === journey.arrivalRoad ? ARRIVE_LEN : FW_TIP) : 0);
       const t = journey.st.simTime + journey.frac, cam = engine.camera.position;
       cityCars.update(journey.plan.freewayFrame, t, cam, false);
-      const ahead = roadShown && roadShown === journey.exitRoad && roadShown.inp.toFreeway ? roadShown : null;
+      const ahead = roadShown && roadShown === journey.exitRoadAhead && roadShown.inp.toFreeway ? roadShown : null;
       if (ahead && roadFrame?.road !== ahead) roadFrame = { road: ahead, F: Frame.ofRoad(ahead) };
       roadCars.update(ahead ? roadFrame!.F : null, t, cam, true);
     }
@@ -837,7 +837,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   }
 
   function backdropState(pr: { road: CountryRoad; s: number } | null): { city: number; p: number } {
-    const st = journey.st, ex = journey.exitRoad;
+    const st = journey.st, ex = journey.exitRoadAhead;
     const rise = (d: number) => 1 - smooth(THREE.MathUtils.clamp(d / 1000, 0, 1));
     if (pr && ex && pr.road === ex) {
       const s = pr.s, L = ex.gateS, fall = (x: number) => 1 - smooth(THREE.MathUtils.clamp((x - 100) / 500, 0, 1));

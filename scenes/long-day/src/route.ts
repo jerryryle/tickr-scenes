@@ -116,10 +116,12 @@ const SMOOTH_DD_MAX = 10 / Math.sqrt(3);   // peak |smoothDD|
 // The unit turn through `ang`: peak curvature 1, each spiral turning the same share of it as
 // TURN_SPIRAL is of a right angle. Tabulated once per angle (position in the turn's own frame: x
 // forward, y left); a turn of corner distance T (from where it starts to the corner of its two
-// straight lines) is this scaled by T / unit.T.
+// straight lines) is this scaled by T / unit.T. (Each step of the table by two-point Gauss-Legendre:
+// an organic town has a new angle at nearly every junction, so a route's turns tabulate a good
+// many, and the journey works them out within one of its steps.) The last TURN_UNITS_MAX kept.
 const TURN_SPIRAL = 22 * Math.PI / 180;
 interface TurnUnit { len: number; N: number; xs: Float64Array; ys: Float64Array; hAt: (u: number) => number; kAt: (u: number) => number; T: number }
-const TURN_UNITS = new Map<number, TurnUnit>();
+const TURN_UNITS = new Map<number, TurnUnit>(), TURN_UNITS_MAX = 2048;
 function turnUnit(ang: number): TurnUnit {
   const key = Math.round(ang * 1e6);
   const hit = TURN_UNITS.get(key);
@@ -128,14 +130,16 @@ function turnUnit(ang: number): TurnUnit {
   const hAt = (u: number) => u < ls ? u * u / (2 * ls) : u <= ls + arc ? ls / 2 + (u - ls) : ang - (len - u) * (len - u) / (2 * ls);
   const kAt = (u: number) => u < ls ? u / ls : u <= ls + arc ? 1 : (len - u) / ls;
   const xs = new Float64Array(N + 1), ys = new Float64Array(N + 1);
-  const sub = 16, du = len / (N * sub);
+  const d = len / N, g = d / (2 * Math.sqrt(3)), w = d / 2;
   let x = 0, y = 0;
   for (let i = 0; i < N; i++) {
-    for (let j = 0; j < sub; j++) { const h = hAt((i * sub + j + 0.5) * du); x += Math.cos(h) * du; y += Math.sin(h) * du; }
+    const m = (i + 0.5) * d, ha = hAt(m - g), hb = hAt(m + g);
+    x += (Math.cos(ha) + Math.cos(hb)) * w; y += (Math.sin(ha) + Math.sin(hb)) * w;
     xs[i + 1] = x; ys[i + 1] = y;
   }
   // The corner: where the start's line (y = 0) meets the end's (through (x, y) on heading ang).
   const u: TurnUnit = { len, N, xs, ys, hAt, kAt, T: x - y * Math.cos(ang) / Math.sin(ang) };
+  if (TURN_UNITS.size >= TURN_UNITS_MAX) TURN_UNITS.delete(TURN_UNITS.keys().next().value!);
   TURN_UNITS.set(key, u);
   return u;
 }
