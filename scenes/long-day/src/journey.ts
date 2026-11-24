@@ -1,12 +1,18 @@
 // The journey: an endless chain of jobs, simulated independently of rendering.
 //
-// Time is deterministic and seekable. The journey runs on a fixed clock of SIM_DT steps, and
-// every city has a fixed slot of the timeline: city N starts at N * period (period =
-// cityMinutes + countrySeconds), runs its jobs, departs, and the country drive fills the rest of
-// the slot. A city's starting state (truck, freight carried in, route start) is a pure function
-// of the journey seed and N, so any moment of the journey can be reached by simulating its city
-// from the start; within the current city, keyframes every KEYFRAME_STEPS make seeking (and
-// scrubbing backwards) instant. Saved progress is just the journey time.
+// Time is deterministic and seekable. The journey runs on a fixed clock of SIM_DT steps. Each city
+// aims to take about `period` (cityMinutes + countrySeconds): its jobs are planned to end in time
+// to leave, and the road out is laid for the drive left to the slot's nominal end (dEst). But that
+// is a guideline, not a deadline: running late, the truck finishes what it is doing and leaves,
+// the drive out takes the time its road was laid for, and the next city starts when the truck gets
+// there (cityStart). A city's starting state (truck, freight carried in, route start) is a pure
+// function of the journey seed and N, so a city is replayed from its start; the starts of the
+// cities played so far are kept (starts), and within a city keyframes every KEYFRAME_STEPS make
+// seeking (and scrubbing backwards) instant. A seek past what has been played plays on to it,
+// every city between included (slow, far ahead in the preview; a board never seeks). A journey started at time t (tests, test renders)
+// takes t's city at its nominal start, N * period; it gets there before street life is attached
+// (main.ts), so where that crosses a hand-over, the next city starts where a run without traffic
+// would put it, not where a board's continuous play does.
 //
 // A job picks up one consignment at a source facility and delivers it in one to three drops;
 // every unit loaded is tagged with the drop it belongs to, so loads and unloads always balance
@@ -122,7 +128,7 @@ interface JourneyState {
   departV: number; departS0: number; departTruck: TruckModel;   // its speed, how far onto the road it already was, and its truck
   exit: { gate: number; dEst: number } | null;   // the gate it is leaving by (its graph's gates) and the planned drive to the hand-over
   exitStep?: number;   // the step the way out was planned on (its road is built from the next: exitRoadAhead)
-  prev?: { gate: number; dEst: number; fromTruck: TruckModel; departAt: number; departV: number; departS0: number } | null;   // the last city's road out, to keep drawing it after the hand-over
+  prev?: { gate: number; dEst: number; fromTruck: TruckModel; departAt: number; departV: number; departS0: number; countryD?: number } | null;   // the last city's road out, to keep drawing it after the hand-over
   truck: TruckModel; mode: Mode; modeTime: number; dwellTotal: number; dwellDone: boolean;
   route: Route | null; s: number; v: number; at: { d: number; before: number; lane?: number };   // the dedge the truck is on, how far short of its end, and its lane (kerb unless said)
   stopS: number; backS: number;     // where the truck stops, and where it reverses to (dock stops)
@@ -131,7 +137,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
+  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; countryD?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -223,12 +229,22 @@ export class Journey {
   }
 
   get period() { return journeyPeriod(this.cfg); }
-  cityAt(t: number) { return Math.max(0, Math.floor(t / this.period + 1e-9)); }
+  // When city N started (or, not reached yet, will at the earliest: its nominal start, N * period,
+  // or later), and the city under journey time t: the last one started by then, of those played.
+  private starts = new Map<number, number>();
+  cityStart(N: number) { return this.starts.get(N) ?? N * this.period; }
+  cityAt(t: number) {
+    if (!this.starts.size) return Math.max(0, Math.floor(t / this.period + 1e-9));
+    let best = -1, bt = -Infinity;
+    for (const [N, s] of this.starts) if (s <= t + 1e-9 && s > bt) { bt = s; best = N; }
+    // (Before every city played: by the nominal starts, as a journey started there would take it.)
+    return best >= 0 ? best : Math.max(0, Math.floor(t / this.period + 1e-9));
+  }
 
   // ---- city starts --------------------------------------------------------------------------
   // City N's starting state, from the seed alone: it enters at the same edge every time, in the
   // truck its freight needs, with that freight bound for a receiver near the entrance.
-  private entryState(N: number): JourneyState {
+  private entryState(N: number, at?: number): JourneyState {
     const citySeed = citySeedOf(this.cfg.seed, N);
     this.climate = this.climateOf(N);
     this.plan = this.planOf(N);
@@ -237,7 +253,8 @@ export class Journey {
     for (const c of [...this.frames.keys()]) if (this.keepNeighbours ? Math.abs(c - N) > 1 : c !== N) this.frames.delete(c);
     this.path = null; this.chores = [];
     this.accel = 0; this.lastStep = 0; this.lightAhead = "-";   // (as a journey starting here has them)
-    const start = N * this.period;
+    const start = at ?? this.cityStart(N);
+    this.starts.set(N, start);
     const freight = this.freightFor(N);
     // In through the entry gate: the slot starts on the highway, ARRIVE_DUR seconds out.
     const gate = this.plan.entryGate, inward = (gate.dir + 2) % 4;
@@ -319,7 +336,7 @@ export class Journey {
     t = Math.max(0, t);
     const N = this.cityAt(t);
     if (N === this.st.city && t >= this.st.simTime - 1e-9) { this.advanceTo(t); this.settlePrev(); return; }
-    const f = this.frames.get(N), target = Math.floor((t - N * this.period) / SIM_DT + 1e-6);
+    const f = this.frames.get(N), target = Math.floor((t - this.cityStart(N)) / SIM_DT + 1e-6);
     let best = -1;
     if (f) for (const k of f.k.keys()) if (k <= target && k > best) best = k;
     if (best >= 0) {
@@ -1099,11 +1116,11 @@ export class Journey {
   private stepJourney() {
     const dt = SIM_DT;
     this.settlePrev();
-    // The slot's end: the next city starts, exactly as its seed says.
-    if (this.st.simTime + 1e-6 >= (this.st.city + 1) * this.period) {
+    // The drive out over: the next city starts, exactly as its seed says, now.
+    if (this.st.mode === "country" && this.st.cityTime + 1e-6 >= this.st.departAt + this.countryLength) {
       const old = this.st, fromTruck = this.exitRoad?.inp.fromTruck ?? old.truck;
-      this.entryState(this.st.city + 1);
-      if (old.exit && old.departAt >= 0) this.st.prev = { gate: old.exit.gate, dEst: old.exit.dEst, fromTruck, departAt: old.departAt, departV: old.departV, departS0: old.departS0 };
+      this.entryState(this.st.city + 1, old.simTime);
+      if (old.exit && old.departAt >= 0) this.st.prev = { gate: old.exit.gate, dEst: old.exit.dEst, fromTruck, departAt: old.departAt, departV: old.departV, departS0: old.departS0, countryD: old.countryD };
       this.log(`arrived in city ${this.st.city}`);
       this.placePose();
       this.settlePrev();
@@ -1450,13 +1467,15 @@ export class Journey {
 
   // The city's time is nearly up and the truck hasn't left: anything still aboard for this city is
   // handed to another driver and it heads out of town now (between stops: a stop in progress is
-  // finished first). Normally the final pickup finishes well before this. As a last resort, with
-  // no time left to drive out, it is put on the road at a gate (a jump; never seen in tests).
+  // finished first, and a stop it is on its way to is still made). Normally the final pickup
+  // finishes well before this. Running late is no matter: the next city waits for the truck. Only
+  // as a last resort, still in town at twice the city's time (something wrong), is it put on the
+  // road at a gate (a jump; never seen in tests).
   private deadline() {
     const st = this.st;
     if (st.mode === "country" || st.mode === "inbound") return;
     const [bx, bz] = this.truckBlock();
-    if (st.cityTime >= this.period - COUNTRY_MIN) { this.log("out of time: forced onto the road"); this.forceLeave(); return; }
+    if (st.cityTime >= 2 * this.period) { this.log("out of time: forced onto the road"); this.forceLeave(); return; }
     if (st.mode !== "drive" || st.stops.some((x) => x.kind === "depart")) return;
     // (Long before the end, no drive out could be long enough: not worth timing it every step.)
     if (st.cityTime < this.period - COUNTRY_MIN - GATE_MAX - 150 || st.cityTime < this.period - COUNTRY_MIN - this.gateTime(this.fromTruck()) - (this.path ? 150 : 40)) return;
@@ -1528,10 +1547,14 @@ export class Journey {
     const st = this.st;
     st.mode = "country"; st.modeTime = 0; st.departAt = st.cityTime; st.departTruck = st.truck;
     st.departV = st.v; st.departS0 = s0;
+    // (As long as the road was laid for, or as long as it takes: country.ts fitDuration.)
+    const road = this.exitEntry(false)?.road;
+    if (road) road.finish();
+    st.countryD = road ? road.fitDuration(Math.max(COUNTRY_MIN, st.exit?.dEst ?? COUNTRY_MIN), st.v, s0) : undefined;
     st.spare = null; st.parked = null; st.dockExit = null; st.lastDock = null; st.garageExit = null; st.intercity = true;
     st.stops = st.stops.filter((s) => s.kind !== "depart");
     this.path = null; st.route = null;
-    this.log(`leaving for the country: ${(this.period - st.departAt).toFixed(0)} s to the next city's road`);
+    this.log(`leaving for the country: ${this.countryLength.toFixed(0)} s to the next city's road`);
     this.countryPose();
   }
   private forceLeave() {
@@ -1558,7 +1581,7 @@ export class Journey {
     c.road.finish();   // (whatever is left of it, built ahead: exitAhead)
     if (st.departAt >= 0) {
       const m = `${st.departAt.toFixed(1)}/${st.departV}/${st.departS0}`;
-      if (c.motion !== m) { c.road.setMotion(this.period - st.departAt, st.departV, st.departS0); c.motion = m; }
+      if (c.motion !== m) { c.road.setMotion(this.countryLength, st.departV, st.departS0); c.motion = m; }
     }
     return c.road;
   }
@@ -1612,7 +1635,7 @@ export class Journey {
     const key = `${this.cfg.seed}/${st.city - 1}/${p.gate}/${p.dEst}/${p.fromTruck}/${p.departAt}/${p.departV}/${p.departS0}`;
     if (!this.prevCache || this.prevCache.key !== key) {
       const road = this.makeExitRoad(st.city - 1, p.gate, p.dEst, p.fromTruck);
-      road.setMotion(this.period - p.departAt, p.departV, p.departS0);
+      road.setMotion(p.countryD ?? Math.max(COUNTRY_MIN, p.dEst), p.departV, p.departS0);
       this.prevCache = { key, road };
     }
     return this.prevCache.road;
@@ -1696,7 +1719,8 @@ export class Journey {
       this.path = null; st.route = null;
     }
   }
-  get countryLength() { return this.st.departAt < 0 ? 0 : this.period - this.st.departAt; }
+  // The drive out: as long as its road was laid for (dEst, from when the way out was planned).
+  get countryLength() { return this.st.departAt < 0 ? 0 : this.st.countryD ?? Math.max(COUNTRY_MIN, this.st.exit?.dEst ?? COUNTRY_MIN); }
 
   snapshot(): JourneyState { return this.st; }
   get keyframeCount() { return this.frames.get(this.st.city)?.k.size ?? 0; }

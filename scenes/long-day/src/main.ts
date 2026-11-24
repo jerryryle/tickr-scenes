@@ -695,10 +695,10 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   // Is tick k on a snapshot boundary (every 10 s of a city's time, the journey's keyframes)?
   function onBoundary(k: number) {
     const N = journey.cityAt(k / TICK_HZ);
-    return N === journey.st.city && (k - Math.round(N * journey.period * TICK_HZ)) % SNAP_TICKS === 0;
+    return N === journey.st.city && (k - Math.round(journey.cityStart(N) * TICK_HZ)) % SNAP_TICKS === 0;
   }
   function boundaryAtOrBefore(k: number) {
-    const N = journey.cityAt(k / TICK_HZ), k0 = Math.round(N * journey.period * TICK_HZ);
+    const N = journey.cityAt(k / TICK_HZ), k0 = Math.round(journey.cityStart(N) * TICK_HZ);
     return k0 + Math.floor((k - k0) / SNAP_TICKS) * SNAP_TICKS;
   }
   function tick() {

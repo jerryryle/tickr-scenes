@@ -246,10 +246,11 @@ export class Path {
     const st0 = G.streets[d >> 1], P0 = G.facePt(d, st0.len - route.before, -st0.half);
     let lx = P0.x, lz = P0.z, lh = P0.h;
     const along = (x: number, z: number) => (x - lx) * Math.cos(lh) - (z - lz) * Math.sin(lh);
-    const pushLine = (len: number, o1: number) => {
+    const pushLine = (len: number, o1: number, must = false) => {
       len = Math.max(0, len);
-      // (A lane change needs room: on a leg too short for one, it stays in its lane.)
-      if (len < MIN_CHANGE) o1 = lo;
+      // (A lane change needs room: on a leg too short for one, it stays in its lane. Unless it must
+      // change: then in what room there is.)
+      if (len < MIN_CHANGE && !must) o1 = lo;
       // Only two lanes, so a line changes lane at most once: none when both ends share one.
       let c0 = 0, tc = 0;
       if (lo !== o1) {
@@ -338,7 +339,10 @@ export class Path {
     }
     // Final leg to the stop point, `after` metres along the last dedge from the node it leaves.
     const stE = G.streets[d >> 1], PE = G.facePt(d, route.after, -stE.half);
-    pushLine(along(PE.x, PE.z), LANE_KERB);
+    // (Up into a garage, from the kerb lane always, as its way in starts there: else, a last leg too
+    // short to change lanes on left in the inner lane, the path would jump 3 m across to it. Seed
+    // 500's city 11, out of a bend in the inner lane 9.7 m short of the garage's turn.)
+    pushLine(along(PE.x, PE.z), LANE_KERB, !!route.garageIn);
     this.endEdge = d; this.endA = route.after; this.endLane = lo;
     if (route.garageIn) {
       // On into a garage and up onto its roof, from the kerb lane where the street leg ends.

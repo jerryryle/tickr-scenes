@@ -614,6 +614,20 @@ export class CountryRoad {
     return out;
   }
 
+  // How long the drive out takes, starting `s0` metres in at `v0`: `D` (as the road was laid for),
+  // or longer, as long as it takes to reach the hand-over at cruising speed with all its stops (a
+  // weigh station or a cattle crossing laid after the road's length: seed 500's road out of city 2
+  // was 592 m short in its 222 s). The next city waits for it (journey.ts).
+  fitDuration(D: number, v0: number, s0: number) {
+    if (this.inp.kind === "arrival") return D;
+    let d = D;
+    for (let k = 0; k < 6; k++) {
+      const m = this.simulate(this.planStops, COUNTRY_VMAX, d, v0, s0), short = this.SB - m.S[m.S.length - 1];
+      if (short < 1) break;
+      d = Math.ceil((d + short / COUNTRY_VMAX + 2) * 10) / 10;
+    }
+    return d;
+  }
   // The drive as it actually goes: `D` seconds from the gate to the hand-over, starting `s0` metres
   // in at `v0`, ending exactly at SB at V_JOIN (the cruising speed is what gives).
   setMotion(D: number, v0: number, s0: number) {

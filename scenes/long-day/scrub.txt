@@ -21,3 +21,10 @@ DEBUG_SCRUBTEST=30 DEBUG_SEED=1 DEBUG_SKIP_MINUTES=12.92 DEBUG_HOUR=10.3 DEBUG_C
 # lands while they run in and lift them. If the journey changes and this stops covering it, find the
 # rescue again in a longer DEBUG_CAMLOG render (TICK lines whose shot is clowns/clowns) and move the skip.
 DEBUG_SCRUBTEST=50 DEBUG_SEED=11 DEBUG_SKIP_MINUTES=309.9 DEBUG_HOUR=18 DEBUG_CLIMATE=autumn/clear
+
+# A hand-over from one city to the next, which starts when the truck gets there (journey.ts
+# cityStart; about 1914 s in, not the old fixed slot's 1845): from 30:00 in the first city (a start
+# past 1845 s would be the next city's, at its nominal start), played across it, 114 s in, to 160 s,
+# then scrubbed back across it to 80 s. If the journey changes and the hand-over moves, find it
+# again in a DEBUG_CAMLOG render ("arrived in city 1") and move the skip.
+DEBUG_SCRUBTEST=160 DEBUG_SEED=659803215 DEBUG_SKIP_MINUTES=30 DEBUG_HOUR=12 DEBUG_CLIMATE=autumn/clear

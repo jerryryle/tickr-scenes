@@ -376,6 +376,7 @@ export interface CityOpts extends OrganicOpts {
   move?: (bx: number, bz: number) => [number, number];
   relax?: (bx: number, bz: number) => number;
   riverLine?: [number, number][];                 // the river's line given (else, with `river`, one that meanders)
+  bridge?: (x: number, z: number) => boolean;     // a street across the river with its middle here always crosses it on a bridge (the lines kept straight: the freeway's, a cable car's)
   rings?: CityRing[];                             // roundabouts and circuses, at (or near) their places: the first clear of the rest
   ringNames?: string[];                           // (with candidate places for rings: as many as these, named so in turn, three to five streets in)
   parks?: [number, number][];                     // superblock parks: four blocks each, (bx, bz) to (bx+1, bz+1), the streets between them left out
@@ -670,8 +671,10 @@ export function* cityGraphSteps(o: GridOpts, seed: number, x: CityOpts = {}): St
       const bank = (v: number) => onEdge(verts[v]) || [...(cellsAt.get(v) ?? [])].some((c) => !water.has(c));
       const bridges = new Set<string>(), between = new Map<string, FE[]>();
       for (const e of fe) { const s = [...sidesOf.get(mk(e.a, e.b))!]; if (s.length === 2) { const k = mk(s[0], s[1]); between.set(k, [...(between.get(k) ?? []), e]); } }
-      // (An avenue crossing it always on a bridge: its line passes between the two cells.)
-      const avCross = (e: FE) => avLines.some(({ line }) => avOff((verts[e.a][0] + verts[e.b][0]) / 2, (verts[e.a][1] + verts[e.b][1]) / 2, line) < BLOCK * 0.6);
+      // (An avenue crossing it always on a bridge: its line passes between the two cells. So does a
+      // line the town keeps straight, x.bridge: a freeway's street, its off-ramp leading on into town
+      // along it, would else stop at the water, and a cable car's tracks with it.)
+      const avCross = (e: FE) => { const mx = (verts[e.a][0] + verts[e.b][0]) / 2, mz = (verts[e.a][1] + verts[e.b][1]) / 2; return avLines.some(({ line }) => avOff(mx, mz, line) < BLOCK * 0.6) || !!x.bridge?.(mx, mz); };
       let since = 0;
       for (let i = 0; i + 1 < chain.length; i++) for (const e of between.get(mk(chain[i], chain[i + 1])) ?? []) {
         if (!bank(e.a) || !bank(e.b)) continue;

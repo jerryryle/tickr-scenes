@@ -174,7 +174,7 @@ import { Journey } from "../src/journey.ts";
   for (const i of order) { const a = Date.now(); q.seekTo(i * DT); seekMax = Math.max(seekMax, Date.now() - a); if (sig(q) !== checks.get(i)) { seekBad++; err(`seek ${(i * DT).toFixed(1)}: ${sig(q)} != ${checks.get(i)}`); } }
   const seekMs = (Date.now() - t0) / order.length;
   let back = 0;
-  for (const i of [...checks.keys()].filter((i) => Math.floor(i * DT / j.period) === j.st.city)) { j.seekTo(i * DT); back++; if (sig(j) !== checks.get(i)) err(`back seek ${(i * DT).toFixed(1)}: ${sig(j)} != ${checks.get(i)}`); }
+  for (const i of [...checks.keys()].filter((i) => j.cityAt(i * DT) === j.st.city && i * DT >= j.cityStart(j.st.city))) { j.seekTo(i * DT); back++; if (sig(j) !== checks.get(i)) err(`back seek ${(i * DT).toFixed(1)}: ${sig(j)} != ${checks.get(i)}`); }
   const restore = `seeks ${order.length - seekBad}/${order.length} ok, ${seekMs.toFixed(0)} ms avg, ${seekMax} max; back ${back}`;
   j.seekTo(n * DT);
   const st = j.st;

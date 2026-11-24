@@ -249,6 +249,9 @@ export class CityPlan {
     const seaW = SLs.sea === null ? undefined : { side: SLs.sea, inSea: (xx: number, zz: number) => SLs.inSea(xx, zz) };
     return yield* cityGraphSteps(opts, seed, { move, cuts, sea: seaW,
       riverLine: river === undefined ? undefined : [[at0(CITY_LO), at0(river) + BLOCK / 2], [at0(CITY_HI + 1), at0(river) + BLOCK / 2]],
+      // (The river runs west to east: across a freeway coming in from the north or south, and its
+      // band either side, and across a cable car's column, always on a bridge.)
+      bridge: (mx, mz) => { const ix = Math.round(li(mx)), iz = Math.round(li(mz)); return onFw(ix, iz) || opts.cableColumn(ix); },
       parks: this.superParks(straight, river, fl.circuses), diagonals: fl.diagonals,
       rings: fl.circuses.map((c) => ({ x: at0(c.ix), z: at0(c.iz), name: c.name, n: c.round ? 4 : 8, r: c.round ? 30 : 45, oneway: !!c.round, arms: 8 })),
       drop: {
