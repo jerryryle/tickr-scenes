@@ -73,7 +73,7 @@ export function buildCarried(id: string, material: THREE.Material, n = 1, varian
     load.animate = (t) => { head.position.set(0.1, 0.78 + Math.max(0, Math.sin(t * 2.2)) * 0.3, 0); };
   }
   if (id === "toilet") {
-    const db = new Batch(); db.box(0, 0.95, 0.4, 0.04, 1.9, 0.8, 0x1f6ab8);
+    const db = new Batch(); db.box(0, 0.955, 0.4, 0.04, 1.89, 0.8, 0x1f6ab8);   // (a cm off the cabin's foot: shared planes flicker)
     const door = new THREE.Group(); door.add(db.build(material)!); door.position.set(0.56, 0, -0.4); group.add(door);
     load.animate = (t) => { door.rotation.y = -0.6 - 0.5 * Math.sin(t * 2.7); };
   }

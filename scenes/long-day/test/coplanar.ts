@@ -3,9 +3,11 @@
 // the camera moves. Built here, with each triangle tagged with the functions that drew it
 // (wrapping Batch's primitives): every chunk of every city (city.ts makeCityChunkBuilder: blocks,
 // streets, the outskirts ring, freeways, elevated lines); the models not built into chunks, each
-// on its own (cars, boats, the trucks, the people and animals, the traffic, the trains, the ships
-// and harbour at sea); and the country roads between the cities (countryworld.ts), a stretch at a
-// time. Every pair of triangles facing the same way is checked, neighbouring chunks included: if
+// on its own (cars, boats, the trucks closed and opened up, the driver and dock worker in each
+// pose they take, the crew's gear, every cargo model and carried load, the animals, pedestrians,
+// traffic, trains, and the ships and harbour at sea); and the country roads between the cities
+// (countryworld.ts), a stretch at a time. Instanced meshes count each instance as placed; a
+// two-sided material's faces count both ways. Every pair of triangles facing the same way is checked, neighbouring chunks included: if
 // they lie within GAP of one plane and overlap by more than AREA, and differ in colour or material
 // (two alike look the same whichever wins), that is a clash. Faces facing each other on one plane
 // don't count: the materials draw front faces only, so one of the two is always culled; nor do
@@ -19,7 +21,9 @@
 // a city's index to sweep just that one (-1 or "": all; given, the models and roads are left
 // out), a piece of a clash's description ("buildPark", "#f2c200") to print the triangles of the
 // first few such clashes ("each": the first in sight of each pair of functions; with a
-// description, also what each ray met), and how many country roads (default 3)
+// description, also what each ray met), and how many country roads (default 3).
+// COPLANAR_SEASON in the environment ("winter/snow") builds the cities and roads in that season;
+// built with --define DEBUG_LAYOUT=..., DEBUG_ONEWAY, DEBUG_EXIT or DEBUG_SEA, in that layout.
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
@@ -33,7 +37,12 @@ import type { BoatKind } from "../src/boats.ts";
 import { BLOCK, RING } from "../src/grid.ts";
 import { Truck, TruckKit } from "../src/truck.ts";
 import type { TruckModel } from "../src/truck.ts";
-import { Character, DRIVER_LOOK, WORKER_LOOK } from "../src/character.ts";
+import { Character, DRIVER_LOOK, WORKER_LOOK, gesturePose, idlePose, restPose, seatedPose, stoopFor, walkPose } from "../src/character.ts";
+import { Crew } from "../src/crew.ts";
+import { CARGO_MODELS } from "../src/cargomodels.ts";
+import { CARGO } from "../src/cargo.ts";
+import { buildCarried } from "../src/loads.ts";
+import type { Season } from "../src/climate.ts";
 import { Cow, Horse, Tractor } from "../src/farm.ts";
 import { Figures } from "../src/figure.ts";
 import { Traffic } from "../src/traffic.ts";
@@ -44,6 +53,9 @@ import { CountryWorld } from "../src/countryworld.ts";
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const SEED = argv[0] ? Number(argv[0]) : 1, CITIES = argv[1] ? Number(argv[1]) : 6;
 const GAP = argv[2] ? Number(argv[2]) : 0.001, FAIL_GAP = 0.001;
+// (Environment: COPLANAR_SEASON, e.g. "winter/snow", builds the cities and roads in that season
+// and weather instead of autumn's.)
+const SEASON = ((proc.env.COPLANAR_SEASON as string | undefined) ?? "autumn/clear").split("/") as [Season, string];
 const ONLY = argv[3] ? Number(argv[3]) : -1;   // just this city (0-based), to look closer
 const DETAIL = argv[4] ?? "";                  // print the triangles of the first few clashes whose key has this in it
 let detailed = 0, DEBUG_RAYS = false;
@@ -105,29 +117,42 @@ function trianglesOf(root: THREE.Object3D, out: Tri[]) {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh || !mesh.visible) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    if (mats.some((m) => m.transparent || m.side !== THREE.FrontSide || !m.depthTest || !m.depthWrite)) return;   // (sorted, blended or two-sided: not this test's)
+    if (mats.some((m) => (m.transparent && !m.depthWrite) || !m.depthTest || !m.depthWrite)) return;   // (blended without depth: no z-fight)
+    const both = mats.some((m) => m.side === THREE.DoubleSide);   // (seen from either side: each face both ways)
     // (Materials told apart by how they shade: the shared vertex-coloured Lambert ones look alike.)
     const mk = `${mats[0].type}:${(mats[0] as any).map ? (mats[0] as any).map.uuid : ""}`;
     const mat = matIds.get(mk) ?? (matIds.set(mk, matIds.size), matIds.size - 1);
     const g = mesh.geometry, pos = g.attributes.position, col = g.attributes.color, idx = g.index;
     const mc = (mats[0] as any).color as THREE.Color | undefined;
     const count = idx ? idx.count : pos.count, S = mesh.userData.sites as [number, string][] | undefined;
-    for (let i = 0; i + 2 < count; i += 3) {
-      const ia = idx ? idx.getX(i) : i, ib = idx ? idx.getX(i + 1) : i + 1, ic = idx ? idx.getX(i + 2) : i + 2;
-      v[0].fromBufferAttribute(pos, ia).applyMatrix4(mesh.matrixWorld);
-      v[1].fromBufferAttribute(pos, ib).applyMatrix4(mesh.matrixWorld);
-      v[2].fromBufferAttribute(pos, ic).applyMatrix4(mesh.matrixWorld);
-      e1.subVectors(v[1], v[0]); e2.subVectors(v[2], v[0]); nn.crossVectors(e1, e2);
-      const L = nn.length(); if (L < 1e-6) continue;   // (degenerate)
-      nn.divideScalar(L);
-      // (A face turned down near the ground is only seen from below it, where no camera goes: the
-      // director keeps the camera 1.3 m up or more.)
-      if (nn.y < -0.5 && Math.max(v[0].y, v[1].y, v[2].y) < DOWN_LOW) continue;
-      const c = col ? hex(col.getX(ia), col.getY(ia), col.getZ(ia)) : mc ? mc.getHex() : 0;
-      const p = [v[0].x, v[0].y, v[0].z, v[1].x, v[1].y, v[1].z, v[2].x, v[2].y, v[2].z];
-      out.push({ p, n: [nn.x, nn.y, nn.z], d: nn.dot(v[0]), col: c, mat, site: mesh.userData.sites ? siteOf(S, ia) : mesh.name || "(unbatched)",
-        lo: [Math.min(p[0], p[3], p[6]), Math.min(p[1], p[4], p[7]), Math.min(p[2], p[5], p[8])],
-        hi: [Math.max(p[0], p[3], p[6]), Math.max(p[1], p[4], p[7]), Math.max(p[2], p[5], p[8])] });
+    // (Instanced: each instance placed and tinted as drawn; none placed yet, the model once.)
+    const inst = (mesh as THREE.InstancedMesh).isInstancedMesh ? mesh as THREE.InstancedMesh : null;
+    const n = inst && inst.count > 0 ? inst.count : 1, im = new THREE.Matrix4(), M = new THREE.Matrix4(), ic = new THREE.Color();
+    for (let k = 0; k < n; k++) {
+      M.copy(mesh.matrixWorld);
+      if (inst && inst.count > 0) { inst.getMatrixAt(k, im); M.multiply(im); }
+      const tint = inst && inst.count > 0 && inst.instanceColor ? (inst.getColorAt(k, ic), ic) : null;
+      for (let i = 0; i + 2 < count; i += 3) {
+        const ia = idx ? idx.getX(i) : i, ib = idx ? idx.getX(i + 1) : i + 1, iC = idx ? idx.getX(i + 2) : i + 2;
+        v[0].fromBufferAttribute(pos, ia).applyMatrix4(M);
+        v[1].fromBufferAttribute(pos, ib).applyMatrix4(M);
+        v[2].fromBufferAttribute(pos, iC).applyMatrix4(M);
+        e1.subVectors(v[1], v[0]); e2.subVectors(v[2], v[0]); nn.crossVectors(e1, e2);
+        const L = nn.length(); if (L < 1e-6) continue;   // (degenerate)
+        nn.divideScalar(L);
+        let c = col ? hex(col.getX(ia), col.getY(ia), col.getZ(ia)) : mc ? mc.getHex() : 0;
+        if (tint) c = hex((col ? col.getX(ia) : 1) * tint.r, (col ? col.getY(ia) : 1) * tint.g, (col ? col.getZ(ia) : 1) * tint.b);
+        for (const sg of both ? [1, -1] : [1]) {
+          const q = sg > 0 ? [v[0], v[1], v[2]] : [v[0], v[2], v[1]], nx = nn.x * sg, ny = nn.y * sg, nz = nn.z * sg;
+          // (A face turned down near the ground is only seen from below it, where no camera goes:
+          // the director keeps the camera 1.3 m up or more.)
+          if (ny < -0.5 && Math.max(v[0].y, v[1].y, v[2].y) < DOWN_LOW) continue;
+          const p = [q[0].x, q[0].y, q[0].z, q[1].x, q[1].y, q[1].z, q[2].x, q[2].y, q[2].z];
+          out.push({ p, n: [nx, ny, nz], d: nx * v[0].x + ny * v[0].y + nz * v[0].z, col: c, mat, site: mesh.userData.sites ? siteOf(S, ia) : mesh.name || "(unbatched)",
+            lo: [Math.min(p[0], p[3], p[6]), Math.min(p[1], p[4], p[7]), Math.min(p[2], p[5], p[8])],
+            hi: [Math.max(p[0], p[3], p[6]), Math.max(p[1], p[4], p[7]), Math.max(p[2], p[5], p[8])] });
+        }
+      }
     }
   });
 }
@@ -277,6 +302,7 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
   for (let N = 0; N < CITIES; N++) {
     if (ONLY >= 0 && N !== ONLY) continue;
     const style = journeyStyle(SEED, N), plan = new CityPlan(citySeedOf(SEED, N), style), sid = (style as any).id ?? `city${N}`;
+    plan.climate = { season: SEASON[0], weather: SEASON[1] as any, snowCover: /snow/.test(SEASON[1]) };
     const build = makeCityChunkBuilder(mat, plan);
     const tris: Tri[] = [];
     let chunks = 0;
@@ -312,7 +338,29 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
     };
     const fresh = (make: (sc: THREE.Scene) => unknown) => { const sc = new THREE.Scene(); make(sc); return [...sc.children]; };
     const kit = new TruckKit(new Proxy({}, { get: () => ({ width: 1, height: 1 }) }) as any);
-    objs("trucks", (["box16", "box26", "reefer", "tractor", "flatbed"] as TruckModel[]).map((m) => new Truck(kit, m, null).root));
+    const models: TruckModel[] = ["box16", "box26", "reefer", "tractor", "flatbed"];
+    objs("trucks", models.map((m) => new Truck(kit, m, null).root));
+    // (And opened up: the roll-up or swing doors, the ramp out, the lift gate down, the cab door,
+    // the trailer's doors; half way and all the way.)
+    for (const f of [0.5, 1]) objs(`trucks open ${f}`, models.map((m) => {
+      const t = new Truck(kit, m, null) as any;
+      t.rearDoor = f; t.ramp = f; t.liftgate = f; t.liftgateDrop = f; t.cabDoor = f; t.trailerDoors = f;
+      t.update(0, 0); return t.root;
+    }));
+    // The driver and the dock worker in the poses they take: standing, walking (through a stride),
+    // seated at the wheel, stooping to a load low and high, and each gesture.
+    const posed = (look: typeof DRIVER_LOOK, vest: boolean, P: ReturnType<typeof restPose>) => { const c = new Character(mat.solid, look, vest); c.apply(P); return c.root; };
+    const poses: ReturnType<typeof restPose>[] = [restPose(), idlePose(1.3, restPose()), seatedPose(restPose(), 0.3)];
+    for (let ph = 0; ph < 1; ph += 0.125) poses.push(walkPose(ph, idlePose(0, restPose())));
+    for (const [h, ahead] of [[0.2, 0.5], [0.9, 0.4], [1.4, 0.3]]) poses.push(stoopFor(restPose(), h, ahead));
+    for (const g of ["clipboard", "wave", "point", "strap", "reach", "stow", "climb"] as const) for (const t of [0.3, 1.1]) { try { poses.push(gesturePose(g as any, t, restPose())); } catch { /* not a gesture */ } }
+    objs("poses", [...poses.map((P) => posed(DRIVER_LOOK, false, P)), ...poses.map((P) => posed(WORKER_LOOK, true, P))]);
+    // The crew's gear (crew.ts: the hand truck, dolly, pallet jack, forklift and the rest).
+    objs("crew gear", fresh((sc) => new Crew(sc, mat.solid)));
+    // Every cargo model in four variants, and every cargo carried.
+    objs("cargo", Object.entries(CARGO_MODELS).flatMap(([, m]) => [0, 1, 2, 3].map((i) => { const b = new Batch(); m.build(b, 0, 0, 0, i); return b.build(mat.solid) ?? new THREE.Group(); })));
+    // (Each posed as it moves, if it does: a penguin's head out of its crate.)
+    objs("loads", CARGO.flatMap((c) => [0, 1].map((v) => { try { const L = buildCarried(c.id, mat.solid, 1, v); L.animate?.(0.4); return L.group; } catch { return new THREE.Group(); } })));
     objs("people", [new Character(mat.solid, DRIVER_LOOK).root, new Character(mat.solid, WORKER_LOOK, true).root,
       ...([0, 1, 2] as const).map((c) => new Cow(mat.solid, c).root), new Horse(mat.solid).root, new Tractor(mat.solid, mat.lamp).root,
       ...fresh((sc) => new Figures(sc, mat.solid, 1))]);
@@ -333,8 +381,8 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
     const sc = new THREE.Scene(), world = new CountryWorld(sc, mat, null), seen = new Set<string>();
     world.exact = true;
     let n = 0;
-    for (let m = 5; m < 400 && n < (argv[5] ? Number(argv[5]) : 3); m += 7) {
-      const road = new Journey(readConfig({ seed: SEED } as SceneEnv), m * 60, "autumn").country;
+    for (let m = 5; m < 1500 && n < (argv[5] ? Number(argv[5]) : 3); m += 7) {
+      const road = new Journey(readConfig({ seed: SEED } as SceneEnv), m * 60, SEASON[0]).country;
       if (!road || seen.has(road.key)) continue;
       seen.add(road.key); n++;
       world.setRoad(road);

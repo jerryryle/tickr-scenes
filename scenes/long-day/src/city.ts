@@ -2085,8 +2085,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     const m0 = a0 + STOP_BACK + 4, m1 = a1 - STOP_BACK - 4, mm = (m0 + m1) / 2;
     box(g, mm, CURB_H / 2, cl, m1 - m0, CURB_H, 0.6, C.curb);
     box(g, mm, CURB_H + 0.01, cl, m1 - m0 - 0.4, 0.02, 0.44, CS.grass);
-    for (let p = m0 + 1.5; p < m1 - 1; p += 2.2) box(s, p, CURB_H + 0.22, cl, 1.3, 0.44, 0.4, rnd() < 0.5 ? 0x3e6b34 : 0x4b7a3a);
-    const nL = Math.max(1, Math.round((m1 - m0) / 30));
+    const nL = Math.max(1, Math.round((m1 - m0) / 30)), poles = Array.from({ length: nL }, (_, k) => m0 + (m1 - m0) * (k + 0.5) / nL);
+    // (No shrub round a streetlight's pole: the pole stood in it.)
+    for (let p = m0 + 1.5; p < m1 - 1; p += 2.2) { const c = rnd() < 0.5 ? 0x3e6b34 : 0x4b7a3a; if (poles.every((q) => Math.abs(q - p) > 0.8)) box(s, p, CURB_H + 0.22, cl, 1.3, 0.44, 0.4, c); }
     for (let k = 0; k < nL; k++) {
       const p = m0 + (m1 - m0) * (k + 0.5) / nL, [px, pz] = axis === 0 ? [p, cl] : [cl, p];
       s.cyl(px, CURB_H + 3.75, pz, 0.1, 7.5, C.pole, 6);
@@ -2098,8 +2099,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       }
     }
   } else if (!feat.oneway) {
-    box(g, mid, M, cl - 0.15, len - 8, MH, 0.12, C.yellow);
-    box(g, mid, M, cl + 0.15, len - 8, MH, 0.12, C.yellow);
+    // (Yellow 4 mm under the white, which can cross it where streets meet: shared planes flicker.)
+    box(g, mid, M - 0.002, cl - 0.15, len - 8, MH - 0.004, 0.12, C.yellow);
+    box(g, mid, M - 0.002, cl + 0.15, len - 8, MH - 0.004, 0.12, C.yellow);
   }
   // Loading zones (lo side, hi side): a yellow kerb and the bay's ends marked across the kerb lane,
   // 16 m, inside the street's ends.
@@ -2125,8 +2127,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // Streetlights on both sidewalks, staggered; street trees where the district has them.
   for (const [side, at, d, c] of [[KERB - 0.6, a0 + 10, loD, loC], [STREET - KERB + 0.6, a0 + 31, hiD, hiC]] as const) {
     // (Not up against the far end, where a short street's next junction has its signal's pole and
-    // mast arm: the two stood in each other.)
-    if (inDrive(d, at, 2) || inDrive(c, at, 0) || at > a1 - 4) continue;
+    // mast arm, or a stop sign: they stood in each other.)
+    if (inDrive(d, at, 2) || inDrive(c, at, 0) || at > a1 - 7) continue;
     const dir = side < cl ? 1 : -1; // arm reaches over the road
     const [px, pz] = axis === 0 ? [at, side] : [side, at];
     s.cyl(px, 3.75, pz, 0.1, 7.5, C.pole, 6); pavementObstacle(px, pz, 0.15, PK.lamp);
@@ -2195,7 +2197,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
         if (Math.abs(p - (a0 + 10)) < 2.5 || Math.abs(p - (a0 + 31)) < 2.5) continue; // clear of lights
         if (inDrive(d, p, 2) || inDrive(cz, p, 0) || (sg !== null && Math.abs(p - sg) < 3.4)) continue;   // driveways, signs, dock corners
         const [tx, tz] = axis === 0 ? [p, side] : [side, p];
-        g.box(tx, CURB_H + 0.01, tz, 1.4, 0.02, 1.4, 0x5a4a38); // tree pit
+        g.box(tx, CURB_H + 0.0125, tz, 1.4, 0.025, 1.4, 0x5a4a38); // tree pit (its top over a path's it can meet: shared planes flicker)
         busy[side < cl ? 0 : 1].push([p - 1.0, p + 1.0]);
         cityTree(s, tx, CURB_H, tz, range(rnd, 6.5, 8), range(rnd, 1.5, 2.0), pick(rnd, CS.trees.greens), rnd);
       }
@@ -2361,7 +2363,7 @@ function palm(s: Batch, x: number, y: number, z: number, h: number, rnd: Rand) {
     const a = k / 7 * Math.PI * 2 + rnd() * 0.4;
     s.boxR(tx + Math.cos(a) * 1.1, ty - 0.25, tz + Math.sin(a) * 1.1, 2.4, 0.08, 0.55, green, 0, -a, -0.5);
   }
-  s.ico(tx, ty, tz, 0.35, 0x5a4a30);
+  s.ico(tx, ty, tz, 0.35, 0x5a4a30, 1, x * 1.7 + z + (seg - 1) * 0.5 + 0.525);   // (turned 0.525 rad from the top ring: then none of its faces is within 20 degrees of parallel to the ring's)
 }
 // (Each turned its own way, by where it stands: neighbours' boughs overlap, and two turned alike
 // could put faces on one plane, which flicker.)
