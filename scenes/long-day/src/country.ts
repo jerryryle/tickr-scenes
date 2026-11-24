@@ -628,8 +628,7 @@ export class CountryRoad {
       // the distance growing with the speed (a handful of drives simulated, where halving took up
       // to 40, in one journey step). The distance can jump (a stop made or not), with the target in
       // the jump: then, once the speed is pinned down (halving every other time), the drive that
-      // ended nearest. Out of reach
-      // either side: the nearer end. Whatever is left is eased in below.
+      // ended nearest. Out of reach either side: the nearer end. Whatever is left is eased in below.
       const mlo = this.simulate(this.planStops, 6, D, v0, s0, acc), mhi = this.simulate(this.planStops, 34, D, v0, s0, acc);
       let lo = 6, hi = 34, flo = end(mlo) - target, fhi = end(mhi) - target, side = 0;
       if (flo >= 0) best = mlo;

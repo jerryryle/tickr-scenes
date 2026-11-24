@@ -107,10 +107,10 @@ export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Ch
 const STOP_SIGN_PAUSE = 1.5;     // s the truck stands at a stop sign's line before going on
 const SWAP_GAP = 2.5;          // metres between the old truck's nose and the new truck's tail
 const WALK_SPEED = 1.35;
-const GATE_TRIM = STREET / 2;
+const GATE_TRIM = STREET / 2;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
 // The road out, built ahead over the steps after the way out is planned: EXIT_PIECES pieces a step
 // for EXIT_AHEAD steps (exitRoadAhead), whatever is left at its first use.
-const EXIT_AHEAD = 30, EXIT_PIECES = 6;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
+const EXIT_AHEAD = 30, EXIT_PIECES = 6;
 // The goals on faces long enough to stop along (CityGraph.hasFrontage), or all of them if none is.
 const fronted = (G: CityGraph, all: Goal[]) => { const f = all.filter((g) => G.hasFrontage(g.d)); return f.length ? f : all; };
 
@@ -1607,10 +1607,11 @@ export class Journey {
   // after the hand-over. From the journey state, so a seek within this city finds it too.
   private prevCache: { key: string; road: CountryRoad } | null = null;
   get previousExit(): CountryRoad | null {
-    const c = this.exitCache, st = this.st;
-    if (c && c.road.inp.city === st.city - 1) return c.road;
-    const p = st.prev;
+    const c = this.exitCache, st = this.st, p = st.prev;
     if (!p) return null;
+    // (The road this journey drove, if it is that one: built, and with the motion it was driven
+    // with. After a seek it may be one built ahead and never driven.)
+    if (c && c.road.built && c.key === `${this.cfg.seed}/${st.city - 1}/${p.gate}/${p.dEst}` && c.motion === `${p.departAt.toFixed(1)}/${p.departV}/${p.departS0}`) return c.road;
     const key = `${this.cfg.seed}/${st.city - 1}/${p.gate}/${p.dEst}/${p.fromTruck}/${p.departAt}/${p.departV}/${p.departS0}`;
     if (!this.prevCache || this.prevCache.key !== key) {
       const road = this.makeExitRoad(st.city - 1, p.gate, p.dEst, p.fromTruck);

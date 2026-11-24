@@ -113,7 +113,12 @@ low. `DEBUG_MEMLOG` reports the cache's size and hits.
 graph (`CityPlan.prepare`), then its sea and the boats on it, are built a few pieces a frame
 (`prepareNextCity` in `src/main.ts`), so neither the way out of town nor the hand-over to the next
 city builds them all in one frame: on a board a frame that long shows as the truck skipping ahead.
-`test/slices.ts` checks that a graph built this way is the same graph as one built at once.
+The road out of town is built the same way, a few pieces a journey step over the 30 steps after
+the way out is planned (`Journey.exitRoadAhead`), and is drawn from then on. A few materials are
+kept compiled and warm from the start by specks far under the ground, drawn once and then hidden
+(`keepWarm` in `src/geom.ts`), so the first oncoming car, strapped load or town on the sea isn't a
+long frame. `test/slices.ts` checks that a graph or road built ahead is the same
+as one built at once.
 
 `src/facadeart.ts` paints the facade atlas on the first frame: the 16 facade kinds in
 `src/facadetiles.ts`, four variants of each (each building gets one), at 128 px a tile, with a

@@ -12,7 +12,7 @@
 // (farFog): out there nothing streams in to be hidden, and the camera's far plane reaches on over it
 // (engine.ts seaFar).
 import * as THREE from "three@0.187.0";
-import { Batch } from "./geom.ts";
+import { Batch, keepWarm } from "./geom.ts";
 import { hash2 } from "./rng.ts";
 import { boatAt, boatExtent, boatSize, BOAT_PAINTS } from "./boats.ts";
 import type { BoatKind } from "./boats.ts";
@@ -53,10 +53,9 @@ export class SeaLife {
     this.surface = share?.surface ?? farFog(base.clone());
     // (Lights: unlit, and drawn only after dark: update.)
     this.lights = share?.lights ?? farFog(new THREE.MeshBasicMaterial({ vertexColors: true }));
-    // Never seen (a speck far under the ground, drawn every frame): keeps the sea's materials in
-    // the setup precompile and warm, so the first town on the sea isn't the frame that compiles
-    // them, which on a board shows as the truck skipping ahead (as countryworld.ts keeps its own).
-    if (!share) for (const m of [this.surface, this.lights]) { const b = new Batch(); b.box(0, -60, 0, 0.01, 0.01, 0.01, 0); const k = b.build(m)!; k.frustumCulled = false; world.add(k); }
+    // The sea's materials kept warm from the start (geom.ts keepWarm), so the first town on the sea
+    // isn't the frame that compiles them.
+    if (!share) for (const m of [this.surface, this.lights]) { const b = new Batch(); b.box(0, 0, 0, 1, 1, 1, 0); keepWarm(world, b.build(m)!.geometry, m); }
   }
 
   clear() {
