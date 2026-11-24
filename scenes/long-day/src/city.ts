@@ -46,8 +46,10 @@ import { BIOMES, landTree } from "./countryworld.ts";
 import { BLOCK, STREET, KERB, CURB_H, LOT_TOP, RING } from "./grid.ts";
 import { angleDiff, CityGraph, clipHalf, inPoly, polyDist } from "./citygraph.ts";
 import type { CBlock, CGate, CNode, CStreet } from "./citygraph.ts";
-import { cityGraph, trimToOutline } from "./citygen.ts";
+import { cityGraphSteps, trimToOutlineSteps } from "./citygen.ts";
 import type { OrganicAvenue } from "./citygen.ts";
+import { drain } from "./slices.ts";
+import type { Steps } from "./slices.ts";
 import { CityOutline, seaSide } from "./outline.ts";
 import { DEBUG_EXIT, DEBUG_LAYOUT, DEBUG_ONEWAY } from "./debug.ts";
 
@@ -99,12 +101,30 @@ export class CityPlan {
   // The street graph (citygraph.ts): built on first use, from the city's limits and gates.
   private g: CityGraph | null = null;
   private organicFailed = false;   // (an organic town was tried and lost a gate: see graph)
-  get graph(): CityGraph {
-    if (this.g) return this.g;
-    const G = this.buildGraph();
-    this.stopSigns(G);
-    linkSignals(G);
-    return G;
+  get graph(): CityGraph { return this.g ?? drain(this.graphJob()); }
+  // Building it ahead, a few pieces at a time (slices.ts), so no one frame takes it all: the
+  // journey has the next city's built this way while the truck is still in this one. Whatever is
+  // left is done at first use. True once it is built.
+  prepare(pieces: number): boolean {
+    if (this.g) return true;
+    const J = this.graphJob();
+    for (let i = 0; i < pieces; i++) if (J.next().done) return true;
+    return false;
+  }
+  private job: Steps<CityGraph> | null = null;
+  private graphJob(): Steps<CityGraph> {
+    if (!this.job) {
+      const self = this;
+      this.job = (function* () {
+        try {
+          const G = yield* self.buildGraph();
+          self.stopSigns(G);
+          linkSignals(G);
+          return G;
+        } finally { self.job = null; }   // (done, or thrown: a throw is thrown again at the next use, as it was)
+      })();
+    }
+    return this.job;
   }
   // All-way stops: in every town, most junctions of three or more streets that lie wholly among
   // houses and parks have stop signs instead of lights (not one at a gate, nor on a roundabout,
@@ -131,16 +151,17 @@ export class CityPlan {
   // The layout over the whole square (buildLayout), cut back to the town's outline (outline.ts,
   // citygen.ts trimToOutline): with the land's edges as drawn, then half as far in, then square;
   // and if even that fails (it shouldn't), the whole square and no sea.
-  private buildGraph(): CityGraph {
-    const L = this.buildLayout();
+  private *buildGraph(): Steps<CityGraph> {
+    const L = yield* this.buildLayout();
     for (const sc of [1, 0.5, 0]) {
-      const O = this.outlineAt(sc), T = trimToOutline(L, O, this.entryGate, this.seed);
+      yield;
+      const O = this.outlineAt(sc), T = yield* trimToOutlineSteps(L, O, this.entryGate, this.seed);
       if (T) { this.ol = O; return this.g = T; }
     }
     // (Laid out again without the sea: the districts by the shore, and the layout's streets
     // round them, asked shoreLine.)
     this.ol = this.shoreOl = this.outlineAt(0, true);
-    return this.g = this.buildLayout();
+    return this.g = yield* this.buildLayout();
   }
   // The town's outline: as the graph was cut to (outline, after the graph), or as first drawn
   // (shore: the sea's line, which the layout's districts ask before there is a graph).
@@ -158,7 +179,7 @@ export class CityPlan {
   }
   // Whether the town has gate i (its graph's gates: 0 the way in, then the ways out).
   gateOpen(i: number): boolean { return !!this.graph.gates[i]; }
-  private buildLayout(): CityGraph {
+  private *buildLayout(): Steps<CityGraph> {
     let river: number | undefined;
     const opts = { lo: CITY_LO, hi: CITY_HI, gates: [this.entryGate], slots: GATE_SLOTS, nameEW: streetNameEW, nameNS: streetNameNS,
       elevatedRow: (iz: number) => elevatedLine(this.style, iz), cableColumn: (ix: number) => !!this.style.cableCar && cableColumn(ix),
@@ -177,14 +198,15 @@ export class CityPlan {
       // the grid's patch round a freeway's interchange. Its roundabouts' candidate places, well
       // inside town: citygen.ts keeps the first clear of everything.)
       const P = fw?.patch, inP = (bx: number, bz: number) => !!P && at0(bx) + BLOCK / 2 > P.x0 && at0(bx) + BLOCK / 2 < P.x1 && at0(bz) + BLOCK / 2 > P.z0 && at0(bz) + BLOCK / 2 < P.z1;
-      const og = cityGraph(opts, this.seed, { river: river && !fw,   /* (with avenues too: one crossing it always does on a bridge) */ sea, avenues: fw ? [fw.avenue, ...avenues] : avenues,   /* (the freeway's laid first: the others keep off its streets) */ patch: P, cuts: this.slipCuts(),
+      const og = yield* cityGraphSteps(opts, this.seed, { river: river && !fw,   /* (with avenues too: one crossing it always does on a bridge) */ sea, avenues: fw ? [fw.avenue, ...avenues] : avenues,   /* (the freeway's laid first: the others keep off its streets) */ patch: P, cuts: this.slipCuts(),
         move: (bx, bz) => inP(bx, bz) ? [0, 0] : [(hash2(bx, bz, this.seed, 0x0a1) - 0.5) * BLOCK * 0.8, (hash2(bx, bz, this.seed, 0x0a2) - 0.5) * BLOCK * 0.8],
         relax: (bx, bz) => (inP(bx, bz) ? 0 : 1), rounds: fw ? [] : rounds });
       if (og.gates.length === 1 && this.avenuesWhole(og)) return og;
       this.organicFailed = true;
+      yield;
     }
     const cuts = this.slipCuts();
-    if (this.layout === "grid") return cityGraph(opts, this.seed, { cuts });
+    if (this.layout === "grid") return yield* cityGraphSteps(opts, this.seed, { cuts });
     // A river across town, in some styles: a row of blocks clear of the freeway's line, elevated
     // lines and gate rows.
     if (this.riverStyle || DEBUG_LAYOUT === "river") {
@@ -225,7 +247,7 @@ export class CityPlan {
     };
     const li = (v: number) => (v - STREET / 2) / BLOCK, SLs = this.shoreLine;
     const seaW = SLs.sea === null ? undefined : { side: SLs.sea, inSea: (xx: number, zz: number) => SLs.inSea(xx, zz) };
-    return cityGraph(opts, seed, { move, cuts, sea: seaW,
+    return yield* cityGraphSteps(opts, seed, { move, cuts, sea: seaW,
       riverLine: river === undefined ? undefined : [[at0(CITY_LO), at0(river) + BLOCK / 2], [at0(CITY_HI + 1), at0(river) + BLOCK / 2]],
       parks: this.superParks(straight, river, fl.circuses), diagonals: fl.diagonals,
       rings: fl.circuses.map((c) => ({ x: at0(c.ix), z: at0(c.iz), name: c.name, n: c.round ? 4 : 8, r: c.round ? 30 : 45, oneway: !!c.round, arms: 8 })),

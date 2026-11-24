@@ -21,6 +21,9 @@
 // belongs to the tile that holds its anchor (its centre; a street's middle; a block's centroid),
 // which on a regular grid is exactly the old one-block-per-chunk ownership.
 
+import { drain } from "./slices.ts";
+import type { Steps } from "./slices.ts";
+
 export const TILE = 60;
 export const MIN_FRONTAGE = 12;
 export type GMove = "S" | "L" | "R";
@@ -106,19 +109,23 @@ export class CityGraph {
     return id;
   }
   // Once every node and street is in: arms, mouths, blocks, faces, signal phases, tiles.
-  finish() {
+  finish() { drain(this.finishSteps()); }
+  // (The same a piece at a time: slices.ts.)
+  *finishSteps(): Steps<void> {
     for (const st of this.streets) {
       this.nodes[st.n0].arms.push({ street: st.id, end: 0, h: wrapPi(st.h0), mouth: 0 });
       this.nodes[st.n1].arms.push({ street: st.id, end: 1, h: wrapPi(st.h0 + st.k * st.len + Math.PI), mouth: 0 });
     }
+    yield;
     for (const n of this.nodes) {
       // Anticlockwise from east (h from -pi up to pi), ties by street id: deterministic.
       n.arms.sort((p, q) => (p.h - q.h) || (p.street - q.street));
       this.mouths(n);
       this.phasesOf(n);
     }
-    this.findBlocks();
-    this.anchors();
+    yield;
+    yield* this.findBlocks();
+    yield* this.anchors();
     this.indexTiles();
   }
 
@@ -165,14 +172,15 @@ export class CityGraph {
 
   // Blocks: walk each face's cycle (at a dedge's end, take the sharpest right turn), keeping the
   // cycles that wind anticlockwise round a bounded area; the one round the outside is no block.
-  private findBlocks() {
+  private *findBlocks(): Steps<void> {
     const D = this.streets.length * 2;
     this.faceBlock = new Int32Array(D).fill(-1);
     const seen = new Uint8Array(D);
-    let outerArea = 0;
+    let outerArea = 0, work = 0;
     this.outer = null;
     for (let d0 = 0; d0 < D; d0++) {
       if (seen[d0]) continue;
+      if (++work % 24 === 0) yield;
       const cyc: number[] = [];
       let d = d0, guard = 0;
       while (!seen[d] && guard++ < 4096) { seen[d] = 1; cyc.push(d); d = this.rightTurn(d); }
@@ -201,9 +209,10 @@ export class CityGraph {
     }
   }
   // The faces' anchors (CBlock.anchor): the longest face first where the square fits inside.
-  private anchors() {
+  private *anchors(): Steps<void> {
     for (const B of this.blocks) {
       if (B.square || B.water || B.park) continue;
+      yield;
       const faces = B.faces.slice().sort((p, q) => (this.faceA1(q) - this.faceA0(q)) - (this.faceA1(p) - this.faceA0(p)) || p - q);
       for (const f of faces) {
         const A0 = this.faceA0(f), A1 = this.faceA1(f);

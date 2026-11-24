@@ -6,6 +6,8 @@ import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { SEA_REACH } from "./outline.ts";
 import { hash2 } from "./rng.ts";
+import { drain } from "./slices.ts";
+import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
 import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
@@ -98,10 +100,18 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   // triangle, so one with corners kilometres off would be fog all over.)
   const SEA_TILE = 30, SEA_OUT = 720, SEA_FAR = 650;
   let seaMesh: THREE.Mesh | null = null;
+  // (The next city's, built ahead a few pieces at a time: prepareNextCity.)
+  let nextSea: { seed: number; job: Steps<THREE.Mesh | null>; mesh?: THREE.Mesh | null } | null = null;
   function buildSea() {
     if (seaMesh) { engine.world.remove(seaMesh); seaMesh.geometry.dispose(); seaMesh = null; }
-    const O = journey.plan.outline, d0 = O.shoreDeepest, deep = d0 === null ? null : d0 + SEA_REACH + 10;   // (under the land the sea reaches round: outline.ts seaward)
-    if (O.sea === null || deep === null) return;
+    const plan = journey.plan, ahead = nextSea?.seed === plan.seed ? nextSea : null;
+    nextSea = null;
+    const m = ahead ? (ahead.mesh !== undefined ? ahead.mesh : drain(ahead.job)) : drain(seaSteps(plan));
+    if (m) { seaMesh = m; engine.world.add(m); }
+  }
+  function* seaSteps(plan: CityPlan): Steps<THREE.Mesh | null> {
+    const O = plan.outline, d0 = O.shoreDeepest, deep = d0 === null ? null : d0 + SEA_REACH + 10;   // (under the land the sea reaches round: outline.ts seaward)
+    if (O.sea === null || deep === null) return null;
     const s = O.sea, b = new Batch(), y = SEA_Y;
     const x0 = s === 0 ? O.X1 - deep : s === 2 ? O.X0 - SEA_OUT : O.X0 - SEA_ALONG, x1 = s === 0 ? O.X1 + SEA_OUT : s === 2 ? O.X0 + deep : O.X1 + SEA_ALONG;
     const z0 = s === 1 ? O.Z0 - SEA_OUT : s === 3 ? O.Z1 - deep : O.Z0 - SEA_ALONG, z1 = s === 1 ? O.Z0 + deep : s === 3 ? O.Z1 + SEA_OUT : O.Z1 + SEA_ALONG;
@@ -109,20 +119,33 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // the sea seen on through it (sealife.ts farFog) would show inland.)
     // (On one grid, each tile once where the two regions overlap.)
     const done = new Set<string>();
-    const tiles = (x0: number, x1: number, z0: number, z1: number) => {
-      for (let x = Math.floor(x0 / SEA_TILE) * SEA_TILE; x < x1; x += SEA_TILE) for (let z = Math.floor(z0 / SEA_TILE) * SEA_TILE; z < z1; z += SEA_TILE) {
-        const xe = x + SEA_TILE, ze = z + SEA_TILE, key = `${x},${z}`;
-        if (done.has(key)) continue;
-        done.add(key);
-        if (![[x, z], [xe, z], [x, ze], [xe, ze], [(x + xe) / 2, (z + ze) / 2]].some(([px, pz]) => O.seaward(px, pz))) continue;
-        b.tri(x, y, z, xe, y, z, xe, y, ze, SEA_COLOR); b.tri(x, y, z, xe, y, ze, x, y, ze, SEA_COLOR);
+    const tiles = function* (x0: number, x1: number, z0: number, z1: number): Steps<void> {
+      for (let x = Math.floor(x0 / SEA_TILE) * SEA_TILE; x < x1; x += SEA_TILE) {
+        yield;
+        for (let z = Math.floor(z0 / SEA_TILE) * SEA_TILE; z < z1; z += SEA_TILE) {
+          const xe = x + SEA_TILE, ze = z + SEA_TILE, key = `${x},${z}`;
+          if (done.has(key)) continue;
+          done.add(key);
+          if (![[x, z], [xe, z], [x, ze], [xe, ze], [(x + xe) / 2, (z + ze) / 2]].some(([px, pz]) => O.seaward(px, pz))) continue;
+          b.tri(x, y, z, xe, y, z, xe, y, ze, SEA_COLOR); b.tri(x, y, z, xe, y, ze, x, y, ze, SEA_COLOR);
+        }
       }
     };
-    tiles(x0, x1, z0, z1);
+    yield* tiles(x0, x1, z0, z1);
     // (And round the shore's bend in towards the road in, outside the town: outline.ts.)
     const bend = O.bendSea(SEA_ALONG);
-    if (bend) tiles(...bend);
-    const m = b.build(seaLife.surface)!; seaMesh = m; engine.world.add(m);
+    if (bend) yield* tiles(...bend);
+    return b.build(seaLife.surface)!;
+  }
+  // The next city, ahead of the hand-over, a few pieces of it a frame, so no one frame does it all:
+  // its street graph (Journey.prepareNext), then its sea and the life on it. (buildCity takes them
+  // in; all pure functions of the seed, so when they are built changes nothing else.)
+  function prepareNextCity() {
+    const P = journey.prepareNext(2);
+    if (!P) return;
+    if (nextSea?.seed !== P.seed) nextSea = { seed: P.seed, job: seaSteps(P) };
+    if (nextSea.mesh === undefined) { const r = nextSea.job.next(); if (r.done) nextSea.mesh = r.value; return; }
+    seaLife.prepare(P, 1);
   }
   // (Test renders: the stretch of shore nearest the middle of the town's sea side.)
   function midShore(plan: CityPlan) {
@@ -137,7 +160,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     seaLife.build(journey.plan);
     engine.seaFar = journey.plan.outline.sea === null ? 0 : SEA_FAR;
     engine.setSky(journey.plan.style.sky);
-    backdrop.build(journey.plan.style, journey.st.citySeed);
+    // (Already up on the road in, as the town's skyline rose: backdropState.)
+    if (backdrop.built !== `${journey.plan.style.id}/${journey.st.citySeed}`) backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
     const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(st));
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
@@ -996,6 +1020,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       ambient.update(shown, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
       seaLife.update(shown);
       if (!TOUR_VIEW) streamRound(true);
+      prepareNextCity();
       {
         const bd = backdropState(pr);
         const bc = bd.city === journey.st.city ? { style: journey.plan.style, seed: journey.st.citySeed } : { style: journey.exitRoad!.inp.toStyle, seed: citySeedOf(cfg.seed, bd.city) };

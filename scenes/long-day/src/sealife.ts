@@ -21,6 +21,8 @@ import { CURB_H } from "./grid.ts";
 import { LAMPS_ON } from "./atmosphere.ts";
 import { ferryModel } from "./countryworld.ts";
 import { WATER_DROP } from "./country.ts";
+import { drain } from "./slices.ts";
+import type { Steps } from "./slices.ts";
 
 const OUT_X = [1, 0, -1, 0], OUT_Z = [0, -1, 0, 1];   // (out to sea from each side: 0 east, 1 north, 2 west, 3 south)
 const SEA_TOP = SEA_Y;   // the sea's surface (main.ts buildSea)
@@ -47,10 +49,10 @@ export class SeaLife {
   private foam: THREE.Mesh | null = null;
   private edges: { ax: number; az: number; bx: number; bz: number; nx: number; nz: number }[] = [];
   private p = { x: 0, z: 0, h: 0 };
-  constructor(private readonly world: THREE.Object3D, base: THREE.Material) {
-    this.surface = farFog(base.clone());
+  constructor(private readonly world: THREE.Object3D, base: THREE.Material, share?: SeaLife) {
+    this.surface = share?.surface ?? farFog(base.clone());
     // (Lights: unlit, and drawn only after dark: update.)
-    this.lights = farFog(new THREE.MeshBasicMaterial({ vertexColors: true }));
+    this.lights = share?.lights ?? farFog(new THREE.MeshBasicMaterial({ vertexColors: true }));
   }
 
   clear() {
@@ -66,7 +68,26 @@ export class SeaLife {
   // The boats, the harbour, the lighthouse and the beach's surf for the town (none off a town not
   // on the sea).
   build(plan: CityPlan) {
+    const T = this.next;
     this.clear();
+    if (T?.seed === plan.seed) { drain(T.job); this.adopt(T.life); }
+    else drain(this.buildSteps(plan));
+    this.next = null;
+  }
+  // Another town's, built ahead a few pieces at a time (slices.ts) out of the world, and taken in
+  // by build when the journey gets there (main.ts). (Its plan's graph built first: CityPlan.prepare.)
+  prepare(plan: CityPlan, pieces: number) {
+    if (this.next?.seed !== plan.seed) { const life = new SeaLife(new THREE.Group(), this.surface, this); this.next = { seed: plan.seed, life, job: life.buildSteps(plan), done: false }; }
+    const T = this.next;
+    for (let i = 0; i < pieces && !T.done; i++) T.done = !!T.job.next().done;
+  }
+  private next: { seed: number; life: SeaLife; job: Steps<void>; done: boolean } | null = null;
+  // (What another one built, into this one's world.)
+  private adopt(o: SeaLife) {
+    this.movers = o.movers; this.statics = o.statics; this.cranes = o.cranes; this.wharf = o.wharf; this.beam = o.beam; this.foam = o.foam; this.edges = o.edges;
+    for (const c of [...o.world.children]) this.world.add(c);
+  }
+  private *buildSteps(plan: CityPlan): Steps<void> {
     const O = plan.outline, s = O.sea;
     if (s === null) return;
     const h = (k: number) => hash2(plan.seed, k, 0, 0x5ea1), port = plan.style.id === "port";
@@ -84,6 +105,7 @@ export class SeaLife {
     const lo = (ew ? O.Z0 : O.X0) - SEA_ALONG, span = (ew ? O.Z1 - O.Z0 : O.X1 - O.X0) + 2 * SEA_ALONG;
     // The lighthouse first: the boats keep clear of its rock.
     const light = this.lighthouse(plan, at), LP = { x: 0, z: 0 };
+    yield;
     at(light, LIGHT_OUT, LP);
     // (Out round it: further out the nearer its point along the coast.)
     const clearOut = (t: number, o: number) => o + Math.max(0, LIGHT_OUT + 30 - o) * (1 - seaStep(40, 110, Math.abs(t - light)));
@@ -108,6 +130,7 @@ export class SeaLife {
     // A loop out from the shore and back: out along one line, round, and in along another beside it.
     // (From a stretch of shore clear of the wharf.)
     const W = shoreMoorings(plan).wharf;
+    yield;
     const E0 = plan.shore.filter((e) => Math.hypot(e.bx - e.ax, e.bz - e.az) > 25 && (!W || Math.hypot((e.ax + e.bx) / 2 - W.x, (e.az + e.bz) / 2 - W.z) > 90));
     const loop = (i: number, make: () => THREE.Object3D, v: number, n0: number, len: number, wide: number, bob = 0.05) => {
       // (Nor round the lighthouse's rock.)
@@ -134,6 +157,7 @@ export class SeaLife {
     // (Enough of them that one or two are usually in view: the coast they ply is some 5 km long.)
     const n = port ? 15 : 20;
     for (let i = 0; i < n; i++) {
+      yield;
       const sail = h(i * 13 + 9) < (port ? 0.4 : 0.65);
       cruise(i, sail ? "sailboat" : "cruiser", sail ? 2.2 + 1.2 * h(i * 13 + 10) : 4.5 + 3 * h(i * 13 + 10), (port ? 70 : 35) + 140 * h(i * 13 + 11), sail && h(i * 13 + 12) < 0.4 ? 1.5 : 1);
     }
@@ -142,14 +166,16 @@ export class SeaLife {
       // back; the wharf and its crane; the boats moored about the harbour.
       const ship = this.ship(true), dir = h(901) < 0.5 ? 1 : -1, ph = h(902) * span, o0 = 230 + 80 * h(903);
       this.add(ship, (t, P) => { const u = ((ph + dir * 3 * t) % span + span) % span; at(lo + u, o0, P); P.h = headOf(dir, 0); }, 0.02);
-      for (let i = 0; i < 2; i++) loop(20 + i, () => this.boat("cruiser", BOAT_PAINTS[Math.floor(h(940 + i) * BOAT_PAINTS.length)], 1, 4), 3.5 + h(950 + i), 48, 160 + 120 * h(960 + i), 14);
+      yield;
+      for (let i = 0; i < 2; i++) { loop(20 + i, () => this.boat("cruiser", BOAT_PAINTS[Math.floor(h(940 + i) * BOAT_PAINTS.length)], 1, 4), 3.5 + h(950 + i), 48, 160 + 120 * h(960 + i), 14); yield; }
       loop(25, () => this.ferry(), 5, 70, 300, 80, 0.03);
-      if (W) this.harbour(W);
-      shoreMoorings(plan).boats.forEach((m) => this.add(this.boat(m.kind, m.paint, 1, 0), (_t, P) => { P.x = m.x; P.z = m.z; P.h = m.yaw; }, 0.07));
+      yield;
+      if (W) { this.harbour(W); yield; }
+      for (const m of shoreMoorings(plan).boats) { this.add(this.boat(m.kind, m.paint, 1, 0), (_t, P) => { P.x = m.x; P.z = m.z; P.h = m.yaw; }, 0.07); yield; }
     } else {
       // Jet skis looping off the beach (in summer, in fair weather, as the umbrellas are out).
       const c = plan.climate, fair = !c || (c.season === "summer" && !/rain|storm|snow|fog/.test(c.weather));
-      if (fair) for (let i = 0; i < 2; i++) loop(30 + i, () => this.boat("jetski", BOAT_PAINTS[Math.floor(h(975 + i) * BOAT_PAINTS.length)], 1, 9), 8 + 3 * h(970 + i), 40, 70 + 60 * h(980 + i), 26);
+      if (fair) for (let i = 0; i < 2; i++) { loop(30 + i, () => this.boat("jetski", BOAT_PAINTS[Math.floor(h(975 + i) * BOAT_PAINTS.length)], 1, 9), 8 + 3 * h(970 + i), 40, 70 + 60 * h(980 + i), 26); yield; }
       this.edges = plan.shore.slice();
       if (this.edges.length) { this.foam = foamMesh(this.edges.length * 2, this.surface); this.world.add(this.foam); }
     }

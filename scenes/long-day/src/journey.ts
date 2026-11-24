@@ -1598,6 +1598,18 @@ export class Journey {
     if (this.plans.size > 3) this.plans.delete(this.plans.keys().next().value!);
     return plan;
   }
+  // The next city's plan, its street graph built ahead a few pieces at a time while the truck is
+  // still in this one (CityPlan.prepare; main.ts calls this every frame), so neither the way out
+  // (its road asks whether that city is on the sea) nor the hand-over builds it all in one step.
+  // The plan once its graph is built (with the climate entryState will give it), else null. (The
+  // graph is a pure function of the seed, so when it is built changes nothing else.)
+  prepareNext(pieces: number): CityPlan | null {
+    if (this.st.cityTime < 20) return null;   // (not on the hand-over's heels: that has work of its own)
+    const N = this.st.city + 1, P = this.planOf(N);
+    if (!P.prepare(pieces)) return null;
+    P.climate = this.climateOf(N);
+    return P;
+  }
   // Whether city N is on the sea: only built out to see when it could be (seaSide).
   private onSea(N: number) { return seaSide(citySeedOf(this.cfg.seed, N), this.styleOf(N)) !== null && this.planOf(N).outline.sea !== null; }
   // The arrival straight into this city (pure: from the seed alone).

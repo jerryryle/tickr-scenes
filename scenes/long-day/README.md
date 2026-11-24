@@ -109,6 +109,12 @@ route and its next stops are built ahead into that cache in otherwise idle frame
 holds its sign and plate atlas slots, so the cache sheds its oldest chunks when either atlas runs
 low. `DEBUG_MEMLOG` reports the cache's size and hits.
 
+`src/slices.ts` runs work a piece at a time. While the truck is in a city, the next city's street
+graph (`CityPlan.prepare`), then its sea and the boats on it, are built a few pieces a frame
+(`prepareNextCity` in `src/main.ts`), so neither the way out of town nor the hand-over to the next
+city builds them all in one frame: on a board a frame that long shows as the truck skipping ahead.
+`test/slices.ts` checks that a graph built this way is the same graph as one built at once.
+
 `src/facadeart.ts` paints the facade atlas on the first frame: the 16 facade kinds in
 `src/facadetiles.ts`, four variants of each (each building gets one), at 128 px a tile, with a
 mask saying which pixels take the building's colour, which are glass lit from inside after dark,
