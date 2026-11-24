@@ -53,6 +53,10 @@ export class SeaLife {
     this.surface = share?.surface ?? farFog(base.clone());
     // (Lights: unlit, and drawn only after dark: update.)
     this.lights = share?.lights ?? farFog(new THREE.MeshBasicMaterial({ vertexColors: true }));
+    // Never seen (a speck far under the ground, drawn every frame): keeps the sea's materials in
+    // the setup precompile and warm, so the first town on the sea isn't the frame that compiles
+    // them, which on a board shows as the truck skipping ahead (as countryworld.ts keeps its own).
+    if (!share) for (const m of [this.surface, this.lights]) { const b = new Batch(); b.box(0, -60, 0, 0.01, 0.01, 0.01, 0); const k = b.build(m)!; k.frustumCulled = false; world.add(k); }
   }
 
   clear() {
