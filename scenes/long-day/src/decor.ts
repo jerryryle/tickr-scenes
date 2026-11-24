@@ -202,11 +202,14 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   const cyl = (al: number, y: number, ac: number, r: number, h: number, color: number, seg = 8) =>
     axis === 0 ? s.cyl(al, y, ac, r, h, color, seg) : s.cyl(ac, y, al, r, h, color, seg);
   const rec = (p: number, across: number, r: number, kind = 0) => axis === 0 ? pavementObstacle(p, across, r, kind) : pavementObstacle(across, p, r, kind);
-  const free = (p: number, half: number) => p - half > a0 + 2.5 && p + half < a1 - 2.5 && busy.every(([a, b]) => p + half < a || p - half > b);
+  const free = (p: number, half: number, end = 2.5) => p - half > a0 + end && p + half < a1 - end && busy.every(([a, b]) => p + half < a || p - half > b);
   const place = (half: number, f: (p: number) => void, kind = 0) => {
+    // (A bus shelter 6 m clear of the corners, where the crossing guard's children gather
+    // (vignettes.ts guard): they walked through its glass.)
+    const end = kind === PK.shelter ? 6 : 2.5;
     for (let t = 0; t < 12; t++) {
       const p = range(rnd, a0 + 3, a1 - 3);
-      if (free(p, half)) {
+      if (free(p, half, end)) {
         f(p); busy.push([p - half - 0.4, p + half + 0.4]);
         // (A bus shelter, long and set back: as a row of circles along its roof, not one as wide as
         // it is long out into the road.)

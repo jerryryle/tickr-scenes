@@ -22,6 +22,8 @@
 // out), a piece of a clash's description ("buildPark", "#f2c200") to print the triangles of the
 // first few such clashes ("each": the first in sight of each pair of functions; with a
 // description, also what each ray met), and how many country roads (default 3).
+// The street vignettes (vignettes.ts) are placed in one city (COPLANAR_VIG_CITIES for more),
+// run through their first minute, and swept at moments through it.
 // COPLANAR_SEASON in the environment ("winter/snow") builds the cities and roads in that season;
 // built with --define DEBUG_LAYOUT=..., DEBUG_ONEWAY, DEBUG_EXIT or DEBUG_SEA, in that layout.
 import * as THREE from "three@0.187.0";
@@ -49,6 +51,10 @@ import { Traffic } from "../src/traffic.ts";
 import { Ambient } from "../src/ambient.ts";
 import { SeaLife } from "../src/sealife.ts";
 import { CountryWorld } from "../src/countryworld.ts";
+import { Vignettes, VIG_KINDS, placeVignette, stepVignette, drawVignette, faceSpan, vignetteWeight } from "../src/vignettes.ts";
+import type { Vig } from "../src/vignettes.ts";
+import { weatherMix } from "../src/climate.ts";
+import { mulberry32 } from "../src/rng.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const SEED = argv[0] ? Number(argv[0]) : 1, CITIES = argv[1] ? Number(argv[1]) : 6;
@@ -71,7 +77,7 @@ const DOWN_LOW = 1.2;        // m: faces turned down below this go unseen (see t
 // callers outside geom.ts; build() hands the records to the mesh.
 const PRIMS = ["box", "boxR", "span", "cyl", "cone", "ico", "prism", "wall", "tri", "stamp"];
 let depth = 0;
-const P = Batch.prototype as any;
+const BP = Batch.prototype as any;
 const sites = new WeakMap<object, [number, string][]>();
 function caller(): string {
   const lines = (new Error().stack ?? "").split("\n").slice(1);
@@ -85,19 +91,19 @@ function caller(): string {
   return out.join(" < ") || "?";
 }
 for (const k of PRIMS) {
-  const f = P[k]; if (typeof f !== "function") continue;
-  P[k] = function wrapped(this: any, ...a: unknown[]) {
+  const f = BP[k]; if (typeof f !== "function") continue;
+  BP[k] = function wrapped(this: any, ...a: unknown[]) {
     if (depth === 0) { let s = sites.get(this); if (!s) sites.set(this, s = []); s.push([this.vertexCount, caller()]); }
     depth++; try { return f.apply(this, a); } finally { depth--; }
   };
 }
-const build0 = P.build;
-P.build = function (this: any, m: THREE.Material) {
+const build0 = BP.build;
+BP.build = function (this: any, m: THREE.Material) {
   const s = sites.get(this) ?? []; sites.delete(this);
   const mesh = build0.call(this, m); if (mesh) mesh.userData.sites = s;
   return mesh;
 };
-P.take = ((t) => function (this: any) { sites.delete(this); return t.call(this); })(P.take);
+BP.take = ((t) => function (this: any) { sites.delete(this); return t.call(this); })(BP.take);
 const siteOf = (s: [number, string][] | undefined, v: number) => {
   if (!s || !s.length) return "?";
   let lo = 0, hi = s.length - 1;
@@ -255,7 +261,9 @@ function hidden(tris: Tri[], grid: Map<string, number[]>, at: number[], n: numbe
 // tests misjudge now and then: an odd one in sight is let be.)
 const SAMPLE = 16;
 interface Clash { key: string; area: number; n: number; gap: number; at: number[]; style: string; looked: number; seen: number }
-function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
+// (`fresh`: only pairs with at least one of the first `fresh` triangles: what's new, against
+// itself and the rest, the rest not against itself again.)
+function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 0) {
   const grid = new Map<string, number[]>();
   tris.forEach((t, i) => {
     for (let x = Math.floor(t.lo[0] / CELL); x <= Math.floor(t.hi[0] / CELL); x++)
@@ -267,6 +275,7 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
   const seen = new Set<number>();
   for (const cell of grid.values()) {
     for (let i = 0; i < cell.length; i++) for (let j = i + 1; j < cell.length; j++) {
+      if (fresh && cell[i] >= fresh && cell[j] >= fresh) continue;
       const a = tris[cell[i]], b = tris[cell[j]];
       if (a.col === b.col && a.mat === b.mat) continue;
       if (a.n[0] * b.n[0] + a.n[1] * b.n[1] + a.n[2] * b.n[2] < COS) continue;
@@ -299,8 +308,9 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
   const clashes = new Map<string, Clash>();
   void new Journey(readConfig({ seed: SEED } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
   const mat = { ground: new THREE.MeshLambertMaterial({ vertexColors: true }), solid: new THREE.MeshLambertMaterial({ vertexColors: true }), lamp: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+  const VIG_ONLY = !!proc.env.COPLANAR_ONLY_VIG;   // (just the vignettes: for working on them)
   for (let N = 0; N < CITIES; N++) {
-    if (ONLY >= 0 && N !== ONLY) continue;
+    if (VIG_ONLY || (ONLY >= 0 && N !== ONLY)) continue;
     const style = journeyStyle(SEED, N), plan = new CityPlan(citySeedOf(SEED, N), style), sid = (style as any).id ?? `city${N}`;
     plan.climate = { season: SEASON[0], weather: SEASON[1] as any, snowCover: /snow/.test(SEASON[1]) };
     const build = makeCityChunkBuilder(mat, plan);
@@ -329,7 +339,7 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
   // Everything else that isn't built into a chunk, each thing on its own, spread out and up off
   // the ground: the trucks, the people and animals, the traffic and the trains (each kind's model:
   // the meshes as built, instanced ones once), and the ships and boats at sea.
-  if (ONLY < 0) {
+  if (ONLY < 0 && !VIG_ONLY) {
     const objs = (label: string, list: THREE.Object3D[]) => {
       const tris: Tri[] = [];
       list.forEach((o, i) => { const g = new THREE.Group(); g.add(o); o.visible = true; g.position.set(i * 60, 2, 0); trianglesOf(g, tris); g.remove(o); });
@@ -374,10 +384,88 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>) {
       objs("sea", [...w.children]); break;
     }
   }
+  // The street vignettes (vignettes.ts): each kind placed on a block of the first city of each
+  // style where it can be (at a few hours and in a few weathers, as it needs), run through its
+  // first VIG_T seconds and drawn every VIG_DT, each moment swept with the chunks round it.
+  if (ONLY < 0 && !proc.env.COPLANAR_NO_VIG) {
+    const VIG_T = 70, VIG_DT = 2.5, sc = new THREE.Scene();
+    const F = new Figures(sc, mat.solid, 2400, 0, { material: mat.solid, cap: 64 }), V = new Vignettes(F);
+    const ctxs = [{ hour: 12, weather: "clear" }, { hour: 16, weather: "rain" }, { hour: 22, weather: "clear" }, { hour: 9, weather: "snow" }, { hour: 7.5, weather: "clear" }, { hour: 15.2, weather: "clear" }];
+    const placed = new Map<string, number>();
+    // (In one city by default, a couple of minutes; COPLANAR_VIG_CITIES for more, one style each.)
+    const VN = Number(proc.env.COPLANAR_VIG_CITIES ?? 1);
+    for (let N = 0; N < VN; N++) {
+      const style = journeyStyle(SEED, N), plan = new CityPlan(citySeedOf(SEED, N), style), G = plan.graph, sid = (style as any).id ?? `city${N}`;
+      const chunks = new Map<string, Tri[]>(), build = makeCityChunkBuilder(mat, plan);
+      const chunkTris = (cx: number, cz: number) => {
+        const key = `${cx},${cz}`; let t = chunks.get(key);
+        if (!t) { t = []; const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next(); if (r.value) { r.value.position.set(cx * BLOCK, 0, cz * BLOCK); trianglesOf(r.value, t); } chunks.set(key, t); }
+        return t;
+      };
+      const r = mulberry32(SEED * 977 + N), blocks = G.blocks.filter((b) => b.inCity);
+      for (const k of VIG_KINDS) for (const cx of ctxs) {
+        const snow = cx.weather === "snow";
+        plan.climate = { season: snow ? "winter" : "summer", weather: cx.weather as any, snowCover: snow };
+        const c = { plan, hour: cx.hour, w: weatherMix(cx.weather as any), season: plan.climate.season, snow };
+        let v: Vig | null = null;
+        // (A parking ticket comes only for the truck parked at a kerb: stepped for with one there.)
+        if (k === "ticket" && cx.hour === 12) {
+          for (let tries = 0; tries < 40 && !v; tries++) {
+            const B = blocks[Math.floor(r() * blocks.length)], f = B.sides[Math.floor(r() * B.sides.length)], sp = faceSpan(G, f);
+            const p = G.facePt(f, (sp.a0 + sp.a1) / 2, -sp.kerb - 1.5), H = G.facePt(f, (sp.a0 + sp.a1) / 2 + 1, -sp.kerb - 1.5);
+            const parked = { x: p.x, z: p.z, h: Math.atan2(-(H.z - p.z), H.x - p.x), cabX: p.x, cabZ: p.z };
+            const W = new Vignettes(F); W.reset(Math.floor(r() * 2 ** 31));
+            for (let i = 0; i < 3000 && !v; i++) {
+              W.step({ plan, simTime: i * 0.1, prs: [], focus: { x: p.x, z: p.z }, truck: [], cars: [], peds: [], parked, busy: new Set() });
+              v = ((W as any).list as Vig[]).find((q) => q.k === "ticket") ?? null;
+            }
+          }
+        }
+        for (let tries = 0; tries < 400 && !v && k !== "ticket"; tries++) {
+          const B = blocks[Math.floor(r() * blocks.length)], side = Math.floor(r() * B.sides.length);
+          if (vignetteWeight(k, plan.district(B.kx, B.kz), c) <= 0) continue;   // (only where it would come)
+          const w: Vig = { k, bx: B.kx, bz: B.kz, side, a: faceSpan(G, B.sides[side]).mid, n: -1, t: 0, pt: 0, on: true, seed: Math.floor(r() * 2 ** 31), c: [], st: [0, 0], pst: [0, 0], rel: 0 };
+          try { if (placeVignette(w, c, V)) v = w; } catch { /* not here */ }
+        }
+        if (!v) continue;
+        placed.set(k, (placed.get(k) ?? 0) + 1);
+        if (v.pst.length !== v.st.length) v.pst = v.st.slice();
+        // (A moment's clashes count only if they're still there a tenth of a second on: moving
+        // figures pass through one plane for an instant, which doesn't show; standing ones stay.)
+        const moment = (into: Map<string, Clash>) => {
+          const tris: Tri[] = [];
+          sc.updateMatrixWorld(true); trianglesOf(sc, tris);
+          if (!tris.length) return;
+          // (And the city round it, within 15 m of what it drew: what it drew is checked against
+          // that and itself, not the city against itself again.)
+          const fresh = tris.length, M = 15;
+          let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+          for (const q of tris) { x0 = Math.min(x0, q.lo[0]); x1 = Math.max(x1, q.hi[0]); z0 = Math.min(z0, q.lo[2]); z1 = Math.max(z1, q.hi[2]); }
+          for (let gx = Math.floor((x0 - M) / BLOCK); gx <= Math.floor((x1 + M) / BLOCK); gx++) for (let gz = Math.floor((z0 - M) / BLOCK); gz <= Math.floor((z1 + M) / BLOCK); gz++)
+            for (const q of chunkTris(gx, gz)) if (q.hi[0] > x0 - M && q.lo[0] < x1 + M && q.hi[2] > z0 - M && q.lo[2] < z1 + M) tris.push(q);
+          sweep(tris, `vig ${k}`, into, fresh);
+        };
+        for (let t = 0; t <= VIG_T; t += VIG_DT) {
+          try { while (v.t < t) stepVignette(v, { ...c, simTime: v.t }, V); } catch { break; }
+          const now = new Map<string, Clash>();
+          F.begin(); drawVignette(F, v, v.t, { hour: cx.hour, night: cx.hour >= 20 || cx.hour < 5, st: v.st }); F.end_();
+          moment(now);
+          if (![...now.values()].some((q) => q.seen && q.gap <= FAIL_GAP)) { for (const [key, q] of now) if (!clashes.has(key)) clashes.set(key, q); continue; }
+          const later = new Map<string, Clash>(), t1 = v.t + 0.1;
+          try { while (v.t < t1) stepVignette(v, { ...c, simTime: v.t }, V); } catch { /* as it is */ }
+          F.begin(); drawVignette(F, v, v.t, { hour: cx.hour, night: cx.hour >= 20 || cx.hour < 5, st: v.st }); F.end_();
+          moment(later);
+          for (const [key, q] of now) if (!(q.seen && q.gap <= FAIL_GAP) || later.has(key)) { const o = clashes.get(key); if (o) { o.area += q.area; o.n += q.n; o.seen += q.seen; o.looked += q.looked; } else clashes.set(key, q); }
+        }
+      }
+      void sid;
+    }
+    console.log(`vignettes: ${[...placed.entries()].map(([k, n]) => `${k} ${n}`).join(", ")}; never placed: ${VIG_KINDS.filter((k) => !placed.has(k)).join(", ") || "none"}`);
+  }
   // The country roads between the cities (countryworld.ts): each of the journey's first drives,
   // built a stretch at a time along its length as the truck would see it, and swept a stretch at
   // a time.
-  if (ONLY < 0) {
+  if (ONLY < 0 && !VIG_ONLY) {
     const sc = new THREE.Scene(), world = new CountryWorld(sc, mat, null), seen = new Set<string>();
     world.exact = true;
     let n = 0;

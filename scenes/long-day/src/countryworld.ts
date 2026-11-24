@@ -1415,7 +1415,9 @@ export class CountryWorld {
         this.rbox(s, S + 40, n, 4.6, 20, 0.5, 10, 0xf2f2ee); this.rbox(s, S + 40, n, 4.3, 20.2, 0.3, 10.2, 0x1f6fb2);
         for (const a of [-7, 7]) this.rbox(s, S + 40 + a, n, 2.2, 0.4, 4.4, 0.4, 0xdedbd0);
         for (const a of [-4, 4]) this.rbox(s, S + 40 + a, n, 0.75, 0.8, 1.5, 0.6, 0xc0392b);
-        this.rbox(s, S + 75, side * (FORECOURT + 14), 2.2, 13.96, 4.4, 7.96, 0xe8e2d6);   // (2 cm in from the paving's edges, and its skirts a cm in from them: shared planes flicker) this.rbox(s, S + 75, side * (FORECOURT + 9.95), 1.8, 10, 2.4, 0.1, 0x2a3440);
+        // (The shop 2 cm in from the paving's edges, which its skirts are a cm in from: shared planes
+        // flicker. Its window 1 cm proud of its wall.)
+        this.rbox(s, S + 75, side * (FORECOURT + 14), 2.2, 13.96, 4.4, 7.96, 0xe8e2d6); this.rbox(s, S + 75, side * (FORECOURT + 9.97), 1.8, 10, 2.4, 0.1, 0x2a3440);
         const uv = this.slot(`GAS  $${(3 + p.variant * 0.17 + 0.29).toFixed(2)}`, { bg: "#1f6fb2", fg: "#ffffff", logo: false });
         this.rbox(s, S + GAS_SIGN + 0.39, side * GAS_SIGN_N, 3.5, 0.3, 7, 0.3, 0x5a5f66);   // behind the board, on the island between the drives
         this.rbox(s, S + GAS_SIGN + 0.1, side * GAS_SIGN_N, 7.2, 0.25, 1.4, 4.8, 0x1f6fb2);

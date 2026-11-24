@@ -435,7 +435,18 @@ const K: Record<VK, Kind> = {
       const sp = spanOf(v.bx, v.bz, v.side);
       v.a = sp.a0 + 5 + r() * Math.max(0, sp.a1 - sp.a0 - 22); v.n = -1.2; cast(r, v.c);
       const n = 5 + Math.floor(r() * 3);
-      for (let i = 0; i < n; i++) v.c.push(pick(r, DOGS), 0.65 + r() * 1.3, (i / (n - 1) - 0.5) * 2.1 + (r() - 0.5) * 0.3, 1.5 + r() * 1.6, r() * 10);
+      // (Each dog clear of the others, wobbles and all: across, or along the leash's reach. Laid
+      // out at random, two could stand in each other, their faces sharing planes. One with no
+      // room is left at home.)
+      const dogs: [number, number, number][] = [];
+      for (let i = 0; i < n; i++) {
+        const col = pick(r, DOGS), S = 0.65 + r() * 1.3, wob = r() * 10;
+        for (let k = 0; k < 30; k++) {
+          const lat = (i / (n - 1) - 0.5) * 2.1 + (r() - 0.5) * 0.3, reach = 1.4 + r() * 2.0;
+          if (dogs.some(([l, re, s2]) => Math.abs(l - lat) < 0.15 * (S + s2) + 0.45 && Math.abs(re - reach) < 0.4 * (S + s2) + 0.55)) continue;
+          dogs.push([lat, reach, S]); v.c.push(col, S, lat, reach, wob); break;
+        }
+      }
       v.st = [0, v.a]; v.pst = [0, v.a];
       return true;
     },
@@ -822,7 +833,7 @@ const K: Record<VK, Kind> = {
       for (const ka of [-3.0, 1.6]) for (const kn of [-1.0, 1.0]) { const [wx, wz] = P(f, v.a + s * ka, v.n + kn); F.box(wx, Y0 + 0.38, wz, 0.75, 0.75, 0.3, f.h0, 0, 0x1a1a1a); }
       const [hx, hz] = P(f, v.a + s * 0.5, v.n - 1.12); F.box(hx, Y0 + 1.75, hz, 2.4, 0.95, 0.04, f.h0, 0, 0x2a1e14);
       if (D.night) F.glow(hx, Y0 + 1.75, hz + 0, 2.2, 0.8, 0.03, f.h0, 0xffd890);
-      const [ax, az] = P(f, v.a + s * 0.5, v.n - 1.55); F.box(ax, Y0 + 2.35, az, 2.6, 0.06, 0.95, f.h0, 0, 0xffffff, 0); F.box(ax, Y0 + 2.36, az, 2.6, 0.04, 0.35, f.h0, 0, 0xc0392b);
+      const [ax, az] = P(f, v.a + s * 0.5, v.n - 1.55); F.box(ax, Y0 + 2.35, az, 2.6, 0.06, 0.95, f.h0, 0, 0xffffff, 0); F.box(ax, Y0 + 2.365, az, 2.6, 0.04, 0.35, f.h0, 0, 0xc0392b);   // (its stripe just over the awning's top: shared planes flicker)
       const [sx, sz] = P(f, v.a + s * 0.5, v.n - 1.3); F.box(sx, Y0 + 1.25, sz, 2.4, 0.06, 0.4, f.h0, 0, 0xb8bcc0);
       const [mx, mz] = P(f, v.a + s * 2.0, v.n - 1.13); F.box(mx, Y0 + 1.75, mz, 0.6, 0.8, 0.02, f.h0, 0, 0x1a1a1a); for (let i = 0; i < 4; i++) F.box(mx, Y0 + 2.0 - i * 0.16, mz - 0, 0.44, 0.03, 0.025, f.h0, 0, 0xf4f0d8);
       { const [px, pz] = P(f, v.a + s * (0.5 + Math.sin(t * 0.7) * 0.6), v.n - 1.05), cook = castAt(v, 1), y = Y0 + 1.4;
@@ -832,12 +843,15 @@ const K: Record<VK, Kind> = {
       const slotA = (i: number) => (i === 0 ? v.a + s * 0.5 : v.a + s * 0.5 - s * (0.4 + i * 0.75)), slotN = (i: number) => (i === 0 ? -0.45 : -0.85);
       for (let j = 0; j < L + 1; j++) {
         const id = k + j, i = j, from = i + 1, sh = shuffle;
+        // (The newcomer joins behind the last in the queue, and at the next shuffle everyone moves
+        // up a place together: it walked up to the last one's own place, and the two stood in each
+        // other.)
         if (j === L) {   // the newcomer walking up to the back
-          const arrive = ramp(ph, 0, 10), aa = lerp(slotA(L - 1) - s * 14, slotA(L - 1), arrive), moving = arrive < 1;
-          walker(F, f, aa, slotN(L - 1), along(f, s), ph * 1.2, extra(v, id), moving);
+          const arrive = ramp(ph, 0, 10), aa = lerp(slotA(L) - s * 14, slotA(L), arrive), moving = arrive < 1;
+          walker(F, f, aa, slotN(L), along(f, s), ph * 1.2, extra(v, id), moving);
           continue;
         }
-        const a = lerp(slotA(from), slotA(i), i === L - 1 ? 1 : sh), n = lerp(slotN(from), slotN(i), sh), moving = sh > 0 && sh < 1 && i < L - 1;
+        const a = lerp(slotA(from), slotA(i), sh), n = lerp(slotN(from), slotN(i), sh), moving = sh > 0 && sh < 1;
         const facing = i === 0 && sh > 0.9 ? toBldg(f) : along(f, s), waiting = !moving;
         walker(F, f, a, n, facing, t * 1.2 + j, extra(v, id), moving, waiting ? { turn: Math.sin(t * 0.3 + id) * 0.4, arms: [0.05, i === 0 && ph > 8 ? 1.1 : -0.05] } : {});
         if (i === 0 && ph > 9) { const h = F.handR; F.box(h[0], h[1], h[2], 0.2, 0.08, 0.14, facing, 0, 0xf4e8d0); }
@@ -946,7 +960,8 @@ const K: Record<VK, Kind> = {
     },
     draw(v, F, t) {
       const f = frameOf(v.bx, v.bz, v.side, v.a), col = v.c[8], half = v.c[9], dh = v.c[10];
-      { const [x, z] = P(f, v.a, v.n - 0.02); F.box(x, Y0 + dh / 2, z, 2 * half + 0.16, dh + 0.08, 0.04, f.h0, 0, v.c[11]); F.box(x, Y0 + dh / 2, z - 0, 2 * half, dh, 0.05, f.h0, 0, 0x1a1410); }
+      // (The door frame from the sill up, not down into the step: shared planes flicker.)
+      { const [x, z] = P(f, v.a, v.n - 0.02); F.box(x, Y0 + (dh + 0.08) / 2, z, 2 * half + 0.16, dh + 0.08, 0.04, f.h0, 0, v.c[11]); F.box(x, Y0 + dh / 2, z - 0, 2 * half, dh, 0.05, f.h0, 0, 0x1a1410); }
       // The couch: half in, swinging and tipping as they try every angle.
       const cyc = t % 14, tw = Math.sin(cyc / 14 * Math.PI * 2) * 0.35, tip = Math.max(0, Math.sin(cyc / 14 * Math.PI * 4)) * 0.55;
       const push = Math.sin(cyc / 14 * Math.PI * 2 + 1) * 0.15, outN = v.n - 0.75 + push, yaw = toBldg(f) + tw;
@@ -1292,7 +1307,8 @@ const K: Record<VK, Kind> = {
     },
     draw(v, F, t) {
       const f = frameOf(v.bx, v.bz, v.side, v.a);
-      { const [x, z] = P(f, v.a, -4.6); F.box(x, 0.012, z, 3.2, 0.01, 2.6, f.h0, 0, 0x3a4a58); const [px, pz] = P(f, v.a + 0.4, -2.9); F.box(px, Y0 + 0.003, pz, 2.0, 0.006, 0.6, f.h0, 0, 0x6a7a88); }
+      // (The puddle over the road's markings, not level with them: shared planes flicker.)
+      { const [x, z] = P(f, v.a, -4.6); F.box(x, 0.0195, z, 3.2, 0.01, 2.6, f.h0, 0, 0x3a4a58); const [px, pz] = P(f, v.a + 0.4, -2.9); F.box(px, Y0 + 0.003, pz, 2.0, 0.006, 0.6, f.h0, 0, 0x6a7a88); }
       // The jet: three streams arcing out over the gutter, spray off their ends.
       const arc = (j: number, k: number): V3 => { const sp = (j - 1) * 0.3 + Math.sin(t * 2 + j) * 0.04, [x, z] = P(f, v.a + sp * k * 2.6, v.n - 0.15 - k * 3.2); return [x, Y0 + 0.45 + k * 1.9 - k * k * 2.25, z]; };
       for (let j = 0; j < 3; j++) for (let i = 0; i < 8; i++) { const a = arc(j, i / 8), b = arc(j, (i + 1) / 8); F.seg(a[0], a[1], a[2], b[0], b[1], b[2], 0.09 - i * 0.006, i < 4 ? 0xeaf6ff : 0xc8e0f4); }
@@ -1677,6 +1693,12 @@ export function placeVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: V
   VG = c.plan.graph;
   const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
   return K[v.k].place(v, full, mulberry32(v.seed), V);
+}
+// How likely kind k is on a block of district d, here and now (Kind.w: 0, never there).
+export function vignetteWeight(k: VK, d: District, c: Partial<Ctx> & { plan: CityPlan }) {
+  VG = c.plan.graph;
+  const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
+  return K[k].w(d, full);
 }
 export function stepVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: Vignettes) {
   VG = c.plan.graph;
