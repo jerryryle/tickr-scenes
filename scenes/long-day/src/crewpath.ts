@@ -34,6 +34,7 @@ export interface Nominal { x: number; z: number; yaw: number; exact: boolean }
 export interface CrewPath { rate: number; x: Float32Array; z: Float32Array; yaw: Float32Array; steps: Float32Array; travel: Float32Array; jx: Float32Array; jz: Float32Array; jyaw: Float32Array; starts: number[] }
 
 const RATE = 30;              // samples a second
+const AVG = 8;                // samples either side over which a move's sideways share is judged (samplePath)
 const LOOK = 0.9;             // walking, the driver heads for the path this far ahead (m)
 const PRE_TURN = 0.55;        // and turns to face the next chore's way over its last this many seconds
 const CATCH = 0.45, CATCH_EXACT = 0.12;   // the time constant of catching up with the path (s)
@@ -173,9 +174,16 @@ export function samplePath(P: CrewPath, t: number, out: { x: number; z: number; 
   out.steps = P.steps[i] + (P.steps[i + 1] - P.steps[i]) * k;
   out.travel = P.travel[i] + (P.travel[i + 1] - P.travel[i]) * k;
   out.speed = Math.abs(P.steps[i + 1] - P.steps[i]) * P.rate;
-  // (How much of the way goes along the facing, 0..1: side-stepping, the rest.)
-  const mx = P.x[i + 1] - P.x[i], mz = P.z[i + 1] - P.z[i], mm = Math.hypot(mx, mz);
-  out.along = mm > 1e-5 ? Math.abs(mx * Math.cos(out.yaw) - mz * Math.sin(out.yaw)) / mm : 1;
+  // (How much of the way goes along the facing, 0..1: side-stepping, the rest. Over a quarter
+  // second either side, by the ground each sample covers: from one sample alone, the drift as a
+  // walk comes to a stop read as side-stepping, and the stride narrowed at a stroke, the planted
+  // foot sliding.)
+  let fw = 0, mm = 0;
+  for (let j = Math.max(0, i - AVG), e = Math.min(n - 1, i + 1 + AVG); j < e; j++) {
+    const mx = P.x[j + 1] - P.x[j], mz = P.z[j + 1] - P.z[j];
+    fw += Math.abs(mx * Math.cos(P.yaw[j]) - mz * Math.sin(P.yaw[j])); mm += Math.hypot(mx, mz);
+  }
+  out.along = mm > 1e-5 ? Math.min(1, fw / mm) : 1;
   out.jx = P.jx[i] + (P.jx[i + 1] - P.jx[i]) * k;
   out.jz = P.jz[i] + (P.jz[i + 1] - P.jz[i]) * k;
   out.jyaw = P.jyaw[i] + wrap(P.jyaw[i + 1] - P.jyaw[i]) * k;

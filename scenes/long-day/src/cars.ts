@@ -151,18 +151,19 @@ function lower(b: Batch, s: CarSpec, paint: number) {
   piece(-f + 0.15, wr - arch, W); piece(-f, -f + 0.15, W - 0.12);
   for (const x of [wf, wr]) for (const z of [-1, 1]) {
     b.box(x, y0 - 0.12, z * (hw - 0.25), arch * 2, 0.26, 0.4, WELL);                     // the well, in shadow
-    b.cyl(x, r, z * (hw - 0.15), r, 0.2, TYRE, 12, Math.PI / 2);
+    b.cyl(x, r, z * (hw - 0.14), r, 0.2, TYRE, 12, Math.PI / 2);   // (just proud of the well: shared planes flicker)
     b.cyl(x, r, z * (hw - 0.045), r * 0.58, 0.02, CHROME, 10, Math.PI / 2);              // wheel
     b.cyl(x, r, z * (hw - 0.04), r * 0.2, 0.02, TRIM, 6, Math.PI / 2);                   // hub
   }
-  for (const z of [-1, 1]) b.box(0, yr + 0.05, z * (hw + 0.004), wf - wr - 2 * arch, 0.1, 0.01, PLASTIC);   // sills
+  for (const z of [-1, 1]) b.box(0, yr + 0.055, z * (hw + 0.004), wf - wr - 2 * arch, 0.09, 0.01, PLASTIC);   // sills
+  // (Sills and bumpers stop short of the body's underside: shared planes flicker.)
   // Front: bumper and air dam, grille between the headlamps, plate.
-  b.box(f - 0.03, yr + 0.09, 0, 0.1, 0.18, W - 0.16, PLASTIC);
+  b.box(f - 0.03, yr + 0.1, 0, 0.1, 0.16, W - 0.16, PLASTIC);
   b.box(f + 0.004, y0 - 0.07, 0, 0.01, 0.14, W * 0.4, TRIM);
   b.box(f + 0.006, yr + 0.3, 0, 0.01, 0.11, 0.42, PLATE);
   for (const z of [-1, 1]) headLamp(b, f + 0.006, y0 - 0.02, z * (hw - 0.27), 0.02, 0.13, 0.36);
   // Rear: bumper, plate, tail lamps wrapping round the corners.
-  b.box(-f + 0.03, yr + 0.07, 0, 0.1, 0.14, W - 0.16, PLASTIC);
+  b.box(-f + 0.03, yr + 0.08, 0, 0.1, 0.12, W - 0.16, PLASTIC);
   b.box(-f - 0.006, yr + 0.3, 0, 0.01, 0.11, 0.42, PLATE);
   const ty = Math.min(xr > -f + 0.5 ? y0 + 0.2 : first[3] - 0.05, y0 + 0.25);
   for (const z of [-1, 1]) {

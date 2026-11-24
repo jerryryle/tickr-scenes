@@ -37,6 +37,15 @@ export function frameApply(f: Frame2, x: number, z: number): [number, number] {
   const c = Math.cos(f.rot), s = Math.sin(f.rot);
   return [f.ox + c * x + s * z, f.oz - s * x + c * z];
 }
+// What a chunk build has placed so far, in its tile's coordinates, so later pieces keep out of it
+// (city.ts cityBatches clears it; inFrame keeps `frames`, the parts' frames being drawn in, inner
+// last): trees' trunks (x, z pairs) and buildings' footprints (four corners each, x, z pairs).
+export const PLACED = { frames: [] as Frame2[], trees: [] as number[], foot: [] as number[] };
+// (x, z) in the frame being drawn in, in the tile's coordinates.
+export function toTile(x: number, z: number): [number, number] {
+  for (let i = PLACED.frames.length - 1; i >= 0; i--) [x, z] = frameApply(PLACED.frames[i], x, z);
+  return [x, z];
+}
 
 export class Batch {
   private pos = new Float32Array(36 * 3 * 64);
@@ -69,12 +78,12 @@ export class Batch {
   span(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, color = 0xffffff) {
     this.box((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0), color);
   }
-  cyl(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0) {
-    this.emit(batchTemplate("cyl" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg)), x, y, z, color, 0, rotX, rotZ, r, h, r);
+  cyl(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0, rotY = 0) {
+    this.emit(batchTemplate("cyl" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg)), x, y, z, color, rotY, rotX, rotZ, r, h, r);
   }
-  // Points up; rotX = Math.PI turns it point down.
-  cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0) {
-    this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, 0, rotX, 0, r, h, r);
+  // Points up; rotX = Math.PI turns it point down. rotY turns it about its axis.
+  cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotY = 0) {
+    this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, rotY, rotX, 0, r, h, r);
   }
   // Low-poly ball (tree crowns, bushes): an icosahedron of radius r, squashed by `sy`.
   ico(x: number, y: number, z: number, r: number, color: number, sy = 1, rotY = 0) {

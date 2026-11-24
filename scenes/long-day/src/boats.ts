@@ -143,7 +143,7 @@ function cruiser(b: Batch) {
   b.box(0.1, y + 1.16, 0, 0.5, 0.16, 0.5, OFF_WHITE);                                    // radar
   b.cyl(-0.4, y + 1.45, 0, 0.03, 0.75, STEEL, 5); b.box(-0.4, y + 1.84, 0, 0.06, 0.06, 0.06, 0xfff4d0);   // mast and its light
   // Cockpit: a bench round its sides with cushions, a step down to the swim platform.
-  b.box(-3.8, y + 0.2, 0, 0.5, 0.4, 2.2, OFF_WHITE); b.box(-3.8, y + 0.42, 0, 0.5, 0.06, 2.1, ACCENT);
+  b.box(-3.8, y + 0.2, 0, 0.5, 0.4, 2.2, OFF_WHITE); b.box(-3.8, y + 0.42, 0, 0.48, 0.06, 2.1, ACCENT);   // (the cushion inside the seat's ends: shared planes flicker)
   for (const z of [0.9, -0.9]) { b.box(-3.0, y + 0.2, z, 1.2, 0.4, 0.4, OFF_WHITE); b.box(-3.0, y + 0.42, z, 1.2, 0.06, 0.38, ACCENT); }
   b.box(-4.55, 0.32, 0, 0.55, 0.08, 2.3, TEAK);
   b.cyl(-4.25, y + 0.55, 0.9, 0.02, 1.1, STEEL, 4); b.box(-4.25, y + 0.95, 0.68, 0.02, 0.26, 0.42, 0x1f3f8a);   // ensign
@@ -176,7 +176,7 @@ function narrowboat(b: Batch) {
   b.cyl(3.9, y + 1.55, 0, 0.09, 0.6, BLACK, 8); b.cyl(3.9, y + 1.83, 0, 0.1, 0.06, BRASS, 8);   // chimney
   b.box(-1.5, y + 1.3, -0.55, 5.5, 0.04, 0.22, TEAK); b.cyl(-1.0, y + 1.29, 0.5, 0.03, 4.5, 0x7a5232, 5, 0, Math.PI / 2);   // plank and pole
   b.box(1.8, y + 1.33, 0.3, 0.3, 0.14, 0.3, 0xb5643a); b.ico(1.8, y + 1.52, 0.3, 0.24, 0x3f8a3a);   // a pot plant
-  b.prism(5.75, y + 0.4, 0, 1.7, 0.8, 1.75, 0x2f4f3a);                                    // the cratch
+  b.prism(5.77, y + 0.4, 0, 1.7, 0.8, 1.75, 0x2f4f3a);                                    // the cratch (from the door's face: shared planes flicker)
   b.cyl(-7.35, y + 0.45, 0, 0.04, 0.9, BLACK, 5); rod(b, [-7.35, y + 0.9, 0], [-6.4, y + 1.05, 0], 0.05, BRASS);   // the tiller
   b.cyl(7.6, 0.35, 0, 0.16, 0.3, 0x8a7a5a, 8);                                            // rope fender on the stem
 }

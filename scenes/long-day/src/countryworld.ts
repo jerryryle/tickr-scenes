@@ -1501,7 +1501,7 @@ export function landTree(s: Batch, x: number, z: number, kind: string, green: nu
     return;
   }
   switch (kind) {
-    case "conifer": s.cyl(x, 0.6 * k, z, 0.2 * k, 1.2 * k, CW.trunk, 5); s.cone(x, 3.6 * k, z, 1.7 * k, 5.5 * k, green, 7); break;
+    case "conifer": s.cyl(x, 0.6 * k, z, 0.2 * k, 1.2 * k, CW.trunk, 5); s.cone(x, 3.6 * k, z, 1.7 * k, 5.5 * k, green, 7, 0, x * 1.7 + z); break;   // (turned its own way: two alike side by side could share a plane, which flickers)
     case "cypress": s.cyl(x, 1 * k, z, 0.25 * k, 2 * k, CW.trunk, 5); s.ico(x, 3.4 * k, z, 2.2 * k, green, 0.55, rnd() * 6); s.ico(x + 0.8, 3.0 * k, z, 1.6 * k, shade(green, 1.1), 0.5, rnd() * 6); break;
     case "broad": s.cyl(x, 1.2 * k, z, 0.22 * k, 2.4 * k, CW.trunk, 5); s.ico(x, 3.3 * k, z, 1.8 * k, green, 1, rnd() * 6); break;
     case "palm": s.cyl(x, 3 * k, z, 0.2, 6 * k, CW.trunk, 5); s.ico(x, 6.2 * k, z, 1.4, green, 0.35); break;

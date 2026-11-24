@@ -41,7 +41,9 @@ const my2 = (a: number, b: number) => (a + b) / 2;
 export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand, seed: number) {
   const H = GARAGE_H, h = heading(side);
   // The ground floor's slab and its painted bays.
-  fbox(ground, side, 9, 51, 0, 42, -0.05, 0.03, 0x8d8a82);
+  // (Its sides a cm inside the block's edges and from the road's top up: where they met the
+  // street's asphalt and the lots' ground in one plane, they flickered.)
+  fbox(ground, side, 9.01, 50.99, 0.01, 41.99, 0, 0.03, 0x8d8a82);
   // The roof deck: everywhere over the middle of the block and across its back that the ramps'
   // decks don't cover (garageRoof), so it meets them without gaps; its edges walled except where
   // a ramp comes up level with it (cars drive on and off there). Columns under it.
@@ -56,7 +58,10 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
     }
   }
   for (const w of R.walls) fbox(solid, side, w[0], w[1], w[2], w[3], H - 0.05, H + 1.0, RAIL);
-  for (let a = 24; a <= 40; a += 8) for (let n = 5; n <= 33; n += 7) if (R.at(a, n) === 1) { const [x, z] = fp(side, a, n); solid.box(x, (H - 0.5) / 2, z, 0.6, H - 0.5, 0.6, COLUMN); }
+  const columns: [number, number][] = [];
+  for (let a = 24; a <= 40; a += 8) for (let n = 5; n <= 33; n += 7) if (R.at(a, n) === 1) { columns.push([a, n]); const [x, z] = fp(side, a, n); solid.box(x, (H - 0.5) / 2, z, 0.6, H - 0.5, 0.6, COLUMN); }
+  // (No car in a bay under the deck that a column stands in, or that would be nose to it.)
+  const columnIn = (a: number, n: number) => columns.some(([ca, cn]) => Math.abs(ca - a) < 1.35 && Math.abs(cn - n) < 2.75);
   // Parked cars: in the bays under the deck and on it, and the bays' lines.
   for (let row = 0; row < 2; row++) for (let k = 0; k < 7; k++) {
     const a = 24.6 + k * 2.6, n = row ? 26 : 9.5;
@@ -65,7 +70,7 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
       const here = (a: number, n: number) => (y < 1 ? R.at(a, n) !== 2 : R.at(a, n) === 1);
       const [lx, lz] = fp(side, a - 1.3, n);
       if (here(a - 1.3, n - 2.4) && here(a - 1.3, n + 2.4)) (y < 1 ? ground : solid).box(lx, y + 0.01, lz, 0.1, 0.02, 4.8, STRIPE, h);
-      if (hash2(k + row * 7, salt, seed, 0x9a7) < 0.62 && [-1, 1].every((u) => here(a + u, n - 2.4) && here(a + u, n + 2.4))) {
+      if (hash2(k + row * 7, salt, seed, 0x9a7) < 0.62 && [-1, 1].every((u) => here(a + u, n - 2.4) && here(a + u, n + 2.4)) && !(y < 1 && columnIn(a, n))) {
         // Nose in (towards the bay's back: the deck's edge or the back wall), cars in car-sized bays.
         const [x, z] = fp(side, a, n), r = hash2(k, row + salt * 3, seed, 0xca7);
         parkedCar(solid, carKindAt(r * 7 % 1, false), x, y, z, h + (row ? -1 : 1) * Math.PI / 2, carPaintAt(r));
@@ -132,7 +137,8 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
           const ka = sa ? 0.9 * k : 0, kb = sb ? 0.9 * k : 0;
           quadIn(solid, P(i, ea, Y), P(i + 1, eb, Y), P(i + 1, eb + kb, Y), P(i, ea + ka, Y), DECK_TOP, [0, 1, 0]);
           quadIn(solid, P(i, ea, H - 0.5), P(i + 1, eb, H - 0.5), P(i + 1, eb + kb, H - 0.5), P(i, ea + ka, H - 0.5), DECK, [0, -1, 0]);
-          quadIn(solid, P(i, ea, H - 0.5), P(i + 1, eb, H - 0.5), P(i + 1, eb, Y), P(i, ea, Y), DECK, side);
+          // (Its face a cm out from the ramp's edge, where the ramp's parapet faces the same way.)
+          quadIn(solid, P(i, ea + k * 0.01, H - 0.5), P(i + 1, eb + k * 0.01, H - 0.5), P(i + 1, eb + k * 0.01, Y), P(i, ea + k * 0.01, Y), DECK, side);
           if (low) {
             const o = 0.25, ta = H + 1.0;
             quadIn(solid, P(i, ea, Y), P(i + 1, eb, Y), P(i + 1, eb, ta), P(i, ea, ta), RAIL, side);
@@ -150,13 +156,13 @@ export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand
     }
   }
   // The receiver's stair and lift tower on the roof, its door facing the lane.
-  fbox(solid, side, 29.5, 35.5, 40.2, 42, H - 0.01, H + 3.3, 0xd8d2c4);
+  fbox(solid, side, 29.5, 35.5, 40.2, 41.97, H - 0.01, H + 3.3, 0xd8d2c4);   // (its back inside the wall along the deck's edge: shared planes flicker)
   fbox(solid, side, 29.3, 35.7, 40.0, 42, H + 3.3, H + 3.6, 0x5b6470);
   fbox(solid, side, GARAGE_DOOR[0] - 0.62, GARAGE_DOOR[0] + 0.62, 40.15, 40.2, H, H + 2.35, 0xf2efe8);   // door frame
-  fbox(solid, side, GARAGE_DOOR[0] - 0.55, GARAGE_DOOR[0] + 0.55, 40.13, 40.17, H, H + 2.25, 0x23365e);   // the door
+  fbox(solid, side, GARAGE_DOOR[0] - 0.55, GARAGE_DOOR[0] + 0.55, 40.13, 40.17, H + 0.01, H + 2.25, 0x23365e);   // the door
   // A "P" sign on a post at the corner where the ramp up begins.
   const [sx, sz] = fp(side, 15.5, 1.2);
-  solid.cyl(sx, 2.4, sz, 0.08, 4.8, 0x3a3d40, 6);
+  solid.cyl(sx, 2.25, sz, 0.08, 4.5, 0x3a3d40, 6);   // (up to the sign's foot: its faces met the sign's)
   solid.box(sx, 5.2, sz, 1.4, 1.4, 0.14, 0x1f4fa8, h);
   solid.box(sx + Math.sin(h) * 0.08, 5.2, sz + Math.cos(h) * 0.08, 0.16, 0.9, 0.04, 0xf2f2ee, h);
   solid.box(sx + Math.sin(h) * 0.08 + Math.cos(h) * 0.18, 5.42, sz + Math.cos(h) * 0.08 - Math.sin(h) * 0.18, 0.4, 0.46, 0.04, 0xf2f2ee, h);

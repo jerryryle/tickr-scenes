@@ -9,7 +9,7 @@
 // brightly. Primitives in the same batch keep aux.z = -1 and render as plain vertex colour, so a
 // chunk's buildings, roofs and trim are a single draw call.
 import * as THREE from "three@0.187.0";
-import { Batch } from "./geom.ts";
+import { Batch, PLACED, toTile } from "./geom.ts";
 import { NIGHT_GLOW } from "./atmosphere.ts";
 import { hash2 } from "./rng.ts";
 import { FACADE_GRID, FACADE_TILE, FACADE_VARIANTS } from "./facadeart.ts";
@@ -114,6 +114,7 @@ export const BAY = 3.4; // target bay width in metres; walls round to whole bays
 export function facadeBox(b: Batch, x0: number, z0: number, x1: number, z1: number, y0: number,
                           bands: FacadeBand[], color: number, doorSide = -1, doorTile = -1): number {
   const corners = [[x0, z1], [x1, z1], [x1, z0], [x0, z0]];
+  for (const [x, z] of corners) PLACED.foot.push(...toTile(x, z));   // (for the trees that come after: city.ts treeRoom)
   const variant = buildingVariant(x0 + x1, z0 + z1);
   doorTile = withVariant(doorTile, variant);
   let y = y0;

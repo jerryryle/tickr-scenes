@@ -167,7 +167,8 @@ export function buildInterchange(ground: Batch, solid: Batch, plan: CityPlan, bl
     const offStreet = (q: Sample) => q.c + q.r > KERB_LINE + 0.7;
     for (const k of [-1, 1]) if (k > 0 ? !ground0 || (offStreet(a) && offStreet(b)) : a.free && b.free && !a.ext && !b.ext) {
       const ea = k > 0 ? a.r : a.l, eb = k > 0 ? b.r : b.l;
-      quad(at(i, ea - k * 0.6, 0.006), at(i, ea - k * 0.45, 0.006), at(i + 1, eb - k * 0.45, 0.006), at(i + 1, eb - k * 0.6, 0.006), 0xe8e8e0, [0, 1, 0]);
+      // (Up 1.6 cm: at the gore, over the freeway's deck and its own lines, nearer flickers.)
+      quad(at(i, ea - k * 0.6, 0.016), at(i, ea - k * 0.45, 0.016), at(i + 1, eb - k * 0.45, 0.016), at(i + 1, eb - k * 0.6, 0.016), 0xe8e8e0, [0, 1, 0]);
     }
     if (!ground0) {
       quad(at(i, a.l, -T), at(i, a.r, -T), at(i + 1, b.r, -T), at(i + 1, b.l, -T), IC_DECK, [0, -1, 0]);
@@ -180,8 +181,10 @@ export function buildInterchange(ground: Batch, solid: Batch, plan: CityPlan, bl
     // Barriers: the right one from where the freeway's ends; the left one from the gore's nose.
     for (const k of [-1, 1]) {
       if (k < 0 && !(a.free && b.free)) continue;
-      const sd: V = [rx * k, 0, rz * k], ea = k > 0 ? a.r : a.l, eb = k > 0 ? b.r : b.l;
-      const n0a = ea - k * 0.25, n0b = eb - k * 0.25, ha = wallH(i, ea), hb = wallH(i + 1, eb);
+      // (Its outer face a cm out from the deck's edge: where it runs along the freeway's deck, that
+      // deck's side shares the plane.)
+      const sd: V = [rx * k, 0, rz * k], ea = (k > 0 ? a.r : a.l) + k * 0.01, eb = (k > 0 ? b.r : b.l) + k * 0.01;
+      const n0a = ea - k * 0.26, n0b = eb - k * 0.26, ha = wallH(i, ea), hb = wallH(i + 1, eb);
       if (ha < 0.02 && hb < 0.02) continue;
       quad(at(i, n0a, 0), at(i + 1, n0b, 0), at(i + 1, n0b, hb), at(i, n0a, ha), IC_RAIL, [-sd[0], 0, -sd[2]]);
       quad(at(i, ea, 0), at(i + 1, eb, 0), at(i + 1, eb, hb), at(i, ea, ha), IC_RAIL, sd);

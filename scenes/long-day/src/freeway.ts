@@ -370,15 +370,15 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
       // Edge lines: solid, but dashed along the on-ramp's merge (where the lanes are one roadway).
       for (const k of [-1, 1]) {
         const n = k * (FW_HALF - 0.75);
-        if (k > 0 && gore(a, a2)) { for (let e = Math.ceil(a / 6) * 6; e < a2 - 0.01; e += 6) along(e, Math.min(a2, e + 3), ma + n, ma + n, ya, yb, 0, 0.025, 0.16, FW_WHITE); }
-        else along(a, a2, ma + n, mb + n, ya, yb, 0, 0.025, 0.14, FW_WHITE);
+        if (k > 0 && gore(a, a2)) { for (let e = Math.ceil(a / 6) * 6; e < a2 - 0.01; e += 6) along(e, Math.min(a2, e + 3), ma + n, ma + n, ya, yb, 0.002, 0.025, 0.16, FW_WHITE); }
+        else along(a, a2, ma + n, mb + n, ya, yb, 0.002, 0.025, 0.14, FW_WHITE);   // (lines from 2 mm up: their undersides met the barrier's, which they run under, in one plane)
       }
       for (const k of [-1, 1]) {
         along(a, a2, ma + k * 4, mb + k * 4, ya, yb, -1.45, -0.55, 0.9, FW_GIRDER);
         if (!(k > 0 && gore(a, a2))) along(a, a2, ma + k * (FW_HALF - 0.2), mb + k * (FW_HALF - 0.2), ya, yb, 0, 0.95, 0.4, FW_CONCRETE);
         // Lane lines, dashed.
         { const k0 = Math.floor(a / STEP + 1e-9) * STEP, e = Math.min(a2, k0 + 4);
-          if (Math.floor(a / STEP + 1e-9) % 2 === 0 && e > a + 0.01) along(a, e, F.m(a) + k * 3.5, F.m(e) + k * 3.5, ya, ya + (yb - ya) * (e - a) / (a2 - a), 0, 0.025, 0.16, FW_WHITE); }
+          if (Math.floor(a / STEP + 1e-9) % 2 === 0 && e > a + 0.01) along(a, e, F.m(a) + k * 3.5, F.m(e) + k * 3.5, ya, ya + (yb - ya) * (e - a) / (a2 - a), 0.002, 0.025, 0.16, FW_WHITE); }
       }
       along(a, a2, ma, mb, ya, yb, 0, 0.8, 0.5, FW_CONCRETE);   // the median barrier
     }

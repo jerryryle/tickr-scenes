@@ -12,7 +12,7 @@ import { FACADE } from "./facadetiles.ts";
 import { FLAG_WAVE, NEON_BLINK, NEON_CHASE, NEON_STEADY } from "./signals.ts";
 import type { CityStyle } from "./styles.ts";
 import { C, CITY_HI, CITY_LO, CityPlan, cityTree, CS, faceYaw, GATE_SLOTS, inset, irange, pick, range, shade, streetSide } from "./city.ts";
-import { BLOCK, CURB_H, STREET } from "./grid.ts";
+import { BLOCK, CURB_H, LOT_TOP, STREET } from "./grid.ts";
 import type { District, Rand, Rect } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
 import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, signAtlas, SignAtlas } from "./signs.ts";
@@ -293,7 +293,7 @@ export function elevatedBent(s: Batch, x: number, top: number) {
   for (const z of EL_COLUMNS) {
     const inward = z < 9 ? 1 : -1;
     s.box(x, beamBot / 2, z, 0.6, beamBot, 0.6, steel);
-    s.box(x, 0.25, z, 1.0, 0.5, 1.0, 0x8a8780);                                          // footing
+    s.box(x, 0.25, z, 1.03, 0.5, 1.03, 0x8a8780);                                        // footing (past the kerb's face, and a loading zone's yellow kerb's, which its side shared)
     s.box(x, beamBot + 0.05, z, 0.8, 0.3, 0.8, steel);                                      // cap
     const k = 1.3, len = Math.hypot(k, k);                                                  // knee brace
     s.boxR(x, beamBot - k / 2, z + (inward * k) / 2, 0.22, len, 0.22, steel, inward * Math.PI / 4, 0, 0);
@@ -369,7 +369,7 @@ export function flagpole(s: Batch, x: number, z: number, h: number, colors: numb
 // ---- the town square (Main Street) ------------------------------------------------------------------
 // A courthouse with a clock tower on a lawn, a bandstand, flags and benches.
 export function buildTownSquare(g: Batch, s: Batch, B: Rect, rnd: Rand) {
-  g.span(B.x0, 0, B.z0, B.x1, CURB_H, B.z1, CS.grass);
+  g.span(B.x0, 0, B.z0, B.x1, LOT_TOP, B.z1, CS.grass);
   const cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2;
   g.span(B.x0, CURB_H, cz - 1.2, B.x1, CURB_H + 0.02, cz + 1.2, C.path);
   g.span(cx - 1.2, CURB_H, B.z0, cx + 1.2, CURB_H + 0.02, B.z1, C.path);
@@ -419,8 +419,10 @@ export function chessStatues(s: Batch, cx: number, cz: number, yaw: number) {
   const rot = (x: number, z: number): [number, number] => [cx + x * Math.cos(yaw) + z * Math.sin(yaw), cz - x * Math.sin(yaw) + z * Math.cos(yaw)];
   const y0 = CURB_H;
   // Table and board.
-  { const [x, z] = rot(0, 0); s.cyl(x, y0 + 0.5, z, 0.25, 1.0, 0x5a4030, 6); s.box(x, y0 + 1.05, z, 1.8, 0.1, 1.8, 0x7a5232, -yaw);
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const [px, pz] = rot(-0.6 + i * 0.4, -0.6 + j * 0.4); s.box(px, y0 + 1.11, pz, 0.4, 0.02, 0.4, (i + j) % 2 ? 0xf2efe6 : 0x2a2a2a, -yaw); }
+  // (Board and squares turned with the table, as rot() lays them out: turned the other way, the
+  // squares overlapped their neighbours and flickered.)
+  { const [x, z] = rot(0, 0); s.cyl(x, y0 + 0.5, z, 0.25, 1.0, 0x5a4030, 6); s.box(x, y0 + 1.05, z, 1.8, 0.1, 1.8, 0x7a5232, yaw);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { const [px, pz] = rot(-0.6 + i * 0.4, -0.6 + j * 0.4); s.box(px, y0 + 1.11, pz, 0.4, 0.02, 0.4, (i + j) % 2 ? 0xf2efe6 : 0x2a2a2a, yaw); }
     for (const [i, j, c] of [[0.2, 0.4, 0xf2efe6], [-0.2, -0.4, 0x2a2a2a], [0.6, -0.2, 0x2a2a2a]] as const) { const [px, pz] = rot(i, j); s.cyl(px, y0 + 1.3, pz, 0.07, 0.35, c, 6); } }
   // Red panda, sitting at -x facing the table.
   { const fur = 0xc4502a, dark = 0x3a2420, cream = 0xf2e6d6;
