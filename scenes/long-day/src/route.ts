@@ -121,7 +121,7 @@ const SMOOTH_DD_MAX = 10 / Math.sqrt(3);   // peak |smoothDD|
 // many, and the journey works them out within one of its steps.) The last TURN_UNITS_MAX kept.
 const TURN_SPIRAL = 22 * Math.PI / 180;
 interface TurnUnit { len: number; N: number; xs: Float64Array; ys: Float64Array; hAt: (u: number) => number; kAt: (u: number) => number; T: number }
-const TURN_UNITS = new Map<number, TurnUnit>(), TURN_UNITS_MAX = 2048;
+const TURN_UNITS = new Map<number, TurnUnit>(), TURN_UNITS_MAX = 256;
 function turnUnit(ang: number): TurnUnit {
   const key = Math.round(ang * 1e6);
   const hit = TURN_UNITS.get(key);

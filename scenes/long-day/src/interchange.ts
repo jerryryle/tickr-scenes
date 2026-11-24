@@ -131,6 +131,7 @@ export function interchangeFoot(plan: CityPlan) {
   }
   const r0 = cross(R, 0), r3 = cross(R, KERB_LINE + 0.01);
   const foot: Foot = { l0, l3, r0, r3, left, right: band(R, r0, r3), apron };
+  if (FOOT.size >= 4) FOOT.delete(FOOT.keys().next().value!);   // (the last few cities')
   FOOT.set(key, foot);
   return foot;
 }
