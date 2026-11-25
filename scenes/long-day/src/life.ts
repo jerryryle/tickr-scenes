@@ -160,6 +160,14 @@ export class StreetLife implements LifeHook {
         const end = L.bedRear - L.rampRun - (st.mode === "dwell" ? RAMP_HOLD + RAMP_LINEUP + 0.6 : 0.2);
         for (let a = L.bedRear - 0.6; a > end; a -= 1.0) obs.push({ x: p.x + fx * a, z: p.z + fz * a, r: 0.75 });
       }
+      // A tractor-trailer's street-side swing door, walked round to lie along its side (chores.ts
+      // leafAt), and its driver out beside it: in the lane behind the trailer's street-side corner,
+      // while they work it (folded flat along the side, it's out of the way).
+      const leaf = st.mode === "dwell" ? j.dwellPhase().chore : null;
+      if (L.trailer && leaf && (leaf.kind === "leafOpen" || leaf.kind === "leafClose") && (leaf.leaf ?? 1) < 0) {
+        const fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h), a = L.bedRear - 0.3, b = -(L.hw + 1.0);
+        obs.push({ x: p.x + fx * a + rx * b, z: p.z + fz * a + rz * b, r: 1.5 });
+      }
       // A forklift unloading from the road side (crew.ts roadLegs) works in the inner lane beside
       // and behind the truck: traffic waits behind it.
       if (st.mode === "dwell" && j.stackMode === "road") {

@@ -158,7 +158,12 @@ what two carry never goes through a tree or bin on the pavement or out through t
 and the pallet jack, steered about its middle, never sinks into a floor, slides sideways or goes
 through a wall or the truck), and `test/jackplan.ts` (every move the pallet jack's planner makes,
 in a bed between loads, out of a doorway beside the truck, past a post, is clear, joined end to
-end and timed at least as it must be). To run it with other arguments and see its report:
+end and timed at least as it must be), and `test/trailer.ts` (a tractor-trailer at the kerb pulls up
+straight, its swing doors are walked round one leaf at a time clear of the driver (the kerb side's
+part way past a tree in its way), its pallets are handed over with the forklift at the doors and
+moved in the trailer on the pallet jack, the driver up in it, and nothing goes through the truck:
+the driver's walks round it, their climb up into the trailer and down past its floor and
+underride guard, or the forklift's tines and load). To run it with other arguments and see its report:
 
 ```bash
 make run SCENE=long-day TEST=journey ARGS="30 '{\"seed\":2}'"

@@ -362,7 +362,7 @@ function runPart(part: string, clashes: Map<string, Clash>) {
     // the trailer's doors; half way and all the way.)
     for (const f of [0.5, 1]) objs(`trucks open ${f}`, models.map((m) => {
       const t = new Truck(kit, m, null) as any;
-      t.rearDoor = f; t.ramp = f; t.liftgate = f; t.liftgateDrop = f; t.cabDoor = f; t.trailerDoors = f;
+      t.rearDoor = f; t.ramp = f; t.liftgate = f; t.liftgateDrop = f; t.cabDoor = f; t.trailerLeafL = f; t.trailerLeafR = f;
       t.update(0, 0); return t.root;
     }));
     // The driver and the dock worker in the poses they take: standing, walking (through a stride),

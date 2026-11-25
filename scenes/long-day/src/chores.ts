@@ -11,7 +11,7 @@
 // climbs the dock stairs, works from the platform through the open door, and a tractor-trailer
 // is loaded by a dock worker's forklift. Forklift trips (`forklift` waits) also load flatbeds.
 import * as THREE from "three@0.187.0";
-import { GATE_LEN, truckLayout } from "./truck.ts";
+import { GATE_LEN, LEAF_HANDLE_Y, LEAF_OPEN, truckLayout } from "./truck.ts";
 import type { TruckLayout, TruckModel } from "./truck.ts";
 import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID, slotAlign, slotEnd, TRUCK_SLOTS } from "./cargo.ts";
@@ -20,15 +20,18 @@ import { DWELL } from "./journey.ts";
 import type { StackMode, Stop } from "./journey.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { handR } from "./decor.ts";
-import { jackBedJoin, jackBudget, jackLeft, jackSpent, jackDoorWays, jackStreet, jackDriverAt, jackDriverClear, jackPoseClear, jackLead, jackReverse, jackExtents, jackJoin, jackMoveClear, jackMoveLen, jackPivot, JACK_MID } from "./jackplan.ts";
+import { jackArc, jackBedJoin, jackBudget, jackLeft, jackSpent, jackDoorWays, jackStreet, jackDriverAt, jackDriverClear, jackPoseClear, jackLead, jackReverse, jackExtents, jackJoin, jackMoveClear, jackMoveLen, jackPivot, JACK_MID } from "./jackplan.ts";
 import type { JackWorld, JMove, JPose } from "./jackplan.ts";
+import { jackPoseAt } from "./jackplan.ts";
 import { CURB_H, KERB } from "./grid.ts";
 import { END_ON_HALF } from "./city.ts";
 
 type ChoreKind =
   | "climbDown" | "climbUp" | "walk" | "doorOpen" | "doorClose" | "rampOut" | "rampIn"
-  | "gateOut" | "gateIn" | "gateRide" | "doorsOpen" | "doorsClose" | "fetch" | "stow" | "wait"
-  | "toolGet" | "toolPut";   // take the hand truck or pallet jack from the bed, put it back
+  | "gateOut" | "gateIn" | "gateRide" | "leafOpen" | "leafClose" | "fetch" | "stow" | "wait"
+  | "toolGet" | "toolPut"   // take the hand truck or pallet jack from the bed, put it back
+  | "bedUp" | "bedDown"     // climb up into a trailer at its back from the road, or down out of it
+  | "jackUp" | "jackDown";  // pump the pallet jack's forks up under a load, or let them down
 export type ChoreGroup = "exit" | "load" | "walk" | "close" | "enter";
 export type ItemKind = "box" | "stack" | "pallet" | "drum" | "crate" | "long" | "animal" | "bundle";
 export type Gesture = "clipboard" | "stretch" | "wave" | "coffee";
@@ -56,6 +59,205 @@ export interface Chore {
   mate?: [[number, number], [number, number]];   // a team lift's walk with the load held rigid: the worker's end from and to (x, z), placed from the driver (crew.ts)
   faceYaw?: [number, number];       // a walk faced so from start to end, whichever way it goes (crewpath.ts): turning a load, side-stepping it
   over?: number;                    // a walk climbing over a load this tall (its top above the floor), on hands and knees (crew.ts)
+  leaf?: number;                    // leafOpen / leafClose: which of a trailer's swing doors (-1 the street side's, +1 the kerb side's)
+  leafPart?: boolean;               // (and only pulled open part way, and pushed to from there: something on the pavement is in its way round)
+  lay?: [number, number, number];   // the stop's load lies on the floor here meanwhile, on its own (crew.ts): handed over by the forklift, or left by the jack
+  handoff?: boolean;                // a forklift wait that hands the load over at the trailer's back (the trip is the stow, not this)
+}
+
+// A trailer's swing doors, one leaf at a time. The driver lifts the leaf's lock handles, pulls it
+// open, backing round as it comes, steps round its free edge, walks it on round to lie flat along
+// the trailer's side and hooks it there; closing, the same backwards: unhooked, drawn off the side
+// walking backwards, stepped round, pushed shut and locked. Each leaf is hinged at a rear corner
+// and turns LEAF_OPEN round to the side. (truck.ts draws them; crew.ts poses the driver from
+// leafAt, and crewpath.ts walks them there.)
+export const LEAF_LEN = 6.4;
+// Its timeline, as fractions of LEAF_LEN opening: handles, pulled open to LEAF_PULL, round the
+// edge, walked round to the side, hooked.
+const LEAF_T = [0.13, 0.36, 0.5, 0.88];
+const LEAF_PULL = 1.75;
+// Where the driver holds it, out from its hinge (m), and stands off its face (m); and the lock
+// handles are at LEAF_HANDLE_Y (truck.ts).
+const LEAF_HOLD = 0.85, LEAF_OFF = 0.5;
+// A leaf's hinge, its width, and the driver's place at it: its free edge's direction from the
+// hinge at angle th, and the normal of its outside (rear) face.
+export function leafGeom(L: TruckLayout, side: number) {
+  const hw = L.hw - 0.04;
+  return { hx: L.bedRear - 0.02, hz: side * (L.hw - 0.02), w: hw, r: hw * LEAF_HOLD };
+}
+const leafDir = (side: number, th: number): [number, number] => [-Math.sin(th), -side * Math.cos(th)];
+const leafNorm = (side: number, th: number): [number, number] => [-Math.cos(th), side * Math.sin(th)];
+// The driver at a leaf at progress u of its chore (or of opening, `open`): where they stand and
+// face (truck frame), the leaf's angle, where their hands are on it (x, y, z each) and how firmly
+// (0..1), and how far they stoop (0..1: unhooking it low at the side).
+// (`part`: only its handles and the pull, to LEAF_PULL, and back: its chore is LEAF_PART_LEN long.)
+export function leafAt(L: TruckLayout, side: number, open: boolean, u: number, part = false) {
+  const g = leafGeom(L, side), T = (open ? u : 1 - u) * (part ? LEAF_T[1] : 1);
+  const [t0, t1, t2, t3] = LEAF_T, e = (a: number, b: number) => { const k = THREE.MathUtils.clamp((T - a) / (b - a), 0, 1); return k * k * (3 - 2 * k); };
+  const th = leafAngle(open, u, part);
+  let side2 = 1, round = 0;
+  if (T >= t1 && T < t2) { round = e(t1, t2); side2 = Math.cos(Math.PI * round); }
+  else if (T >= t2) side2 = -1;
+  const [dx, dz] = leafDir(side, th), [nx, nz] = leafNorm(side, th);
+  const cx = g.hx + dx * g.r, cz = g.hz + dz * g.r;
+  // (Round the free edge: out past it by a body's width and back in on its other face.)
+  const bulge = round ? (g.w - g.r + 0.38) * Math.sin(Math.PI * round) : 0;
+  const ox = nx * LEAF_OFF * side2 + dx * bulge, oz = nz * LEAF_OFF * side2 + dz * bulge;
+  const x = cx + ox, z = cz + oz, yaw = Math.atan2(oz, -ox);   // (facing the leaf: back towards where it's held)
+  // Hands: on the handles (lifted, swung out, as the lock bars turn), then on the leaf's face either
+  // side of where it's held; off it going round its edge; low on it hooking it to the side.
+  const grip = T < t1 ? 1 : T < t2 ? 1 - Math.sin(Math.PI * round) : 1;
+  const lift = T < t0 ? 0.14 * Math.sin(Math.PI * Math.min(1, T / t0)) : 0;
+  const stoop = e(t3, 1);
+  const hy = LEAF_HANDLE_Y + lift - 0.35 * stoop, f = side2 >= 0 ? 0.04 : -0.04;
+  const hand = (d: number): [number, number, number] => [g.hx + dx * (g.r + d) + nx * f, hy, g.hz + dz * (g.r + d) + nz * f];
+  // (Opening, on the handles of its two rods; then either side of where it's held.)
+  return { x, z, yaw, th, hands: (T < t1 ? [hand(0.82 * g.w - g.r + 0.15), hand(0.42 * g.w - g.r + 0.15)] : [hand(0.12), hand(-0.28)]) as [[number, number, number], [number, number, number]], grip, stoop };
+}
+// The leaf's angle (rad from shut) at progress u of its chore.
+export function leafAngle(open: boolean, u: number, part = false) {
+  const T = (open ? u : 1 - u) * (part ? LEAF_T[1] : 1), [t0, t1, t2, t3] = LEAF_T;
+  const e = (a: number, b: number) => { const k = THREE.MathUtils.clamp((T - a) / (b - a), 0, 1); return k * k * (3 - 2 * k); };
+  return T < t2 ? LEAF_PULL * e(t0, t1) : LEAF_PULL + (LEAF_OPEN - LEAF_PULL) * e(t2, t3);
+}
+// Where the driver stands to begin a leaf, or where they finish (opening: closed at the back,
+// open beside the trailer's side).
+export function leafStand(L: TruckLayout, side: number, opened: boolean, part = false): [number, number, number] {
+  const p = leafAt(L, side, true, opened ? 1 : 0, part);
+  return [p.x, 0, p.z];
+}
+export const LEAF_PART_LEN = LEAF_LEN * LEAF_T[1];
+// Whether anything standing on the pavement is in a leaf's way round to the trailer's side (or the
+// driver's, walking it round), so it is only pulled open part way.
+export function leafBlocked(L: TruckLayout, side: number, obstacles: WalkObstacle[]) {
+  const g = leafGeom(L, side);
+  return obstacles.some((o) => o.x > g.hx - g.w - 1.0 && Math.sign(o.z) === Math.sign(side) && Math.abs(o.z) > L.hw - 0.1
+    && Math.hypot(o.x - g.hx, o.z - g.hz) < g.w + LEAF_OFF + 0.35 + o.r);
+}
+
+// A tractor-trailer at the kerb: the dock worker's forklift lifts the load to the trailer's floor
+// and sets it down just inside its doors (its middle this far in), or takes it from there; the
+// driver, up in the trailer with the pallet jack, takes it from there to where it rides, or brings
+// it there. A jack's driver is always at its handle, behind the load, so the hand-over at the
+// doors is worked from the trailer's inside, the jack's forks to the doors; and the jack, with
+// no room to turn a load round in the trailer, stays under the load at the back of the rest (as a
+// box truck's heavy loads stay on theirs, jackStays): a pickup's left on it, a drop's taken up
+// from where it was left. The driver comes past it on foot, along the other column.
+export const HAND_IN = 0.75;
+// Climbing up into the trailer (and down): from the road behind it, a step on the underride guard.
+export const BED_CLIMB = 2.8, BED_CLIMB_Z = -0.35;
+// Pumping the jack's forks up under a load, or letting them down.
+export const JACK_PUMP = 1.4;
+// The jack, from its middle: back to its pump (-), on to its fork tips, half wide; and the
+// driver, behind its middle on the handle, and their half width.
+const TJ_BACK = 0.88, TJ_FRONT = 0.69, TJ_HALF = 0.33, TJ_LEAD = JACK_MID + 1.0, TJ_BODY = 0.28;
+const tjFwd = (h: number): [number, number] => [Math.cos(h), -Math.sin(h)];
+// Whether a move keeps the jack and its driver inside the trailer and off what lies in it
+// (footprints: x0 x1 z0 z1).
+function trailerMoveClear(L: TruckLayout, m: JMove, lying: { x0: number; x1: number; z0: number; z1: number }[]): boolean {
+  const inside = (x: number, z: number, r: number) => x > L.bedRear + r - 0.02 && x < L.bedFront - r && Math.abs(z) < L.hw - 0.05 - r;
+  const off = (x: number, z: number, r: number) => lying.every((b) => x < b.x0 - r || x > b.x1 + r || z < b.z0 - r || z > b.z1 + r);
+  for (let i = 0; i <= 24; i++) {
+    const u = i / 24, p = jackPoseAt(m, u), [fx, fz] = tjFwd(p.h), [dx, dz] = jackDriverAt(m, u);
+    if (!inside(dx, dz, TJ_BODY) || !off(dx, dz, TJ_BODY)) return false;
+    for (const a of [-TJ_BACK, 0, TJ_FRONT]) for (const b of [-TJ_HALF, 0, TJ_HALF]) {
+      const x = p.x + fx * a - fz * b, z = p.z + fz * a + fx * b;
+      if (!inside(x, z, 0.02) || !off(x, z, 0.02)) return false;
+    }
+  }
+  return true;
+}
+// Two arcs that shift the jack `dz` across as it rolls on along itself, gently enough that the
+// driver on its handle keeps inside the trailer.
+function jackShift(p: JPose, dz: number): JMove[] {
+  const d = 0.6, rho = Math.abs(dz) / (2 * (1 - Math.cos(d))), len = rho * d;
+  for (const sg of [1, -1]) {
+    const a = jackArc(p, len, sg * d), b = jackArc(a.p1, len, -sg * d);
+    if (Math.sign(b.p1.z - p.z) === Math.sign(dz)) return [a, { ...b, p1: { ...b.p1, z: p.z + dz, h: p.h } }];
+  }
+  return [];
+}
+// The trailer's plan for a kerb stop, in order: the jack's moves, walks on foot, the hand-over and
+// the rest, with where the load lies meanwhile; or null where there isn't the room (it's too full
+// behind the stop's loads, or they aren't the rearmost, or there are too few to leave room deep of
+// the one shown once they're gone), and the forklift loads it as it can.
+export type TJStep = { move: JMove; item: boolean; lay?: [number, number, number] } | { walk: [number, number, number][]; lay?: [number, number, number] }
+  | { chore: "handoff" | "up" | "down" | "merge"; lay?: [number, number, number] } | { get: ToolRest } | { put: ToolRest; lay?: [number, number, number] };
+export function trailerJackPlan(L: TruckLayout, model: TruckModel, stop: Stop, slot0: number, aboard: { cargo: string; slot: number; units: number }[], store: ToolRest): TJStep[] | null {
+  if (!L.trailer || STYLE[CARGO_BY_ID.get(stop.cargo)!.handling].tool !== "palletJack") return null;
+  const pickup = stop.kind === "pickup", F = L.floor, R = L.bedRear, size = CARGO_MODELS[stop.cargo]?.size ?? [1.2, 1.1, 1.0];
+  const units = bedUnits(L, model, stop.cargo, stop.units, slot0);
+  if (!units.length) return null;
+  const print = (x: number, z: number, sz: number[]) => ({ x0: x - sz[0] / 2, x1: x + sz[0] / 2, z0: z - sz[2] / 2, z1: z + sz[2] / 2 });
+  const others = aboard.flatMap((a) => { const sz = CARGO_MODELS[a.cargo]?.size ?? [0.5, 0.5, 0.5]; return bedUnits(L, model, a.cargo, a.units, a.slot).map((p) => print(p[0], p[2], sz)); });
+  // The load's rearmost unit (a row's kerb side one): the one shown on its own, on the jack.
+  const rear = Math.min(...units.map((p) => p[0]));
+  const row = units.filter((p) => p[0] < rear + 0.05), unit = row.find((p) => p[2] > 0) ?? row[0];
+  const zc = unit[2], P = unit[0];
+  // (Nothing of the other stops' behind the load, and room deep of the one shown, its jack's driver
+  // there, once the rest are gone (or before they come).)
+  const blockDeep = Math.max(...units.map((p) => p[0])) + size[0] / 2;
+  if (others.some((b) => b.x0 < blockDeep - 0.05)) return null;
+  const deepFree = Math.min(L.bedFront, ...others.map((b) => b.x0)) - 0.02;
+  if (P + TJ_LEAD + 0.09 + TJ_BODY + 0.05 > Math.max(blockDeep, deepFree) || P - size[0] / 2 < R + HAND_IN + size[0] / 2 + 0.6) return null;
+  // The way past it on foot: along the other column, out of the jack's and the load's way.
+  const zp = -Math.sign(zc || 1) * Math.max(0.35, L.hw - 0.05 - TJ_BODY - 0.25);
+  const H = R + HAND_IN, pose = (x: number, z: number, h: number): JPose => ({ x, z, h });
+  const roll = (a: JPose, x: number, z = a.z): JMove => ({ kind: "roll", p0: a, p1: pose(x, z, a.h) });
+  const back = Math.PI;   // (forks to the doors)
+  const handAt: [number, number, number] = [H, F, zc], restAt: [number, number, number] = [P, F, zc];
+  const feet = (p: JPose): [number, number, number] => [p.x - Math.cos(p.h) * TJ_LEAD, F, p.z + Math.sin(p.h) * TJ_LEAD];
+  const wheel = (p: JPose): [number, number, number] => [p.x - Math.cos(p.h) * JACK_MID, F, p.z + Math.sin(p.h) * JACK_MID];
+  // (At the doors: the forks out from under where the load is handed over, and in under it.)
+  const wait = pose(H + 0.09 + 1.2, zc, back), under = pose(H + 0.09, zc, back), left = pose(P + 0.09, zc, back);
+  const leftRest: ToolRest = { at: wheel(left), stand: feet(left), yaw: back };
+  const past = (lay: [number, number, number]): [number, number, number][] =>   // (from deep of it to before it, or back)
+    [[P + size[0] / 2 + 0.45, F, zp], [P - size[0] / 2 - 0.45, F, zp]];
+  const ok = (ms: JMove[]) => ms.every((q) => trailerMoveClear(L, q, others));
+  const steps: TJStep[] = [];
+  if (pickup) {
+    if (Math.abs(store.yaw) > 0.01) return null;
+    // From where it rides, drawn back from the loads ahead (room to turn it), turned round, over to
+    // the load's column, and down to the doors to wait for the forklift.
+    const rest = pose(store.at[0] + JACK_MID, store.at[2], 0);
+    let lead: JMove[] | null = null;
+    for (let xc = rest.x; xc >= wait.x + 1.0 && !lead; xc -= 0.1) {
+      const a = roll(rest, xc), tp: JMove = { kind: "pivot", p0: a.p1, p1: pose(xc, a.p1.z, back), tight: 0.5, turn: Math.PI };
+      const sh = Math.abs(zc - a.p1.z) > 0.01 ? jackShift(tp.p1, zc - a.p1.z) : [];
+      const end = sh.length ? sh[1].p1 : tp.p1;
+      if (end.x >= wait.x && ok([a, tp, ...sh])) lead = [a, tp, ...sh];
+    }
+    if (!lead) return null;
+    steps.push({ get: store });
+    for (const m of lead) steps.push({ move: m, item: false });
+    const at = lead[lead.length - 1].p1;
+    steps.push({ move: roll(at, wait.x, zc), item: false });
+    steps.push({ chore: "handoff", lay: handAt });
+    // Forks in under it, pumped up, drawn in to the back of the rest, let down and left on it; past
+    // it on foot, and the rest are there with it.
+    steps.push({ move: roll(wait, under.x), item: false, lay: handAt });
+    steps.push({ chore: "up" });
+    steps.push({ move: roll(under, left.x), item: true });
+    steps.push({ chore: "down", lay: restAt });
+    steps.push({ put: leftRest, lay: restAt });
+    steps.push({ walk: past(restAt), lay: restAt });
+    steps.push({ chore: "merge", lay: restAt });
+    return steps;
+  }
+  // A drop: the jack left under the back of the load at the last stop. The rest are taken as the
+  // driver comes to them, and the one on the jack is left; past it on foot to the jack's handle,
+  // pumped up, pushed to the doors, let down, drawn back out from under it for the forklift.
+  steps.push({ walk: [[P - size[0] / 2 - 0.45, F, zp]] });
+  steps.push({ chore: "merge", lay: restAt });
+  steps.push({ walk: [...past(restAt).reverse(), feet(left)], lay: restAt });
+  steps.push({ get: leftRest });
+  steps.push({ chore: "up" });
+  steps.push({ move: roll(left, under.x), item: true });
+  steps.push({ chore: "down", lay: handAt });
+  steps.push({ move: roll(under, wait.x), item: false, lay: handAt });
+  steps.push({ chore: "handoff", lay: handAt });
+  steps.push({ put: { at: wheel(wait), stand: feet(wait), yaw: back } });
+  return steps;
 }
 
 // Brisk: a stop's whole dwell should land around 35-50 s so a stop cycle stays near 60-90 s.
@@ -955,9 +1157,13 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     let bx = rampBox && drawn ? [...boxes, rampBox] : boxes;
     // (Round the truck itself too: the way round anything else is never through its side.)
     if (ground) {
-      const tb: WalkBox = { x: (L.rear + L.front) / 2, z: 0, hx: (L.front - L.rear) / 2 + 0.1, hz: L.hw + 0.15, ax: 1, az: 0 };   // (boxRoute keeps BODY_R more clear)
-      const inTb = (p: [number, number, number]) => Math.abs(p[0] - tb.x) < tb.hx && Math.abs(p[2]) < tb.hz;
-      if (!inTb(a) && !inTb(b)) bx = [...bx, tb];
+      // (A tractor-trailer as its trailer and its narrower cab: one box as wide as the trailer all
+      // along would take in the cab's door, where walks start and end, and so be left out of them.)
+      const box = (x0: number, x1: number, hw: number): WalkBox => ({ x: (x0 + x1) / 2, z: 0, hx: (x1 - x0) / 2, hz: hw + 0.15, ax: 1, az: 0 });   // (boxRoute keeps BODY_R more clear)
+      // (Its back a little further out for the underride guard under it.)
+      const tbs = L.trailer ? [box(L.rear - 0.2, L.bedFront, L.hw), box(L.bedFront, L.front + 0.1, L.cabHW)] : [box(L.rear - 0.1, L.front + 0.1, L.hw)];
+      const inTb = (tb: WalkBox, p: [number, number, number]) => Math.abs(p[0] - tb.x) < tb.hx && Math.abs(p[2]) < tb.hz;
+      for (const tb of tbs) if (!inTb(tb, a) && !inTb(tb, b)) bx = [...bx, tb];
     }
     // (Round the boxes, the pavement's things as squares among them; where that finds no way (a
     // square crowding the truck's corner), round the pavement's things as they are, circles, and
@@ -1183,18 +1389,52 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     return finishChores(out, L, obstacles0);
   }
 
-  walk("load", door, side, WALK);
   if (L.trailer) {
-    // Tractor-trailer at the kerb: open the swing doors, the worker forklifts the pallets in
-    // from behind, close up.
-    walk("load", side, atRear, WALK);
-    add({ kind: "doorsOpen", group: "load", len: 2.6, face: FACE_FRONT });
-    walk("load", atRear, side, WALK);
-    for (let i = 0; i < trips; i++) add({ kind: "wait", group: "load", len: 7, face: FACE_BACK, gesture: i % 2 ? "wave" : "clipboard", forklift: true });
-    walk("close", side, atRear, WALK);
-    add({ kind: "doorsClose", group: "close", len: 2.6, face: FACE_FRONT });
-    walk("close", atRear, door, WALK);
+    // Tractor-trailer at the kerb: open the swing doors one leaf at a time, the street side's
+    // first, the worker forklifts the pallets in from behind, close up the other way round.
+    // (A leaf with something on the pavement in its way round is only pulled open part way.)
+    const part = (s: number) => leafBlocked(L, s, obstacles), lp = (s: number) => (part(s) ? { leafPart: true, len: LEAF_PART_LEN } : { len: LEAF_LEN });
+    const open = (s: number, from: [number, number, number]) => { walk("load", from, leafStand(L, s, false, part(s)), WALK); add({ kind: "leafOpen", group: "load", leaf: s, ...lp(s) }); return leafStand(L, s, true, part(s)); };
+    const shut = (s: number, from: [number, number, number]) => { walk("close", from, leafStand(L, s, true, part(s)), WALK); add({ kind: "leafClose", group: "close", leaf: s, ...lp(s) }); return leafStand(L, s, false, part(s)); };
+    let at = open(1, open(-1, door));
+    const tj = trailerJackPlan(L, model, stop, slot0, aboard, toolStore(L, "palletJack", rearBefore));
+    if (tj) {
+      // Up into the trailer at its back; the load handed over with the forklift at the doors, the
+      // pallet jack under it in the trailer (trailerJackPlan); down again.
+      const foot: [number, number, number] = [L.bedRear - 0.6, 0, BED_CLIMB_Z], top: [number, number, number] = [L.bedRear + 0.5, L.floor, BED_CLIMB_Z];
+      walk("load", at, foot, WALK);
+      add({ kind: "bedUp", group: "load", len: BED_CLIMB, a: foot, b: top, face: FACE_FRONT });
+      let here = top, h = 0;
+      const on = (lay?: [number, number, number]) => (lay ? { lay } : {});
+      for (const q of tj) {
+        if ("move" in q) {
+          const m = q.move, [ax, az] = jackDriverAt(m, 0), [bx, bz] = jackDriverAt(m, 1);
+          add({ kind: "walk", group: "load", len: jackMoveLen(m, q.item ? HEAVY : TOOL, q.item ? JACK_TURN_LOADED : JACK_TURN, WALK), a: [ax, L.floor, az], b: [bx, L.floor, bz], tool: "palletJack", item: q.item ? st.item : null, jack: m, linear: true, ...on(q.lay) });
+          here = [bx, L.floor, bz]; h = m.p1.h;
+        } else if ("walk" in q) {
+          for (const p of q.walk) { if (dist3(here, p) < 0.05) continue; add({ kind: "walk", group: "load", len: Math.max(0.4, dist3(here, p) / WALK), a: here, b: p, linear: true, ...on(q.lay) }); h = Math.atan2(-(p[2] - here[2]), p[0] - here[0]); here = p; }
+        } else if ("get" in q) {
+          if (dist3(here, q.get.stand) > 0.05) walk("load", here, q.get.stand, WALK, { linear: true });
+          add({ kind: "toolGet", group: "load", len: TOOL_TAKE, face: q.get.yaw, rest: q.get });
+          here = q.get.stand; h = q.get.yaw;
+        } else if ("put" in q) {
+          add({ kind: "toolPut", group: "load", len: TOOL_TAKE, face: q.put.yaw, rest: q.put, ...on(q.lay) });
+        } else if (q.chore === "handoff") add({ kind: "wait", group: "load", len: 9, face: h, tool: "palletJack", forklift: true, handoff: true, ...on(q.lay) });
+        else if (q.chore === "up") add({ kind: "jackUp", group: "load", len: JACK_PUMP, face: h, tool: "palletJack", item: st.item });
+        else if (q.chore === "down") add({ kind: "jackDown", group: "load", len: JACK_PUMP, face: h, tool: "palletJack", item: st.item, ...on(q.lay) });
+        else add({ kind: "stow", group: "load", len: 1.2, face: h, ...on(q.lay) });   // (facing on the way they walked: no turning round, the stop's jack not in hand)
+      }
+      walk("close", here, top, WALK, { linear: true });
+      add({ kind: "bedDown", group: "close", len: BED_CLIMB, a: top, b: foot, face: FACE_FRONT });
+      at = foot;
+    } else {
+      walk("load", at, side, WALK); at = side;
+      for (let i = 0; i < trips; i++) add({ kind: "wait", group: "load", len: 7, face: FACE_BACK, gesture: i % 2 ? "wave" : "clipboard", forklift: true });
+    }
+    at = shut(-1, shut(1, at));
+    walk("close", at, door, WALK);
   } else if (L.flatbed) {
+    walk("load", door, side, WALK);
     // Flatbed: the dock worker forklifts the load on from the facility side, then it's strapped.
     // (Working from the road side, the forklift comes round the back of the truck: the driver
     // waits by the cab, out of its way.)
@@ -1214,6 +1454,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     add({ kind: "wait", group: "close", len: 3, face: Math.PI / 2, gesture: "stretch" });
     walk("close", deck, door, WALK);
   } else {
+    walk("load", door, side, WALK);
     const sill: [number, number, number] = [rear + 0.5, L.floor, 0];
     const ramp = L.loader !== "liftgate";
     let foot: [number, number, number];

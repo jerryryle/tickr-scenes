@@ -104,6 +104,12 @@ export const SPECS: Record<TruckModel, TruckSpec> = {
 
 // 53 ft dry van, in its own frame: origin at the kingpin, extending to -x.
 export const TRAILER = { front: 0.9, rear: -15.25, floor: 1.25, top: 4.1, hw: 1.3, axles: [-12.4, -13.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
+// How far a trailer's swing door turns from shut to lying back along the side (rad).
+export const LEAF_OPEN = 4.55;
+// The height of its lock rods' handles over the road (m).
+export const LEAF_HANDLE_Y = 1.42;
+// The top of a trailer's underride guard, under its back (the crew steps on it climbing in).
+export const UNDERRIDE_Y = 0.6;
 
 // Shared across every truck: materials, livery textures, the unit wheel geometry.
 export class TruckKit {
@@ -224,7 +230,7 @@ export class Truck {
   private head = false;
   get headlights() { return this.head; }
   set headlights(on: boolean) { if (on !== this.head) { this.head = on; this.applyLights(); } }
-  rearDoor = 0; ramp = 0; liftgate = 0; liftgateDrop = 0; cabDoor = 0; trailerDoors = 0;
+  rearDoor = 0; ramp = 0; liftgate = 0; liftgateDrop = 0; cabDoor = 0; trailerLeafL = 0; trailerLeafR = 0;   // (the swing doors: 0 shut .. 1 round against the side, LEAF_OPEN)
   trailerYaw = 0;
   interiorView = false;
   private boxParent: THREE.Object3D | null = null; private boxSpec: CargoSpec | null = null;
@@ -384,7 +390,7 @@ export class Truck {
 
   // The moving parts' state (main.ts: preview snapshots and part-ticks); the meshes follow from it.
   private static SAVED = ["speed", "accel", "steer", "distance", "heading", "hazards", "signal", "engineOn", "rearDoor", "ramp", "liftgate", "liftgateDrop",
-    "cabDoor", "trailerDoors", "trailerYaw", "interiorView", "cutaway", "bob", "puffTimer", "time"] as const;
+    "cabDoor", "trailerLeafL", "trailerLeafR", "trailerYaw", "interiorView", "cutaway", "bob", "puffTimer", "time"] as const;
   // (`into`: an earlier save, of this truck or another, filled again in place.)
   save(into?: TruckSave): TruckSave {
     const s = into ?? { f: {}, x: 0, z: 0 };
@@ -583,8 +589,8 @@ export class Truck {
       if (this.liftFlap) this.liftFlap.rotation.z = Math.PI * (1 - ease((this.liftgate - 0.4) / 0.2));
     }
     if (this.trailer) {
-      const open = ease(this.trailerDoors) * 4.55; // ~260 degrees, folded back against the sides
-      if (this.trailerLeaves.length === 2) { this.trailerLeaves[0].rotation.y = open; this.trailerLeaves[1].rotation.y = -open; }
+      // (Each leaf as far round as the crew has it: ~260 degrees folds it back against the side.)
+      if (this.trailerLeaves.length === 2) { this.trailerLeaves[0].rotation.y = this.trailerLeafR * LEAF_OPEN; this.trailerLeaves[1].rotation.y = -this.trailerLeafL * LEAF_OPEN; }
       if (this.trailerBody) this.trailerBody.position.y = this.body.position.y * 0.6;
     }
 
@@ -918,6 +924,15 @@ export class Truck {
           u0: side > 0 ? 0.5 : 0, u1: side > 0 ? 1 : 0.5 }]);
         leaf.add(new THREE.Mesh(geo, this.kit.liveryRearDS));
         const frame = new Batch(); frame.span(-0.04, yfl, side > 0 ? -wl : 0, 0, yfl + openH, side > 0 ? 0 : wl, TC.white);
+        // Two lock rods down its face, each with its handle low down, swung in towards the hinge
+        // (the crew lifts them: chores.ts leafAt), and their keepers top and bottom.
+        for (const f of [0.42, 0.82]) {
+          const z = -side * wl * f;
+          frame.span(-0.085, yfl - 0.04, z - 0.022, -0.05, yfl + openH + 0.03, z + 0.022, TC.chrome);
+          const hz0 = Math.min(z, z + side * 0.3), hz1 = Math.max(z, z + side * 0.3);
+          frame.span(-0.11, LEAF_HANDLE_Y - 0.03, hz0, -0.08, LEAF_HANDLE_Y + 0.03, hz1, TC.chrome);
+          for (const y of [yfl + 0.06, yfl + openH - 0.06]) frame.span(-0.1, y - 0.04, z - 0.05, -0.045, y + 0.04, z + 0.05, TC.frame);
+        }
         leaf.add(frame.build(this.kit.paint)!);
         leaf.position.set(x0 - 0.02, 0, side * (hw - 0.02));
         parent.add(leaf);
@@ -1075,6 +1090,13 @@ export class Truck {
     }
     P.span(-0.58, t.floor - 0.18, -0.9, 0.9, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
     P.span(-0.05, t.floor - 0.3, -0.05, 0.05, t.floor - 0.18, 0.05, TC.chrome);   // kingpin
+    // The underride guard under its back, a little out behind the doors: a bar across on two
+    // struts down from the frame (the crew steps on it, its top UNDERRIDE_Y, climbing in).
+    P.span(t.rear - 0.27, UNDERRIDE_Y - 0.13, -(t.hw - 0.14), t.rear - 0.13, UNDERRIDE_Y, t.hw - 0.14, TC.frame);
+    for (const z of [-0.72, 0.72]) {
+      P.span(t.rear - 0.24, UNDERRIDE_Y, z - 0.05, t.rear - 0.16, t.floor - 0.4, z + 0.05, TC.frame);   // (strut up, and back in under the floor)
+      P.span(t.rear - 0.24, t.floor - 0.4, z - 0.05, t.rear + 0.3, t.floor - 0.3, z + 0.05, TC.frame);
+    }
     this.trailerBody.add(P.build(this.kit.paint)!);
     this.addLights(this.trailerBody, L);
     this.root.add(this.trailer);

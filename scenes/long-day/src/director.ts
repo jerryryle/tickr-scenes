@@ -151,7 +151,17 @@ export function swapWalkPoint(journey: Journey, oldTruck: Truck, newTruck: Truck
   if (ph.phase === "park" || ph.phase === "exit") return out.copy(a);
   if (ph.phase !== "walk") return out.copy(b);
   const u = THREE.MathUtils.clamp(ph.t / Math.max(0.1, ph.len - 1.5), 0, 1);
-  return out.copy(a).lerp(b, u * u * (3 - 2 * u));
+  return swapClear(out.copy(a).lerp(b, u * u * (3 - 2 * u)), oldTruck, newTruck, u);
+}
+// A walk `u` of the way from one truck's cab door to the other's (world space, `out`), pushed out
+// along the street side clear of the wider truck's body (a tractor's trailer the widest),
+// stepping out from the one door and back in to the other. (Also the country truck stop's, crew.ts.)
+export function swapClear(out: THREE.Vector3, oldTruck: Truck, newTruck: Truck, u: number): THREE.Vector3 {
+  const h = oldTruck.heading, rx = Math.sin(h), rz = Math.cos(h), p = oldTruck.root.position;
+  const hw = Math.max(truckLayout(oldTruck.model).hw, truckLayout(newTruck.model).hw);
+  const lat = (out.x - p.x) * rx + (out.z - p.z) * rz, clear = -(hw + 0.45), k = THREE.MathUtils.smoothstep(Math.min(u, 1 - u), 0, 0.15);
+  if (lat > clear) { const d = (clear - lat) * k; out.x += rx * d; out.z += rz * d; }
+  return out;
 }
 
 type DirectorSave = { f: Record<string, unknown>; p: THREE.Vector3; q: THREE.Quaternion; fov: number };

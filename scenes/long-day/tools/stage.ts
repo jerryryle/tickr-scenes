@@ -4,11 +4,11 @@
 //   make stage [STAGE="box26 boxes drop"] [VIEW=quarter] [FROM=0] [SECS=12] [SPEED=1]
 //     -> build/long-day-stage/stage.mp4
 // STAGE: model cargo kind [nodoor | door=x (the door's middle along the truck)] [tree=x,out ...]; VIEW: quarter (from behind, by the street), side (along the
-// truck's kerb side), rear (straight behind), top (straight down); FROM: seconds into the stop.
+// truck's kerb side), rear (straight behind), top (straight down), corner (fixed on its back from the street side), into (fixed, in through its back), climb (fixed, side on to its back, close); FROM: seconds into the stop.
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { Crew } from "../src/crew.ts";
-import { Truck, TruckKit, LIVERY_ASSETS } from "../src/truck.ts";
+import { Truck, TruckKit, LIVERY_ASSETS, truckLayout } from "../src/truck.ts";
 import type { LiveryName, TruckModel } from "../src/truck.ts";
 import { CURB_H } from "../src/grid.ts";
 import { makeStage, stageSpec } from "../src/stage.ts";
@@ -74,10 +74,14 @@ export default function createScene({ sys, assets }: SceneInputs): Scene {
       if (door && shut) { door.update(S.journey, crew.workerRoot); shut.visible = !door.shown; }
       // The camera: on the action, the driver, held level.
       const p = crew.driver.root.getWorldPosition(new THREE.Vector3());
-      const fx = THREE.MathUtils.clamp(p.x, -12, 4), fz = THREE.MathUtils.clamp(p.z, -1, S.wallZ);
+      // (Along the truck no further back than a little behind its tail: a trailer's is 15 m back.)
+      const R = truckLayout(model).bedRear, fx = THREE.MathUtils.clamp(p.x, Math.min(-12, R - 4), 4), fz = THREE.MathUtils.clamp(p.z, -1, S.wallZ);
       if (STAGE_VIEW === "top") { cam.position.set(fx, 16, fz + 0.01); cam.lookAt(fx, 0, fz); cam.fov = 40; }
       else if (STAGE_VIEW === "side") { cam.position.set(fx - 7, 2.2, S.kerbZ + 1.2); cam.lookAt(fx, 1.0, fz); cam.fov = 48; }
-      else if (STAGE_VIEW === "rear") { cam.position.set(-15, 3.2, 1.5); cam.lookAt(fx, 1.0, fz); cam.fov = 34; }
+      else if (STAGE_VIEW === "rear") { cam.position.set(R - 9, 3.2, 1.5); cam.lookAt(fx, 1.0, fz); cam.fov = 34; }
+      else if (STAGE_VIEW === "climb") { cam.position.set(R - 0.2, 1.3, -6.0); cam.lookAt(R - 0.2, 1.1, -0.35); cam.fov = 22; }   // (fixed, side on to its back, close: climbing in)
+      else if (STAGE_VIEW === "into") { cam.position.set(R - 3.6, 3.4, -0.6); cam.lookAt(R + 3.5, 1.2, 0.1); cam.fov = 58; }   // (fixed, in through its back)
+      else if (STAGE_VIEW === "corner") { cam.position.set(R - 4.6, 3.0, -4.2); cam.lookAt(R + 0.4, 1.3, 0); cam.fov = 50; }   // (fixed, on the back of the truck from the street side)
       else { cam.position.set(fx - 7.5, 3.4, -5.5); cam.lookAt(fx, 1.0, fz); cam.fov = 40; }
       cam.updateProjectionMatrix();
       r.setClearColor(0x7aa7d9); r.render(scene, cam); ctx.drawImage(r.domElement as any, 0, 0);

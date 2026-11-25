@@ -144,6 +144,8 @@ interface JourneyState {
 export const SIM_DT = 0.1;              // the fixed simulation step
 const KEYFRAME_STEPS = 100;       // a keyframe every 10 s of journey within the current city
 const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is never planned shorter than this
+// A rig pulling up at a kerb is lined up straight over this run in (m: hitchStep).
+const STRAIGHTEN = 18;
 const THROUGH = 1e9;              // stopS of a path driven straight through its end (JSON has no Infinity)
 const GATE_SPEED = 6.5;           // rough average speed across town, for timing the way out
 // (Metres) what a drive takes beyond the graph's corner to corner: round to the kerb, the lights
@@ -826,8 +828,8 @@ export class Journey {
     let on = -1, off = -1;
     for (let i = 0; i < this.chores.length; i++) {
       const k = this.chores[i].kind, end = this.choreStart[i] + this.chores[i].len;
-      if (on < 0 && (k === "doorOpen" || k === "doorsOpen")) on = end;
-      if (k === "doorClose" || k === "doorsClose") off = end;
+      if (on < 0 && (k === "doorOpen" || k === "leafOpen")) on = end;
+      if (k === "doorClose" || k === "leafClose") off = end;
     }
     return on >= 0 && off > on && tc >= on && tc < off;
   }
@@ -844,14 +846,14 @@ export class Journey {
     let last = first;
     for (let i = first; i < ch.length; i++) if (ch[i].kind === "fetch") last = i;
     const u = (i: number) => (tc - S[i]) / ch[i].len, ss = THREE.MathUtils.smoothstep;
-    const o = ch.findIndex((c, i) => i < first && (c.kind === "doorOpen" || c.kind === "doorsOpen"));
+    const o = ch.findIndex((c, i) => i < first && (c.kind === "doorOpen" || c.kind === "leafOpen"));
     // (Shut once everyone is well clear of it: on a pickup, as the driver puts the last load in
     // the truck; on a drop, as they get ready to close the truck up (its door, or whatever
     // closing up it has).)
     const pickup = this.st.stops[0]?.kind === "pickup";
     let k = -1;
     if (pickup) for (let i = last; i < ch.length; i++) { if (ch[i].kind === "stow") k = i; }
-    else k = ch.findIndex((c, i) => i > last && (c.kind === "doorClose" || c.kind === "doorsClose"));
+    else k = ch.findIndex((c, i) => i > last && (c.kind === "doorClose" || c.kind === "leafClose"));
     if (k < 0) k = ch.findIndex((c, i) => i > last && c.group === "close");
     const shut = k < 0 ? ss(tc - S[last] - ch[last].len, 0.3, 1.2) : pickup ? ss(u(k), 0.1, 0.9) : ss(u(k), 0, 0.6);
     return (o >= 0 ? ss(u(o), 0.2, 1) : ss(u(first), 0.05, 0.3)) * (1 - shut);
@@ -1104,6 +1106,15 @@ export class Journey {
     const kx = this.pose.x + Math.cos(this.pose.h) * FIFTH_WHEEL, kz = this.pose.z - Math.sin(this.pose.h) * FIFTH_WHEEL;
     const th = Math.atan2(-(kz - az), kx - ax);
     st.hitchYaw = THREE.MathUtils.clamp(Math.atan2(Math.sin(th - this.pose.h), Math.cos(th - this.pose.h)), -1.4, 1.4);
+    // Pulling up at a kerb (or behind a spare), the driver lines the rig up along it over the last
+    // metres, as a driver does, so it stands straight: the crew's chores, which work round a
+    // straight trailer, then stay out of it. (Scaled by how much of the run in is left this step
+    // over last step, so what's left of the swing when the run in starts is gone at the stop.)
+    if (st.mode === "drive" && st.stopS < THROUGH && st.backS >= st.stopS - 0.01) {
+      const d1 = Math.max(0, st.stopS - st.s), d0 = d1 + Math.hypot(this.pose.x - x0, this.pose.z - z0);
+      const f0 = THREE.MathUtils.smoothstep(d0, 0, STRAIGHTEN), f1 = THREE.MathUtils.smoothstep(d1, 0, STRAIGHTEN);
+      st.hitchYaw = f0 > 1e-6 ? st.hitchYaw * Math.min(1, f1 / f0) : 0;
+    }
   }
   // The trailer's yaw off the tractor's heading as the journey steps it (hitchStep); 0 for others.
   get hitchYaw(): number { return this.st.hitchYaw ?? 0; }
@@ -1230,8 +1241,12 @@ export class Journey {
       else if ((st.holdT ?? 0) > 0 && (st.v < 1 || (st.holdT! > 1 - HOLD_KEEP && st.holdS! > st.s))) { st.holdT! -= dt; ys = st.holdS!; }
       else st.holdT = 0;
       // (Held standing by it, its own light not red nor turning: the jam's clock runs. Not waiting
-      // for a gap to pull out of a bay: that ends in its nosing out (life.ts outWait), not a honk.)
-      this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && this.lightAhead !== "red" && this.lightAhead !== "yellow" && !this.life?.gapHeld);
+      // for a gap to pull out of a bay: that ends in its nosing out (life.ts outWait), not a honk.
+      // Once it has stood held through a green long enough to honk, though, the light ahead isn't
+      // what holds it (a tractor stuck in a junction, its trailer swung across a car): the clock
+      // runs on through the light's red, or the clowns come a whole cycle late.)
+      const light = this.lightAhead !== "red" && this.lightAhead !== "yellow" || (st.jamT ?? 0) >= JAM_HONK;
+      this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && light && !this.life?.gapHeld);
       // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
       if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));
       // (The last metre in to it at a crawl, slowing as it closes: where it stands to is only known to
