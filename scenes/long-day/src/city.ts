@@ -18,7 +18,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./works.ts";
-import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree } from "./storybook.ts";
+import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./storybook.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -1066,6 +1066,7 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
         const wall = pick(rnd, CS.walls.industrial);
         const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.INDUSTRIAL, floors: 1, floorH: range(rnd, 6, 9) }], wall);
         flatRoof(s, b, top, wall, rnd, 1);
+        if (CS.storybook) storyWorkshop(s, b, top, rnd);
       }
     });
   }
@@ -1309,6 +1310,7 @@ function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [num
           const wall = pick(rnd, district === "industrial" ? CS.walls.industrial : CS.walls.commercial);
           const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.INDUSTRIAL, floors: 1, floorH: range(rnd, 6, 9) }], wall);
           flatRoof(s, b, top, wall, rnd, 1);
+          if (CS.storybook) storyWorkshop(s, b, top, rnd);
         }
       });
       built = true;

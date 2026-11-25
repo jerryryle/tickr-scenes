@@ -151,7 +151,7 @@ export function storyTower(s: Batch, cx: number, cz: number, R: number, room: To
     const band = { tile: first ? look.ground : look.upper, floors: fl, floorH: bandH };
     if (!first && r > prevR * 1.08) sbCap(s, px, pz, r, n, rot, y, wall, true);   // an overhang's underside
     const top = facadePrism(s, px, pz, r, n, rot, y, [band], wall, first && look.door !== undefined ? 0 : -1, look.door ?? -1);
-    sbTrim(s, px, pz, r, n, rot, top - 0.12, sbPick(rnd, trims));
+    sbTrim(s, px, pz, r, n, rot, top - 0.17, sbPick(rnd, trims));   // (no higher than the pod's top: the next pod's walls start there)
     sbCap(s, px, pz, r, n, rot, top - 0.005, sbPick(rnd, look.roofs));
     y = top; left -= fl; k++; prevR = r;
   }
@@ -328,4 +328,12 @@ export function storyPuffBus(b: Batch) {
   b.ico(0, y + R + 0.75, 0, 0.55, SB.mustard, 1.2, 0.3); b.cone(0, y + R + 1.45, 0, 0.12, 0.5, SB.ink, 4);
   headLamp(b, L / 2 + 0.25, 0.95, -0.7, 0.04, 0.16, 0.3); headLamp(b, L / 2 + 0.25, 0.95, 0.7, 0.04, 0.16, 0.3);
   tailLamp(b, -L / 2 - 0.25, 0.95, -0.7, 0.04, 0.14, 0.3); tailLamp(b, -L / 2 - 0.25, 0.95, 0.7, 0.04, 0.14, 0.3);
+}
+
+// A storybook workshop's roof (an industrial lot's shed, b in its frame, its roof at `top`): a
+// curly striped chimney at one end under a little hat, clear of the roof's clutter.
+export function storyWorkshop(s: Batch, b: { x0: number; z0: number; x1: number; z1: number }, top: number, rnd: SbRand) {
+  const cx = b.x1 - 2.2 - rnd() * 1.5, cz = (b.z0 + b.z1) / 2 + 1.5, c = sbPick(rnd, [SB.red, SB.teal, SB.violet, SB.mustard]);
+  sbTube(s, sbCurve(4, (t) => [cx + Math.sin(t * 6) * 0.5, top + 0.3 + t * 5.5, cz + Math.cos(t * 6) * 0.5]), (i) => 0.55 - i * 0.05, (i) => (i % 2 ? SB.white : c), 7, cx);
+  s.cone(cx + Math.sin(6) * 0.5, top + 6.3, cz + Math.cos(6) * 0.5, 0.75, 0.9, SB.ink, 7, Math.PI, cx);
 }
