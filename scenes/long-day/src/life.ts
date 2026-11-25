@@ -109,7 +109,9 @@ export class StreetLife implements LifeHook {
   private carsClear = (x0: number, z0: number, x1: number, z1: number, secs: number) => this.traffic.crossingClear(x0, z0, x1, z1, secs);
 
   reset(j: Journey) {
-    const s = j.st.citySeed;
+    // (By the journey's seed as well as the city's key: a catalogue city's traffic and crowd
+    // differ from one journey's visit to another's.)
+    const s = Math.floor(hash2(j.st.citySeed, j.st.city, j.cfg.seed, 0x11fe) * 2 ** 32);
     this.traffic.reset(Math.floor(hash2(s, 1, 0, 0x7a4f) * 2 ** 32));
     this.crowd.reset(Math.floor(hash2(s, 2, 0, 0xc40d) * 2 ** 32));
     this.outGo = false;

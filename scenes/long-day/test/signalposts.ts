@@ -33,7 +33,6 @@ import { inPoly, polyDist } from "../src/citygraph.ts";
   const misses = { none: 0, paths: 0 }, stopMisses = { none: 0, paths: 0 };
   for (let seed = 1; seed <= towns; seed++) {
     const cfg = readConfig({ seed } as SceneEnv);
-    void new Journey(cfg, 0, "autumn");   // (sets the city limits the plan reads)
     for (let city = 0; city < 3; city++) {
       const P = new CityPlan(citySeedOf(seed, city), journeyStyle(seed, city)), G = P.graph;
       // (A post or pole of radius r at (x, z) clear of the sidewalk's furniture, streetlights and

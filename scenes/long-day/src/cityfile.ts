@@ -17,48 +17,48 @@ import type { Steps } from "./slices.ts";
 
 export interface CityFile {
   format: 1;
-  id: string;                     // <style>-<slug>, as the file's name
+  id: string;                     // (It is <style>-<slug>, as in the file's name.)
   name: string;
   style: StyleId;
-  key: number;                    // what the default rules hash (the seed the city was drafted from)
+  key: number;                    // (The default rules hash it. It is the seed the city was drafted from.)
   layout: "grid" | "warp" | "organic";
-  outline: { scale: number; seaOff?: true };   // the outline the town was cut to (outline.ts)
+  outline: { scale: number; seaOff?: true };   // (It says how the town's outline was cut, outline.ts.)
   nodes: CityFileNode[];
   streets: CityFileStreet[];
-  gates: (CityFileGate | null)[]; // the way in first, then the ways out; null: a gate closed by the sea
+  gates: (CityFileGate | null)[]; // (The way in comes first, then the ways out; null stands for a gate the sea closed.)
   blocks: CityFileBlock[];
 }
 export interface CityFileNode {
   id: number; x: number; z: number;
-  k: [number, number];            // the node's hash key (the old grid's ix, iz)
-  control?: Control;              // "stop" or "none" where the junction has no signals
+  k: [number, number];            // (It is the node's hash key, the old grid's ix and iz.)
+  control?: Control;              // (It is "stop" or "none" where the junction has no signals.)
 }
 export type StreetTag = "elevated" | "cable" | "freeway";
 export interface CityFileStreet {
   id: number; a: number; b: number;
   name?: string;
   bend?: number;
-  half?: number;                  // centre line to the back of the sidewalk, when not 9
-  kerb?: number;                  // the sidewalk's width, when not 3
-  outside?: true;                 // not drivable: beyond the town
-  oneway?: true;                  // driven only from a to b
-  ring?: true;                    // a roundabout's ring
+  half?: number;                  // (It runs from the centre line to the back of the sidewalk, when not 9.)
+  kerb?: number;                  // (It is the sidewalk's width, when not 3.)
+  outside?: true;                 // (The street lies beyond the town, and nothing drives it.)
+  oneway?: true;                  // (Traffic drives it only from a to b.)
+  ring?: true;                    // (It is part of a roundabout's ring.)
   tags?: StreetTag[];
 }
 export interface CityFileGate {
   id: string;
-  street: number;                 // its gate street, running out of town
-  out: "a" | "b";                 // which end of that street is outside
-  dir: number;                    // the way out: 0 east, 1 north, 2 west, 3 south
-  x: number; z: number;           // the gate street's outer end
+  street: number;                 // (It is the gate's street, which runs out of town.)
+  out: "a" | "b";                 // (It names the end of that street that lies outside.)
+  dir: number;                    // (It is the way out: 0 east, 1 north, 2 west, 3 south.)
+  x: number; z: number;           // (They are the gate street's outer end.)
 }
 export interface CityFileBlock {
-  at: [number, number];           // a point inside the block
-  k: [number, number];            // its hash key
+  at: [number, number];           // (It is a point inside the block.)
+  k: [number, number];            // (It is the block's hash key.)
   district: District;
-  facility?: FacilityId;          // none on water and in the outskirts
+  facility?: FacilityId;          // (Water and the outskirts have none.)
   water?: true; park?: true;
-  outside?: true;                 // not part of the town
+  outside?: true;                 // (The block is not part of the town.)
 }
 
 export const STREET_HALF = 9, STREET_KERB = 3;

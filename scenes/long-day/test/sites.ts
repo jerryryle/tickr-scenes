@@ -4,8 +4,6 @@
 // Also: a block's ground (city.ts slab) covers just the block, concave ones too (a warped
 // superblock's T-junction notch).
 // Args (all optional): seed
-import { readConfig } from "../src/env.ts";
-import { Journey } from "../src/journey.ts";
 import { CityPlan, lotGround, siteSquare, slab } from "../src/city.ts";
 import { inPoly } from "../src/citygraph.ts";
 import { citySeedOf } from "../src/country.ts";
@@ -22,7 +20,6 @@ const tops = (poly: [number, number][]) => {
 {
   const proc = (globalThis as any).process, errs: string[] = [];
   for (const seed of proc.argv[2] ? [Number(proc.argv[2])] : [1, 11]) {
-    void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
     let n = 0, blocks = 0;
     for (let N = 0; N < 12; N++) {
       const plan = new CityPlan(citySeedOf(seed, N), journeyStyle(seed, N)), G = plan.graph;

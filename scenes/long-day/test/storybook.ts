@@ -42,7 +42,7 @@ if (within20 / JOURNEYS < 0.75) fails.push(`only ${(within20 / JOURNEYS * 100).t
 const WORKS_N = argv[2] ? Number(argv[2]) : 12;
 let works = 0;
 for (let seed = 0; seed < WORKS_N; seed++) {
-  const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (this sets up the city's limits and gates)
+  const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
   const town = citiesOfStyle("storybook")[seed % citiesOfStyle("storybook").length];   // (each catalogue storybook town in turn)
   const plan = new CityPlan(town.key, STYLES.storybook), id = plan.worksBlock;
   if (id < 0) { fails.push(`seed ${seed}: no knitting works`); continue; }

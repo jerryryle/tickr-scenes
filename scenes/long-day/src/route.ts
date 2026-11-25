@@ -36,8 +36,7 @@ const WIDE_SWING = 1;
 // change would jink across), and the shortest it moves from that swing all the way over to the kerb
 // lane on (WIDE_KERB_CHANGE). A turn tightens to leave it room for those, but never tighter than
 // WIDE_T_FLOOR.
-const WIDE_MIN_CHANGE = 6, WIDE_KERB_CHANGE = 16, WIDE_T_FLOOR = 4;
-export const WIDE_MUST_CHANGE = 10;
+const WIDE_MIN_CHANGE = 6, WIDE_MUST_CHANGE = 10, WIDE_KERB_CHANGE = 16, WIDE_T_FLOOR = 4;
 // (Those for the 1 m shift back from WIDE_SWING, and the 4 m on over to the kerb lane: a swing out of
 // the kerb lane, twice as far, needs proportionally longer. easeLen: back into the inner lane from
 // swung offset o; kerbLen: on over to the kerb lane from it.)

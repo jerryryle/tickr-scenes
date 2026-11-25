@@ -49,9 +49,11 @@ while (chosen.length < 5 && chosen.length < drafts.length) {
 if (chosen.length < 5) throw new Error(`only ${chosen.length} good ${draftStyle} drafts`);
 
 fs.mkdirSync(draftDir, { recursive: true });
+let written = 0;
 chosen.forEach((d, i) => {
   const name = draftNames[i], file = path.join(draftDir, `${draftStyle}-city-${slugOf(name)}.ts`);
   if (fs.existsSync(file)) { console.log(`${file}: exists, left as it is`); return; }
+  written++;
   const F = cityFileOfPlan(d.plan, `${draftStyle}-${slugOf(name)}`, name);
   const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
     : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
@@ -70,3 +72,5 @@ chosen.forEach((d, i) => {
   fs.writeFileSync(file, text);
   console.log(`${path.relative(draftProc.cwd(), file)}: seed ${d.seed}, ${JSON.stringify(d.traits)}`);
 });
+// (A style whose names all have files already gets nothing new: say so, and fail.)
+if (!written) throw new Error(`every ${draftStyle} name in styles.ts already has a city file: add names to draft more`);
