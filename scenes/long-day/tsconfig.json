@@ -2,5 +2,5 @@
   "extends": "../../tsconfig.base.json",
   "include": ["src/**/*.ts", "test/*.ts", "tools/*.ts", "../../types/tickr-scene.d.ts"],
   "//": "The cities' contents files are data the packer checks (tools/pack.ts); typed, they took the checker 4.5 GB.",
-  "exclude": ["src/city-*/*-contents-recipes.ts", "tools/pack.ts"]
+  "exclude": ["src/city-*/*/*-contents.ts", "tools/pack.ts"]
 }

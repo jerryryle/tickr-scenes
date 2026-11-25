@@ -190,7 +190,7 @@ export function cityTraits(plan: CityPlan) {
     oneWays: G.streets.some((st) => st.oneway && !st.ring), rounds: G.streets.some((st) => st.ring), docks, lots, blocks: G.blocks.length };
 }
 
-// A city's contents file's text (src/city-<style>/<style>-<city>-contents-recipes.ts): one recipe's
+// A city's contents file's text (src/city-<style>/<city>/<city>-contents.ts): one recipe's
 // row a line, each block's under its place in the city file's blocks and each street's under its id.
 export function contentsFileText(F: CityFile, C: CityFileContents): string {
   const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
@@ -200,14 +200,16 @@ export function contentsFileText(F: CityFile, C: CityFileContents): string {
     `// ${F.name}'s contents (docs/fixed-cities.md, "City contents"): everything that stands on its`,
     `// layout, each a recipe's row (src/contents.ts FIELDS). Drafted by tools/cityfiles.ts; edited by hand`,
     `// from here on. The scene carries them packed (tools/pack.ts).`,
-    `import type { CityFileContents } from "../cityfile.ts";`, ``,
+    `import type { CityFileContents } from "../../cityfile.ts";`, ``,
     `export const CONTENTS_${F.style.toUpperCase()}_${slugOf(F.name).toUpperCase().replace(/-/g, "_")}: CityFileContents = {`,
     ...group("blocks", C.blocks), ...group("streets", C.streets), `  outskirts: [`, ...C.outskirts.map((r) => `    ${item(r)},`), `  ],`, `};`, ``,
   ].join("\n");
 }
-// Where a city's contents file is.
-export const contentsPath = (F: CityFile) => `scenes/long-day/src/city-${F.style}/${F.style}-${F.id.slice(F.style.length + 1)}-contents-recipes.ts`;
-// A city's file name and constant: <style>-city-<slug> and CITY_<STYLE>_<SLUG>.
+// A city's folder, src/city-<style>/<slug>/, and its city file and contents file there.
+export const cityDir = (F: CityFile) => `scenes/long-day/src/city-${F.style}/${F.id.slice(F.style.length + 1)}`;
+export const cityPath = (F: CityFile) => `${cityDir(F)}/${F.id.slice(F.style.length + 1)}.ts`;
+export const contentsPath = (F: CityFile) => `${cityDir(F)}/${F.id.slice(F.style.length + 1)}-contents.ts`;
+// A city's slug and constant: higgle-on-the-wobble and CITY_<STYLE>_<SLUG>.
 export const slugOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 export const constOf = (style: StyleId, name: string) => `CITY_${style.toUpperCase()}_${slugOf(name).toUpperCase().replace(/-/g, "_")}`;
 
@@ -218,7 +220,7 @@ export function cityFileText(F: CityFile, header: string[]): string {
   const list = (k: string, a: unknown[]) => `  ${k}: [\n${a.map((v) => `    ${item(v)},`).join("\n")}\n  ],`;
   return [
     ...header,
-    `import type { CityFile } from "../cityfile.ts";`,
+    `import type { CityFile } from "../../cityfile.ts";`,
     ``,
     `export const ${constOf(F.style, F.name)}: CityFile = {`,
     `  format: 1, id: ${item(F.id)}, name: ${item(F.name)}, style: ${item(F.style)}, key: ${F.key},`,

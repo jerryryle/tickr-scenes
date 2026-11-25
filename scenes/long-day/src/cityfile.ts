@@ -1,5 +1,5 @@
 // City files (docs/fixed-cities.md): each catalogue city's plan, written out as data in
-// src/city-<style>/<style>-city-<slug>.ts and read here into its street graph. A file holds the
+// src/city-<style>/<slug>/<slug>.ts and read here into its street graph. A file holds the
 // city's structure explicitly: its nodes, streets, gates and each block's properties. Everything
 // else comes from the default rules in city.ts and facilities.ts, which hash the file's `key`.
 //

@@ -169,7 +169,7 @@ export function citySvg(F: CityFile): string {
   const m = 40, { x0, z0, x1, z1 } = G.bounds, w = x1 - x0 + 2 * m, h = z1 - z0 + 2 * m;
   const out = [
     `<?xml version="1.0" encoding="UTF-8"?>`,
-    `<!-- ${esc(F.name)} (${F.id}), drawn from src/city-${F.style}/${F.style}-city-${F.id.slice(F.style.length + 1)}.ts by tools/maps.ts (make maps). Build output, regenerated and never read back: mark up a copy. -->`,
+    `<!-- ${esc(F.name)} (${F.id}), drawn from src/city-${F.style}/${F.id.slice(F.style.length + 1)}/${F.id.slice(F.style.length + 1)}.ts by tools/maps.ts (make maps). Build output, regenerated and never read back: mark up a copy. -->`,
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="${cmOf(x0 - m)} ${cmOf(z0 - m)} ${cmOf(w)} ${cmOf(h)}" width="${Math.round(w)}" height="${Math.round(h)}">`,
     `<title>${esc(F.name)}</title>`,
     `<rect id="backdrop" x="${cmOf(x0 - m)}" y="${cmOf(z0 - m)}" width="${cmOf(w)}" height="${cmOf(h)}" fill="#f4f1e8"/>`,
@@ -184,7 +184,7 @@ export function citySvg(F: CityFile): string {
 }
 
 // Where a city's map is written: build output, in a folder for its style as its file is.
-export const mapPath = (F: CityFile) => `build/long-day-maps/city-${F.style}/${F.style}-city-${F.id.slice(F.style.length + 1)}.svg`;
+export const mapPath = (F: CityFile) => `build/long-day-maps/city-${F.style}/${F.id.slice(F.style.length + 1)}.svg`;
 
 // The world map (requirement 21): the world graph alone, one node a city at its place
 // (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and

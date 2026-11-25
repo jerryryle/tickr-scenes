@@ -299,22 +299,30 @@ Everything below is under `scenes/long-day/src/`.
 world.ts                                 the world graph, roads and planner settings
 city-metro/
   metro-style.ts                         the metro style, moved out of styles.ts
-  metro-city-grand-central.ts            a city file
-  metro-grand-central-vignette-busker.ts an asset for this city alone
   metro-vehicle-tram.ts                  an asset shared by every metro city
+  grand-central/
+    grand-central.ts                     a city file
+    grand-central-contents.ts            its contents ("City contents")
+    grand-central-vignette-busker.ts     an asset for this city alone
 city-coastal/  city-desert/  city-brick/  city-mainstreet/  city-port/
 city-storybook/
   storybook-style.ts                     the storybook style
   storybook-buildings-town.ts            the town's buildings, trees and lamps, once storybook.ts
   storybook-landmark-knitting-works.ts   the knitting works, once works.ts
-  storybook-city-wumbleton.ts
+  wumbleton/
+    wumbleton.ts
+    wumbleton-contents.ts
 ```
 
-A city file is named `<style>-city-<slug>`, where the slug is the city's name in lower-case kebab
-form: "Higgle-on-the-Wobble" becomes `higgle-on-the-wobble`. An asset shared by a style is named
-`<style>-<asset type>-<asset name>`, and an asset for one city alone is named
-`<style>-<city slug>-<asset type>-<asset name>`. The asset type is a word such as `vehicle`,
-`vignette`, `landmark` or `buildings`. A style's own definition is `<style>-style.ts`. Assets every
+Each city has a folder of its own in its style's folder, and every file's name starts with what it
+belongs to: the city's slug for the city's files, the style's id for the style's. A city's files
+therefore sort together in its folder, and the style's are the plain files beside the cities'
+folders. The slug is the city's name in lower-case kebab form: "Higgle-on-the-Wobble" becomes
+`higgle-on-the-wobble`. A city file is `<slug>.ts` and its contents file `<slug>-contents.ts`. An
+asset for one city alone is `<slug>-<asset type>-<asset name>.ts` in the city's folder, and an
+asset shared by a style is `<style>-<asset type>-<asset name>.ts` in the style's. The asset type
+is a word such as `vehicle`, `vignette`, `landmark` or `buildings`. A style's own definition is
+`<style>-style.ts`. Assets every
 style uses, such as `cars.ts` and `boats.ts`, stay where they are. What remains of `styles.ts` is
 the shared `CityStyle` type and the list of the seven styles.
 
@@ -483,7 +491,7 @@ Five choices were made along the way.
    one, and an edit changes only the item edited. The builders no longer draw from the tile's random
    stream for an item's detail.
 2. A city's contents live in a file of their own beside its city file,
-   `<style>-<city>-contents-recipes.ts`, each recipe a row: its kind's fields in a fixed order
+   `<slug>-contents.ts`, each recipe a row: its kind's fields in a fixed order
    (`contents.ts` FIELDS). The scene does not import those files. `tools/pack.ts` packs them into
    `src/contents-packed.ts` (build output) before every build, compressed by `src/pack.ts` from
    28.6 MB to 9.5 MB, and a city's contents are unpacked when the city is planned. As objects in

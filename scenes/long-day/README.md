@@ -10,7 +10,7 @@ make check-long-day     # type-check, load-test and run the tests
 
 ## Source
 
-Every city is a catalogue city: a file in `src/city-<style>/` listed in `src/world.ts`
+Every city is a catalogue city: a folder in `src/city-<style>/` listed in `src/world.ts`
 (`docs/fixed-cities.md` has the design). `src/cityfile.ts` reads a city file into its street
 graph. Country roads join the cities' gates in a fixed world graph (`src/world-roads.ts`, drafted
 by `tools/draftworld.ts` with `make draftworld`), and `src/visits.ts` plans each journey along it:
