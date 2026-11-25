@@ -7,6 +7,7 @@
 // instanceColor; a Ryder truck is a baked copy of the real model.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
+import { storyBubbleCar, storyPuffBus } from "./storybook.ts";
 import { Batch, keepWarm } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
@@ -28,6 +29,8 @@ export interface LiftedCar { kind: string; color: number; model: TruckModel | nu
 export interface LiftDraw { car: LiftedCar; x: number; y: number; z: number; h: number; roll: number }
 export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number; body?: boolean }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking); body: the truck's own body (life.ts), parked or not
 
+// The storybook city's traffic: mostly its own bubble cars, its puff bus, a few others.
+const STORY_TRAFFIC: Record<string, number> = { bubblecar: 6, puffbus: 0.9, hatch: 1, van: 1, icecream: 0.6, police: 0.3, ryder: 0.8 };
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
   colors: number[] | null;             // body tints; null keeps the painted colours
@@ -117,6 +120,9 @@ export class Traffic {
     kind("icecream", 5.8, 2.1, 8, 0.5, null, 2, (b) => iceCreamTruck(b));
     kind("ryder", 11.3, 2.5, 10, 0.8, null, 2, null);
     kind("cablecar", 8.6, 2.5, 6, 0, null, 3, cableCarBody);
+    // The storybook city's own (STORY_TRAFFIC): bubble cars and the round puff bus.
+    kind("bubblecar", 3.4, 1.8, 9, 0, [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0x5fd3a0, 0xff9a2e, 0xe8333a], 14, storyBubbleCar);
+    kind("puffbus", 9.2, 2.6, 8, 0, null, 3, storyPuffBus);
     const bb = new Batch(); bb.box(0, 0, 0, 0.28, 0.14, 0.5, 0xffffff);
     const bm = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.beacons = new THREE.InstancedMesh(bb.build(bm)!.geometry, bm, 4);
@@ -299,9 +305,10 @@ export class Traffic {
   // in sight down a long street).
   private count(id: string, near: { x: number; z: number } | null = null) { let n = 0; for (const c of this.cars) if (c.kind.id === id && (!near || Math.hypot(c.x - near.x, c.z - near.z) <= TRAFFIC_DESPAWN)) n++; return n; }
   private pickKind(plan: CityPlan): VehicleKind | null {
-    const pool = this.kinds.filter((k) => k.weight > 0 && (k.id !== "icecream" || plan.style.id !== "port"));
-    let t = this.rnd() * pool.reduce((a, k) => a + k.weight, 0);
-    for (const k of pool) { if ((t -= k.weight) < 0) return k; }
+    const w = (k: VehicleKind) => plan.style.storybook ? STORY_TRAFFIC[k.id] ?? 0 : k.weight;
+    const pool = this.kinds.filter((k) => w(k) > 0 && (k.id !== "icecream" || plan.style.id !== "port"));
+    let t = this.rnd() * pool.reduce((a, k) => a + w(k), 0);
+    for (const k of pool) { if ((t -= w(k)) < 0) return k; }
     return pool[0] ?? null;
   }
   // Where car c is to wait for the truck coming in at the town's gate, its way on not yet known (an

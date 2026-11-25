@@ -12,6 +12,9 @@ export const SHIRTS = [0xc0392b, 0x2e86c1, 0x27ae60, 0xf1c40f, 0x8e44ad, 0xecf0f
 export const PANTS = [0x2c3e50, 0x1f2a44, 0x4a4a4a, 0x7a5a3a, 0x222222, 0x5a6a7a, 0xc8b89a];
 export const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0x6b4423];
 export const HAIRS = [0x2a1a10, 0x5a3a1a, 0x111111, 0xc8a050, 0x8a3a1a, 0xaaaaaa];
+// The storybook city (main.ts sets it as each city is built): people dress for it (Figures.person).
+export const FIG_STYLE = { storybook: false };
+const STORY_CLOTHES = [0xe8333a, 0x1fb5b0, 0x9a6cf0, 0xf2c230, 0xff7fb5, 0x5fd3a0, 0xff9a2e, 0x2b3f8a];
 export const UMBRELLAS = [0x1a1a1a, 0xc0392b, 0x2e86c1, 0xf1c40f, 0x16a085, 0x8e44ad, 0xff8fb0];
 
 // A person's pose. Swings are about the body's side axis from hanging straight down (+ forward,
@@ -148,8 +151,49 @@ export class Figures {
     return e;
   }
 
+  // In the storybook city (FIG_STYLE, main.ts sets it with the city), people are dressed for the
+  // place: each a hat or hairdo and a scarf or bow tie of their own (from their colours, so it
+  // stays theirs frame to frame and on a scrub). Off for figures that are in costume already.
+  costumes = true;
   // A person. Afterwards handL/handR, footL/footR, head and hipC hold where those ended up.
   person(b: Body) {
+    this.personBody(b);
+    if (FIG_STYLE.storybook && this.costumes && b.hat === undefined) this.storyOutfit(b);
+  }
+  private storyOutfit(b: Body) {
+    const s = b.s ?? 1, yaw = b.yaw + (b.turn ?? 0), lean = b.lean ?? 0, [hx, hy, hz] = this.head;
+    const fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw);
+    const k = ((b.shirt * 7 + b.pants * 13 + b.skin * 3 + b.hair) >>> 0) % 997, kind = k % 6;
+    const C = STORY_CLOTHES, a = C[k % C.length], c2 = C[(k >> 3) % C.length];
+    const H = (i: number) => hy + (0.15 + i) * s;
+    if (kind === 0) {   // a tall striped stovepipe, bending back
+      for (let i = 0; i < 6; i++) this.box(hx - fx * i * i * 0.012 * s, H(0.03 + i * 0.12), hz - fz * i * i * 0.012 * s, 0.2 * s, 0.125 * s, 0.2 * s, yaw, -lean + 0.1 + i * 0.05, i % 2 ? 0xffffff : a);
+      this.box(hx, hy + 0.13 * s, hz, 0.36 * s, 0.03 * s, 0.36 * s, yaw, -lean, a);
+    } else if (kind === 1) {   // a floppy wide-brimmed hat with a tall crooked crown
+      this.box(hx, hy + 0.14 * s, hz, 0.58 * s, 0.03 * s, 0.58 * s, yaw, -lean + 0.12, a);
+      for (let i = 0; i < 4; i++) this.box(hx + rx * i * 0.03 * s, H(0.07 + i * 0.1), hz + rz * i * 0.03 * s, (0.22 - i * 0.03) * s, 0.11 * s, (0.22 - i * 0.03) * s, yaw, -lean, a, 0.25 * i);
+      this.box(hx, hy + 0.17 * s, hz, 0.24 * s, 0.05 * s, 0.24 * s, yaw, -lean, c2);
+    } else if (kind === 2) {   // a knitted cap, its long tassel and a pompom
+      this.box(hx, hy + 0.15 * s, hz, 0.24 * s, 0.12 * s, 0.23 * s, yaw, -lean, a);
+      this.box(hx - fx * 0.1 * s, hy + 0.42 * s, hz - fz * 0.1 * s, 0.05 * s, 0.45 * s, 0.05 * s, yaw, -lean + 0.5, a);
+      this.box(hx - fx * 0.24 * s, hy + 0.66 * s, hz - fz * 0.24 * s, 0.14 * s, 0.14 * s, 0.14 * s, yaw, 0, c2);
+    } else if (kind === 3) {   // a tower of curls, and a bow on top
+      for (let i = 0; i < 4; i++) this.box(hx + Math.sin(i * 2) * 0.06 * s, H(0.03 + i * 0.13), hz + Math.cos(i * 2) * 0.06 * s, (0.3 - i * 0.05) * s, 0.14 * s, (0.3 - i * 0.05) * s, yaw + i * 0.4, -lean, b.hair);
+      this.box(hx, hy + 0.68 * s, hz, 0.24 * s, 0.08 * s, 0.06 * s, yaw, 0, a);
+    } else if (kind === 4) {   // a teapot of a hat, spout and all
+      this.box(hx, hy + 0.2 * s, hz, 0.28 * s, 0.2 * s, 0.28 * s, yaw, -lean, a);
+      this.box(hx + fx * 0.22 * s, hy + 0.26 * s, hz + fz * 0.22 * s, 0.2 * s, 0.05 * s, 0.05 * s, yaw, -lean - 0.6, a);
+      this.box(hx, hy + 0.33 * s, hz, 0.06 * s, 0.06 * s, 0.06 * s, yaw, 0, 0xffffff);
+    } else {   // a cap with a spring and a ball bobbing on it
+      this.box(hx, hy + 0.15 * s, hz, 0.25 * s, 0.1 * s, 0.24 * s, yaw, -lean, a);
+      for (let i = 0; i < 3; i++) this.box(hx + Math.sin(i * 2.1) * 0.04 * s, hy + (0.25 + i * 0.09) * s, hz + Math.cos(i * 2.1) * 0.04 * s, 0.03 * s, 0.09 * s, 0.03 * s, yaw + i, 0.5, 0x2a2440);
+      this.box(hx, hy + 0.55 * s, hz, 0.13 * s, 0.13 * s, 0.13 * s, yaw, 0, c2);
+    }
+    if ((k >> 2) % 2) {   // a long striped scarf, trailing behind
+      for (let i = 0; i < 5; i++) this.box(hx - fx * (0.12 + i * 0.07) * s + rx * 0.05 * s, hy - (0.2 + i * 0.09) * s, hz - fz * (0.12 + i * 0.07) * s + rz * 0.05 * s, 0.08 * s, 0.1 * s, 0.12 * s, b.yaw, 0.6, i % 2 ? 0xffffff : c2);
+    } else this.box(hx + fx * 0.12 * s, hy - 0.2 * s, hz + fz * 0.12 * s, 0.05 * s, 0.1 * s, 0.3 * s, b.yaw, 0, c2);   // a big bow tie
+  }
+  private personBody(b: Body) {
     const s = b.s ?? 1, yaw = b.yaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw);
     const y0 = b.y ?? CURB_H, H = b.hip ?? 0.86 * s, hy = y0 + H, lean = b.lean ?? 0, tilt = b.tilt ?? 0;
     const legs = b.legs ?? [0, 0], arms = b.arms ?? [0, 0], lo = b.legOut ?? [0, 0], ao = b.armOut ?? [0, 0];

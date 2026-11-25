@@ -37,7 +37,7 @@ export const VIG_LOG: { out: ((line: string) => void) | null } = { out: null }; 
 
 export type VK = "peeSign" | "dogPack" | "wetPaint" | "pigeons" | "umbrella" | "iceCream" | "ticket" | "chalk" |
   "washers" | "foodTruck" | "courier" | "couch" | "hatch" | "guard" | "coffee" | "couple" | "falafel" | "bouncer" |
-  "sled" | "shovel" | "snowman" | "hydrant" | "chess" | "taichi" | "frisbee" | "kite";
+  "sled" | "shovel" | "snowman" | "hydrant" | "chess" | "taichi" | "frisbee" | "kite" | "knitter";
 
 export interface Vig {
   k: VK; bx: number; bz: number; side: number; a: number; n: number;
@@ -585,6 +585,39 @@ const K: Record<VK, Kind> = {
       // Crumbs in the air.
       const ct = t % 4.5;
       if (ct > 2.0 && ct < 2.7) { const k = (ct - 2.0) / 0.7, [cx, cz] = P(f, v.a + 0.3, lerp(v.n - 0.1, v.n - 0.55, k)); F.box(cx, Y0 + 0.9 * Math.sin(k * Math.PI) + 0.2, cz, 0.04, 0.04, 0.04, 0, 0, 0xf0e2b8); }
+    },
+  },
+
+  // The storybook city: someone on a bench knitting a striped scarf so long it has spilled off
+  // the bench and wanders away along the pavement, growing as they knit; their ball of yarn at
+  // their feet, now and then rolling off a little and back.
+  knitter: {
+    w: (d, c) => (c.plan.style.storybook && city(d, "park", "commercial", "downtown", "residential") && !wet(c) && day(c, 7, 20) ? 2.2 : 0), trigger: 0,
+    place(v, c, r, V) {
+      const b = furniture(c, v.bx, v.bz, v.side, PK.bench, V);
+      if (!b.length) return false;
+      [v.a, v.n] = pick(r, b);
+      v.c.push(pick(r, SHIRTS), pick(r, PANTS), pick(r, SKINS), pick(r, OLD_HAIR));
+      v.c.push(pick(r, [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0]), pick(r, [0xffffff, 0xe8333a, 0x1fb5b0]), r() < 0.5 ? 1 : -1, 2 + r() * 2);
+      v.st = [0]; v.pst = [0];
+      return true;
+    },
+    draw(v, F, t) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), c1 = v.c[4], c2 = v.c[5], dir = v.c[6], len0 = v.c[7];
+      const [x, z] = P(f, v.a, v.n + 0.17), k = Math.sin(t * 9);
+      F.person({ x, z, yaw: toStreet(f), ...sitting(0.5), lean: 0.25, arms: [0.55, 0.55], fore: [1.35 + k * 0.12, 1.35 - k * 0.12], foreOut: [-0.45, 0.45], nod: 0.45, ...cs });
+      // the needles, crossing in their hands
+      for (const [hd, s] of [[F.handL, 1], [F.handR, -1]] as const) F.box(hd[0], hd[1] + 0.08, hd[2], 0.02, 0.35, 0.02, f.h0, s * 0.6, 0xd4af37);
+      // the scarf: from the lap down over the bench's front and away along the pavement, wavering
+      const L = Math.min(9, len0 + t * 0.04), seg = 0.22, n = Math.floor(L / seg);
+      for (let i = 0; i < n; i++) {
+        const u = i * seg, drop = Math.min(1, u / 0.5), a = v.a + dir * Math.max(0, u - 0.5) * 0.9, nn = v.n - 0.45 - Math.max(0, u - 0.5) * 0.1 + Math.sin(u * 1.3) * 0.25;
+        const [sx, sz] = P(f, a, i < 3 ? v.n - 0.1 - u * 0.5 : nn), y = Y0 + (i < 3 ? 0.55 - drop * 0.5 : 0.02);
+        F.box(sx, y, sz, 0.24, 0.03, 0.32, f.h0 + Math.sin(u * 1.3) * 0.3, 0, Math.floor(i / 2) % 2 ? c2 : c1);
+      }
+      // the ball of yarn at their feet
+      const roll = Math.max(0, Math.sin(t * 0.4)) ** 4 * 0.6, [bx, bz] = P(f, v.a - dir * (0.35 + roll), v.n - 0.35);
+      F.box(bx, Y0 + 0.11, bz, 0.22, 0.22, 0.22, t * 0.8, roll * 3, c1);
     },
   },
 

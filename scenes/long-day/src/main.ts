@@ -54,6 +54,7 @@ import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
 import { SEA_ALONG, SeaLife } from "./sealife.ts";
 import { KnittingWorksFx } from "./works.ts";
+import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 
 const STREAM_RADIUS = 3;
@@ -159,6 +160,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     streamer?.clear();
     buildSea();
     seaLife.build(journey.plan);
+    FIG_STYLE.storybook = !!journey.plan.style.storybook;
     worksFx.build(journey.plan, (bx, bz) => { const L = siteLayout(journey.plan, bx, bz); return L.kind === "dock" ? L : null; });
     engine.seaFar = journey.plan.outline.sea === null ? 0 : SEA_FAR;
     engine.setSky(journey.plan.style.sky);

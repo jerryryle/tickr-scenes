@@ -73,6 +73,7 @@ export class Clowns {
 
   constructor(scene: THREE.Scene | null, material: THREE.Material | null) {
     this.F = scene && material ? new Figures(scene, material, 1400) : null;
+    if (this.F) this.F.costumes = false;   // (in costume already)
   }
 
   clear() { this.waves.length = 0; this.since = 0; this.came = false; this.obstacles.length = 0; }
