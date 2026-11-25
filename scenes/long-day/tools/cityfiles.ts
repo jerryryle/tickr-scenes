@@ -1,7 +1,12 @@
 // Writing and checking city files (src/cityfile.ts): the drafting tool (tools/draftcities.ts)
 // writes a generated city's plan out with cityFileOfPlan, and it and test/catalogue.ts check a
 // city with cityProblems.
-import { CityPlan } from "../src/city.ts";
+import * as THREE from "three@0.187.0";
+import { CityPlan, CITY_HI, CITY_LO, cityDistance, makeCityChunkBuilder } from "../src/city.ts";
+import { FURNITURE, PK } from "../src/decor.ts";
+import { angleDiff } from "../src/citygraph.ts";
+import { BLOCK, RING } from "../src/grid.ts";
+import { signalPoles, stopSignPosts } from "../src/signals.ts";
 import { insidePoint, STREET_HALF, STREET_KERB } from "../src/cityfile.ts";
 import type { CityFile, CityFileBlock, CityFileFreeway, CityFileGate, CityFileNode, CityFileStreet, StreetTag } from "../src/cityfile.ts";
 import { inPoly } from "../src/citygraph.ts";
@@ -10,10 +15,47 @@ import type { StyleId } from "../src/styles.ts";
 
 const cm = (v: number) => Math.round(v * 100) / 100;
 
+// Every street's furniture as the city's chunks are built (decor.ts streetFurniture records each
+// piece it places, or draws from a file): each street's pieces as [kind, side looking from its
+// first node to its second, metres along from it].
+export function streetFurnitureOf(plan: CityPlan): Map<number, [string, "l" | "r", number][]> {
+  const G = plan.graph, mats = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
+  const build = makeCityChunkBuilder(mats, plan), rec: number[] = [];
+  FURNITURE.out = rec;
+  try {
+    for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
+      if (cityDistance(cx, cz) > 0) continue;
+      const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next();
+    }
+  } finally { FURNITURE.out = null; }
+  const name = Object.fromEntries(Object.entries(PK).map(([k, v]) => [v, k])) as Record<number, string>;
+  const out = new Map<number, [string, "l" | "r", number][]>(), seen = new Set<string>();
+  for (let i = 0; i + 3 < rec.length; i += 4) {
+    // (Once each: a street is drawn again in the probe builds a chunk's doors and pavement ask for.)
+    const k = `${rec[i]}/${rec[i + 1]}/${rec[i + 2].toFixed(3)}/${rec[i + 3]}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const st = G.streets[rec[i]], axis = Math.abs(angleDiff(st.h0 + Math.PI / 2)) < 1e-9 ? 1 : 0;
+    // (Its lo side, inward -1, is the street's right on a north-south grid street, its left on any other: city.ts fileFurniture.)
+    const lo = rec[i + 3] < 0, side: "l" | "r" = (axis === 1) === lo ? "r" : "l";
+    const list = out.get(st.id) ?? [];
+    list.push([name[rec[i + 1]], side, cm(rec[i + 2] - 9)]);
+    out.set(st.id, list);
+  }
+  return out;
+}
+
 // A city's plan as a city file, its structure as the plan has it.
 export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFile {
   const G = plan.graph, O = plan.outline;
-  const nodes: CityFileNode[] = G.nodes.map((N) => ({ id: N.id, x: cm(N.x), z: cm(N.z), k: [N.kx, N.kz], ...(N.control !== "signal" ? { control: N.control } : {}) }));
+  const nodes: CityFileNode[] = G.nodes.map((N) => {
+    const out: CityFileNode = { id: N.id, x: cm(N.x), z: cm(N.z), k: [N.kx, N.kz], ...(N.control !== "signal" ? { control: N.control } : {}) };
+    const poles = signalPoles(G, N), stops = [...stopSignPosts(G, N)].sort((a, b) => a[0] - b[0]);
+    if (poles.length) out.poles = poles.map((p) => [p.i, cm(p.px), cm(p.pz), Math.round(p.h * 1e4) / 1e4, cm(p.toCentre)]);
+    if (stops.length) out.stops = stops.map(([arm, [x, z]]) => [arm, cm(x), cm(z)]);
+    return out;
+  });
+  const furniture = streetFurnitureOf(plan);
   const streets: CityFileStreet[] = G.streets.map((st) => {
     const A = G.nodes[st.n0], B = G.nodes[st.n1], out: CityFileStreet = { id: st.id, a: st.n0, b: st.n1 };
     if (st.name) out.name = st.name;
@@ -29,6 +71,8 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
     if (st.ring) out.ring = true;
     const tags = (["elevated", "cable", "freeway"] as StreetTag[]).filter((t) => st.tags[t]);
     if (tags.length) out.tags = tags;
+    const f = furniture.get(st.id);
+    if (f?.length) out.furniture = f.sort((p, q) => p[2] - q[2] || (p[1] < q[1] ? -1 : 1));
     return out;
   });
   const gates: (CityFileGate | null)[] = G.gates.map((g, i) => g ? { id: `g${i}`, street: g.street, out: g.out ? "b" : "a", dir: g.dir, x: cm(g.x), z: cm(g.z) } : null);
@@ -39,6 +83,8 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
     if (B.water) out.water = true;
     if (B.park) out.park = true;
     if (!B.inCity) out.outside = true;
+    const lots = plan.fileLots(B.id);
+    if (lots) out.lots = lots;
     return out;
   });
   // (Its sea as the outline holds it; its freeway's gate slot, whether the truck comes in on it and
@@ -103,3 +149,22 @@ export function cityTraits(plan: CityPlan) {
 // A city's file name and constant: <style>-city-<slug> and CITY_<STYLE>_<SLUG>.
 export const slugOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 export const constOf = (style: StyleId, name: string) => `CITY_${style.toUpperCase()}_${slugOf(name).toUpperCase().replace(/-/g, "_")}`;
+
+// A city file's text (its header comment lines given): one node, street, gate and block a line.
+export function cityFileText(F: CityFile, header: string[]): string {
+  const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
+    : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
+  const list = (k: string, a: unknown[]) => `  ${k}: [\n${a.map((v) => `    ${item(v)},`).join("\n")}\n  ],`;
+  return [
+    ...header,
+    `import type { CityFile } from "../cityfile.ts";`,
+    ``,
+    `export const ${constOf(F.style, F.name)}: CityFile = {`,
+    `  format: 1, id: ${item(F.id)}, name: ${item(F.name)}, style: ${item(F.style)}, key: ${F.key},`,
+    `  layout: ${item(F.layout)}, outline: ${item(F.outline)},`,
+    `  sea: ${F.sea ? item(F.sea) : "null"},`,
+    ...(F.freeway ? [`  freeway: ${item(F.freeway)},`] : []),
+    list("nodes", F.nodes), list("streets", F.streets), list("gates", F.gates), list("blocks", F.blocks),
+    `};`, ``,
+  ].join("\n");
+}

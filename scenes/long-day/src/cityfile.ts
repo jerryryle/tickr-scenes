@@ -10,6 +10,8 @@
 // that way (negative: to the right), in metres. Coordinates are world metres.
 import { CityGraph, inPoly } from "./citygraph.ts";
 import type { Control } from "./citygraph.ts";
+import { presetJunctionPosts } from "./signals.ts";
+import type { SignalPole } from "./signals.ts";
 import type { District } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
 import type { StyleId } from "./styles.ts";
@@ -41,6 +43,8 @@ export interface CityFileNode {
   id: number; x: number; z: number;
   k: [number, number];            // (It is the node's hash key, the old grid's ix and iz.)
   control?: Control;              // (It is "stop" or "none" where the junction has no signals.)
+  poles?: [number, number, number, number, number][];   // (Its signal poles: each [arm, x, z, heading, mast reach], signals.ts SignalPole.)
+  stops?: [number, number, number][];                   // (Its stop signs' posts: each [arm, x, z].)
 }
 export type StreetTag = "elevated" | "cable" | "freeway";
 export interface CityFileStreet {
@@ -53,6 +57,7 @@ export interface CityFileStreet {
   oneway?: true;                  // (Traffic drives it only from a to b.)
   ring?: true;                    // (It is part of a roundabout's ring.)
   tags?: StreetTag[];
+  furniture?: [string, "l" | "r", number][];   // (Its pavements' furniture: each [kind, the side it stands on looking from a to b, metres along from a].)
 }
 export interface CityFileGate {
   id: string;
@@ -68,7 +73,13 @@ export interface CityFileBlock {
   facility?: FacilityId;          // (Water and the outskirts have none.)
   water?: true; park?: true;
   outside?: true;                 // (The block is not part of the town.)
+  lots?: CityFileLot[];           // (Its lots, when it is hand-shaped: in place of those the rules pick, city.ts buildLots.)
 }
+// A lot of a hand-shaped block: on the face along `street` on its `side` looking from its first node
+// to its second, from `a0` to `a1` metres along that face's frontage (from the node it starts at:
+// the first node for the right side, the second for the left) and `depth` metres in. Its building
+// may give its floors and its walls' colour; the rest is its district's, as on any lot.
+export interface CityFileLot { street: number; side: "l" | "r"; a0: number; a1: number; depth: number; floors?: number; wall?: number }
 
 export const STREET_HALF = 9, STREET_KERB = 3;
 
@@ -92,6 +103,14 @@ export function* graphOfFile(F: CityFile): Steps<CityGraph> {
     street.set(s.id, G.addStreet(a, b, { ...arc, name: s.name ?? "", half: s.half ?? STREET_HALF, kerb: s.kerb ?? STREET_KERB,
       inCity: !s.outside, oneway: !!s.oneway, ring: !!s.ring, tags }));
   }
+  // (Each junction's signal poles and stop signs' posts, as the file lists them.)
+  const poles = new Map<number, SignalPole[]>(), stops = new Map<number, Map<number, [number, number]>>();
+  for (const n of F.nodes) {
+    const id = node.get(n.id)!;
+    poles.set(id, (n.poles ?? []).map(([i, px, pz, h, toCentre]) => ({ i, px, pz, h, toCentre })));
+    stops.set(id, new Map((n.stops ?? []).map(([arm, x, z]) => [arm, [x, z] as [number, number]])));
+  }
+  presetJunctionPosts(G, poles, stops);
   F.gates.forEach((g, i) => {
     if (!g) { G.gates.push(null); return; }
     const sid = street.get(g.street)!, st = G.streets[sid], out = g.out === "b" ? 1 : 0;

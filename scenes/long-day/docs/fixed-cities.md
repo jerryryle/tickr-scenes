@@ -329,6 +329,16 @@ every stage.
    placing split from their drawing. Blocks may list their own lots and buildings, and every city
    file lists its furniture, signal poles and stop signs (requirement 5a). The maps already show
    all three, from today's rules, since stage 2.
+
+   As built, a street's `furniture` lists hydrants, bins, benches, mailboxes, newspaper boxes,
+   meters, shelters and bike racks, and a junction's `poles` and `stops` list its signal poles and
+   stop-sign posts. Streetlights and street trees are still placed by rule as the chunk builder
+   draws, so requirement 5a is met for everything but those two. The placing rules still run when a
+   file lists its furniture, with their draws discarded, so the random draws after them (lots,
+   buildings, trees) stay where they were. A block's `lots` replace the lots the rules pick on the
+   kerb-layout path of `buildLots`, and each lot may fix its building's floors and wall colour;
+   the building on it is still chosen by rule. `test/lots.ts` checks a listed lot, and
+   `test/catalogue.ts` checks that every file reads back as it was written.
 7. **Mapped country roads.** Each world road gets a map of its own, as a city has: its curves,
    biomes, trees, set pieces (truck stops, rail crossings, ferries, attractions, billboards) and
    roadside are pre-generated and stored for the road, and the scene draws what the map holds in

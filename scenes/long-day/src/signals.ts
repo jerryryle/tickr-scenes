@@ -360,6 +360,12 @@ export function junctionTraffic(G: CityGraph, n: CNode, misses: { paths: number 
 // through it a path couldn't be made for; given, the poles are worked out afresh.) Memoised: the
 // graph doesn't change once built.
 const POLES = new WeakMap<CityGraph, Map<number, SignalPole[]>>();
+// A city file's signal poles and stop-sign posts (cityfile.ts), node by node, in place of placing
+// them: what signalPoles and stopSignPosts give for that graph from then on (but when a test asks
+// for the rule's own, with `misses`).
+export function presetJunctionPosts(G: CityGraph, poles: Map<number, SignalPole[]>, stops: Map<number, Map<number, [number, number]>>) {
+  POLES.set(G, poles); STOP_POSTS.set(G, stops);
+}
 export function signalPoles(G: CityGraph, n: CNode, misses: { none: number; paths: number } | null = null): SignalPole[] {
   let byNode = POLES.get(G);
   if (!byNode) POLES.set(G, byNode = new Map());

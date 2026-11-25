@@ -36,13 +36,14 @@ import { inPoly, polyDist } from "../src/citygraph.ts";
     for (let city = 0; city < 3; city++) {
       const P = new CityPlan(citySeedOf(seed, city), journeyStyle(seed, city)), G = P.graph;
       // (A post or pole of radius r at (x, z) clear of the sidewalk's furniture, streetlights and
-      // trees, its own pavement obstacle aside: the first towns' first cities, as the probe builds are slow.)
+      // trees, its own pavement obstacle aside, which the city file holds to the centimetre and so may
+      // lie a few millimetres off the rule's: the first towns' first cities, as the probe builds are slow.)
       const furnished = (x: number, z: number, r: number, what: string) => {
         if (seed > 3 || city > 0) return;
         furnChecked++;
         for (const b of G.blocks.filter((b) => b.inCity && Math.hypot(b.cx - x, b.cz - z) < 60)) for (const o of pavementObstacles(P, b.kx, b.kz)) {
           const d = Math.hypot(o.x - x, o.z - z);
-          if (d > 1e-6 && d < o.r + r + 0.1 && errs.length < 400) { errs.push(`seed ${seed} city ${city}: ${what} at (${x.toFixed(1)}, ${z.toFixed(1)}) in the sidewalk's furniture (kind ${o.kind}, ${d.toFixed(2)} m from it)`); return; }
+          if (d > 0.02 && d < o.r + r + 0.1 && errs.length < 400) { errs.push(`seed ${seed} city ${city}: ${what} at (${x.toFixed(1)}, ${z.toFixed(1)}) in the sidewalk's furniture (kind ${o.kind}, ${d.toFixed(2)} m from it)`); return; }
         }
       };
       for (const n of G.nodes) {

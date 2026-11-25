@@ -38,11 +38,12 @@ import type { ExitKind } from "./route.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, FW_HALF, FW_OFF_K, FW_STRAIGHT, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import type { FwCurve } from "./freeway.ts";
-import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
+import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower, FURNITURE } from "./decor.ts";
+import type { FurnitureItem } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, FacilityId, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { graphOfFile } from "./cityfile.ts";
-import type { CityFile } from "./cityfile.ts";
+import type { CityFile, CityFileLot } from "./cityfile.ts";
 import { cityByKey } from "./visits.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
@@ -105,7 +106,8 @@ export class CityPlan {
   readonly file: CityFile | null;
   // `dressing`: its visit's dressing seed (visits.ts), which the parked cars along its kerbs and the
   // boats moored on its river hash; the city itself is the same whatever it is.
-  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal, readonly dressing: number = seed) { this.file = cityByKey(seed) ?? null; this.name = cityName(seed, style); }
+  // (`file`: the catalogue's by default; a test may give one of its own.)
+  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal, readonly dressing: number = seed, file: CityFile | null = cityByKey(seed) ?? null) { this.file = file; this.name = file?.name ?? cityName(seed, style); }
   // The street graph (citygraph.ts): built on first use, from the city's limits and gates.
   protected g: CityGraph | null = null;
   get graph(): CityGraph { return this.g ?? drain(this.graphJob()); }
@@ -370,14 +372,18 @@ export class CityPlan {
   // (A catalogue city's are its file's, by block key, with its facilities: fileBlocks.)
   private districts = new Map<number, District>();
   private facilities: Map<number, FacilityId> | null = null;
+  private lotsOf = new Map<number, CityFileLot[]>();
   private fileBlocks(G: CityGraph, F: CityFile) {
     this.facilities = new Map();
     for (const L of F.blocks) {
       const B = G.blockAt(L.at[0], L.at[1])!, key = (B.kx + 4096) * 1e7 + (B.kz + 5e6);
+      if (L.lots) this.lotsOf.set(B.id, L.lots);
       this.districts.set(key, L.district);
       if (L.facility) this.facilities.set(key, L.facility);
     }
   }
+  // A hand-shaped block's lots, as its file lists them (buildLots), or undefined.
+  fileLots(block: number): CityFileLot[] | undefined { void this.graph; return this.lotsOf.get(block); }
   // A catalogue city's facility on block (bx, bz), as its file has it (facilities.ts facilityAt).
   fileFacility(bx: number, bz: number): FacilityId | undefined { void this.graph; return this.facilities?.get((bx + 4096) * 1e7 + (bz + 5e6)); }
   district(bx: number, bz: number): District {
@@ -619,6 +625,18 @@ function junctionPosts(G: CityGraph, st: CStreet): { right: boolean; s: number; 
   }
   return out;
 }
+// A street's furniture as its city file lists it (cityfile.ts), for each side in the street's
+// frame (lo: across < 9, the street's right looking from its first node to its second on a
+// north-south grid street, its left on any other), each piece at 9 + its distance along; null for
+// a generated city, whose furniture is placed as it is drawn (decor.ts streetFurniture).
+const FURNITURE_KIND: Record<string, number> = { hydrant: PK.hydrant, trash: PK.trash, bench: PK.bench, mailbox: PK.mailbox, news: PK.news, meter: PK.meter, shelter: PK.shelter, rack: PK.rack };
+function fileFurniture(plan: CityPlan, st: CStreet, axis: 0 | 1): [FurnitureItem[], FurnitureItem[]] | null {
+  const F = plan.file?.streets[st.id];
+  if (!F) return null;
+  const lo: FurnitureItem[] = [], hi: FurnitureItem[] = [], loSide = axis === 1 ? "r" : "l";
+  for (const [kind, side, at] of F.furniture ?? []) (side === loSide ? lo : hi).push([FURNITURE_KIND[kind], 9 + at]);
+  return [lo, hi];
+}
 function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: number, oz: number, district: District, rnd: Rand) {
   const G = plan.graph, A = G.nodes[st.n0];
   const mA = G.armOut(st.id * 2).mouth, mB = G.armIn(st.id * 2).mouth;
@@ -650,10 +668,11 @@ function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: nu
   // (An organic town's freeway round its curve: its own streets, at any angle, tagged.)
   const fwCurve = !fw && !!st.tags.freeway && axis === 0;
   const ic = fw ? plan.interchangeStreet(axis, A.kx, A.kz) : null;
+  FURNITURE.street = st.id;
   inFrame(f, [g, s, DC.lamps], () => {
     buildStreet(g, s, axis, district, rnd, front(loFace), front(hiFace), along(loFace), along(hiFace), 9 + mA, 9 + st.len - mB,
       { el: !!st.tags.elevated && axis === 0, fw: !!fw || fwCurve, icClear: ic?.clear ?? null, oneway: st.oneway, ring: !!st.ring, loading: [zone(loFace), zone(hiFace)], wet: [water(loFace), water(hiFace)], median: plan.avenueMedian(st, district) && !front(loFace).drive && !front(hiFace).drive, salt: st.id * 31 + plan.seed,
-        posts: junctionPosts(G, st) });
+        posts: junctionPosts(G, st), furniture: fileFurniture(plan, st, axis) });
     // (Node to node, a little on past each end where the line bends on along the next street, so the
     // two close up on the outside of the bend; at the line's end, on over the junction as on the grid.)
     if (st.tags.elevated && axis === 0) buildElevated(s, 9 - lineExt(G, st, 0, "elevated", 4.6), 9 + st.len + lineExt(G, st, 1, "elevated", 4.6));
@@ -696,7 +715,7 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
     if (!pavilions) return;
   }
   const depth = pavilions ? 6 : LOT_DEPTH[district], [w0, w1] = pavilions ? [7, 9] : LOT_WIDTH[district], hs = plan.downtownHeight(blk.kx, blk.kz);
-  type Lot = { f: number; a0: number; a1: number; d: number; pts: [number, number][] };
+  type Lot = { f: number; a0: number; a1: number; d: number; pts: [number, number][]; floors?: number; wall?: number };
   const lots: Lot[] = [];
   const corners = (f: number, a0: number, a1: number, d: number) => [[a0, 0.3], [a1, 0.3], [a1, d], [a0, d]].map(([a, n]) => { const p = G.facePt(f, a, n); return [p.x - ox, p.z - oz] as [number, number]; });
   const overlaps = (p: [number, number][], q: [number, number][]) => {
@@ -752,6 +771,10 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
       }
     }
   }
+  // (A hand-shaped block's lots, as its file lists them, in place of those picked above. The picking
+  // still ran, so the random draws after it are as they were.)
+  const own = plan.fileLots(blk.id);
+  if (own) lots.splice(0, lots.length, ...own.map((o): Lot => { const f = o.street * 2 + (o.side === "r" ? 0 : 1); return { f, a0: o.a0, a1: o.a1, d: o.depth, pts: corners(f, o.a0, o.a1, o.depth), floors: o.floors, wall: o.wall }; }));
   // The buildings, each in its face's frame: x along the face, z in from it (the street at z < 0).
   // Each building's front door, between two of its bays (as kerbDoors would put it): x0..x1 its
   // street wall, n its depth in from the block's edge. `painted`: over the door facadeBox paints
@@ -769,11 +792,11 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
       if (CS.storybook && !pavilions && district !== "industrial") { storyLot(s, b, L.f, district, hs, rnd, door); return; }
       if (district !== "residential") door(L.f, b.x0, b.x1, b.z0);
       if (district === "downtown") {
-        const wall = pick(rnd, CS.walls.downtown), floors = Math.max(3, Math.round((3 + hs * range(rnd, 4, 14)) * CS.towerScale));
+        const w0 = pick(rnd, CS.walls.downtown), f0 = Math.max(3, Math.round((3 + hs * range(rnd, 4, 14)) * CS.towerScale)), wall = L.wall ?? w0, floors = L.floors ?? f0;
         const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: rnd() < 0.5 ? FACADE.LOBBY : FACADE.STOREFRONT, floors: 1, floorH: 5 }, { tile: pick(rnd, CS.towerTiles), floors, floorH: 3.6 }], wall);
         flatRoof(s, b, top, wall, rnd, 3);
       } else if (district === "commercial") {
-        const floors = Math.min(CS.maxShopFloors, Math.max(1, 1 + Math.floor(rnd() * rnd() * 5))), wall = pick(rnd, CS.walls.commercial);
+        const f0 = Math.min(CS.maxShopFloors, Math.max(1, 1 + Math.floor(rnd() * rnd() * 5))), w0 = pick(rnd, CS.walls.commercial), floors = L.floors ?? f0, wall = L.wall ?? w0;
         const bands: FacadeBand[] = [{ tile: FACADE.STOREFRONT, floors: 1, floorH: 4.2 }];
         if (floors > 1) bands.push({ tile: pick(rnd, CS.upperTiles), floors: floors - 1, floorH: 3.4 });
         const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, bands, wall);
@@ -785,12 +808,12 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
       } else if (district === "residential") {
         const h: Rect = { x0: b.x0 + 0.8, z0: b.z0 + range(rnd, 2.2, 3.2), x1: b.x1 - 0.8, z1: Math.min(b.z1, b.z0 + 10) };
         door(L.f, h.x0, h.x1, h.z0, true);
-        const wall = pick(rnd, CS.walls.residential), floors = irange(rnd, 1, 2);
+        const w0 = pick(rnd, CS.walls.residential), f0 = irange(rnd, 1, 2), wall = L.wall ?? w0, floors = L.floors ?? f0;
         const top = facadeBox(s, h.x0, h.z0, h.x1, h.z1, CURB_H, [{ tile: FACADE.RESIDENTIAL, floors, floorH: 3.1 }], wall, 2, FACADE.DOOR);
         flatRoof(s, h, top, wall, rnd, 0);
         if (rnd() < 0.5) cityTree(s, (h.x0 + h.x1) / 2 + range(rnd, -2, 2), CURB_H, h.z1 + 2.5, range(rnd, 5, 7), 1.6, pick(rnd, CS.trees.greens), rnd);
       } else {
-        const wall = pick(rnd, CS.walls.industrial);
+        const wall = L.wall ?? pick(rnd, CS.walls.industrial);
         const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.INDUSTRIAL, floors: 1, floorH: range(rnd, 6, 9) }], wall);
         flatRoof(s, b, top, wall, rnd, 1);
         if (CS.storybook) storyWorkshop(s, b, top, rnd);
@@ -1282,7 +1305,9 @@ function buildBlockPart(ground: Batch, solid: Batch, plan: CityPlan, blk: CBlock
   // The freeway's off-ramp and its (super)block: drawn on the freeway's line, whatever its shape.
   if (plan.interchangeAt(cx, cz)) { buildInterchange(ground, solid, plan, blk, ox, oz); return { stalls: [] as StallPose[], site: siteLayout(plan, cx, cz) }; }
   const x0 = Math.min(...blk.poly.map((p) => p[0])), z0 = Math.min(...blk.poly.map((p) => p[1]));
-  if (!blk.square || CS.storybook) {   // (the storybook city's blocks are all built by their lots, whatever their shape)
+  // (The storybook city's blocks are all built by their lots, whatever their shape; so is a
+  // hand-shaped block, square or not, but for a square one with a site, which keeps the grid's.)
+  if (!blk.square || CS.storybook || (plan.fileLots(blk.id) && siteLayout(plan, cx, cz).kind === "kerb")) {
     const dcx = DC.cx, dcz = DC.cz, site = siteLayout(plan, cx, cz);
     DC.cx = cx; DC.cz = cz; DC.fac = facilityAt(plan, cx, cz);
     let stalls: StallPose[] = [];
@@ -1874,7 +1899,7 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
   }
 }
 function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
-  loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[] }) {
+  loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[]; furniture?: [FurnitureItem[], FurnitureItem[]] | null }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
     axis === 0 ? b.box(al, y, ac, lal, h, lac, color) : b.box(ac, y, al, lac, h, lal, color);
   const len = a1 - a0, mid = (a0 + a1) / 2, cl = STREET / 2;
@@ -2082,8 +2107,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     }
   }
   if (!bridge) {
-    streetFurniture(s, g, district, KERB, -1, axis, busy[0], rnd, a0, a1);
-    streetFurniture(s, g, district, STREET - KERB, 1, axis, busy[1], rnd, a0, a1);
+    streetFurniture(s, g, district, KERB, -1, axis, busy[0], rnd, a0, a1, feat.furniture?.[0] ?? null);
+    streetFurniture(s, g, district, STREET - KERB, 1, axis, busy[1], rnd, a0, a1, feat.furniture?.[1] ?? null);
   }
 }
 // The river's side of a street (wet: lo side, hi side). A bridge: a stone parapet along each side's

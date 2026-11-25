@@ -10,7 +10,7 @@ import { hash2 } from "../src/rng.ts";
 import { STYLES } from "../src/styles.ts";
 import type { StyleId } from "../src/styles.ts";
 import { cityByKey } from "../src/visits.ts";
-import { cityFileOfPlan, cityProblems, cityTraits, constOf, slugOf } from "./cityfiles.ts";
+import { cityFileOfPlan, cityFileText, cityProblems, cityTraits, slugOf } from "./cityfiles.ts";
 
 const draftProc = (globalThis as any).process, fs = draftProc.getBuiltinModule("node:fs"), path = draftProc.getBuiltinModule("node:path");
 const draftArgs: string[] = draftProc.argv.slice(2);
@@ -55,22 +55,10 @@ chosen.forEach((d, i) => {
   if (fs.existsSync(file)) { console.log(`${file}: exists, left as it is`); return; }
   written++;
   const F = cityFileOfPlan(d.plan, `${draftStyle}-${slugOf(name)}`, name);
-  const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
-    : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
-  const list = (k: string, a: unknown[]) => `  ${k}: [\n${a.map((v) => `    ${item(v)},`).join("\n")}\n  ],`;
-  const text = [
+  const text = cityFileText(F, [
     `// ${name}, a ${draftStyle} city (docs/fixed-cities.md). Drafted from seed ${d.seed} by tools/draftcities.ts;`,
     `// edited by hand from here on.`,
-    `import type { CityFile } from "../cityfile.ts";`,
-    ``,
-    `export const ${constOf(draftStyle, name)}: CityFile = {`,
-    `  format: 1, id: ${item(F.id)}, name: ${item(F.name)}, style: ${item(F.style)}, key: ${F.key},`,
-    `  layout: ${item(F.layout)}, outline: ${item(F.outline)},`,
-    `  sea: ${F.sea ? item(F.sea) : "null"},`,
-    ...(F.freeway ? [`  freeway: ${item(F.freeway)},`] : []),
-    list("nodes", F.nodes), list("streets", F.streets), list("gates", F.gates), list("blocks", F.blocks),
-    `};`, ``,
-  ].join("\n");
+  ]);
   fs.writeFileSync(file, text);
   console.log(`${path.relative(draftProc.cwd(), file)}: seed ${d.seed}, ${JSON.stringify(d.traits)}`);
 });
