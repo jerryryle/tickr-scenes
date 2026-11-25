@@ -9,6 +9,7 @@
 // bend: how far its middle lies to the left of the line from its first node to its second, driving
 // that way (negative: to the right), in metres. Coordinates are world metres.
 import { CityGraph, inPoly } from "./citygraph.ts";
+import type { RecipeRow } from "./contents.ts";
 import type { Control } from "./citygraph.ts";
 import { presetJunctionPosts } from "./signals.ts";
 import type { SignalPole } from "./signals.ts";
@@ -34,7 +35,13 @@ export interface CityFile {
   streets: CityFileStreet[];
   gates: (CityFileGate | null)[]; // (The way in comes first, then the ways out; null stands for a gate the sea closed.)
   blocks: CityFileBlock[];
+  // Its contents in place of those its own contents file lists (docs/fixed-cities.md, "City
+  // contents"), or (null) none: tests and the drafting tools give a city by its rules this way.
+  contents?: () => CityFileContents | null;
 }
+// A city's contents: each block's items (by its place in the file's `blocks`), each street's (by
+// its id) and the countryside ring's, each a recipe's row (contents.ts rowOf).
+export interface CityFileContents { blocks: Record<number, RecipeRow[]>; streets: Record<number, RecipeRow[]>; outskirts: RecipeRow[] }
 // A town's freeway (freeway.ts): the gate slot whose line it runs out along (its way in, gate g0),
 // whether the truck comes in on it (merge) and by which kind of exit, and its curve through an
 // organic town.

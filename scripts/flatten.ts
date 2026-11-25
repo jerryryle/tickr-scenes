@@ -11,10 +11,12 @@
 // Because the modules end up in one scope, the rules are: no two modules declare the same
 // top-level name; local imports name things as declared (no `as`, `* as` or default imports);
 // only the entry has `export default`. --define replaces the value of a top-level
-// `const NAME = ...;` (for test builds). --root sets the directory banners are relative to.
+// `const NAME = ...;` (for test builds). --root sets the directory banners are relative to. A scene
+// with a tools/pack.ts beside its src/ has it run first (it builds sources from others).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
+import { execFileSync } from "node:child_process";
 import ts from "typescript";
 
 const fail = (msg: string): never => {
@@ -29,6 +31,13 @@ const { values: opts, positionals } = parseArgs({
 if (positionals.length !== 1) fail("usage: node scripts/flatten.ts <entry.ts> [--root dir] [--define NAME=VALUE]");
 const entry = path.resolve(positionals[0]);
 const root = path.resolve(opts.root ?? path.dirname(entry));
+// A scene whose sources are built from others first (long-day's packed city contents) has a
+// tools/pack.ts beside its src/: it runs before the modules are read, and does nothing when its
+// output is up to date.
+{
+  const pack = path.join(root, "..", "tools", "pack.ts");
+  if (path.basename(root) === "src" && fs.existsSync(pack)) execFileSync(process.execPath, [pack], { stdio: ["ignore", "ignore", "inherit"] });
+}
 
 interface Module { file: string; body: string }
 const order: Module[] = [];

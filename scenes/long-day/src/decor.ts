@@ -3,7 +3,7 @@
 // square's clock tower, the water tower with the town name), plus plaza statues, flags, the
 // Ryder rooftop sign and marquees. Builders run inside the chunk builder and read the chunk's
 // context from DC.
-import type { PlateSet } from "./signs.ts";
+import type { PlateSet, SignStyle } from "./signs.ts";
 import { Batch } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import { PoolBuilder } from "./atmosphere.ts";
@@ -13,8 +13,9 @@ import { FLAG_WAVE, NEON_BLINK, NEON_CHASE, NEON_STEADY } from "./signals.ts";
 import type { CityStyle } from "./styles.ts";
 import { C, CITY_HI, CITY_LO, CityPlan, cityTree, CS, faceYaw, GATE_SLOTS, inset, irange, pick, range, shade, streetSide } from "./city.ts";
 import { BLOCK, CURB_H, LOT_TOP, STREET } from "./grid.ts";
-import type { District, Rand, Rect } from "./city.ts";
+import type { District, Rand, Rect, StallPose } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
+import { hash2 } from "./rng.ts";
 import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, signAtlas, SignAtlas } from "./signs.ts";
 
 interface RoofSpot { r: Rect; top: number }
@@ -41,6 +42,9 @@ export const DC = {
   roofs: [] as RoofSpot[],             // flat roofs built in this chunk (for billboards)
   fac: "residence" as FacilityId,
   plan: null as unknown as CityPlan,
+  // (The chunk's sign slots, and a rental lot's stalls as it is drawn, tile-local: city.ts.)
+  takeSlot: null as ((text: string, style: SignStyle) => ReturnType<SignAtlas["uv"]> | null) | null,
+  stalls: [] as StallPose[],
   cx: 0, cz: 0,
   pools: null as unknown as PoolBuilder,   // light pools under the streetlights
   lampSites: [] as number[],   // streetlight heads (x, y, z), for applyLampLight
@@ -148,20 +152,27 @@ export function shopNeon(s: Batch, b: Rect, side: number, rnd: Rand) {
 
 // ---- billboards and ghost signs -------------------------------------------------------------------
 // A billboard on one of the chunk's flat roofs, facing the nearest street.
-export function roofBillboard(s: Batch, B: Rect, rnd: Rand) {
+// A billboard on a roof drawn in this block (DC.roofs) facing a street: the roof (r, its top), the
+// side it faces, and its ad (a pool, AD_POOLS, and the ad's place in it); or null.
+export const AD_POOLS: Record<string, readonly unknown[]> = { ryder: AD_RYDER, baton: AD_BATON, billboard: AD_BILLBOARD };
+export function billboardSpot(B: Rect, rnd: Rand): { r: Rect; top: number; side: number; ad: [string, number] } | null {
   const spots = DC.roofs.filter((sp) => sp.top > 3 && sp.top < 30 && Math.min(sp.r.x1 - sp.r.x0, sp.r.z1 - sp.r.z0) >= 6);
-  if (!spots.length) return;
+  if (!spots.length) return null;
   const sp = pick(rnd, spots), side = streetSide(sp.r, B, 30);
-  if (side < 0) return;
-  const w = Math.min(8, wallLen(sp.r, side) - 1), h = w * 0.375;
+  if (side < 0) return null;
+  const k = rnd(), pool = k < 0.25 ? "ryder" : k < 0.37 ? "baton" : "billboard";
+  return { r: sp.r, top: sp.top, side, ad: [pool, Math.floor(rnd() * AD_POOLS[pool].length)] };
+}
+export function drawBillboard(s: Batch, r: Rect, top: number, side: number, ad: [string, number]) {
+  const w = Math.min(8, wallLen(r, side) - 1), h = w * 0.375;
   const [nx, nz] = SIDE_N[side], [rx, rz] = sideRight(side);
-  const [x, z] = onWall(sp.r, side, 0, -1.0);
-  const base = sp.top + 1.4, yaw = Math.atan2(-rz, rx);
-  for (const k of [-0.33, 0.33]) s.box(x + rx * w * k - nx * 0.4, sp.top + (base - sp.top + h) / 2, z + rz * w * k - nz * 0.4, 0.22, base - sp.top + h, 0.22, C.pole);
+  const [x, z] = onWall(r, side, 0, -1.0);
+  const base = top + 1.4, yaw = Math.atan2(-rz, rx);
+  for (const k of [-0.33, 0.33]) s.box(x + rx * w * k - nx * 0.4, top + (base - top + h) / 2, z + rz * w * k - nz * 0.4, 0.22, base - top + h, 0.22, C.pole);
   s.boxR(x, base + h / 2, z, w + 0.3, h + 0.3, 0.28, 0x2a2c30, 0, yaw, 0);
   s.boxR(x - nx * 0.2, base - 0.15, z - nz * 0.2, w, 0.08, 0.7, C.pole, 0, yaw, 0);   // catwalk
-  const k = rnd(), ad = k < 0.25 ? pick(rnd, AD_RYDER) : k < 0.37 ? pick(rnd, AD_BATON) : pick(rnd, AD_BILLBOARD);
-  DC.quads.push({ x: x + nx * 0.15, y: base + h / 2, z: z + nz * 0.15, w, h, rotY: faceYaw(nx, nz), ...signAtlas.adUV(ad) });
+  const pool = AD_POOLS[ad[0]] ?? AD_BILLBOARD;
+  DC.quads.push({ x: x + nx * 0.15, y: base + h / 2, z: z + nz * 0.15, w, h, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pool[ad[1] % pool.length] as never) });
   DC.ads = true;
 }
 // A faded painted sign high on a blank wall.
@@ -271,8 +282,9 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
       if (rnd() < 0.3) place(1.9, PK.shelter);   // bus shelter
     }
     if (district === "downtown" && rnd() < 0.5) place(0.9, PK.rack);   // bike rack
-    // A manhole cover in the road.
-    const mh = range(rnd, a0 + 8, a1 - 8);
+    // A manhole cover in the road (where by its street and side, as the stream's draws differ between
+    // a city drawn by its rules and one drawn from its file).
+    const mh = a0 + 8 + hash2(FURNITURE.street, inward, Math.round(a0 * 10), DC.plan.seed) * Math.max(0, a1 - a0 - 16);
     if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);
   }
   for (const [kind, p] of given ?? []) { piece[kind]?.(p); FURNITURE.out?.push(FURNITURE.street, kind, p, inward); }

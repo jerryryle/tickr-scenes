@@ -3,13 +3,15 @@
 // city with cityProblems.
 import * as THREE from "three@0.187.0";
 import { CityPlan, CITY_HI, CITY_LO, cityDistance, kerbDoors, makeCityChunkBuilder } from "../src/city.ts";
+import { CONTENTS, rowOf } from "../src/contents.ts";
+import type { Recipe, RecipeRow } from "../src/contents.ts";
 import type { KerbDoor } from "../src/city.ts";
 import { FURNITURE, PK } from "../src/decor.ts";
 import { angleDiff } from "../src/citygraph.ts";
 import { BLOCK, RING } from "../src/grid.ts";
 import { signalPoles, stopSignPosts } from "../src/signals.ts";
 import { insidePoint, STREET_HALF, STREET_KERB } from "../src/cityfile.ts";
-import type { CityFile, CityFileBlock, CityFileFreeway, CityFileGate, CityFileNode, CityFileStreet, StreetTag } from "../src/cityfile.ts";
+import type { CityFile, CityFileBlock, CityFileContents, CityFileFreeway, CityFileGate, CityFileNode, CityFileStreet, StreetTag } from "../src/cityfile.ts";
 import { inPoly } from "../src/citygraph.ts";
 import { facilityAt, siteLayout } from "../src/facilities.ts";
 import type { StyleId } from "../src/styles.ts";
@@ -47,6 +49,28 @@ export function streetFurnitureOf(plan: CityPlan): Map<number, [string, "l" | "r
 }
 
 // A city's plan as a city file, its structure as the plan has it.
+// Everything that stands on the city's layout, as its builders make it (contents.ts): every chunk
+// built with the recipes recorded, by what owns them (a block, a street, the countryside ring).
+export interface CityContents { blocks: Map<number, Recipe[]>; streets: Map<number, Recipe[]>; outskirts: Recipe[] }
+export function cityContentsOf(plan: CityPlan): CityContents {
+  const mats = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
+  const build = makeCityChunkBuilder(mats, plan), rec = CONTENTS.out = new Map<string, Recipe[]>();
+  try {
+    for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
+      if (cityDistance(cx, cz) > 0) continue;
+      const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next();
+      (r.value as THREE.Group).userData.onDispose?.();
+    }
+  } finally { CONTENTS.out = null; }
+  const out: CityContents = { blocks: new Map(), streets: new Map(), outskirts: [] };
+  for (const [owner, list] of rec) {
+    if (owner.startsWith("b")) out.blocks.set(Number(owner.slice(1)), list);
+    else if (owner.startsWith("s")) { const sid = Number(owner.slice(1, owner.indexOf("@"))); out.streets.set(sid, [...(out.streets.get(sid) ?? []), ...list]); }
+    else out.outskirts.push(...list);
+  }
+  return out;
+}
+
 export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFile {
   const G = plan.graph, O = plan.outline;
   const nodes: CityFileNode[] = G.nodes.map((N) => {
@@ -104,6 +128,18 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
   return { format: 1, id, name, style: plan.style.id, key: plan.seed, layout: plan.layout,
     outline: { scale: cut.scale, ...(cut.seaOff ? { seaOff: true as const } : {}) }, sea: O.data, ...(freeway ? { freeway } : {}), nodes, streets, gates, blocks };
 }
+// A city's contents as its contents file lists them: each block's rows by its place in the city
+// file's blocks, each street's by its id, the ring's (`contents`: cityContentsOf's, or else the
+// plan's own, as read).
+export function contentsRowsOf(plan: CityPlan, given: CityContents | null = null): CityFileContents | null {
+  const contents = given ?? plan.contents, G = plan.graph;
+  if (!contents) return null;
+  return {
+    blocks: Object.fromEntries(G.blocks.map((B, i) => [i, (contents.blocks.get(B.id) ?? []).map(rowOf)]).filter(([, l]) => (l as RecipeRow[]).length)),
+    streets: Object.fromEntries([...contents.streets].filter(([, l]) => l.length).map(([k, l]) => [k, l.map(rowOf)])),
+    outskirts: contents.outskirts.map(rowOf),
+  };
+}
 
 // What is wrong with a city, for normal play: an empty list when nothing is. Its streets must let
 // the truck and traffic get from every node to every other, and every site's kerb must be one the
@@ -154,6 +190,23 @@ export function cityTraits(plan: CityPlan) {
     oneWays: G.streets.some((st) => st.oneway && !st.ring), rounds: G.streets.some((st) => st.ring), docks, lots, blocks: G.blocks.length };
 }
 
+// A city's contents file's text (src/city-<style>/<style>-<city>-contents-recipes.ts): one recipe's
+// row a line, each block's under its place in the city file's blocks and each street's under its id.
+export function contentsFileText(F: CityFile, C: CityFileContents): string {
+  const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
+    : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
+  const group = (name: string, R: Record<number, RecipeRow[]>) => [`  ${name}: {`, ...Object.entries(R).flatMap(([k, l]) => [`    ${k}: [`, ...l.map((r) => `      ${item(r)},`), `    ],`]), `  },`];
+  return [
+    `// ${F.name}'s contents (docs/fixed-cities.md, "City contents"): everything that stands on its`,
+    `// layout, each a recipe's row (src/contents.ts FIELDS). Drafted by tools/cityfiles.ts; edited by hand`,
+    `// from here on. The scene carries them packed (tools/pack.ts).`,
+    `import type { CityFileContents } from "../cityfile.ts";`, ``,
+    `export const CONTENTS_${F.style.toUpperCase()}_${slugOf(F.name).toUpperCase().replace(/-/g, "_")}: CityFileContents = {`,
+    ...group("blocks", C.blocks), ...group("streets", C.streets), `  outskirts: [`, ...C.outskirts.map((r) => `    ${item(r)},`), `  ],`, `};`, ``,
+  ].join("\n");
+}
+// Where a city's contents file is.
+export const contentsPath = (F: CityFile) => `scenes/long-day/src/city-${F.style}/${F.style}-${F.id.slice(F.style.length + 1)}-contents-recipes.ts`;
 // A city's file name and constant: <style>-city-<slug> and CITY_<STYLE>_<SLUG>.
 export const slugOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 export const constOf = (style: StyleId, name: string) => `CITY_${style.toUpperCase()}_${slugOf(name).toUpperCase().replace(/-/g, "_")}`;

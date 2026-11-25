@@ -10,7 +10,7 @@ import { hash2 } from "../src/rng.ts";
 import { STYLES } from "../src/styles.ts";
 import type { StyleId } from "../src/styles.ts";
 import { cityByKey } from "../src/visits.ts";
-import { cityFileOfPlan, cityFileText, cityProblems, cityTraits, slugOf } from "./cityfiles.ts";
+import { cityContentsOf, cityFileOfPlan, cityFileText, contentsFileText, contentsPath, contentsRowsOf, cityProblems, cityTraits, slugOf } from "./cityfiles.ts";
 
 const draftProc = (globalThis as any).process, fs = draftProc.getBuiltinModule("node:fs"), path = draftProc.getBuiltinModule("node:path");
 const draftArgs: string[] = draftProc.argv.slice(2);
@@ -54,12 +54,13 @@ chosen.forEach((d, i) => {
   const name = draftNames[i], file = path.join(draftDir, `${draftStyle}-city-${slugOf(name)}.ts`);
   if (fs.existsSync(file)) { console.log(`${file}: exists, left as it is`); return; }
   written++;
-  const F = cityFileOfPlan(d.plan, `${draftStyle}-${slugOf(name)}`, name);
+  const F = cityFileOfPlan(d.plan, `${draftStyle}-${slugOf(name)}`, name), C = contentsRowsOf(d.plan, cityContentsOf(d.plan))!;
   const text = cityFileText(F, [
     `// ${name}, a ${draftStyle} city (docs/fixed-cities.md). Drafted from seed ${d.seed} by tools/draftcities.ts;`,
     `// edited by hand from here on.`,
   ]);
   fs.writeFileSync(file, text);
+  fs.writeFileSync(contentsPath(F), contentsFileText(F, C));   // (its contents beside it)
   console.log(`${path.relative(draftProc.cwd(), file)}: seed ${d.seed}, ${JSON.stringify(d.traits)}`);
 });
 // (A style whose names all have files already gets nothing new: say so, and fail.)

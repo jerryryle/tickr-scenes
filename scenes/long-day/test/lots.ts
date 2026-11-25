@@ -1,7 +1,8 @@
 // Test: a hand-shaped block (cityfile.ts CityFileLot) is built from the lots its file lists, in place
 // of those the rules pick (city.ts buildLots): one block of Millbrook, given one lot of its own with
 // its floors and wall colour, has that lot and no other, a building on it, and its neighbours
-// unchanged; and a file with the lot reads back as written.
+// unchanged; and a file with the lot reads back as written. (A city drafted by its rules, as the
+// drafting tools build it: a city that lists its contents draws them, its lots among them.)
 import * as THREE from "three@0.187.0";
 import { CityPlan, makeCityChunkBuilder } from "../src/city.ts";
 import type { CityFile } from "../src/cityfile.ts";
@@ -13,7 +14,7 @@ import { cityById } from "../src/visits.ts";
 import { cityFileOfPlan } from "../tools/cityfiles.ts";
 
 const ltProc = (globalThis as any).process, ltFails: string[] = [];
-const F0 = cityById("brick-millbrook")!, P0 = new CityPlan(F0.key, STYLES.brick), G0 = P0.graph;
+const F0: CityFile = { ...cityById("brick-millbrook")!, contents: () => null }, P0 = new CityPlan(F0.key, STYLES.brick, F0.key, F0), G0 = P0.graph;
 // (A residential block with no site, its longest face 30 m or more.)
 const B = G0.blocks.find((b) => b.inCity && !b.water && !b.park && P0.district(b.kx, b.kz) === "residential" && siteLayout(P0, b.kx, b.kz).kind === "kerb"
   && b.faces.some((f) => G0.faceA1(f) - G0.faceA0(f) >= 30))!;

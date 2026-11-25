@@ -344,7 +344,7 @@ the shared `CityStyle` type and the list of the seven styles.
 
 ## Build order
 
-The change lands in seven stages, and the scene plays a correct day after
+The change lands in eight stages, and the scene plays a correct day after
 every stage.
 
 1. **City files.** The `CityFile` type, its loader, the drafting tool and the 35 drafted cities, with
@@ -406,6 +406,98 @@ every stage.
       way the map was drafted. A driver the other way sees its back.
    3. Under `DEBUG_STYLE` the made-up road between two cities of one style borrows a catalogue
       road's map that turns the same way, so its signs name that road's cities.
+8. **Everything on the layout listed.** Every lot, building, site, tree and streetlight is listed
+   in its city file, and the scene draws only what the file lists. "City contents" (below) has
+   the design.
+
+## City contents
+
+A city file lists everything that stands on its layout, each as a recipe: what kind of thing it
+is, where it stands, the choices that make it look as it does, and a seed of its own for the fine
+detail. The scene draws each recipe as it is listed and decides nothing for itself, so any item
+can be moved, changed or deleted by hand, and a new one added. Geometry that follows from the
+layout stays derived from it: road markings, crosswalks and kerbs from the streets, the freeway,
+elevated and cable-car structures from the street tags and the freeway curve, and the sea's
+surface from the sea data. Editing a street moves those with it.
+
+### What is listed
+
+1. **Buildings**, per block. A building recipe holds its kind (which builder draws it), its
+   footprint as a rectangle in a frame (the frame's world origin and heading), its floors, its
+   wall and trim colours, its facade tiles, its roof (cap colour, water tank, clutter), its extras
+   (awning and colour, neon, fire escape, ghost sign, crown, antenna, billboard) and its seed. The
+   seed draws what no field names: a rooftop unit's place, a storybook pod's lean, a window's
+   light. About twenty kinds cover today's builders, among them a lot's tower, shop, house and
+   shed, a podium tower, a court, a detached house, a row house and a storybook tower, shop row
+   and house.
+2. **Lots**, per block, as the stage 6 `lots` field has them, now for every block. A building's
+   frame is its lot's when it has one.
+3. **Sites**, per block: a dock, rental lot, stand, container, garage or the knitting works, with
+   the fields `facilities.ts` siteLayout hashes today (its side, its bays and their widths, which
+   are active, its look) and its buildings and yard items as recipes. The town's plaza and town
+   square are a block's site too.
+4. **Trees**, rocks, ponds, sheds, fences, planters and container stacks: block items with a
+   place, a size and a colour. A park's, a garden's, an infill's and a close's are all of these.
+5. **Streetlights and street trees**, per street, as stage 6 lists its furniture: each a side and
+   a distance along it.
+6. **The countryside ring's trees and rocks**, per city, with their places.
+
+### How it is built
+
+The drafting tool runs today's builders once with recorders, as stage 6 recorded street
+furniture: each builder makes a recipe, records it, and draws it with the recipe's drawer. In the
+scene the recipes are read from the file and the same drawers draw them. The placing rules
+(lot cutting, the grid builders' splits, infill fitting, the tree and footprint checks) then live
+only in the drafting tools, as the street generator does since stage 5.
+
+Each drawer draws from its recipe's own seed. Today one random stream per tile runs through the
+streets, the blocks and the countryside in order, so moving or deleting one item changes every
+item drawn after it; with a seed per recipe, an edit changes only the item edited. The drafting
+redraws every city once with the new seeds, so every building's fine detail changes once.
+
+Doors stay as stage 6 lists them. A building edited by hand needs its door edited to match, and
+`test/doors.ts` reports a door left on no wall.
+
+### Cost and order of work
+
+Every builder in `city.ts`, `decor.ts` and the storybook files splits into its placing and its
+drawing, which is the largest refactor in the change. A city file grows by about a few hundred
+kilobytes, by an estimate from Midtown's lots and trees: 1,500 buildings at about 150 bytes and
+5,000 trees and lights at about 30. The work lands in steps, each with the scene playing correctly:
+
+1. Streetlights, street trees, and the trees, rocks and other items in parks, gardens, infill and
+   the countryside ring.
+2. Lots for every block, and the buildings on them (`buildLots` and `storyLot`).
+3. The square-grid builders: downtown, commercial, residential, row houses and industrial.
+4. Closes and infill.
+5. Sites, the plaza and the town square.
+6. The placing rules out of the scene, into the drafting tools.
+
+### As built
+
+Every city file lists its contents, and `test/contents.ts` checks that a city drawn from its list is
+the city its rules draw, chunk by chunk, triangle for triangle (to 2 cm), for a city of each style.
+Five choices were made along the way.
+
+1. A recipe's seed is a hash of the recipe itself unless it carries its own (`s`), so nothing stores
+   one, and an edit changes only the item edited. The builders no longer draw from the tile's random
+   stream for an item's detail.
+2. A city's contents live in a file of their own beside its city file,
+   `<style>-<city>-contents-recipes.ts`, each recipe a row: its kind's fields in a fixed order
+   (`contents.ts` FIELDS). The scene does not import those files. `tools/pack.ts` packs them into
+   `src/contents-packed.ts` (build output) before every build, compressed by `src/pack.ts` from
+   28.6 MB to 9.5 MB, and a city's contents are unpacked when the city is planned. As objects in
+   the city files every city's recipes stayed in memory, 706 MB of heap after the start; packed, the
+   scene is 36 MB, it holds 333 MB after the start (237 MB before this stage) and starts in 2.5 s.
+   The contents files are left out of the type checker, which they took to 4.5 GB; the packer and
+   `test/catalogue.ts` read every one.
+3. A street's and the countryside's items name the tile that draws them, since a street's part can
+   draw one just past its tile's edge.
+4. Some recipes are coarse: a dock, rental lot, stand, garage, town square and park are each one
+   recipe whose fields are their layout, and an industrial grid block's warehouse and yard is one.
+   Their trees are recipes of their own.
+5. The placing rules have not moved out of `city.ts`. A city whose file lists its contents never
+   runs them; the drafting tools run them through the same builders.
 
 The flattener (`scripts/flatten.ts`) joins every module into one scope and accepts no default
 imports, so a city file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL`, in

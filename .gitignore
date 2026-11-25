@@ -8,3 +8,6 @@ dist/
 .tickr-scene/
 
 .DS_Store
+
+# Packed city contents (scenes/long-day/tools/pack.ts)
+/scenes/long-day/src/contents-packed.ts
