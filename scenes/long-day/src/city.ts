@@ -17,6 +17,7 @@ import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
+import { buildWorksStatic, worksFrameOf, WORKS } from "./works.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree } from "./storybook.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
@@ -311,6 +312,24 @@ export class CityPlan {
     let h = 0;
     for (let i = 0; i < st.name.length; i++) h = (h * 31 + st.name.charCodeAt(i)) | 0;
     return hash2(h, 0xa7e, this.seed, 1) < 0.5;
+  }
+  // The storybook city's knitting works: on the block nearest the middle of town (industrial first,
+  // then shops) whose shape fits a dock site against a face the truck can drive along. Its block
+  // id, or -1 (any other city, or none fits).
+  private worksId: number | undefined;
+  get worksBlock(): number {
+    if (this.worksId !== undefined) return this.worksId;
+    this.worksId = -1;
+    if (!this.style.storybook) return -1;
+    const G = this.graph;
+    let best = Infinity;
+    for (const B of G.blocks) {
+      if (!B.inCity || B.water || B.park || B.square || !B.anchor || !G.drivable(B.anchor.face) || this.interchangeAt(B.kx, B.kz)) continue;
+      const d = this.district(B.kx, B.kz), pen = d === "industrial" ? 0 : d === "commercial" ? 4 : d === "residential" ? 8 : 12;
+      const c = pen + this.coreDistance(B.kx, B.kz) + hash2(B.kx, B.kz, this.seed, 0x4417) * 0.5;
+      if (c < best) { best = c; this.worksId = B.id; }
+    }
+    return this.worksId;
   }
   // The town's plaza, a whole block of paving with a fountain and trees in place of buildings: the
   // most central block downtown or in the shops whose facility is at the kerb (no site laid out on
@@ -1065,7 +1084,7 @@ function storyLot(s: Batch, b: Rect, f: number, district: District, hs: number, 
     for (let k = 0; k < (two ? 2 : 1); k++) {
       const cx = two ? b.x0 + cw * (k + 0.5) : (b.x0 + b.x1) / 2, cz = b.z0 + R * Math.cos(Math.PI / n);
       const storeys = district === "downtown" ? Math.max(3, Math.min(9, Math.round(3 + hs * range(rnd, 2, 9)))) : irange(rnd, 2, 3);
-      storyTower(s, cx, cz, R, { x: cw / 2 - 0.25, zf: R + 1.2, zb: d - R + 1 }, CURB_H, { ...look, storeys }, rnd);
+      storyTower(s, cx, cz, R, { x: cw / 2 - 0.55, zf: R + 1.2, zb: d - R + 0.4 }, CURB_H, { ...look, storeys }, rnd);   // (its trims clear of the next lot's, or the other tower's)
       if (k === 0) door(f, cx - 0.5, cx + 0.5, b.z0);
     }
     return;
@@ -3228,7 +3247,8 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // then a building of its own (warehouseLook): wall colour and cladding, height, roof, an accent
   // colour and what the business adds (tanks, a stack, a rooftop office, a canopy...).
   const r = frontRect(side, L.a0, L.a1, L.wall, 39.5);
-  const top = buildWarehouse(s, side, face, L, r, district, rnd);
+  // (The storybook city's knitting works: its hall and its process beside it, works.ts.)
+  const top = DC.fac === "knittingWorks" ? buildWorksStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L) : buildWarehouse(s, side, face, L, r, district, rnd);
   if (DC.fac === "ryderWarehouse" && uv) ryderRoofSign(s, r, top, face, uv);
 
   // Platform and its edge, bumpers, a door at every bay (the site's own style), the leveller,
@@ -3366,8 +3386,9 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   if (pLo - 4.5 > 9.5) posts(9.2, pLo - 4.5);
   if (L.deep && pHi + 18 < 50.5) posts(pHi + 18, 50.8);
 
-  // A shallow dock sits beside the store or tower that fronts the rest of the street.
-  if (!L.deep) {
+  // A shallow dock sits beside the store or tower that fronts the rest of the street (the knitting
+  // works' yard is its process instead: works.ts).
+  if (!L.deep && DC.fac !== "knittingWorks") {
     const sr = frontRect(side, L.a1, 48.5, 2, 39.5);
     if (district === "downtown") {
       const wall = pick(rnd, CS.walls.downtown);
@@ -3389,7 +3410,11 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // The name sign: across the dock wall above the doors, or on the store front.
   if (uv) {
     const d = FRONT_NODE[side][2], ox = -RIGHT[d][0], oz = -RIGHT[d][1];   // out towards the street
-    if (L.deep) {
+    if (DC.fac === "knittingWorks") {   // up on the hall's gable, under the barrel roof's front
+      const y = WORKS.hallTop + 3.4, n = L.wall + 0.28;
+      fspan(s, side, 15.7, 25.3, y - 0.72, y + 0.72, n - 0.1, n, SB.ink);
+      signQuad(quads, uv, side, 20.5, n - 0.11, y, 9.2, 1.15, ox, oz);
+    } else if (L.deep) {
       const y = P + 4.6 + 1.1;
       fspan(s, side, 25, 35, y - 0.72, y + 0.72, L.wall - 0.12, L.wall - 0.012, C.dark);   // (off the wall's plane, and the ribs')
       signQuad(quads, uv, side, 30, L.wall - 0.13, y, 9.6, 1.2, ox, oz);

@@ -56,6 +56,12 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   carTires: { size: [0.66, 0.66, 0.22], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.33, z, 0.33, 0.22, CK.black, 12, Math.PI / 2); b.cyl(x, y + 0.33, z, 0.17, 0.23, 0xb8bcc2, 8, Math.PI / 2);
   } },
+  // A bolt of knitting: a fat roll of striped knit on its edge, wound in the works' dyes.
+  knitwear: { size: [0.8, 0.8, 1.1], round: true, build: (b, x, y, z, i) => {
+    const pair = vpick([[CK.pink, CK.white], [0x6fe0e8, CK.white], [0xf2c230, CK.red], [CK.pink, 0x6fe0e8]], i);
+    for (let k = 0; k < 5; k++) b.cyl(x, y + 0.4, z - 0.44 + k * 0.22, 0.4 - (k % 2) * 0.01, 0.222, pair[k % 2], 12, Math.PI / 2, 0, k * 0.26);
+    b.cyl(x, y + 0.4, z, 0.08, 1.12, 0x6b4a2c, 6, Math.PI / 2);
+  } },
   truckTires: { size: [1.0, 1.0, 0.3], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.5, z, 0.5, 0.3, CK.black, 14, Math.PI / 2); b.cyl(x, y + 0.5, z, 0.26, 0.31, 0x8a9096, 8, Math.PI / 2);
   } },
