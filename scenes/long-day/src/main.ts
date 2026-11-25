@@ -167,7 +167,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // (Already up on the road in, as the town's skyline rose: backdropState.)
     if (backdrop.built !== `${journey.plan.style.id}/${journey.st.citySeed}`) backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
-    const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(st));
+    const toon = journey.plan.style.storybook ? 1 : 0;   // (the storybook's parked trucks cartoons: truck.ts toonWarp)
+    const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(toon ? st.map((x) => ({ ...x, toon })) : st));
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
       const g = yield* build(cx, cz);
       // (The block holds its sign slots and lamp sites from here: dropped at this yield, as
@@ -265,6 +266,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
   }
 
+  // How cartoonish the trucks are (truck.ts toonWarp): wholly in the storybook city, and on the
+  // drive to or from it as the land is (CountryRoad.storyAt).
+  function setToon() {
+    const road = journey.st.mode === "country" ? journey.country : null;
+    const k = road ? road.storyAt(journey.countryS) : journey.plan.style.storybook ? 1 : 0;
+    truck.toon = k; if (other) other.toon = k;
+  }
   function newTruck(model: TruckModel) {
     const t = new Truck(kit, model, puffs);
     engine.scene.add(t.root);
@@ -833,6 +841,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     stopAnimation();
     updateTablet();
     crew.update(dt, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);
+    setToon();
     truck.update(dt, time);
     truck.honk(journey.honking);   // (out of a gridlock: journey.ts JAM_HONK)
     other?.update(dt, time);
@@ -998,6 +1007,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       streamer.fill(truck.root.position);
       if (TOUR_VIEW) { tourCamera(0); streamer.fill(focus); }
       crew.update(0, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);
+      setToon();
       truck.update(0);
       placeCamera(0);
       // Compile what only appears later too (rain, snow, stars, the country road and its cars, the

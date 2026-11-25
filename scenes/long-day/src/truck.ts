@@ -213,6 +213,34 @@ type TruckSave = { f: Record<string, unknown>; x: number; z: number };
 function strapMaterial() { const m = new THREE.MeshLambertMaterial({ color: STRAP_COLOR }); applyDriverSpot(m); applyLampLight(m); return m; }
 export function keepStrapsWarm(scene: THREE.Object3D) { const b = new Batch(), m = strapMaterial(); b.box(0, 0, 0, 1, 1, 1, 0xffffff); keepWarm(scene, b.build(m)!.geometry, m); }
 
+// ---- The storybook's cartoon look ------------------------------------------------------------
+// In and near the storybook city (CountryRoad.storyAt) every truck goes cartoonish, by `toon`
+// (0..1): its cab taller, bulging at the middle and leaning forward, its hood shorter with a
+// rounded nose, its tyres fat and its rims pink, its trim in the storybook's colours (frame and
+// grille plum, chrome gold, tank mint), its bounce bouncier and its puffs big and lilac. Only the
+// look: the wheels, the box, its doors and the crew's places stay where they are (the cab is
+// changed ahead of the box's front, the rest only in colour), so it docks, loads and swaps the
+// same. Built as one morph target per mesh (makeToon), so it fades in and out continuously.
+const TOON_TRIM: [number, number][] = [
+  [TC.frame, 0x5a2a7a], [TC.mud, 0x3a1a5a], [TC.chrome, 0xffc94a], [TC.tank, 0x6fe0e8], [TC.grille, 0x6a3a8a],
+  [TC.step, 0x5a2a7a], [TC.black, 0x3a1a5a], [TC.skirt, 0xff7fb5], [TC.alu, 0xf3e07a],
+];
+const TOON_RIM = 0xff7fb5, TOON_PUFF = 0xd9b8ff;
+// A point of the truck's body (its frame: x forward from the rear axle, y up, z across) as the
+// cartoon has it, k of the way there.
+export function toonWarp(s: TruckSpec, p: THREE.Vector3, k: number) {
+  const ft = s.frameTop, a = s.cargo ? s.cargo.x1 + 0.03 : s.cabBack - 0.3, b = s.cabBack + 0.02;
+  const w = k * THREE.MathUtils.smoothstep(p.x, a, b);
+  if (w <= 0) return p;
+  const t = THREE.MathUtils.clamp((p.y - ft) / (s.cabTop - ft), 0, 1.2), tc = Math.min(t, 1), up = Math.max(0, p.y - ft);
+  const hood = s.noseFront - s.cabFront, u = hood > 0.01 ? THREE.MathUtils.clamp((p.x - s.cabFront) / hood, 0, 1) : 0;
+  const bump = 4 * tc * (1 - tc);
+  p.x += w * (0.32 * t * t - 0.2 * hood * u);
+  p.y += w * (0.2 * up * (1 - 0.5 * u) - 0.3 * u * u * tc);
+  p.z *= 1 + w * (0.05 + 0.09 * bump);
+  return p;
+}
+
 export class Truck {
   readonly spec: TruckSpec;
   readonly root = new THREE.Group();   // world pose
@@ -241,6 +269,12 @@ export class Truck {
   private lights = new LightSet();
   private glass = new THREE.MeshBasicMaterial({ color: 0x1d2a3a, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide });
   private wheels: THREE.InstancedMesh;
+  // How cartoonish (0..1; see toonWarp), set by the scene each frame; the meshes with a cartoon
+  // shape to morph to.
+  toon = 0;
+  private toonShown = 0;
+  private toonMeshes: THREE.Mesh[] = [];
+  private toonCol = new THREE.Color();
   private wheelSlots: WheelSlot[] = [];
   private driverDoor = new THREE.Group();
   private rampGroup: THREE.Group | null = null;
@@ -265,7 +299,7 @@ export class Truck {
   private time = 0;
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private e = new THREE.Euler();
   private v3 = new THREE.Vector3(); private s3 = new THREE.Vector3(); private tm = new THREE.Matrix4();
-  private puffVel = new THREE.Vector3();   // (scratch: PuffSystem.emit copies it)
+  private puffVel = new THREE.Vector3(); private puffVel2 = new THREE.Color();   // (scratch: PuffSystem.emit copies it)
 
   constructor(private kit: TruckKit, readonly model: TruckModel, private puffs: PuffSystem | null = null) {
     this.spec = SPECS[model];
@@ -301,6 +335,7 @@ export class Truck {
     this.wheels.frustumCulled = false;
     this.root.add(this.wheels);
     for (const a of Object.values(this.anchors)) this.body.add(a);
+    this.makeToon();
     this.update(0);
   }
 
@@ -550,17 +585,27 @@ export class Truck {
     let i = 0;
     if (this.trailer) { this.trailer.rotation.y = this.trailerYaw; this.trailer.updateMatrix(); }
     const tmat = this.trailer ? this.trailer.matrix : null;
+    // (Cartoon tyres a little bigger and much fatter, a dual pair spread to fit.)
+    const K = this.toon, R = 1 + 0.1 * K, fat = 1 + 0.5 * K, spread = 0.07 * K;
     for (const w of this.wheelSlots) {
-      this.e.set(0, w.steer ? this.steer : 0, -this.distance / w.r);
+      const r = w.r * R, dual = w.steer ? 0 : Math.sign(Math.abs(w.z) - (w.trailer ? TRAILER.rearZ : s.rearZ)) * Math.sign(w.z) * spread;
+      this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
       this.q.setFromEuler(this.e);
-      this.m4.compose(this.v3.set(w.x, w.r, w.z), this.q, this.s3.set(w.r, w.r, 1));
+      this.m4.compose(this.v3.set(w.x, r, w.z + dual), this.q, this.s3.set(r, r, fat));
       if (w.trailer && tmat) this.m4.premultiply(tmat);
       this.wheels.setMatrixAt(i++, this.m4);
     }
     this.wheels.instanceMatrix.needsUpdate = true;
+    if (K !== this.toonShown) {
+      this.toonShown = K;
+      this.toonCol.setHex(0xffffff).lerp(new THREE.Color(TOON_RIM), K);
+      for (let j = 0; j < this.wheelSlots.length; j++) this.wheels.setColorAt(j, this.toonCol);
+      this.wheels.instanceColor!.needsUpdate = true;
+      for (const m of this.toonMeshes) m.morphTargetInfluences![0] = K;
+    }
 
     // Suspension: a little bounce with speed, pitch with acceleration (nose dips when braking).
-    const moving = Math.min(Math.abs(this.speed) / 6, 1);
+    const moving = Math.min(Math.abs(this.speed) / 6, 1) * (1 + 2.5 * K);   // (a cartoon's bouncier)
     this.body.position.y = 0.025 * moving * Math.sin(this.distance * 1.9) + 0.012 * moving * Math.sin(this.distance * 4.3);
     this.body.rotation.z = THREE.MathUtils.clamp(this.accel * 0.0025, -0.012, 0.012);
     // Roll away from the turn (a left turn leans the body toward +z).
@@ -620,10 +665,55 @@ export class Truck {
         for (const p of this.exhaust) {
           this.v3.copy(p).applyMatrix4(this.body.matrixWorld);
           const vel = this.puffVel.fromArray(PUFF_VEL[s.exhaust]).applyQuaternion(this.root.quaternion), k = hard ? PUFF_HARD : PUFF_IDLE;
-          this.puffs.emit(this.v3, vel, k.color, k.size, k.life);
+          const col = K > 0 ? this.toonCol.setHex(k.color).lerp(this.puffVel2.setHex(TOON_PUFF), K).getHex() : k.color;
+          this.puffs.emit(this.v3, vel, col, k.size * (1 + 0.6 * K), k.life);
         }
       }
     }
+  }
+
+  // The cartoon shape and colours of every mesh of the truck that has them, as a morph target:
+  // each vertex where toonWarp puts it in the body's frame (a door or ramp in its own group as
+  // it stands built: shut, stowed), and the trim's colours (TOON_TRIM) the storybook's. (Not the
+  // roll-up door's slats, rebuilt as they move, nor kit geometry shared between trucks.)
+  private makeToon() {
+    this.root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), v = new THREE.Vector3();
+    const trim = TOON_TRIM.map(([a, b]) => [new THREE.Color(a), new THREE.Color(b)] as const);
+    const visit = (o: any, warp: boolean) => {
+      if (!o.isMesh || o.isInstancedMesh || o.geometry.userData?.shared || o.geometry === this.slats?.geo || o === this.slats?.strap) return;
+      const g = o.geometry as THREE.BufferGeometry, P = g.getAttribute("position"), C = g.getAttribute("color");
+      M.multiplyMatrices(inv, o.matrixWorld); Mi.copy(M).invert();
+      let moved = false, recol = false;
+      const pos = new Float32Array(P.count * 3);
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P as THREE.BufferAttribute, i);
+        const x = v.x, y = v.y, z = v.z;
+        if (warp) { v.applyMatrix4(M); toonWarp(this.spec, v, 1); v.applyMatrix4(Mi); }
+        if (Math.abs(v.x - x) + Math.abs(v.y - y) + Math.abs(v.z - z) > 1e-5) moved = true;
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+      }
+      let col: Float32Array | null = null;
+      if (C) {
+        col = new Float32Array(C.count * 3);
+        for (let i = 0; i < C.count; i++) {
+          const r = C.getX(i), gg = C.getY(i), b = C.getZ(i);
+          const hit = trim.find(([a]) => Math.abs(a.r - r) + Math.abs(a.g - gg) + Math.abs(a.b - b) < 2e-3);
+          if (hit) recol = true;
+          col[i * 3] = hit ? hit[1].r : r; col[i * 3 + 1] = hit ? hit[1].g : gg; col[i * 3 + 2] = hit ? hit[1].b : b;
+        }
+      }
+      if (!moved && !recol) return;
+      g.morphAttributes.position = [new THREE.BufferAttribute(pos, 3)];
+      if (col) g.morphAttributes.color = [new THREE.BufferAttribute(col, 3)];
+      o.updateMorphTargets(); o.morphTargetInfluences[0] = 0;
+      this.toonMeshes.push(o);
+    };
+    // (The trailer keeps its shape: only its trim changes colour.)
+    this.body.traverse((o) => { if (this.trailer && isUnder(o, this.trailer)) visit(o, false); else visit(o, true); });
+    if (this.trailer && !isUnder(this.trailer, this.body)) this.trailer.traverse((o) => visit(o, false));
+    this.wheels.setColorAt(0, this.toonCol.setHex(0xffffff));   // (the instance colours, white until a cartoon)
+    for (let j = 1; j < this.wheelSlots.length; j++) this.wheels.setColorAt(j, this.toonCol);
   }
 
   // ---- construction --------------------------------------------------------------------------
@@ -1116,3 +1206,4 @@ function fitText(g: CanvasRenderingContext2D, text: string, max: number) {
   while (s.length > 1 && g.measureText(s).width > max) s = s.slice(0, -1);
   return s === text ? s : s.slice(0, -1) + "…";
 }
+function isUnder(o: THREE.Object3D, p: THREE.Object3D) { for (let q: THREE.Object3D | null = o; q; q = q.parent) if (q === p) return true; return false; }

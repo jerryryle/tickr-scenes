@@ -703,7 +703,7 @@ export const irange = (r: Rand, lo: number, hi: number) => Math.floor(lo + (hi -
 export interface CityMaterials { ground: THREE.Material; solid: THREE.Material; lamp: THREE.Material }
 // Parked trucks for a rental lot, in chunk-local coordinates (main.ts bakes them from the real
 // truck models; absent in tests).
-export interface StallPose { model: TruckModel; x: number; z: number; h: number }
+export interface StallPose { model: TruckModel; x: number; z: number; h: number; toon?: number }   // (toon: fleet.ts)
 export type FleetBuilder = (stalls: StallPose[]) => THREE.Object3D | null;
 
 // Everything a city tile is made of, as batches (`takeSlot` null: no sign atlas use, for
