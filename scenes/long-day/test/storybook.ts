@@ -2,10 +2,10 @@
 // across many journeys it is never one of the first two cities, never within STORYBOOK_GAP cities
 // of the last, takes between one city in ten and one in seven over a long journey, shows up in
 // most journeys of twenty cities, and leaves the real styles' cycle as it was (no two cities in a
-// row of the same style). And that every storybook city of the first few journeys has its knitting
+// row of the same style). It also checks that every storybook city of the first few journeys has its knitting
 // works (CityPlan.worksBlock), on a shallow dock its trucks can reach, and that the city after a
 // storybook one arrives with the works' wonders, and no other city with any (journey.ts freightFor).
-// Args (optional): journeys (default 400), cities each (default 40), works checked (default 12).
+// The optional args are journeys (default 400), cities each (default 40) and works checked (default 12).
 import { journeyStyle, isStorybookCity, STORYBOOK_GAP, STYLES } from "../src/styles.ts";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
@@ -38,11 +38,11 @@ const rate = story / total;
 console.log(`storybook cities: ${story} of ${total} (1 in ${(1 / rate).toFixed(1)}); in the first 20 cities of ${(within20 / JOURNEYS * 100).toFixed(0)}% of journeys`);
 if (rate < 1 / 10 || rate > 1 / 7) fails.push(`storybook rate 1 in ${(1 / rate).toFixed(1)}: want between 1 in 10 and 1 in 7`);
 if (within20 / JOURNEYS < 0.75) fails.push(`only ${(within20 / JOURNEYS * 100).toFixed(0)}% of journeys see the storybook city in 20 cities`);
-// The works: in the storybook city of a dozen journeys.
+// The works are checked in the storybook city of a dozen journeys.
 const WORKS_N = argv[2] ? Number(argv[2]) : 12;
 let works = 0;
 for (let seed = 0; seed < WORKS_N; seed++) {
-  const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
+  const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (this sets up the city's limits and gates)
   const plan = new CityPlan(citySeedOf(seed, 3 + seed), STYLES.storybook), id = plan.worksBlock;
   if (id < 0) { fails.push(`seed ${seed}: no knitting works`); continue; }
   const B = plan.graph.blocks[id], L = siteLayout(plan, B.kx, B.kz);

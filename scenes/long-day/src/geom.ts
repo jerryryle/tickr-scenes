@@ -23,16 +23,16 @@ function batchTemplate(key: string, make: () => THREE.BufferGeometry): BatchTemp
   return t;
 }
 
-// A turned shape (Batch.lathe): the profile turned round y, smooth normals from the profile's
+// A turned shape (Batch.lathe) is the profile turned round y, with smooth normals from the profile's
 // slope, and only one triangle a step where the profile meets the axis (three.js's lathe makes two,
 // one of them empty).
 function latheGeometry(profile: readonly (readonly [number, number])[], seg: number): THREE.BufferGeometry {
   const pos: number[] = [], nrm: number[] = [], n = profile.length;
-  // (The profile's normal at each point: its slope's perpendicular, averaged with the next.)
+  // (The profile's normal at each point is its slope's perpendicular, averaged with the next.)
   const pn = profile.map((_, i) => {
     const [a0, b0] = profile[Math.max(0, i - 1)], [a1, b1] = profile[Math.min(n - 1, i + 1)];
     const dx = a1 - a0, dy = b1 - b0, l = Math.hypot(dx, dy) || 1;
-    return [dy / l, -dx / l] as const;   // (outward, as the profile runs up)
+    return [dy / l, -dx / l] as const;   // (it points outward, as the profile runs up)
   });
   const P = (i: number, k: number) => { const t = (k / seg) * Math.PI * 2, [r, y] = profile[i]; return [r * Math.sin(t), y, r * Math.cos(t)]; };
   const N = (i: number, k: number) => { const t = (k / seg) * Math.PI * 2, [nr, ny] = pn[i]; return [nr * Math.sin(t), ny, nr * Math.cos(t)]; };
@@ -108,12 +108,12 @@ export class Batch {
   cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotY = 0) {
     this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, rotY, rotX, 0, r, h, r);
   }
-  // An open cylinder (no end caps): a piece of a chain whose ends are inside its neighbours or
-  // under something (storybook.ts sbTube), half the triangles of a capped one.
+  // An open cylinder (it has no end caps) is for a piece of a chain whose ends are inside its neighbours or
+  // under something (storybook.ts sbTube), and has half the triangles of a capped one.
   tubeSeg(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0, rotY = 0) {
     this.emit(batchTemplate("tube" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg, 1, true)), x, y, z, color, rotY, rotX, rotZ, r, h, r);
   }
-  // A turned shape, smooth-shaded: `profile` is [radius, height] pairs from the bottom up (radius 1
+  // This makes a turned shape, smooth-shaded: `profile` is [radius, height] pairs from the bottom up (radius 1
   // and height 1 at most), turned round y in `seg` steps, then r across and h up, its foot at y.
   // `key` names the profile (shapes are cached by it).
   lathe(key: string, profile: readonly (readonly [number, number])[], x: number, y: number, z: number, r: number, h: number, color: number, seg = 10, rotY = 0, rotX = 0, rotZ = 0) {

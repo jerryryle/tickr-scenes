@@ -1,5 +1,6 @@
-// Test scene: the storybook city's wonders (cargo.ts STORY_CARGO; cargomodels.ts), each in four
-// variants in a row, close, one a second, then all together. Build and render it with
+// This test scene shows the storybook city's wonders (cargo.ts STORY_CARGO; cargomodels.ts). It
+// shows each in four variants in a row, close, one a second, and then all together. Build and
+// render it with
 //   make tool SCENE=long-day TOOL=wonders SECS=8   -> build/long-day-wonders/wonders.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";

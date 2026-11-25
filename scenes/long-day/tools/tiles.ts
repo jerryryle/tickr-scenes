@@ -1,6 +1,7 @@
-// Test scene: the storybook city's facade tiles (facadeart.ts) at their own size, three to a frame
-// (its window tile, its shop front, its house door), one variant a second, then their masks (red:
-// the building's colour tints it, green: glass lit after dark). Build and render it with
+// This test scene shows the storybook city's facade tiles (facadeart.ts) at their own size, three to
+// a frame, one variant a second, and then their masks. The three are a variant's window tile, its
+// shop front and its house door. In a mask, red marks where the building's colour tints it and green
+// marks glass lit after dark. Build and render it with
 //   make tool SCENE=long-day TOOL=tiles SECS=8   -> build/long-day-tiles/tiles.png
 import { paintFacadeAtlas, FACADE_GRID, FACADE_TILE } from "../src/facadeart.ts";
 import { FACADE, FACADE_KINDS } from "../src/facadetiles.ts";

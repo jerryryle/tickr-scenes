@@ -38,7 +38,7 @@ function fbox(b: Batch, side: number, a0: number, a1: number, n0: number, n1: nu
 
 
 const my2 = (a: number, b: number) => (a + b) / 2;
-// (`cars`: whether cars stand in its bays; none in the storybook city, which has only its own vehicles.)
+// (`cars` says whether cars stand in its bays; there are none in the storybook city, which has only its own vehicles.)
 export function buildGarage(ground: Batch, solid: Batch, side: number, rnd: Rand, seed: number, cars = true) {
   const H = GARAGE_H, h = heading(side);
   // The ground floor's slab and its painted bays.

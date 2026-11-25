@@ -47,7 +47,7 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
   // Gradients and samples are taken unconditionally: derivatives inside non-uniform control flow
   // are undefined in GLSL, and some GPUs return garbage there.
   const float GRID = ${glslFloat(FACADE_GRID)}, ROWS = ${glslFloat(FACADE_ROWS)};
-  vec2 tsz = vec2(1.0 / GRID, 1.0 / ROWS);   // one tile, in texture coordinates
+  vec2 tsz = vec2(1.0 / GRID, 1.0 / ROWS);   // this is one tile, in texture coordinates
   vec2 gx = dFdx(vAux.xy) * tsz, gy = dFdy(vAux.xy) * tsz;
   float tileId = floor(max(vAux.z, 0.0) + 0.5); // interpolation can turn 8.0 into 7.9999
   float kind = mod(tileId, ${glslFloat(FACADE_KINDS)});
@@ -148,7 +148,7 @@ export function facadeBox(b: Batch, x0: number, z0: number, x1: number, z1: numb
 // corners R out at angles rot + 2*PI*i/n (x = cos, z = sin), with facade bands stacked from y0, a
 // tile's bays to each side. Side `doorFacet` (between corners i and i + 1, facing angle rot +
 // (i + 0.5) * 2 * PI / n) gets `doorTile` on its first storey, a whole tile, for a painted door.
-// Returns the top height.
+// It returns the top height.
 export function facadePrism(b: Batch, cx: number, cz: number, R: number, n: number, rot: number, y0: number,
                             bands: FacadeBand[], color: number, doorFacet = -1, doorTile = -1): number {
   for (const [x, z] of [[cx - R, cz + R], [cx + R, cz + R], [cx + R, cz - R], [cx - R, cz - R]]) PLACED.foot.push(...toTile(x, z));
@@ -159,7 +159,7 @@ export function facadePrism(b: Batch, cx: number, cz: number, R: number, n: numb
   bands.forEach((band, bi) => {
     const h = band.floors * band.floorH, tile = withVariant(typeof band.tile === "number" ? band.tile : band.tile[0], variant);
     for (let i = 0; i < n; i++) {
-      // (From the corner at the larger angle to the smaller: the wall faces out.)
+      // (It runs from the corner at the larger angle to the smaller, so the wall faces out.)
       const a0 = rot + (i + 1) * step, a1 = rot + i * step;
       const ax = cx + R * Math.cos(a0), az = cz + R * Math.sin(a0), bx = cx + R * Math.cos(a1), bz = cz + R * Math.sin(a1);
       const bays = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / BAY));

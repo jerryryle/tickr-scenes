@@ -54,7 +54,7 @@ export const FAC = {
   ryderService: { label: "Ryder Service Bay", w: { industrial: 1.5 } },
   rentalLot: { label: "Ryder Rental", w: { industrial: 2.5 } },
   construction: { label: "Construction Site", w: { industrial: 1, commercial: 1, downtown: 1.5, residential: 0.6 } },
-  // The storybook city's knitting works (one to a storybook city: CityPlan.worksBlock), never drawn by district.
+  // The storybook city's knitting works (one to a storybook city: CityPlan.worksBlock) is never drawn by district.
   knittingWorks: { label: "Knitting Works", w: {}, dock: true },
   // Shops, restaurants and services.
   retail: { label: "Retail", w: { commercial: 6 } },
@@ -188,7 +188,7 @@ const wrapIndex = (n: number, len: number) => ((n % len) + len) % len;
 export const streetNameEW = (iz: number) => `${ordinal(wrapIndex(iz, 48) + 1)} St`;
 export const streetNameNS = (ix: number) => `${AVENUES[wrapIndex(ix, AVENUES.length)]} Ave`;
 
-// The storybook city's names for its trades (a few of each), in place of the usual ones.
+// These are the storybook city's names for its trades (a few of each), in place of the usual ones.
 const STORY_NAMES: Partial<Record<FacilityId, string[]>> = {
   retail: ["Whatnots & Whosits", "The Thingamajiggery", "Oddments Emporium"], grocery: ["Grubbleworth's Grocery", "The Turnip Tumble"],
   cornerStore: ["Pickle & Fizz", "The Snack Nook"], restaurant: ["The Wobbly Noodle", "Soup on a Stilt"], diner: ["The Flapjack Flip"],
@@ -307,7 +307,7 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
     return { kind: "stand", side, a: STAND_DOOR_A, stand: STANDS[fac] ?? "farmStand", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
   }
   // Stores that take pallets by tractor-trailer have a truck yard as deep as an industrial one.
-  // (The knitting works: a shallow van dock, its process laid out beside it: storybook.ts.)
+  // (The knitting works has a shallow van dock with its process laid out beside it: storybook.ts.)
   const deep = fac !== "knittingWorks" && (plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery");
   const edge = deep ? 22.5 : 12;
   const a0 = 11.5, a1 = deep ? 48.5 : 29.5;

@@ -108,11 +108,11 @@ const LOAD_EXTRA: [string, number][] = [["high", 0.08], ["front", 0.1], ["right"
 const LOAD_CLEARANCE = 3.5;
 const ARRIVE_VARIANTS = ["dive", "passenger"] as const;
 const ARRIVE_SHARE = 1 / 2;
-// The knitting works' arrival shot: from this far out (m along the way), and its spots across the
-// street in the works' frame ([a, n, y], works.ts: a along its frontage, n in from the pavement),
+// The knitting works' arrival shot is taken from this far out (m along the way), and its spots lie across the
+// street in the works' frame ([a, n, y], works.ts: a along its frontage, n in from the pavement); it uses
 // the first clear of buildings with a clear look at the works.
 const WORKS_DIST = 75, WORKS_FOV = 48;
-const WORKS_SPOTS: [number, number, number][] = [[34, -20, 9], [30, -26, 14], [24, -16, 6], [40, -30, 20]];     // the dock stops that get the cab arrival; the rest stay on the road coverage
+const WORKS_SPOTS: [number, number, number][] = [[34, -20, 9], [30, -26, 14], [24, -16, 6], [40, -30, 20]];     // these are the dock stops that get the cab arrival; the rest stay on the road coverage
 const ROADSIDE_GAP = 20;        // seconds between set-piece shots by the road, at least
 const ROADSIDE_MIN = 6;         // ...and only one that will be on screen this long
 const GLIDE = 5;                // seconds a camera move from one road setup to the next takes
@@ -229,7 +229,7 @@ export class Director {
   private holdPos = new THREE.Vector3(); private pushPos = new THREE.Vector3(); private holdFov = FOV;
   private backSpot = new THREE.Vector3();
   private jamPos = new THREE.Vector3(); private jamLook = new THREE.Vector3();   // (the jam's shot)
-  private worksPos = new THREE.Vector3(); private worksLook = new THREE.Vector3();   // (the knitting works' shot: works.ts)
+  private worksPos = new THREE.Vector3(); private worksLook = new THREE.Vector3();   // (these hold the knitting works' shot: works.ts)
   private clownPos = new THREE.Vector3(); private clownLook = new THREE.Vector3(); private clownId = -1; private clownH = 0; private clownDone = -1;   // (the clowns' shot, and the lot it was set up on)
   // The world moved by (dx, dz) under the camera (main.ts: the next city takes over out on the
   // road): move with it, so nothing on screen changes.
@@ -356,8 +356,8 @@ export class Director {
     if (this.departed(j) < DEPART_LEN) return "depart";
     if (stop && stop.kind !== "depart" && j.path) {
       const d = st.stopS - st.s;
-      // The storybook city's knitting works: the truck pulling up to it is its arrival there,
-      // filmed wide across the street, held till it backs in (works.ts).
+      // At the storybook city's knitting works, the truck pulling up to it is its arrival there,
+      // filmed wide across the street and held till it backs in (works.ts).
       if (d < WORKS_DIST && j.isDockStop(stop) && stop.site && j.plan.blockOf(stop.site.bx, stop.site.bz)?.id === j.plan.worksBlock && j.plan.worksBlock >= 0) return "works";
       // (With a name sign to open on: only once the truck is about to drive into its frame.)
       if (!j.isDockStop(stop) && (d < CURB_SIGN_DIST && this.curbPlan(j) ? this.curbLead(j) <= CURB_SIGN_LEAD : d < CURB_DIST)) return "curb";
@@ -594,7 +594,7 @@ export class Director {
       }
 
       case "works":
-        // Locked off across the street on the works; the operator leans a little toward the truck.
+        // The camera is locked off across the street on the works; the operator leans a little toward the truck.
         s.pos.copy(this.worksPos); s.look.lerpVectors(this.worksLook, this.v3.set(this.T.x, this.T.y + 1.5, this.T.z), 0.25); s.fov = WORKS_FOV; s.cutaway = false; s.pan = 2;
         return s;
 

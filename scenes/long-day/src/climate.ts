@@ -89,7 +89,7 @@ export function seasonalStyle(style: CityStyle, c: Climate): CityStyle {
   const key = `${style.id}/${c.season}/${c.snowCover}`;
   let s = seasonalStyles.get(key);
   if (!s) {
-    // (The storybook city's trees are its colours whatever the season; under snow, capped with it.)
+    // (The storybook city's trees are its colours whatever the season; under snow, they are capped with it.)
     s = { ...style, trees: { ...style.trees, greens: style.storybook ? style.trees.greens : seasonGreens(style.trees.greens, c) }, grass: seasonGround(style.grass, c), snowTufts: !!style.storybook && c.snowCover };
     if (c.snowCover) s.roofs = style.roofs.map((r) => shadeBy(r, 0.7, SNOW));
     seasonalStyles.set(key, s);

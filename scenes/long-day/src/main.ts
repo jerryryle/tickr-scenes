@@ -168,7 +168,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // (Already up on the road in, as the town's skyline rose: backdropState.)
     if (backdrop.built !== `${journey.plan.style.id}/${journey.st.citySeed}`) backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
-    const toon = journey.plan.style.storybook ? 1 : 0;   // (the storybook's parked trucks cartoons: truck.ts toonWarp)
+    const toon = journey.plan.style.storybook ? 1 : 0;   // (the storybook's parked trucks are cartoons: truck.ts toonWarp)
     const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(toon ? st.map((x) => ({ ...x, toon })) : st));
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
       const g = yield* build(cx, cz);
@@ -267,8 +267,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
   }
 
-  // How cartoonish the trucks are (truck.ts toonWarp): wholly in the storybook city, and on the
-  // drive to or from it as the land is (CountryRoad.storyAt).
+  // The trucks turn cartoonish (truck.ts toonWarp) wholly in the storybook city, and on the
+  // drive to or from it as the land does (CountryRoad.storyAt).
   function setToon() {
     const road = journey.st.mode === "country" ? journey.country : null;
     const k = road ? road.storyAt(journey.countryS) : journey.plan.style.storybook ? 1 : 0;
@@ -331,13 +331,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
 
   const siteEdgeAt = new THREE.Vector3();   // (the siteEdge view's streaming centre)
   // Test renders only: a tour camera on the downtown core nearest the start.
-  let trafficFollow = -1, trafficFollowT = 0;   // (DEBUG_VIEW "traffic": the vehicle followed, since when)
+  let trafficFollow = -1, trafficFollowT = 0;   // (DEBUG_VIEW "traffic" keeps these: the vehicle followed, and since when)
   let tourT = 0, tourTrain = -1, tourBend: { x: number; z: number; nx: number; nz: number; ex: number; ez: number } | null = null;   // (tourBend: lineBend's shot)
   let jamShot: { x: number; y: number; z: number; lx: number; lz: number } | null = null;   // (DEBUG_VIEW "jam": the fixed shot, once set up)
   function tourCamera(dt: number): boolean {
     if (!DEBUG_VIEW || DEBUG_VIEW === "countryTop" || DEBUG_VIEW === "scrub") return false;
     tourT += dt;
-    // "traffic": the vehicle nearest the truck, from its front quarter, a new one every 8 s.
+    // "traffic" shows the vehicle nearest the truck, from its front quarter, and picks a new one every 8 s.
     if (DEBUG_VIEW === "traffic") {
       if (trafficFollow < 0 || tourT - trafficFollowT > 8 || !traffic.vehiclePose(trafficFollow)) { trafficFollow = traffic.vehicleNear(truck.root.position.x, truck.root.position.z); trafficFollowT = tourT; }
       const v = traffic.vehiclePose(trafficFollow);
@@ -474,7 +474,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const a = tourT * 0.12;
       cam.position.set(cx + Math.cos(a) * 55, 38, cz + Math.sin(a) * 55); cam.lookAt(cx, 0, cz);
     } else if (DEBUG_VIEW.startsWith("works") && plan.worksBlock >= 0) {
-      // The storybook city's knitting works from across its street, drifting along it ("works"), or
+      // These show the storybook city's knitting works from across its street, drifting along it ("works"), or
       // close on the vats ("worksVats") or the spools ("worksSpools").
       const B = plan.graph.blocks[plan.worksBlock], an = B.anchor!, G = plan.graph;
       const P = (a: number, n: number) => G.facePt(an.face, a + an.delta, n);
@@ -483,8 +483,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       cx = C1.x; cz = C1.z;
       cam.position.set(C0.x, cy, C0.z); cam.lookAt(C1.x, ly, C1.z);
     } else if (DEBUG_VIEW === "gate" && plan.graph.gates[0]) {
-      // From the road in, outside the entry gate, looking into town past it (a storybook city's
-      // arch stands just inside), drifting in slowly.
+      // This view stands on the road in, outside the entry gate, looking into town past it (a storybook city's
+      // arch stands just inside), and drifts in slowly.
       const e = gateEnd(plan.graph.gates[0]), fx = Math.cos(e.h), fz = -Math.sin(e.h), d = 45 - tourT * 2;
       cx = e.x; cz = e.z;
       cam.position.set(e.x + fx * d - fz * 3, 5, e.z + fz * d + fx * 3); cam.lookAt(e.x - fx * 20, 7, e.z - fz * 20);

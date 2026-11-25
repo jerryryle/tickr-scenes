@@ -34,8 +34,8 @@ export interface CityStyle {
   cranes?: boolean;                   // container cranes and stacks in industrial blocks
   rail?: boolean;                     // rail spurs through industrial yards
   townSquare?: boolean;               // courthouse clock tower and a water tower with the town name
-  storybook?: boolean;                // the fantasy city: bent towers, tuft trees, striped hills, the knitting works
-  snowTufts?: boolean;                // (a storybook city under snow: its trees keep their colours, capped with snow)
+  storybook?: boolean;                // it is set for the fantasy city: bent towers, tuft trees, striped hills, the knitting works
+  snowTufts?: boolean;                // (it is set for a storybook city under snow: its trees keep their colours, capped with snow)
   // How likely each street layout is (city.ts CityPlan.layout): the square grid, a grid bent out
   // of square, an organic town with no grid. Relative weights; organic only where nothing needs a
   // straight line through town (no freeway, elevated line or cable car), else its share goes to
@@ -147,7 +147,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "evergreens", backdropColor: 0x2f5a4a, sky: 0x0b4cb8, cranes: true,
   },
   storybook: {
-    // The fantasy town: a storybook place of bent, bulging towers in hats, crooked shop rows under
+    // The fantasy town is a storybook place of bent, bulging towers in hats, crooked shop rows under
     // scalloped awnings, tuft trees on striped trunks, striped contour hills and a knitting works.
     id: "storybook", storybook: true, layouts: { grid: 0, warp: 0.35, organic: 0.65 },
     names: ["Wumbleton", "Fizzlebury", "Snickerwick", "Tumbledown Tuft", "Higgle-on-the-Wobble", "Puddlewump"],
@@ -167,12 +167,12 @@ export const STYLES: Record<StyleId, CityStyle> = {
     backdrop: "storyhills", backdropColor: 0x5fcf8a, sky: 0x34b6e0,
   },
 };
-const STYLE_IDS = (Object.keys(STYLES) as StyleId[]).filter((id) => !STYLES[id].storybook);   // the real cities' styles
+const STYLE_IDS = (Object.keys(STYLES) as StyleId[]).filter((id) => !STYLES[id].storybook);   // these are the real cities' styles
 
-// The storybook city: now and then a city of the journey is the fantasy town in place of the real
-// style its turn would have had. Never the first two cities (the journey starts somewhere real),
-// never within STORYBOOK_GAP cities of the last one, and otherwise with STORYBOOK_ODDS: about one
-// city in eight over a long journey. A pure function of the seed.
+// The storybook city comes now and then: a city of the journey is the fantasy town in place of the real
+// style its turn would have had. It is never one of the first two cities (the journey starts somewhere real),
+// never within STORYBOOK_GAP cities of the last one, and otherwise comes with STORYBOOK_ODDS: about one
+// city in eight over a long journey. isStorybookCity is a pure function of the seed.
 export const STORYBOOK_ODDS = 1 / 2, STORYBOOK_GAP = 6;
 export function isStorybookCity(seed: number, city: number): boolean {
   let last = -Infinity;
@@ -180,7 +180,7 @@ export function isStorybookCity(seed: number, city: number): boolean {
   return last === city;
 }
 
-// The style for city number `city` of a journey: the journey cycles through the six real styles in
+// This picks the style for city number `city` of a journey: the journey cycles through the six real styles in
 // an order shuffled from its seed, so no two cities in a row share a style and each style comes
 // round every six cities; now and then (isStorybookCity) the storybook city takes a city's turn.
 export function journeyStyle(seed: number, city: number): CityStyle {

@@ -1,6 +1,6 @@
-// Test scene: the trucks' storybook cartoon look (truck.ts toonWarp) side by side, each model at
-// none, half and all of it, broadside and then the whole cartoon close (plain white liveries:
-// the tool has no assets). Build and render it with
+// This test scene shows the trucks' storybook cartoon look (truck.ts toonWarp) side by side, with
+// each model at none, half and all of it, broadside and then the whole cartoon close. The liveries
+// are plain white because the tool has no assets. Build and render it with
 //   make tool SCENE=long-day TOOL=toons SECS=10   -> build/long-day-toons/toons.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
@@ -32,7 +32,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
   function draw(time: number) {
     {
       if (!rows.length) {
-        // (Plain white liveries, put in after: the 2D canvas isn't to be touched.)
+        // (The plain white liveries are put in after, because the 2D canvas isn't to be touched.)
         const kit = new TruckKit({} as Record<LiveryName, CanvasImageSource>);
         const white = new THREE.DataTexture(new Uint8Array([244, 244, 240, 255]), 1, 1); white.needsUpdate = true;
         for (const n of LIVERY_ASSETS) kit.livery[n].map = white;
@@ -42,8 +42,8 @@ export default function createScene({ sys }: SceneInputs): Scene {
         })));
       }
       const k = Math.floor(time) % (MODELS.length * 2), i = Math.floor(k / 2), rear = k % 2 === 1, z = i * 60;
-      // (Side on, all and half of it left to right; then the whole cartoon close, from its
-      // front three-quarter.)
+      // (The side-on view shows all and half of it left to right; then the whole cartoon is shown
+      // close, from its front three-quarter.)
       const G = gapOf(i), tr = MODELS[i] === "tractor" ? -6 : 0;   // (a tractor's trailer runs far back)
       if (!rear) { cam.fov = 42; cam.position.set(1.5 * G + 2 + tr, 2.4, z - 26 - (G - GAP)); cam.lookAt(1.5 * G + 2 + tr, 2, z); }
       else { cam.fov = 34; cam.position.set(2 * G + 14, 4.5, z - 12); cam.lookAt(2 * G + 1, 1.8, z); }

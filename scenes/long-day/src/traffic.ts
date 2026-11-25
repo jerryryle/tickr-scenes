@@ -31,16 +31,16 @@ export interface LiftedCar { kind: string; color: number; model: TruckModel | nu
 export interface LiftDraw { car: LiftedCar; x: number; y: number; z: number; h: number; roll: number }
 export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number; body?: boolean }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking); body: the truck's own body (life.ts), parked or not
 
-// The storybook city's traffic: its own contraptions (storyvehicles.ts) and nothing else but the
-// Ryder trucks, gone cartoonish there as the player's is (fleet.ts, `toon`).
+// The storybook city's traffic is its own contraptions (storyvehicles.ts) and nothing else but the
+// Ryder trucks, which are cartoonish there as the player's is (fleet.ts, `toon`).
 const STORY_TRAFFIC: Record<string, number> = { hamster: 1.4, strider: 1.4, caterpillar: 0.8, pogo: 1.2, unicycle: 1.0, balloon: 0.8, teacup: 1.2, snail: 0.7, ryder: 0.8 };
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
   colors: number[] | null;             // body tints; null keeps the painted colours
-  mesh: THREE.InstancedMesh | null;    // null for Ryder trucks (separate groups) and the storybook's rigs
+  mesh: THREE.InstancedMesh | null;    // it is null for Ryder trucks (they are separate groups) and the storybook's rigs
   cap: number;
-  // A storybook contraption (storyvehicles.ts): its parts, each an instanced mesh posed per
-  // vehicle (the white of its first part apart, tinted with the vehicle's colour).
+  // A storybook contraption (storyvehicles.ts) has its parts here, each an instanced mesh posed per
+  // vehicle (the white of its first part is kept apart and tinted with the vehicle's colour).
   rig?: StoryRig; rigMeshes?: { mesh: THREE.InstancedMesh; part: number; tint: boolean }[];
 }
 interface Car {
@@ -69,7 +69,7 @@ interface Car {
   dT?: number; dS0?: number; dA?: number; dB?: number; dV?: number;
   lastO?: number; mergeUp?: boolean;   // the path's lane offset last step, and which way it last moved   // pedT: how long a pedestrian has held it up   // the vehicle it is held up close behind (-1: none, or not a vehicle), and how long it has crawled (< 0.5 m/s)
   x: number; z: number; h: number; px: number; pz: number; ph: number;   // pose now and one step ago
-  odo?: number; podo?: number;         // how far it has come (m), now and one step ago (a rig's stride: storyvehicles.ts)
+  odo?: number; podo?: number;         // this is how far it has come (m), now and one step ago (a rig's stride follows it: storyvehicles.ts)
   cable: boolean; id: number; model: TruckModel | null;   // model: a Ryder truck's
 }
 
@@ -97,9 +97,9 @@ export class Traffic {
   private nextId = 0;
   private byId = new Map<number, Car>(); private ignore: number[] = [];   // (step's, reused)
   private groups = new Map<number, THREE.Object3D>();   // Ryder trucks' models, by car id
-  private spare = new Map<string, THREE.Object3D[]>();   // models of Ryder trucks that left, for reuse (each is new GPU geometry)
+  private spare = new Map<string, THREE.Object3D[]>();   // these are models of Ryder trucks that left, kept for reuse (each is new GPU geometry)
   time = 0;   // render time (the police lights)
-  ryderToon = 0;   // how cartoonish Ryder trucks in traffic are drawn (1 in the storybook city: truck.ts makeToon)
+  ryderToon = 0;   // this is how cartoonish Ryder trucks in traffic are drawn (1 in the storybook city: truck.ts makeToon)
   private drawn: number[] = [];   // per vehicle as last drawn: x, z, heading, half length
   readonly obstacles: Obstacle[] = [];      // this frame's vehicles, for pedestrians
 
@@ -128,7 +128,7 @@ export class Traffic {
     kind("icecream", 5.8, 2.1, 8, 0.5, null, 2, (b) => iceCreamTruck(b));
     kind("ryder", 11.3, 2.5, 10, 0.8, null, 2, null);
     kind("cablecar", 8.6, 2.5, 6, 0, null, 3, cableCarBody);
-    // The storybook city's own (STORY_TRAFFIC): each contraption, its parts' meshes made the first
+    // The storybook city's own kinds (STORY_TRAFFIC) are one to each contraption. Its parts' meshes are made the first
     // time one is wanted (rigMeshesOf: the start has a budget, and most journeys meet these late).
     const rigCols = [SB.pink, SB.aqua, SB.mustard, SB.violet, SB.mint, SB.orange, SB.coral, SB.lime, SB.teal, SB.magenta];
     for (const rig of storyRigs()) {
@@ -1449,15 +1449,15 @@ export class Traffic {
     }
   }
 
-  // Test renders (main.ts DEBUG_VIEW "traffic"): the vehicle (not a Ryder truck) nearest (x, z),
-  // or one by its id, as it stands: where, its heading and length.
+  // For test renders (main.ts DEBUG_VIEW "traffic") these give the vehicle (not a Ryder truck) nearest (x, z),
+  // or one by its id, as it stands: where it is, its heading and its length.
   vehicleNear(x: number, z: number): number { let best = -1, bd = Infinity; for (const c of this.cars) { if (c.model) continue; const d = Math.hypot(c.x - x, c.z - z); if (d < bd) { bd = d; best = c.id; } } return best; }
   vehiclePose(id: number): { x: number; z: number; h: number; len: number } | null { const c = this.cars.find((o) => o.id === id); return c ? { x: c.x, z: c.z, h: c.h, len: c.kind.len } : null; }
 
-  // A storybook contraption's parts, posed (storyvehicles.ts) and placed by `base`.
+  // A storybook contraption's parts are posed (storyvehicles.ts) and placed by `base`.
   private material: THREE.Material;
-  // A contraption's parts as instanced meshes, made the first time (its first part's pure white
-  // apart, tinted per vehicle).
+  // This makes a contraption's parts as instanced meshes the first time (its first part's pure white is kept
+  // apart and tinted per vehicle).
   private rigMeshesOf(k: VehicleKind) {
     if (k.rigMeshes) return k.rigMeshes;
     const meshes: { mesh: THREE.InstancedMesh; part: number; tint: boolean }[] = [];
@@ -1682,8 +1682,8 @@ function nearestStreet(G: CityGraph, x: number, z: number, cable: boolean): numb
   return best;
 }
 
-// A geometry's triangles split in two: those not all pure white, and those that are (or null when
-// none are): a storybook contraption's tinted body apart from the rest.
+// This splits a geometry's triangles in two: those not all pure white, and those that are (or null when
+// none are). It keeps a storybook contraption's tinted body apart from the rest.
 function splitWhite(g: THREE.BufferGeometry): [THREE.BufferGeometry, THREE.BufferGeometry | null] {
   const C = g.getAttribute("color"), names = Object.keys(g.attributes), out: [number[][], number[][]] = [names.map(() => []), names.map(() => [])];
   const white = (i: number) => C.getX(i) > 0.999 && C.getY(i) > 0.999 && C.getZ(i) > 0.999;

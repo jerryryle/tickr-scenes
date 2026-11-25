@@ -1,8 +1,9 @@
-// Sketch scene: an art-direction study for Long Day's first fantasy city, a storybook town of
-// bent, bulging towers, tufted trees on striped trunks, striped contour hills and a contraption of
-// a factory, its people human but dressed for it. Not part of the scene: a diorama built from
-// Long Day's own Batch and Figures so the look can be judged at the board's resolution, with a
-// stand-in box truck for scale. One view a second (the last two at dusk). Build and render it with
+// This sketch scene is an art-direction study for Long Day's first fantasy city, a storybook town
+// of bent, bulging towers, tufted trees on striped trunks, striped contour hills and a contraption
+// of a factory, whose people are human but dressed for it. The sketch is not part of the scene. It
+// is a diorama built from Long Day's own Batch and Figures so the look can be judged at the board's
+// resolution, with a stand-in box truck for scale. It shows one view a second (the last two are at
+// dusk). Build and render it with
 //   make tool SCENE=long-day TOOL=whimsy SECS=10   -> build/long-day-whimsy/whimsy.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
@@ -15,7 +16,7 @@ const pick = <T>(a: T[]) => a[Math.floor(rnd() * a.length)];
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const sstep = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-// The palette: saturated storybook colours, a warm cream for relief, black and white for stripes.
+// The palette has saturated storybook colours, a warm cream for relief, and black and white for stripes.
 const C = {
   coral: 0xff5a4e, red: 0xe8333a, pink: 0xff7fb5, magenta: 0xd83a9a, orange: 0xff9a2e, mustard: 0xf2c230,
   butter: 0xfbe58a, lime: 0xa6e05a, mint: 0x5fd3a0, teal: 0x1fb5b0, aqua: 0x6fe0e8, sky: 0x4f9cf0,
@@ -26,7 +27,7 @@ const TRIMS = [C.cream, C.white, C.ink, C.red, C.navy, C.plum];
 const TUFTS = [C.pink, C.orange, C.mustard, C.violet, C.magenta, C.coral, C.aqua];
 const WIN_DAY = 0x24304a, WIN_LIT = 0xffe08a;
 
-// The main street: a lazy S along x.
+// The main street is a lazy S along x.
 const zc = (x: number) => 11 * Math.sin(x / 34) + 4 * Math.sin(x / 13 + 1);
 const zcd = (x: number) => (11 / 34) * Math.cos(x / 34) + (4 / 13) * Math.cos(x / 13 + 1);
 const ROAD = 4.5, WALK = 3.4;
@@ -34,10 +35,11 @@ function frame(x: number) {
   const d = zcd(x), l = Math.hypot(1, d), tx = 1 / l, tz = d / l;
   return { x, z: zc(x), tx, tz, nx: -tz, nz: tx, yaw: -Math.atan2(tz, tx) };
 }
-// Off the street by `off` (+ to +z) at x.
+// along() gives the point at x offset from the street by `off` (a positive `off` goes towards +z).
 function along(x: number, off: number): [number, number] { const f = frame(x); return [f.x + f.nx * off, f.z + f.nz * off]; }
 
-// A chain of cylinders through `pts`: pipes, trunks, crooks. r and colour per piece.
+// tube() lays a chain of cylinders through `pts` for pipes, trunks and crooks. Each piece takes its own
+// r and colour.
 const Y = new THREE.Vector3(0, 1, 0), dv = new THREE.Vector3(), qq = new THREE.Quaternion(), ee = new THREE.Euler();
 function tube(b: Batch, pts: P3[], r: (i: number, t: number) => number, col: (i: number) => number, seg = 8) {
   for (let i = 0; i + 1 < pts.length; i++) {
@@ -51,9 +53,10 @@ function tube(b: Batch, pts: P3[], r: (i: number, t: number) => number, col: (i:
 const curve = (n: number, f: (t: number) => P3) => Array.from({ length: n + 1 }, (_, i) => f(i / n));
 
 // ---- Buildings --------------------------------------------------------------------------------
-// A wobbly tower: pods stacked up a bending spine, each its own colour and girth (top-heavy as
-// often as not), a trim band at each pod's top, portholes and tall windows, an arched door facing
-// `face`, and a hat: an onion dome, a bent witch's cone, a curly chimney or a little ball-and-spike.
+// A wobbly tower stacks pods up a bending spine, each its own colour and girth (the tower is
+// top-heavy as often as not). It has a trim band at each pod's top, portholes and tall windows, an
+// arched door facing `face`, and a hat, which is an onion dome, a bent witch's cone, a curly chimney
+// or a little ball-and-spike.
 function tower(b: Batch, glow: Batch, x: number, z: number, face: number, scale = 1, floors = 2 + Math.floor(rnd() * 4)) {
   const lean = (rnd() - 0.5) * 0.35, dir = rnd() * Math.PI * 2, wob = rnd() * 6;
   let y = 0, R = (2.6 + rnd() * 1.6) * scale;
@@ -120,7 +123,7 @@ function hat(b: Batch, glow: Batch, x: number, y: number, z: number, r: number, 
   }
   void glow;
 }
-// A shop row building: boxes stacked crooked, each a little off true, with a striped awning.
+// A shop row building stacks boxes crooked, each a little off true, and has a striped awning.
 function crooked(b: Batch, glow: Batch, x: number, z: number, yaw: number, w: number) {
   const n = 2 + Math.floor(rnd() * 3), fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw);
   let y = 0, roll = 0, shift = 0, ww = w;
@@ -209,12 +212,13 @@ function fountain(b: Batch, x: number, z: number) {
 }
 
 // ---- The knitting works -----------------------------------------------------------------------
-// The town's factory, one process laid out along the street, left to right: undyed white tufts
+// The town's factory lays one process out along the street, left to right. Undyed white tufts are
 // picked from an orchard by a gantry claw, lifted by a bucket elevator into a sorting hopper,
-// dropped by chutes into three dye vats (stirred, steaming in their colour), piped into a
-// barrel-roofed spinning hall, wound as yarn onto spools turned by a row of meshing gears, knitted
+// dropped by chutes into three dye vats (the vats are stirred and steam in their colour), piped into
+// a barrel-roofed spinning hall, wound as yarn onto spools turned by a row of meshing gears, knitted
 // by a circular knitting head into a striped band that runs down a roller table onto a bolt, and
-// stacked as bolts on a dock where a truck loads. Returns its moving parts and its steam vents.
+// stacked as bolts on a dock where a truck loads. The function returns its moving parts and its
+// steam vents.
 const DYES = [C.pink, C.aqua, C.mustard];
 const WZ = -38;                                        // the works' centre line, parallel to the street
 const SPOOLS = [106, 113.5, 121], SPOOL_Y = 4.5, KNIT_X = 128, BOLT_X = 137.5;
@@ -225,7 +229,7 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   const Z = WZ;
   b.box(89, 0.06, Z - 3, 126, 0.12, 42, 0xf2dcc8);                            // the yard's paving
 
-  // 1. The orchard: rows of white tuft trees, and a gantry whose claw carries a tuft to the elevator.
+  // 1. The orchard has rows of white tuft trees and a gantry whose claw carries a tuft to the elevator.
   for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) if (!(j === 1 && i > 1)) tuftTree(b, 9 + i * 5 + (j % 2) * 2, Z - 9 + j * 9, 0.75, 0xfff8ee);
   for (const x of [6, 30]) for (const dz of [-3, 3]) b.box(x, 5.5, Z + dz, 0.5, 11, 0.5, C.navy);
   b.box(18, 11.2, Z, 25, 0.7, 0.9, C.mustard); for (const x of [6, 30]) b.box(x, 11.2, Z, 0.9, 0.7, 6.8, C.mustard);
@@ -237,7 +241,7 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   parts.push(t => { const s = (Math.sin(t * 0.6) + 1) / 2; claw.position.x = lerp(12, 28.5, s); claw.position.y = -Math.max(0, Math.sin(t * 0.6 - 1.2)) * 1.5; });
   b.box(29.5, 0.5, Z, 3.2, 1, 3.2, C.ink); for (let k = 0; k < 5; k++) b.ico(28.7 + (k % 3) * 0.8, 1.1, Z - 0.6 + (k % 2) * 1.2, 0.6, 0xfff8ee);   // the elevator's pit
 
-  // 2. The bucket elevator, up to the sorting hopper.
+  // 2. The bucket elevator runs up to the sorting hopper.
   const A: P3 = [29.5, 0.8, Z], B: P3 = [38, 21, Z], L = Math.hypot(B[0] - A[0], B[1] - A[1]), ux = (B[0] - A[0]) / L, uy = (B[1] - A[1]) / L;
   for (const dz of [-0.9, 0.9]) tube(b, [[A[0], A[1], Z + dz], [B[0], B[1], Z + dz]], () => 0.18, () => C.navy, 4);
   for (let k = 1; k < 4; k++) { const x = lerp(A[0], B[0], k / 4); b.box(x + 0.6, lerp(A[1], B[1], k / 4) / 2, Z + 1.1, 0.3, lerp(A[1], B[1], k / 4), 0.3, C.navy); }
@@ -252,7 +256,7 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
     g.position.set(A[0] + ux * d - uy * side, A[1] + uy * d + ux * side, Z); g.rotation.set(0, 0, up ? 0 : Math.PI); tuft.visible = up;
   }));
 
-  // 3. The sorting hopper on stilts, and a chute to each vat.
+  // 3. The sorting hopper stands on stilts, and a chute runs to each vat.
   const HX = 40;
   for (const [ox, oz] of [[-2.2, -2.2], [2.2, -2.2], [-2.2, 2.2], [2.2, 2.2]]) b.box(HX + ox, 7.5, Z + oz, 0.4, 15, 0.4, C.navy);
   b.box(HX, 14.2, Z, 3.4, 2.4, 3.4, C.violet); b.cone(HX, 18, Z, 3.4, 4.6, C.orange, 12, Math.PI); b.cyl(HX, 20.4, Z, 3.5, 0.4, C.cream, 12);
@@ -260,8 +264,9 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   const VATS = [47, 54, 61];
   VATS.forEach((vx, k) => tube(b, curve(6, s => [lerp(HX + 1.6, vx - 0.6, s), lerp(13.6, 8.6, s) + Math.sin(s * Math.PI) * 0.8, Z + 1.2 * s]), () => 0.45, i => (i % 2 ? C.cream : DYES[k]), 6));
 
-  // 4. The dye vats: on legs, striped, the dye's surface showing, a stirrer turning in each, a
-  // ladder up the front; water piped in from a tower behind, dye piped out to the spinning hall.
+  // 4. The dye vats stand on legs and are striped, with the dye's surface showing, a stirrer turning
+  // in each and a ladder up the front. Water is piped in from a tower behind, and dye is piped out to
+  // the spinning hall.
   VATS.forEach((vx, k) => {
     for (const a of [0.8, 2.4, 4.0, 5.6]) b.box(vx + Math.cos(a) * 2.2, 1.5, Z + Math.sin(a) * 2.2, 0.35, 3, 0.35, C.navy);
     for (let s = 0; s < 3; s++) b.cyl(vx, 3 + s * 1.5 + 0.75, Z, 2.7, 1.5, s === 1 ? DYES[k] : C.cream, 14);
@@ -282,8 +287,8 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   tube(b, [[VATS[0], 12.5, Z - 3.2], [VATS[2], 12.5, Z - 3.2]], () => 0.35, () => C.sky, 6);
   for (const vx of VATS) tube(b, [[vx, 12.5, Z - 3.2], [vx, 8.6, Z - 2.2]], () => 0.2, () => C.sky, 4);
 
-  // 5. The spinning hall: a long barrel roof of wobbling red and cream bands, arched windows, two
-  // boiler stacks behind and, on the ridge, its sign: a giant ball of yarn run through by needles.
+  // 5. The spinning hall has a long barrel roof of wobbling red and cream bands, arched windows and
+  // two boiler stacks behind. On the ridge stands its sign, a giant ball of yarn run through by needles.
   b.box(83, 4, Z, 34, 8, 24, C.cream); b.box(83, 0.8, Z, 34.3, 1.6, 24.3, C.red);
   for (let i = 0; i < 6; i++) b.cyl(66 + (i + 0.5) * 34 / 6, 8, Z, 12 + (i % 2) * 0.6 + Math.sin(i * 1.7) * 0.3, 34 / 6 + 0.02, i % 2 ? C.cream : C.red, 18, 0, Math.PI / 2);
   for (let i = 0; i < 5; i++) {
@@ -306,7 +311,7 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   parts.push(t => (ball.rotation.y = Math.sin(t * 0.4) * 0.3));
   for (let k = 0; k < 3; k++) b.box(100.1, 6.5 - k * 0.3, Z - 1 + k, 0.2, 0.7, 0.5, C.ink);   // the yarn's slots
 
-  // 6. The spools, each wound in its dye, turned by a row of meshing gears from a motor on the hall.
+  // 6. Each spool is wound in its dye and turned by a row of meshing gears from a motor on the hall.
   const gearM = (m: Batch, r: number, c: number, teeth: number, phase: number, dz = 0) => {
     m.cyl(0, 0, dz, r, 0.5, c, 18, Math.PI / 2); m.cyl(0, 0, dz + 0.1, r * 0.3, 0.7, C.ink, 10, Math.PI / 2);
     for (let i = 0; i < teeth; i++) { const a = phase + i / teeth * Math.PI * 2; m.boxR(Math.cos(a) * (r + 0.22), Math.sin(a) * (r + 0.22), dz, 0.5, 0.5, 0.5, c, 0, 0, a); }
@@ -316,7 +321,7 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
     for (const dz of [-2.1, 2.1]) for (const dx of [-1.6, 1.6]) b.boxR(sx + dx / 2, SPOOL_Y / 2, Z + dz, 0.35, SPOOL_Y + 0.6, 0.35, C.navy, 0, 0, -dx * 0.18);
     b.cyl(sx, SPOOL_Y, Z, 0.25, 5.6, C.ink, 6, Math.PI / 2);
     const spool = part(m => {
-      // overfilled: the dyed yarn bulges past the flanges, so it reads from the street
+      // The spools are overfilled: the dyed yarn bulges past the flanges, so it reads from the street.
       for (const [dz, r] of [[-1.2, 2.9], [-0.4, 3.25], [0.4, 3.25], [1.2, 2.9]]) m.cyl(0, 0, dz, r, 0.82, DYES[k], 16, Math.PI / 2);
       for (const dz of [-1.65, 1.65]) m.cyl(0, 0, dz, 2.15, 0.2, C.cream, 14, Math.PI / 2);
       for (let i = 0; i < 6; i++) { const a = i * 1.05; m.boxR(Math.cos(a) * 2.85, Math.sin(a) * 2.85, 1.62, 0.5, 0.12, 0.06, C.white, 0, 0, a + 1.2); }   // loose turns of yarn on the face
@@ -324,8 +329,8 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
     }, sx, SPOOL_Y, Z);
     parts.push(t => (spool.rotation.z = -t * 0.9));
   });
-  // small gears on the spools, idlers between them (so neighbouring spools turn the same way), and
-  // a pinion from a motor on the hall's end driving the first
+  // Small gears sit on the spools with idlers between them (the idlers make neighbouring spools turn
+  // the same way), and a pinion from a motor on the hall's end drives the first.
   const pin = part(m => gearM(m, 1.2, C.red, 7, 0), SPOOLS[0] - 3.35, SPOOL_Y, Z + 2.4);
   parts.push(t => (pin.rotation.z = t * 0.9 * 1.9 / 1.2));
   b.box(SPOOLS[0] - 3.35, SPOOL_Y, Z + 1.2, 1.6, 1.6, 2, C.violet);
@@ -339,8 +344,8 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   for (const sx of [SPOOLS[0] + 1, SPOOLS[2] + 1]) b.box(sx, 5.3, Z - 2.6, 0.3, 10.6, 0.3, C.navy);
   b.box((SPOOLS[0] + KNIT_X) / 2 + 0.5, 10.8, Z - 2.6, KNIT_X - SPOOLS[0], 0.3, 0.3, C.navy);
 
-  // 7. The circular knitting head on its frame, the striped band it makes running down a roller
-  // table onto a turning bolt, and the bolts stacked on the dock for the truck.
+  // 7. The circular knitting head sits on its frame, and the striped band it makes runs down a roller
+  // table onto a turning bolt. The bolts are stacked on the dock for the truck.
   for (const dx of [-2.8, 2.8]) for (const dz of [-2.8, 2.8]) b.box(KNIT_X + dx, 5.8, Z + dz, 0.4, 11.6, 0.4, C.violet);
   b.box(KNIT_X, 11.6, Z, 6, 0.4, 6, C.violet); b.cone(KNIT_X, 12.6, Z, 1.3, 1.8, C.mustard, 8);
   const head = part(m => {
@@ -362,7 +367,7 @@ function knittingWorks(scene: THREE.Scene, mat: THREE.Material, b: Batch, glow: 
   for (const dz of [-1.9, 1.9]) b.box(BOLT_X, 1.4, Z + dz, 0.4, 2.8, 0.4, C.navy);
   const bolt = part(m => { m.cyl(0, 0, 0, 1.5, 3.0, C.pink, 14, Math.PI / 2); for (const dz of [-1.0, 0, 1.0]) m.cyl(0, 0, dz, 1.52, 0.18, C.white, 14, Math.PI / 2); for (let i = 0; i < 3; i++) m.boxR(0, 0, 1.52, 2.6, 0.2, 0.05, C.ink, 0, 0, i * Math.PI / 3); }, BOLT_X, 2.8, Z);
   parts.push(t => (bolt.rotation.z = -t * 0.9 / 1.5));
-  // the dock: a platform under a scalloped canopy, bolts stacked, a truck backed in
+  // The dock is a platform under a scalloped canopy, with bolts stacked on it and a truck backed in.
   b.box(145, 0.65, Z, 12, 1.3, 12, C.cream); b.box(145, 1.32, Z + 5.9, 12, 0.1, 0.3, C.mustard);
   for (const dx of [-5.6, 5.6]) for (const dz of [-5.6, 5.6]) b.box(145 + dx, 4, Z + dz, 0.35, 6, 0.35, C.ink);
   for (let i = 0; i < 6; i++) { b.boxR(140 + i * 2 + 1, 7.2 + (i % 2) * 0.3, Z, 2.05, 0.25, 13, i % 2 ? C.white : C.teal, 0, 0, (i % 2 ? 1 : -1) * 0.12); b.cone(140 + i * 2 + 1, 6.75, Z + 6.5, 1, 0.6, i % 2 ? C.white : C.teal, 6, Math.PI); }
@@ -440,7 +445,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
       hemi = new THREE.HemisphereLight(0xd8f4ff, 0x6a5a70, 2.1);
       scene.add(sun, hemi);
       const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-      // sky domes: a turquoise-to-peach day, a violet-to-tangerine dusk
+      // Two sky domes give a turquoise-to-peach day and a violet-to-tangerine dusk.
       const dome = (top: number, mid: number, low: number) => {
         const g = new THREE.SphereGeometry(900, 24, 16), p = g.attributes.position, col = new Float32Array(p.count * 3), c = new THREE.Color(), a = new THREE.Color(top), m = new THREE.Color(mid), l = new THREE.Color(low);
         for (let i = 0; i < p.count; i++) { const t = p.getY(i) / 900; if (t > 0.18) c.copy(m).lerp(a, Math.min(1, (t - 0.18) / 0.5)); else c.copy(l).lerp(m, Math.max(0, t / 0.18)); col.set([c.r, c.g, c.b], i * 3); }
@@ -448,7 +453,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
         const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })); scene.add(mesh); return mesh;
       };
       skyDay = dome(0x34b6e0, 0x9fe6e0, 0xffe0b0); skyDusk = dome(0x3a2a7a, 0xc0508a, 0xffa050);
-      // ground: flat in town, striped contour hills beyond; the town's lawns mown in waves
+      // The ground is flat in town with striped contour hills beyond, and the town's lawns are mown in waves.
       const gg = new THREE.PlaneGeometry(1400, 1400, 200, 200).toNonIndexed(); gg.rotateX(-Math.PI / 2);
       const gp = gg.attributes.position, gc = new Float32Array(gp.count * 3), cc = new THREE.Color();
       const hillCols = [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0];
@@ -466,7 +471,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
       scene.add(new THREE.Mesh(gg, mat));
 
       const b = new Batch(), glow = new Batch();
-      // the street: a purple-grey road with a polka-dot centre line, checkered pavements
+      // The street is a purple-grey road with a polka-dot centre line and checkered pavements.
       for (let x = -300; x < 300; x += 2) {
         const f0 = frame(x), f1 = frame(x + 2), k = Math.round((x + 300) / 2);
         const q = (o0: number, o1: number, y: number, col: number) => {
@@ -483,7 +488,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
         }
         if (k % 2 === 0) b.cyl(f0.x, 0.03, f0.z, 0.35, 0.03, (k / 2) % 2 ? C.pink : C.mustard, 8);
       }
-      // the buildings along it: wobbly towers and crooked shop rows, both sides
+      // The buildings along it are wobbly towers and crooked shop rows, on both sides.
       for (const sgn of [-1, 1]) {
         let x = -130 + rnd() * 6;
         while (x < 130) {
@@ -503,7 +508,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
         }
         for (let x = -120; x < 130; x += 16) { const [lx, lz] = along(x, sgn * (ROAD + 0.6)); lamp(b, glow, lx, lz, Math.atan2(-frame(x).nz * sgn, -frame(x).nx * sgn)); }
       }
-      // second row and beyond: more towers, trees and a garden of oddities, thinning out
+      // The second row and beyond hold more towers, trees and a garden of oddities, which thin out.
       for (let i = 0; i < 160; i++) {
         const x = (rnd() - 0.5) * 300, off = (rnd() < 0.5 ? -1 : 1) * (22 + rnd() * 70), [px, pz] = along(x, off);
         if (px > -4 && px < 160 && pz > -84 && pz < -12) continue;
@@ -523,19 +528,19 @@ export default function createScene({ sys }: SceneInputs): Scene {
         tube(b, pts, () => 0.04, () => C.ink, 3);
         for (let i = 0; i < n; i++) { const [px, py, pz] = pts[i], [qx, qy, qz] = pts[i + 1]; b.tri(px, py, pz, qx, qy, qz, (px + qx) / 2, py - 1, (pz + qz) / 2, TUFTS[i % TUFTS.length], [1, 0, 0]); b.tri(px, py, pz, (px + qx) / 2, py - 1, (pz + qz) / 2, qx, qy, qz, TUFTS[i % TUFTS.length], [-1, 0, 0]); }
       }
-      // the town gate: two corkscrew columns and a striped arch
+      // The town gate has two corkscrew columns and a striped arch.
       { const gx = -150, [ax, az] = along(gx, -ROAD - 2), [cx, cz] = along(gx, ROAD + 2);
         for (const [px, pz] of [[ax, az], [cx, cz]]) { tube(b, curve(16, t => [px + Math.cos(t * 12) * 0.5, t * 10, pz + Math.sin(t * 12) * 0.5]), () => 0.55, i => (i % 2 ? C.white : C.red), 8); b.ico(px, 10.6, pz, 1, C.mustard); }
         tube(b, curve(16, t => [lerp(ax, cx, t), 10 + Math.sin(t * Math.PI) * 4, lerp(az, cz, t)]), () => 0.5, i => (i % 2 ? C.white : C.teal), 8);
         b.box((ax + cx) / 2 + 0.6, 11.5, (az + cz) / 2, 0.4, 2.2, 7, C.butter, 0); b.box((ax + cx) / 2 + 0.5, 11.5, (az + cz) / 2, 0.4, 2.6, 7.4, C.magenta, 0);
       }
-      // clouds: curly heaps
+      // The clouds are curly heaps.
       for (let i = 0; i < 14; i++) {
         const cx = (rnd() - 0.5) * 600, cy = 70 + rnd() * 50, cz = -150 - rnd() * 250;
         for (let j = 0; j < 6; j++) b.ico(cx + j * 5 - 12, cy + Math.sin(j * 1.3) * 3, cz, 5 + Math.sin(j * 2.1) * 2, 0xfffaf0, 0.7, j);
         tube(b, curve(10, t => [cx + 16 + Math.cos(t * 8) * 3 * (1 - t), cy + Math.sin(t * 8) * 3 * (1 - t), cz]), () => 1.2, () => 0xfffaf0, 6);
       }
-      // far spires on the hills: tall bent cones
+      // The far spires on the hills are tall bent cones.
       for (let i = 0; i < 9; i++) {
         const a = -2.6 + i * 0.4 + rnd() * 0.2, d = 260 + rnd() * 120, sx = Math.cos(a) * d, sz = Math.sin(a) * d, H = 40 + rnd() * 40;
         tube(b, curve(8, t => [sx + t * t * 14, t * H, sz]), (j, t) => 7 * (1 - t) + 0.6, j => (j % 2 ? pick([C.pink, C.butter]) : C.teal), 8);
@@ -544,7 +549,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
       truck(b, TRUCK_X, zc(TRUCK_X), frame(TRUCK_X).yaw);
       scene.add(b.build(mat)!);
       glowMesh = glow.build(new THREE.MeshBasicMaterial({ vertexColors: true }))!; scene.add(glowMesh);
-      // steam: tinted over the vats, white from the boilers
+      // The steam is tinted over the vats and white from the boilers.
       works.vents.forEach(({ o, c }) => { for (let j = 0; j < 6; j++) { const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: c, flatShading: true })); scene.add(m); puffs.push({ m, o, k: j, big: c === 0xfffaf0 }); } });
       // people on the pavements and round the fountain
       const fig = new Figures(scene, mat, 4000);
@@ -554,11 +559,11 @@ export default function createScene({ sys }: SceneInputs): Scene {
         dressed(fig, px, pz, frame(x).yaw + (rnd() < 0.5 ? 0 : Math.PI), Math.floor(rnd() * 30), rnd() * 6);
       }
       { const [fx, fz] = along(18, ROAD + WALK + 9); for (let i = 0; i < 10; i++) { const a = i * 0.63; dressed(fig, fx + Math.cos(a) * 6.5, fz + Math.sin(a) * 6.5, -a + Math.PI / 2, i, i); } }
-      // a line-up for the costume view, on the plaza's far side
+      // A line-up for the costume view stands on the plaza's far side.
       for (let i = 0; i < 10; i++) { const [px, pz] = along(-90 + i * 1.3, ROAD + 1.6); dressed(fig, px, pz, frame(-90).yaw - Math.PI / 2, i, 0); }
       fig.end_();
 
-      // the views (built here, once the street is known)
+      // The views are built here, once the street is known.
       const t = frame(TRUCK_X), ahead = along(TRUCK_X + 30, 0), [lx, lz] = along(-90 + 6, ROAD + 1.6), fs = along(18, ROAD + WALK + 9), fq = along(4, -ROAD);
       VIEWS.push(
         [TRUCK_X - t.tx * 18, 8.5, zc(TRUCK_X) - t.tz * 18 + 1, ahead[0], 3, ahead[1], 36, false],    // chase: down main street

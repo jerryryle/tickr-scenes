@@ -1,8 +1,8 @@
-// Test: what a city chunk costs the board, style by style: its triangles (mean, 95th percentile
+// Test: this measures what a city chunk costs the board, style by style: its triangles (mean, 95th percentile
 // and the most of any chunk) and meshes (draw calls), over every chunk of a city of each style.
 // The storybook city (styles.ts) is built from curved, bulging parts; it must cost no more than
 // BUDGET times the dearest of the real styles, by mean and by 95th percentile, or this fails.
-// Args (optional): seed (default 1), cities per style (default 2).
+// The optional args are seed (default 1) and cities per style (default 2).
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
@@ -16,7 +16,7 @@ const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const SEED = argv[0] ? Number(argv[0]) : 1, PER = argv[1] ? Number(argv[1]) : 2;
 const BUDGET = 1.2;
 
-void new Journey(readConfig({ seed: SEED } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
+void new Journey(readConfig({ seed: SEED } as SceneEnv), 0, "autumn");   // (this sets up the city's limits and gates)
 const mat = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
 const pct = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const rows: { id: string; mean: number; p95: number; max: number; meshes: number }[] = [];
@@ -26,7 +26,7 @@ for (const id of Object.keys(STYLES) as StyleId[]) {
     const plan = new CityPlan(citySeedOf(SEED, 1 + k * 7), STYLES[id]), build = makeCityChunkBuilder(mat, plan);
     plan.climate = { season: "autumn", weather: "clear", snowCover: false };
     for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
-      if (cityDistance(cx, cz) > 0) continue;   // (the city's own chunks: the outskirts are alike everywhere)
+      if (cityDistance(cx, cz) > 0) continue;   // (it counts the city's own chunks: the outskirts are alike everywhere)
       const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next();
       const g = r.value; if (!g) continue;
       let t = 0, m = 0;

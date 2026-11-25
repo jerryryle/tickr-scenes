@@ -39,7 +39,7 @@ import type { Station } from "./boats.ts";
 const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
-const STORY_STEPS = 8;           // the steps of the storybook's creep into the real land near it (storyLook)
+const STORY_STEPS = 8;           // the storybook's creep into the real land near it goes in this many steps (storyLook)
 const SIDE_W = 170;              // scenery either side of the road
 // The land's mesh: its columns across the road (each side), out past the fog. Field and beach
 // edges fall on columns.
@@ -60,7 +60,7 @@ export const BIOMES: Record<BiomeId, BiomeLook> = {
     fields: [0x8fb34a, 0x5d8a36, 0xd6bf66, 0x7a5a3a, 0x9ac05a], fence: true, barns: true },
   prairie: { ground: 0xb0b25c, ground2: 0x9aa64e, trees: ["broad", "shrub"], greens: [0x4f7a34, 0x5a8a3a], density: 0.12, rocks: 0.1, fence: true, turbines: true, cows: true },
   wetlands: { ground: 0x5a8a50, ground2: 0x6a9a58, trees: ["broad", "shrub", "shrub", "conifer"], greens: [0x3c6a3c, 0x4a7a40], density: 0.4, rocks: 0.05, ponds: true, pylons: true },
-  // The storybook city's country: rolling hills in bands of lime, mint, butter and pink, dotted
+  // The storybook city's country is rolling hills in bands of lime, mint, butter and pink, dotted
   // with tuft trees, pancake trees and topiary (storybook.ts).
   storybook: { ground: 0x98dc62, ground2: 0x6fd38a, trees: ["tuft", "tuft", "pancake", "spiral"], greens: [0xff7fb5, 0xff9a2e, 0xf2c230, 0x9a6cf0, 0x6fe0e8], density: 0.6, rocks: 0,
     fields: [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0] },
@@ -308,15 +308,15 @@ export class CountryWorld {
     const w = road.storyAt(sa);
     return w > 0.04 ? this.storyLook(id, c, Math.min(STORY_STEPS, Math.round(w * STORY_STEPS))) : this.lookOf(id, c);
   }
-  // A real biome's look with some of the storybook's in it (q of STORY_STEPS): its ground and
-  // fields brighter, towards the storybook's limes and pinks; candy-coloured crowns among its
-  // greens, a storybook tree here and there among its own, and its own trees thinning to the
+  // This gives a real biome's look with some of the storybook's in it (q of STORY_STEPS). Its ground and
+  // fields grow brighter, towards the storybook's limes and pinks; candy-coloured crowns come among its
+  // greens, a storybook tree stands here and there among its own, and its own trees thin to the
   // storybook's spacing.
   private storyLook(id: BiomeId, c: Climate, q: number) {
     const key = `${id}/${c.season}/${c.snowCover}/sb${q}`;
     let l = this.looks.get(key);
     if (!l) {
-      const r = this.lookOf(id, c), sb = this.lookOf("storybook", c), w = q / STORY_STEPS;   // (the storybook's in the same climate: snowy where the real land is)
+      const r = this.lookOf(id, c), sb = this.lookOf("storybook", c), w = q / STORY_STEPS;   // (sb is the storybook's look in the same climate: snowy where the real land is)
       const mix = (a: number, b: number, k: number) => this.tmpC.setHex(a).lerp(this.tmpC2.setHex(b), k).getHex();
       const candy = Math.round(w * 2 * r.greens.length);
       const greens = r.greens.map((g) => mix(g, 0x7ad04a, w * 0.5)), cgreens = r.cgreens.map((g) => mix(g, 0x7ad04a, w * 0.5));
@@ -1166,7 +1166,7 @@ export class CountryWorld {
   }
   // A big overhead-height highway sign on two posts (big enough to read across the room).
   private greenSign(s: Batch, p: RoadPiece, text: string) {
-    // (The storybook city's own, welcoming and leaving: magenta, edged in butter, on striped posts.)
+    // (The storybook city's own signs, welcoming and leaving, are magenta, edged in butter, on striped posts.)
     if ((p.kind === "welcome" || p.kind === "leave") && p.variant === 1) {
       const n = p.n ?? 11, uv = this.slot(text, { bg: "#d83a9a", fg: "#fff3dc", logo: false });
       for (const k of [-5.4, 5.4]) for (let i = 0; i < 10; i++) this.rbox(s, p.s + 0.27, n + k, 0.64 * (i + 0.5), 0.26 - (i % 2) * 0.02, 0.64, 0.26 - (i % 2) * 0.02, i % 2 ? 0xffffff : 0xe8333a);

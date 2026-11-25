@@ -1,4 +1,4 @@
-// The trucks' storybook cartoon shape (truck.ts makeToon): soft, rounded and chunky. Each truck's
+// The trucks' storybook cartoon shape (truck.ts makeToon) is soft, rounded and chunky. Each truck's
 // shells (cab, hood, box or trailer) are boxes; here each is a region whose edges are rounded off
 // (toonRound: a rounded box's, a radius of its own on each side, none where the box meets
 // something that stays square, its doors or the cab's cowl) and whose big faces are puffed out a
@@ -11,12 +11,12 @@ import * as THREE from "three@0.187.0";
 const clamp = THREE.MathUtils.clamp, smoothstep = THREE.MathUtils.smoothstep;
 
 export interface ToonRegion {
-  x0: number; x1: number; y0: number; y1: number; hw: number;      // the shell's box (z from -hw to hw)
-  top: number; bottom: number; front: number; back: number; side: number;   // the rounding's radius on each side (0: square)
-  frontFrom?: number;    // the front's rounding only above this height (a cab's, above its hood)
-  pillow: number;        // how far its sides and top are puffed out at their middles (a fraction)
+  x0: number; x1: number; y0: number; y1: number; hw: number;      // these give the shell's box (z runs from -hw to hw)
+  top: number; bottom: number; front: number; back: number; side: number;   // these are the rounding's radius on each side (0 is square)
+  frontFrom?: number;    // the front is rounded only above this height (a cab's is rounded above its hood)
+  pillow: number;        // this is how far its sides and top are puffed out at their middles (as a fraction)
 }
-// Whether a point is near enough a region to move with it (its own parts and what is on them).
+// toonNear says whether a point is near enough a region to move with it (its own parts and what is on them).
 function toonNear(R: ToonRegion, x: number, y: number, z: number) {
   return x >= R.x0 - 0.02 && x < R.x1 + 0.05 && y > R.y0 - 0.05 && y < R.y1 + 0.3 && Math.abs(z) < R.hw + 0.7;
 }
@@ -25,8 +25,8 @@ export function regionAt(regions: readonly ToonRegion[], p: THREE.Vector3): Toon
   return null;
 }
 
-// A point of a region's as the rounded, puffed shell has it. The rounding: within a band a
-// radius deep along each rounded side, the point's place in the band (0 at its start, 1 at the
+// toonRound moves a point of a region's to where the rounded, puffed shell has it. In the rounding,
+// within a band a radius deep along each rounded side, the point's place in the band (0 at its start, 1 at the
 // face) on each axis is a vector d; a corner of the box (d on two or three axes) is pulled in onto
 // a quarter circle (or sphere) by scaling d from its largest component to its length, so a slab's
 // inner and outer faces stay nested.
@@ -41,7 +41,7 @@ export function toonRound(R: ToonRegion, p: THREE.Vector3) {
     const f = inf / l2;
     p.x = ax.q + (cx * f + ax.d - cx) * ax.r; p.y = ay.q + (cy * f + ay.d - cy) * ay.r; p.z = az.q + (cz * f + az.d - cz) * az.r;
   }
-  // Puffed: the sides out and the top up, most at their middles, nothing at their edges.
+  // The puffing moves the sides out and the top up, most at their middles and not at all at their edges.
   if (R.pillow > 0) {
     const ux = clamp((p.x - R.x0) / (R.x1 - R.x0), 0, 1), uy = clamp((p.y - R.y0) / (R.y1 - R.y0), 0, 1), uz = clamp((p.z + R.hw) / (2 * R.hw), 0, 1);
     const bell = (u: number) => 1 - (2 * u - 1) ** 2;
@@ -50,16 +50,16 @@ export function toonRound(R: ToonRegion, p: THREE.Vector3) {
   }
   return p;
 }
-// A coordinate's place in a rounded side's band: d (0 at the band's start, 1 at the face, more
-// past it), its start q and its radius r; d 0 outside the bands.
+// band gives a coordinate's place in a rounded side's band: d (0 at the band's start, 1 at the face, more
+// past it), its start q and its radius r; d is 0 outside the bands.
 function band(v: number, lo: number, hi: number, rLo: number, rHi: number) {
   if (rHi > 1e-4 && v > hi - rHi) return { d: (v - (hi - rHi)) / rHi, q: hi - rHi, r: rHi };
   if (rLo > 1e-4 && v < lo + rLo) return { d: (v - (lo + rLo)) / rLo, q: lo + rLo, r: rLo };
   return { d: 0, q: v, r: 0 };
 }
 
-// Where to cut a region's parts so its rounding and puffing can bend them: three strips across
-// each rounded band, and every metre or so along its faces.
+// toonCuts says where to cut a region's parts so its rounding and puffing can bend them: three strips
+// across each rounded band, and every metre or so along its faces.
 export function toonCuts(R: ToonRegion): [number[], number[], number[]] {
   const bands = (lo: number, hi: number, rLo: number, rHi: number, step: number) => {
     const c: number[] = [];
@@ -71,9 +71,9 @@ export function toonCuts(R: ToonRegion): [number[], number[], number[]] {
   return [bands(R.x0, R.x1, R.back, R.front, 1.0), bands(R.y0, R.y1, R.bottom, R.top, 0.9), bands(-R.hw, R.hw, R.side, R.side, 0.8)];
 }
 
-// A copy of a (non-indexed, or made so) geometry with its triangles cut by planes across one axis
-// of the frame `at` maps its vertices into (every attribute interpolated), those whose middle is
-// near enough a region `keep` says.
+// toonSlice copies a (non-indexed, or made so) geometry with its triangles cut by planes across one axis
+// of the frame `at` maps its vertices into (every attribute interpolated); the copy keeps those whose
+// middle is near enough a region `keep` says.
 export function toonSlice(g: THREE.BufferGeometry, at: (i: number, out: THREE.Vector3) => THREE.Vector3, axis: 0 | 1 | 2, cuts: number[], keep: (c: THREE.Vector3) => boolean): THREE.BufferGeometry {
   const src = g.index ? g.toNonIndexed() : g, names = Object.keys(src.attributes);
   const attrs = names.map((n) => src.getAttribute(n) as THREE.BufferAttribute), sizes = attrs.map((a) => a.itemSize);
@@ -117,8 +117,8 @@ export function toonSlice(g: THREE.BufferGeometry, at: (i: number, out: THREE.Ve
   return r;
 }
 
-// Flat normals of a non-indexed triangle list's positions (into `out`; where a triangle has
-// shrunk to nothing, `fallback`'s).
+// faceNormals writes the flat normals of a non-indexed triangle list's positions into `out` (where a
+// triangle has shrunk to nothing, it writes `fallback`'s).
 export function faceNormals(pos: Float32Array, fallback: ArrayLike<number>, out: Float32Array) {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   for (let i = 0; i + 8 < pos.length; i += 9) {

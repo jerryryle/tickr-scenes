@@ -1,7 +1,8 @@
-// Sketch scene: the storybook city's own vehicles (storyvehicles.ts), for art direction. One a
-// second, each three times along a pastel street at a third of its stride apart (how it moves,
-// in one picture), from its front three-quarter; then each close. With RIDES_CLIP 1, each one alone going by for
-// three seconds (a clip, rendered every 100 ms). Build and render it with
+// This sketch scene shows the storybook city's own vehicles (storyvehicles.ts) for art direction.
+// It shows one a second, each three times along a pastel street at a third of its stride apart
+// (the copies show how it moves in one picture), from its front three-quarter, and then each close.
+// With RIDES_CLIP 1, it shows each one alone going by for three seconds as a clip, rendered every
+// 100 ms. Build and render it with
 //   make tool SCENE=long-day TOOL=storyrides SECS=16   -> build/long-day-storyrides/storyrides.png
 import * as THREE from "three@0.187.0";
 import "../src/works.ts";   // (first: storybook.ts and works.ts import each other round about, and works.ts needs the palette as it loads)
@@ -11,7 +12,7 @@ import type { StoryRig } from "../src/storyvehicles.ts";
 
 const RIDES_CLIP = 0;
 const ROW = 14, COPIES = 3, SPEED = 4;
-// A stride's length (m) for each, so the copies show three points in it.
+// STRIDE holds a stride's length (m) for each, so the copies show three points in it.
 const STRIDE: Record<string, number> = { hamster: 3.0, strider: 2.4, caterpillar: 2.2, pogo: 2.6, unicycle: 2.5, balloon: 3, teacup: 3, snail: 1.2 };
 
 export default function createScene({ sys }: SceneInputs): Scene {
@@ -59,7 +60,8 @@ export default function createScene({ sys }: SceneInputs): Scene {
         const base = new THREE.Matrix4().makeTranslation(x, 0, z);
         o.parts.forEach((m, k) => { m.visible = show; m.matrix.multiplyMatrices(base, tmp[k]); m.matrixWorldNeedsUpdate = true; });
       }));
-      // (After the first round, each again close, the first of its copies from its front quarter.)
+      // (After the first round, each is shown again close, with the first of its copies seen from its
+      // front quarter.)
       const close = !RIDES_CLIP && Math.floor(f.t) >= n, mid = RIDES_CLIP || close ? 0 : (COPIES - 1) * (storyRigs()[i].len + 3.5) / 2;
       if (close) { const L = storyRigs()[i].len; cam.position.set(L * 0.7 + 3, 2.0, z - L * 0.9 - 4); cam.lookAt(0, 1.2, z); cam.fov = 40; }
       else { cam.position.set(mid + 7.5, 3.6, z - 10.5); cam.lookAt(mid, 1.7, z); cam.fov = RIDES_CLIP ? 34 : 44; }

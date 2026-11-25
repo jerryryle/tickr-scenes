@@ -1,9 +1,9 @@
 // Test: the storybook city's wonders (cargo.ts STORY_CARGO) are only ever picked up in a
-// storybook city: plays journeys through one (and the cities either side of it) and checks every
+// storybook city: it plays journeys through one (and the cities either side of it) and checks every
 // pickup planned, and that the wonders do turn up there, several kinds of them; and that the picker
 // never draws them unless asked, whatever its caller allows.
-// Args (optional): minutes per journey (default 110), seeds (comma separated; default 4,9,11: the
-// third city a storybook one, about 56 minutes in).
+// The optional args are minutes per journey (default 110) and seeds (comma separated; default 4,9,11, whose
+// third city is a storybook one, about 56 minutes in).
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
 import { journeyStyle } from "../src/styles.ts";
@@ -31,7 +31,7 @@ for (const seed of SEEDS) {
     }
   }
 }
-// And the picker itself: whatever a caller's allow-list lets through (everything; a swap pool of
+// The picker itself is tested too: whatever a caller's allow-list lets through (everything; a swap pool of
 // all the cargo there is), it never draws the storybook's unless asked for it (`story`).
 const allows: [string, ((c: { id: string }) => boolean) | undefined][] = [["none", undefined], ["everything", () => true], ["the storybook's", (c) => STORY_CARGO.has(c.id)], ["all ids", (c) => CARGO.some((k) => k.id === c.id)]];
 for (const [what, allow] of allows) for (let i = 0; i < 4000; i++) {

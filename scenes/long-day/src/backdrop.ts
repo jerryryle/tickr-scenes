@@ -99,7 +99,7 @@ export class Backdrop {
         break;
       }
       case "storyhills": {
-        // The storybook city's: round hills banded in contour stripes (each a stack of domes, each
+        // The storybook city's are round hills banded in contour stripes (each is a stack of domes, each
         // smaller and higher than the last, so their rims show as stripes), and tall bent spires
         // striped up their length, leaning over.
         const bands = [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0];
@@ -116,7 +116,7 @@ export class Backdrop {
           }
           b.ico(x + tx * bend, H + 2, z + tz * bend, 3.5, haze(0xf2c230, 0.3));
         }
-        // Curly clouds: heaps of puffs, each with a curl of cloud at its end.
+        // Curly clouds are heaps of puffs, each with a curl of cloud at its end.
         for (let i = 0; i < 12; i++) {
           const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R - 100 + r() * 150), y = 150 + r() * 110, ex = -Math.sin(a), ez = Math.cos(a), w = haze(0xfffaf0, 0.12);
           for (let k = 0; k < 4; k++) b.ico(x + ex * (k - 1.5) * 16, y + Math.sin(k * 1.7 + i) * 6, z + ez * (k - 1.5) * 16, 13 + Math.sin(k * 2.1 + i) * 4, w, 0.65, a + k);

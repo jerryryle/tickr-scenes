@@ -313,9 +313,9 @@ export class CityPlan {
     for (let i = 0; i < st.name.length; i++) h = (h * 31 + st.name.charCodeAt(i)) | 0;
     return hash2(h, 0xa7e, this.seed, 1) < 0.5;
   }
-  // The storybook city's knitting works: on the block nearest the middle of town (industrial first,
-  // then shops) whose shape fits a dock site against a face the truck can drive along. Its block
-  // id, or -1 (any other city, or none fits).
+  // The storybook city's knitting works stands on the block nearest the middle of town (industrial ones first,
+  // then shops) whose shape fits a dock site against a face the truck can drive along. worksBlock is its block
+  // id, or -1 in any other city or when none fits.
   private worksId: number | undefined;
   get worksBlock(): number {
     if (this.worksId !== undefined) return this.worksId;
@@ -703,7 +703,7 @@ export const irange = (r: Rand, lo: number, hi: number) => Math.floor(lo + (hi -
 export interface CityMaterials { ground: THREE.Material; solid: THREE.Material; lamp: THREE.Material }
 // Parked trucks for a rental lot, in chunk-local coordinates (main.ts bakes them from the real
 // truck models; absent in tests).
-export interface StallPose { model: TruckModel; x: number; z: number; h: number; toon?: number }   // (toon: fleet.ts)
+export interface StallPose { model: TruckModel; x: number; z: number; h: number; toon?: number }   // (fleet.ts describes toon)
 export type FleetBuilder = (stalls: StallPose[]) => THREE.Object3D | null;
 
 // Everything a city tile is made of, as batches (`takeSlot` null: no sign atlas use, for
@@ -1073,10 +1073,10 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   const extra = close ? drawClose(g, s, G, close, poly, ox, oz, lots.map((l) => l.pts), rnd) : [];
   buildInfill(g, s, plan, blk, poly, ox, oz, district, lots, keep, hs, extra);
 }
-// The storybook city's buildings on a lot b (in its face's frame, the street at -z): downtown a
-// bent tower or two of round pods in hats, shops in crooked rows (now and then a short tower), and
-// houses as squat pods or crooked gables. `door` records the front door for kerbDoors, as for any
-// city's lot (x0..x1 the wall it is in, n its depth).
+// This builds the storybook city's buildings on a lot b (in its face's frame, with the street at -z): downtown gets a
+// bent tower or two of round pods in hats, shops stand in crooked rows (now and then with a short tower), and
+// houses are squat pods or crooked gables. `door` records the front door for kerbDoors, as for any
+// city's lot (x0..x1 is the wall it is in, n its depth).
 function storyLot(s: Batch, b: Rect, f: number, district: District, hs: number, rnd: Rand, door: (f: number, x0: number, x1: number, n: number, painted?: boolean) => void) {
   const w = b.x1 - b.x0, d = b.z1 - b.z0, roofs = CS.roofs;
   if (district === "downtown" || (district === "commercial" && rnd() < 0.3)) {
@@ -1085,7 +1085,7 @@ function storyLot(s: Batch, b: Rect, f: number, district: District, hs: number, 
     for (let k = 0; k < (two ? 2 : 1); k++) {
       const cx = two ? b.x0 + cw * (k + 0.5) : (b.x0 + b.x1) / 2, cz = b.z0 + R * Math.cos(Math.PI / n);
       const storeys = district === "downtown" ? Math.max(3, Math.min(9, Math.round(3 + hs * range(rnd, 2, 9)))) : irange(rnd, 2, 3);
-      storyTower(s, cx, cz, R, { x: cw / 2 - 0.55, zf: R + 1.2, zb: d - R + 0.4 }, CURB_H, { ...look, storeys }, rnd);   // (its trims clear of the next lot's, or the other tower's)
+      storyTower(s, cx, cz, R, { x: cw / 2 - 0.55, zf: R + 1.2, zb: d - R + 0.4 }, CURB_H, { ...look, storeys }, rnd);   // (its trims stay clear of the next lot's, or the other tower's)
       if (k === 0) door(f, cx - 0.5, cx + 0.5, b.z0);
     }
     return;
@@ -1095,7 +1095,7 @@ function storyLot(s: Batch, b: Rect, f: number, district: District, hs: number, 
     storyShopRow(s, b, CURB_H, Math.min(CS.maxShopFloors, irange(rnd, 1, 3)), { walls: CS.walls.commercial, roofs, ground: FACADE.STORY_SHOP, upper: FACADE.STORYBOOK, storeys: 0 }, rnd);
     return;
   }
-  // a house, set back behind its front garden, its tree behind it
+  // a house is set back behind its front garden, with its tree behind it
   const h: Rect = { x0: b.x0 + 0.8, z0: b.z0 + range(rnd, 2.2, 3.2), x1: b.x1 - 0.8, z1: Math.min(b.z1, b.z0 + 10) };
   const R = Math.max(2.6, Math.min((h.x1 - h.x0) / 2, (h.z1 - h.z0) / 2) - 0.2), cx = (h.x0 + h.x1) / 2, cz = h.z0 + R;
   const r = storyHouse(s, cx, cz, R, CURB_H, { walls: CS.walls.residential, roofs: CS.gables, ground: FACADE.STORYBOOK, upper: FACADE.STORYBOOK, door: FACADE.STORY_DOOR, storeys: 0 }, rnd);
@@ -1555,7 +1555,7 @@ function buildBlockPart(ground: Batch, solid: Batch, plan: CityPlan, blk: CBlock
   // The freeway's off-ramp and its (super)block: drawn on the freeway's line, whatever its shape.
   if (plan.interchangeAt(cx, cz)) { buildInterchange(ground, solid, plan, blk, ox, oz); return { stalls: [] as StallPose[], site: siteLayout(plan, cx, cz) }; }
   const x0 = Math.min(...blk.poly.map((p) => p[0])), z0 = Math.min(...blk.poly.map((p) => p[1]));
-  if (!blk.square || CS.storybook) {   // (the storybook city's blocks all by their lots, whatever their shape)
+  if (!blk.square || CS.storybook) {   // (the storybook city's blocks are all built by their lots, whatever their shape)
     const dcx = DC.cx, dcz = DC.cz, site = siteLayout(plan, cx, cz);
     DC.cx = cx; DC.cz = cz; DC.fac = facilityAt(plan, cx, cz);
     let stalls: StallPose[] = [];
@@ -2136,7 +2136,7 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
   for (let i = 0; i < n; i++) {
     const p = b0 + (i + 0.5) * 6.5, r = hash2(Math.round(p * 10), salt, 0x10ad, Math.round(a0));
     if (i % 3 === 1) box(g, p, CURB_H + 0.01, kerb + sg * 0.05, 6.3, 0.02, 0.1, C.yellow);
-    if (r < 0.55 && !CS.storybook) {   // (none in the storybook city: its own vehicles only, storyvehicles.ts)
+    if (r < 0.55 && !CS.storybook) {   // (the storybook city has none: it has only its own vehicles, storyvehicles.ts)
       // (Parked facing the traffic's way: +along.)
       const kind: CarKind = i % 3 === 1 ? "van" : carKindAt(r * 7 % 1, false), [x, z] = axis === 0 ? [p, lane] : [lane, p];
       parkedCar(s, kind, x, 0.005, z, axis === 0 ? 0 : -Math.PI / 2, carPaintAt(r));
@@ -2177,7 +2177,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       box(g, (p0 + p1) / 2, CURB_H / 2, (lo + hi) / 2, p1 - p0, CURB_H, hi - lo, C.sidewalk);
       box(g, (p0 + p1) / 2, CURB_H + 0.004, edge + 0.125, p1 - p0, 0.008, 0.25, C.curb);
       if (CS.storybook) {
-        // Checkered: cream squares laid on the pink, two across, clear of the kerb's edge strip.
+        // The sidewalk is checkered with cream squares laid on the pink, two across, clear of the kerb's edge strip.
         const c0 = lo === 0 ? 0 : edge + 0.25, c1 = lo === 0 ? edge : STREET, cw = (c1 - c0) / 2, y = CURB_H + 0.002;
         const quad = (u0: number, u1: number, v0: number, v1: number) => {
           const P = (u: number, v: number): [number, number] => axis === 0 ? [u, v] : [v, u];
@@ -2222,10 +2222,10 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       }
     }
   } else if (!feat.oneway && CS.storybook) {
-    // The storybook city's centre line: a row of polka dots, pink and gold by turns.
+    // The storybook city's centre line is a row of polka dots, pink and gold by turns.
     for (let p = a0 + 4.5, k = 0; p < a1 - 4; p += 2.2, k++) {
       const [x, z] = axis === 0 ? [p, cl] : [cl, p], y = M + 0.004, c = k % 2 ? SB.mustard : C.yellow;
-      for (let i = 0; i < 6; i++) {   // (flat: a hexagon of six triangles, all a dot needs from above)
+      for (let i = 0; i < 6; i++) {   // (each dot is flat, a hexagon of six triangles, which is all a dot needs from above)
         const a0 = p * 0.37 + i * Math.PI / 3, a1 = a0 + Math.PI / 3;
         g.tri(x, y, z, x + Math.cos(a1) * 0.3, y, z + Math.sin(a1) * 0.3, x + Math.cos(a0) * 0.3, y, z + Math.sin(a0) * 0.3, c);
       }
@@ -2263,7 +2263,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (inDrive(d, at, 2) || inDrive(c, at, 0) || at > a1 - 7) continue;
     const dir = side < cl ? 1 : -1; // arm reaches over the road
     const [px, pz] = axis === 0 ? [at, side] : [side, at];
-    if (CS.storybook) {   // a shepherd's crook, its lamp hanging over the kerb lane
+    if (CS.storybook) {   // the streetlight is a shepherd's crook whose lamp hangs over the kerb lane
       const [hx, hz] = axis === 0 ? [px, side + dir * 1.5] : [side + dir * 1.5, pz];
       pavementObstacle(px, pz, 0.15, PK.lamp);
       const l = storyLamp(s, px, pz, hx, hz, 0); DC.lampSites.push(l[0], l[1], l[2]);
@@ -2278,7 +2278,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // What the furniture must keep clear of, per sidewalk.
   const busy: [number[][], number[][]] = [[], []];
   for (const [i, at, d] of [[0, a0 + 10, loD], [1, a0 + 31, hiD]] as const) if (!inDrive(d, at, 2)) busy[i].push([at - 0.6, at + 0.6]);
-  // The storybook city: bunting across some of its streets, between striped poles at the backs of
+  // The storybook city hangs bunting across some of its streets, between striped poles at the backs of
   // the sidewalks (clear of driveways, signs and the streetlights).
   if (CS.storybook && len > 30 && district !== "industrial" && rnd() < (district === "residential" ? 0.25 : 0.6)) {
     const p = a0 + 20.5 + (rnd() - 0.5) * 6;
@@ -2423,7 +2423,7 @@ function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number,
   const fields = b.fields?.map((f) => c ? seasonGround(f, c) : f);
   const keep = id === "storybook", greens = c && !keep ? seasonGreens(b.greens, c) : b.greens, cgreens = c && !keep ? seasonGreens(b.greens, c, true) : b.greens;
   const ox = cx * BLOCK, oz = cz * BLOCK, line = plan.elevatedSides(cz).includes(cx < (CITY_LO + CITY_HI) / 2 ? -1 : 1);
-  // The storybook city's gate: its arch over the street in, just inside where the road arrives.
+  // The storybook city's gate is its arch over the street in, just inside where the road arrives.
   const eg = plan.style.storybook ? G.gates[0] : null;
   if (eg) {
     const e = gateEnd(eg), fx = Math.cos(e.h), fz = -Math.sin(e.h), x = e.x - fx * 6, z = e.z - fz * 6;
@@ -3249,7 +3249,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // then a building of its own (warehouseLook): wall colour and cladding, height, roof, an accent
   // colour and what the business adds (tanks, a stack, a rooftop office, a canopy...).
   const r = frontRect(side, L.a0, L.a1, L.wall, 39.5);
-  // (The storybook city's knitting works: its hall and its process beside it, works.ts.)
+  // (works.ts builds the storybook city's knitting works: its hall and its process beside it.)
   const top = DC.fac === "knittingWorks" ? buildWorksStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L) : buildWarehouse(s, side, face, L, r, district, rnd);
   if (DC.fac === "ryderWarehouse" && uv) ryderRoofSign(s, r, top, face, uv);
 
@@ -3412,7 +3412,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // The name sign: across the dock wall above the doors, or on the store front.
   if (uv) {
     const d = FRONT_NODE[side][2], ox = -RIGHT[d][0], oz = -RIGHT[d][1];   // out towards the street
-    if (DC.fac === "knittingWorks") {   // up on the hall's gable, under the barrel roof's front
+    if (DC.fac === "knittingWorks") {   // the sign goes up on the hall's gable, under the barrel roof's front
       const y = WORKS.hallTop + 3.4, n = L.wall + 0.28;
       fspan(s, side, 15.7, 25.3, y - 0.72, y + 0.72, n - 0.1, n, SB.ink);
       signQuad(quads, uv, side, 20.5, n - 0.11, y, 9.2, 1.15, ox, oz);

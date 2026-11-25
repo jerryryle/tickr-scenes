@@ -601,7 +601,7 @@ export class Journey {
       : null;
     // (The waterfront's cargo with a source near, looked for once: makeJob's shore pick.)
     let seaNear: Set<string> | null = null;
-    // (And the storybook city's wonders with a source near, likewise.)
+    // (And the storybook city's wonders with a source near are likewise looked for once.)
     let storyNear: Set<string> | null = null;
     const storyHas = (k: { id: string }) => (storyNear ??= new Set([...STORY_CARGO].filter((id) => this.findNear(CARGO_BY_ID.get(id)!.from, bx, bz, 14, here, 1).length > 0))).has(k.id);
     const seaHas = (k: { id: string }) => (seaNear ??= new Set([...SEA_CARGO].filter((id) => this.findNear(CARGO_BY_ID.get(id)!.from, bx, bz, SEARCH, here, 1).length > 0))).has(k.id);
@@ -635,7 +635,7 @@ export class Journey {
       // widening the search only after a few attempts.
       // Rare and humorous cargo comes from rare facilities, so it may look further afield. A
       // swap's cargo looks as far as its pool did.
-      const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous" || SEA_CARGO.has(c.id) || STORY_CARGO.has(c.id);   // (the waterfront's, the works': few places)
+      const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous" || SEA_CARGO.has(c.id) || STORY_CARGO.has(c.id);   // (the waterfront's and the works' come from few places)
       // (The storybook city has one works: its freight is fetched from it wherever it is in town.)
       let sources = this.findNear(c.from, bx, bz, reach || (STORY_CARGO.has(c.id) && freight ? 40 : change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2);
       if (!sources.length) continue;

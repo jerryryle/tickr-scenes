@@ -11,7 +11,7 @@ import type { StallPose } from "./city.ts";
 interface FleetPart { material: THREE.Material; names: string[]; arrays: Float32Array[]; count: number }
 
 export class FleetBaker {
-  private glass: THREE.Material | null = null;   // (the glass every template's trucks are baked with: flatten)
+  private glass: THREE.Material | null = null;   // (this holds the glass every template's trucks are baked with: see flatten)
   constructor(private kit: TruckKit) {}
 
   build(stalls: StallPose[]): THREE.Object3D | null {
@@ -54,8 +54,8 @@ export class FleetBaker {
     return root.children.length ? root : null;
   }
 
-  // (A stall's `toon`: how cartoonish its truck is, in and near the storybook city (truck.ts
-  // toonWarp), baked in its quarters.)
+  // (A stall's `toon` is how cartoonish its truck is, in and near the storybook city (truck.ts
+  // toonWarp), and it is baked in its quarters.)
   private parts = new Map<string, FleetPart[]>();
   private partsFor(model: TruckModel, toon: number): FleetPart[] {
     const q = Math.round(THREE.MathUtils.clamp(toon, 0, 1) * 4) / 4, key = `${model}/${q}`;
@@ -72,14 +72,14 @@ export class FleetBaker {
     const keep = (mat: THREE.Material) => mat instanceof THREE.MeshLambertMaterial || (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map);
     const tint = new THREE.Color();
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, toon = 0, inst: THREE.Color | null = null) => {
-      // (Every template's glass is the same see-through tint: one material for all, so a lot whose
+      // (Every template's glass is the same see-through tint: one material is shared by all, so a lot whose
       // trucks come from different templates, as a country stop's cartoons do, draws its glass at once.)
       if (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map) mat = this.glass ??= mat;
       const g = geo.index ? geo.toNonIndexed() : geo;
-      // (A cartoon's shape and colours: its morph target, as far as the truck has it.)
+      // (A cartoon's shape and colours come from its morph target, as far as the truck has it.)
       const morph = (n: string, a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, i: number, k: number) => {
         const m = toon > 0 ? (g.morphAttributes as Record<string, THREE.BufferAttribute[] | undefined>)[n]?.[0] : undefined, b = a.getComponent(i, k);
-        return m ? b + m.getComponent(i, k) * toon : b;   // (relative targets)
+        return m ? b + m.getComponent(i, k) * toon : b;   // (the targets are relative)
       };
       const names = ["position", "normal", "color", "uv"].filter((n) => g.getAttribute(n));
       if (!names.includes("position") || !names.includes("normal")) return;
@@ -93,7 +93,7 @@ export class FleetBaker {
         for (let i = 0; i < count; i++) {
           if (n === "position") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix4(world); arr.set([v.x, v.y, v.z], i * 3); }
           else if (n === "normal") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix3(nm).normalize(); arr.set([v.x, v.y, v.z], i * 3); }
-          else for (let k = 0; k < size; k++) arr[i * size + k] = morph(n, a, i, k) * (inst && n === "color" ? (k === 0 ? inst.r : k === 1 ? inst.g : inst.b) : 1);   // (an instance's colour: a cartoon's pink rims)
+          else for (let k = 0; k < size; k++) arr[i * size + k] = morph(n, a, i, k) * (inst && n === "color" ? (k === 0 ? inst.r : k === 1 ? inst.g : inst.b) : 1);   // (an instance's colour makes a cartoon's rims pink)
         }
         entry!.chunks[ai].push(arr);
       });
