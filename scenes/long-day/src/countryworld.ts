@@ -39,6 +39,7 @@ import type { Station } from "./boats.ts";
 const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
+const STORY_STEPS = 8;           // the steps of the storybook's creep into the real land near it (storyLook)
 const SIDE_W = 170;              // scenery either side of the road
 // The land's mesh: its columns across the road (each side), out past the fog. Field and beach
 // edges fall on columns.
@@ -300,7 +301,35 @@ export class CountryWorld {
   // A biome's look at (s, n), in the season there.
   private looks = new Map<string, BiomeLook & { cgreens: number[] }>();
   private tmpC = new THREE.Color();
-  private look(road: CountryRoad, sa: number, n = 0) { return this.lookOf(road.biomeAt(sa, n), road.climateAt(sa, n)); }
+  // (Near the storybook city its colours and trees creep into the real land too: storyLook.)
+  private look(road: CountryRoad, sa: number, n = 0) {
+    const id = road.biomeAt(sa, n), c = road.climateAt(sa, n);
+    if (id === "storybook") return this.lookOf(id, c);
+    const w = road.storyAt(sa);
+    return w > 0.04 ? this.storyLook(id, c, Math.min(STORY_STEPS, Math.round(w * STORY_STEPS))) : this.lookOf(id, c);
+  }
+  // A real biome's look with some of the storybook's in it (q of STORY_STEPS): its ground and
+  // fields brighter, towards the storybook's limes and pinks; candy-coloured crowns among its
+  // greens, a storybook tree here and there among its own, and its own trees thinning to the
+  // storybook's spacing.
+  private storyLook(id: BiomeId, c: Climate, q: number) {
+    const key = `${id}/${c.season}/${c.snowCover}/sb${q}`;
+    let l = this.looks.get(key);
+    if (!l) {
+      const r = this.lookOf(id, c), sb = BIOMES.storybook, w = q / STORY_STEPS;
+      const mix = (a: number, b: number, k: number) => this.tmpC.setHex(a).lerp(this.tmpC2.setHex(b), k).getHex();
+      const candy = Math.round(w * 2 * r.greens.length);
+      const greens = r.greens.map((g) => mix(g, 0x7ad04a, w * 0.5)), cgreens = r.cgreens.map((g) => mix(g, 0x7ad04a, w * 0.5));
+      for (let i = 0; i < candy; i++) { const g = sb.greens[i % sb.greens.length]; greens.push(g); cgreens.push(g); }
+      const odd = Math.round(w * 1.5 * r.trees.length), trees = [...r.trees];
+      for (let i = 0; i < odd; i++) trees.push(sb.trees[i % sb.trees.length]);
+      l = { ...r, ground: mix(r.ground, sb.ground, w * 0.8), ground2: mix(r.ground2, sb.ground2, w * 0.8), greens, cgreens, trees,
+        density: r.density + (sb.density - r.density) * w,
+        fields: r.fields?.map((f, i) => mix(f, sb.fields![i % sb.fields!.length], w * 0.8)) };
+      this.looks.set(key, l);
+    }
+    return l;
+  }
   private lookOf(id: BiomeId, c: Climate) {
     const key = `${id}/${c.season}/${c.snowCover}`;
     let l = this.looks.get(key);

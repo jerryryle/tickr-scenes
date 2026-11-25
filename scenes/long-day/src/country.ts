@@ -1054,10 +1054,26 @@ export class CountryRoad {
   // The land changes from the last city's to the next city's around the middle of the drive, along
   // a ragged line: patches of the next land become more and more common. Settled well before the
   // hand-over (the arrival straight is all the next city's).
+  //   A drive into or out of the storybook city changes slowly instead: from soon after the
+  // last city's edge to the arrival straight (storyAt), the land taking on more and more of the
+  // storybook's, its trees and colours creeping into the real land as well (countryworld.ts).
   blendAt(s: number) {
     if (this.inp.kind === "arrival") return 1;
+    if (this.toBiome === "storybook" && this.fromBiome !== "storybook") return this.storyAt(s);
+    if (this.fromBiome === "storybook" && this.toBiome !== "storybook") return 1 - this.storyAt(s);
     const SB = this.SB, b0 = Math.max(LAND_SEAM + 400, SB * 0.5 - 350), b1 = Math.max(b0 + 200, Math.min(SB - 350, SB * 0.5 + 350));
     return smooth(THREE.MathUtils.clamp((s - b0) / (b1 - b0), 0, 1));
+  }
+  // How much of the storybook there is at s (0..1): none on a drive that has nothing to do with
+  // it, all of it in its own town's land; between, it grows from soon after one city's edge to
+  // the other's arrival straight, slowly at first (a tinted tree or two) and fastest near the
+  // end. Out of the storybook city, the same backwards.
+  storyAt(s: number) {
+    const to = this.toBiome === "storybook", from = this.fromBiome === "storybook";
+    if (to === from || this.inp.kind === "arrival") return to ? 1 : 0;
+    const b0 = LAND_SEAM + 200, b1 = Math.max(b0 + 400, this.SB - 350);
+    const k = THREE.MathUtils.clamp((to ? s - b0 : b1 - s) / (b1 - b0), 0, 1);
+    return k * k * (1.6 - 0.6 * k);   // (eased in: k², softened so the last stretch isn't sudden)
   }
   isFrom(s: number, n = 0) { return hash2(Math.floor(s / 12), Math.floor(n / 12), this.inp.seed, 0xb10) >= this.blendAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.isFrom(s, n) ? this.fromBiome : this.toBiome; }

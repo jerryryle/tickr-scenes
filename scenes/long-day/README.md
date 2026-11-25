@@ -108,7 +108,11 @@ checkered pavements, shepherd's-crook lamps and bunting, entered under a corkscr
 buildings are bent towers of round pods in hats, crooked shop rows and pod houses (walls of facade
 tiles, `facadePrism` in `src/facade.ts`, so they cost what other cities' do: `test/chunkcost.ts`
 keeps a chunk within 1.2 times the dearest real style); its trees are tufts, pancakes, droops and
-topiary, and its country rolls away in striped hills. Its people wear hats and scarves of their own
+topiary, and its country rolls away in striped hills. The drive there changes slowly, not halfway as other
+drives do (`CountryRoad.storyAt`, `src/country.ts`): from soon after the last city the real land
+brightens, candy-coloured crowns and the odd storybook tree turn up among its own, patches of
+storybook land grow more common and the hills and sky come round, until the arrival straight is all
+storybook; leaving, the same in reverse (`storyLook`, `src/countryworld.ts`). Its people wear hats and scarves of their own
 (`FIG_STYLE`, `src/figure.ts`), its traffic is bubble cars and the puff bus, and one vignette is
 there only (a knitter). One block is the knitting works (`CityPlan.worksBlock`): a shallow van dock
 under a barrel-roofed spinning hall, its process laid out in the yard beside it from an orchard of
