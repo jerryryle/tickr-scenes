@@ -6,7 +6,6 @@
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { facadeBox, facadePrism } from "./facade.ts";
-import { headLamp, tailLamp } from "./cars.ts";
 
 export type SbP3 = [number, number, number];
 
@@ -314,39 +313,6 @@ export function storyTree(s: Batch, kind: string, x: number, y: number, z: numbe
 }
 
 // ---- vehicles ---------------------------------------------------------------------------------
-// The storybook city's traffic (traffic.ts STORY_TRAFFIC), modelled as cars.ts's are: at the
-// origin, nose to +x, on the road at y = 0; white parts take the car's colour.
-// A bubble car: a short chassis on four fat wheels under a tall bulging cabin with a round
-// windscreen, a curly exhaust at the back and a bobble on a spring on its roof.
-export function storyBubbleCar(b: Batch) {
-  const W = 1.8;
-  for (const x of [-1.1, 1.1]) for (const z of [-0.78, 0.78]) b.cyl(x, 0.36, z, 0.36, 0.3, 0x161616, 10, Math.PI / 2);
-  b.box(0, 0.62, 0, 3.3, 0.42, W - 0.1, 0xffffff);
-  b.lathe("bulb", SB_BULB, -0.15, 0.25, 0, 1.15, 2.25, 0xffffff, 12, 0.3);
-  b.lathe("bulb", SB_BULB, 0.45, 0.72, 0, 0.82, 1.5, 0x26313d, 10, 1.4);   // the windscreen, bulging out of the front of the dome
-  b.box(1.66, 0.62, 0, 0.06, 0.26, W - 0.3, 0x2a2440);
-  headLamp(b, 1.66, 0.82, -0.6, 0.04, 0.16, 0.22); headLamp(b, 1.66, 0.82, 0.6, 0.04, 0.16, 0.22);
-  tailLamp(b, -1.66, 0.82, -0.6, 0.04, 0.14, 0.22); tailLamp(b, -1.66, 0.82, 0.6, 0.04, 0.14, 0.22);
-  sbTube(b, sbCurve(4, (t) => [-1.55 - t * 0.35, 0.55 + t * 1.2 + Math.sin(t * 7) * 0.12, 0.6 + Math.cos(t * 7) * 0.12]), () => 0.07, () => 0x2a2440, 4, 0.2);
-  sbTube(b, sbCurve(3, (t) => [-0.25 + Math.cos(t * 9) * 0.06, 2.45 + t * 0.6, Math.sin(t * 9) * 0.06]), () => 0.035, () => 0x2a2440, 4, 0.5);
-  b.lathe("bulb", SB_BULB, -0.25, 2.95, 0, 0.17, 0.34, SB.mustard, 6, 0.2);
-}
-// The puff bus: a fat round-ended coral body banded in cream, round windows down both sides, a
-// little striped onion on its roof.
-export function storyPuffBus(b: Batch) {
-  const L = 9.2, R = 1.3, y = 1.75;
-  for (const x of [-2.9, 2.9]) for (const z of [-1.05, 1.05]) b.cyl(x, 0.48, z, 0.48, 0.34, 0x161616, 10, Math.PI / 2);
-  b.cyl(0, y, 0, R, L - 2 * R * 0.8, SB.coral, 12, 0, Math.PI / 2);
-  b.cyl(0, y - 0.35, 0, R + 0.03, L - 2 * R * 0.8 - 0.2, SB.cream, 12, 0, Math.PI / 2);   // (not quite as long: its ends inside the body's)
-  b.lathe("bulb", SB_BULB, L / 2 - R * 0.8, y - R, 0, R, 2 * R, SB.coral, 12, 0.4); b.lathe("bulb", SB_BULB, -L / 2 + R * 0.8, y - R, 0, R, 2 * R, SB.coral, 12, 1.1);
-  b.lathe("bulb", SB_BULB, L / 2 - R * 0.5, y + 0.25 - R * 0.58, 0, R * 0.78, R * 1.17, 0x26313d, 10, 0.9);   // windscreen
-  for (let i = 0; i < 5; i++) for (const z of [-1, 1]) b.cyl(-2.6 + i * 1.3, y + 0.35, z * (R - 0.02), 0.34, 0.08, 0x26313d, 8, Math.PI / 2, 0, i * 0.3);
-  b.cyl(0, y + R + 0.15, 0, 0.5, 0.3, SB.teal, 8);
-  b.lathe("onion", SB_ONION, 0, y + R + 0.25, 0, 0.6, 1.3, SB.mustard, 10, 0.3); b.cone(0, y + R + 1.45, 0, 0.12, 0.5, SB.ink, 4);
-  headLamp(b, L / 2 + 0.25, 0.95, -0.7, 0.04, 0.16, 0.3); headLamp(b, L / 2 + 0.25, 0.95, 0.7, 0.04, 0.16, 0.3);
-  tailLamp(b, -L / 2 - 0.25, 0.95, -0.7, 0.04, 0.14, 0.3); tailLamp(b, -L / 2 - 0.25, 0.95, 0.7, 0.04, 0.14, 0.3);
-}
-
 // A storybook workshop's roof (an industrial lot's shed, b in its frame, its roof at `top`): a
 // curly striped chimney at one end under a little hat, clear of the roof's clutter.
 export function storyWorkshop(s: Batch, b: { x0: number; z0: number; x1: number; z1: number }, top: number, rnd: SbRand) {

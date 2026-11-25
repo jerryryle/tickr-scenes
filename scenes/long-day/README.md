@@ -119,7 +119,7 @@ fat tyres on pink rims and plum and gold trim, built as morph targets so the cha
 box's back, doors and floor and the wheels' places stay where they are, so docking and loading are
 the same; parked fleets too (`src/fleet.ts`). `make tool SCENE=long-day TOOL=toons SECS=10`
 shows each model at none, half and all of it. Its people wear hats and scarves of their own
-(`FIG_STYLE`, `src/figure.ts`), its traffic is bubble cars and the puff bus, and one vignette is
+(`FIG_STYLE`, `src/figure.ts`), its traffic is its own contraptions (`src/storyvehicles.ts`: a hamster wheel, a walking strider, a caterpillar bus, a pogo hopper, a unicycle tower, a balloon, a spinning teacup and a snail, each posed from how far it has come, so scrubbing replays them; `make tool SCENE=long-day TOOL=storyrides SECS=16` shows them, `DEBUG_VIEW=traffic` follows them in the scene) and cartoon Ryder trucks, and one vignette is
 there only (a knitter). One block is the knitting works (`CityPlan.worksBlock`): a shallow van dock
 under a barrel-roofed spinning hall, its process laid out in the yard beside it from an orchard of
 white tufts to spools on the hall's front and a knitting head on its roof, its moving parts turned by

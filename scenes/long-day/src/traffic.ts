@@ -7,7 +7,9 @@
 // instanceColor; a Ryder truck is a baked copy of the real model.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
-import { storyBubbleCar, storyPuffBus } from "./storybook.ts";
+import { storyRigs } from "./storyvehicles.ts";
+import type { StoryRig } from "./storyvehicles.ts";
+import { SB } from "./storybook.ts";
 import { Batch, keepWarm } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
@@ -29,13 +31,17 @@ export interface LiftedCar { kind: string; color: number; model: TruckModel | nu
 export interface LiftDraw { car: LiftedCar; x: number; y: number; z: number; h: number; roll: number }
 export interface Obstacle { x: number; z: number; r: number; still?: boolean; owner?: number; sweep?: boolean; vx?: number; vz?: number; body?: boolean }   // still: a truck parked in the lane (traffic passes it); owner: the vehicle's id; sweep: where the truck reversing into a bay will be; vx, vz: how it is moving (m/s: someone walking); body: the truck's own body (life.ts), parked or not
 
-// The storybook city's traffic: mostly its own bubble cars, its puff bus, a few others.
-const STORY_TRAFFIC: Record<string, number> = { bubblecar: 6, puffbus: 0.9, hatch: 1, van: 1, icecream: 0.6, police: 0.3, ryder: 0.8 };
+// The storybook city's traffic: its own contraptions (storyvehicles.ts) and nothing else but the
+// Ryder trucks, gone cartoonish there as the player's is (fleet.ts, `toon`).
+const STORY_TRAFFIC: Record<string, number> = { hamster: 1.4, strider: 1.4, caterpillar: 0.8, pogo: 1.2, unicycle: 1.0, balloon: 0.8, teacup: 1.2, snail: 0.7, ryder: 0.8 };
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
   colors: number[] | null;             // body tints; null keeps the painted colours
-  mesh: THREE.InstancedMesh | null;    // null for Ryder trucks (separate groups)
+  mesh: THREE.InstancedMesh | null;    // null for Ryder trucks (separate groups) and the storybook's rigs
   cap: number;
+  // A storybook contraption (storyvehicles.ts): its parts, each an instanced mesh posed per
+  // vehicle (the white of its first part apart, tinted with the vehicle's colour).
+  rig?: StoryRig; rigMeshes?: { mesh: THREE.InstancedMesh; part: number; tint: boolean }[];
 }
 interface Car {
   kind: VehicleKind; path: Path; s: number; v: number;
@@ -63,6 +69,7 @@ interface Car {
   dT?: number; dS0?: number; dA?: number; dB?: number; dV?: number;
   lastO?: number; mergeUp?: boolean;   // the path's lane offset last step, and which way it last moved   // pedT: how long a pedestrian has held it up   // the vehicle it is held up close behind (-1: none, or not a vehicle), and how long it has crawled (< 0.5 m/s)
   x: number; z: number; h: number; px: number; pz: number; ph: number;   // pose now and one step ago
+  odo?: number; podo?: number;         // how far it has come (m), now and one step ago (a rig's stride: storyvehicles.ts)
   cable: boolean; id: number; model: TruckModel | null;   // model: a Ryder truck's
 }
 
@@ -90,12 +97,13 @@ export class Traffic {
   private nextId = 0;
   private byId = new Map<number, Car>(); private ignore: number[] = [];   // (step's, reused)
   private groups = new Map<number, THREE.Object3D>();   // Ryder trucks' models, by car id
-  private spare = new Map<TruckModel, THREE.Object3D[]>();   // models of Ryder trucks that left, for reuse (each is new GPU geometry)
+  private spare = new Map<string, THREE.Object3D[]>();   // models of Ryder trucks that left, for reuse (each is new GPU geometry)
   time = 0;   // render time (the police lights)
+  ryderToon = 0;   // how cartoonish Ryder trucks in traffic are drawn (1 in the storybook city: truck.ts makeToon)
   private drawn: number[] = [];   // per vehicle as last drawn: x, z, heading, half length
   readonly obstacles: Obstacle[] = [];      // this frame's vehicles, for pedestrians
 
-  constructor(private scene: THREE.Scene, material: THREE.Material, private ryder: ((model: TruckModel) => THREE.Object3D | null) | null) {
+  constructor(private scene: THREE.Scene, material: THREE.Material, private ryder: ((model: TruckModel, toon: number) => THREE.Object3D | null) | null) {
     const kind = (id: string, len: number, width: number, vmax: number, weight: number, colors: number[] | null, cap: number, build: ((b: Batch) => void) | null) => {
       let mesh: THREE.InstancedMesh | null = null;
       if (build) {
@@ -120,9 +128,14 @@ export class Traffic {
     kind("icecream", 5.8, 2.1, 8, 0.5, null, 2, (b) => iceCreamTruck(b));
     kind("ryder", 11.3, 2.5, 10, 0.8, null, 2, null);
     kind("cablecar", 8.6, 2.5, 6, 0, null, 3, cableCarBody);
-    // The storybook city's own (STORY_TRAFFIC): bubble cars and the round puff bus.
-    kind("bubblecar", 3.4, 1.8, 9, 0, [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0x5fd3a0, 0xff9a2e, 0xe8333a], 14, storyBubbleCar);
-    kind("puffbus", 9.2, 2.6, 8, 0, null, 3, storyPuffBus);
+    // The storybook city's own (STORY_TRAFFIC): each contraption, its parts' meshes made the first
+    // time one is wanted (rigMeshesOf: the start has a budget, and most journeys meet these late).
+    const rigCols = [SB.pink, SB.aqua, SB.mustard, SB.violet, SB.mint, SB.orange, SB.coral, SB.lime, SB.teal, SB.magenta];
+    for (const rig of storyRigs()) {
+      const cap = rig.id === "caterpillar" || rig.id === "balloon" ? 4 : 8;
+      this.kinds.push({ id: rig.id, len: rig.len, width: rig.width, vmax: rig.vmax, weight: 0, colors: rigCols, mesh: null, cap, rig });
+    }
+    this.material = material;
     const bb = new Batch(); bb.box(0, 0, 0, 0.28, 0.14, 0.5, 0xffffff);
     const bm = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.beacons = new THREE.InstancedMesh(bb.build(bm)!.geometry, bm, 4);
@@ -134,7 +147,7 @@ export class Traffic {
 
   private release(g: THREE.Object3D) {
     g.removeFromParent();
-    const m = g.userData.model as TruckModel;
+    const m = `${g.userData.model}/${g.userData.toon ?? 0}`;
     let list = this.spare.get(m);
     if (!list) this.spare.set(m, (list = []));
     list.push(g);
@@ -192,7 +205,7 @@ export class Traffic {
     this.truckTurn = 0;
     if (truckPath) for (const tn of truckPath.path.nodes) if (tn.sOut > truckPath.s) { if (tn.sLine - truckPath.s < 70 && tn.move !== "S") this.truckTurn = tn.move === "L" ? 1 : -1; break; }
     const dt = SIM_DT;
-    for (const c of this.cars) { c.px = c.x; c.pz = c.z; c.ph = c.h; }
+    for (const c of this.cars) { c.px = c.x; c.pz = c.z; c.ph = c.h; c.podo = c.odo ?? 0; }
     // Despawn far vehicles; top up near the truck. (Never where it would be seen going: a far one
     // still in sight down a long street goes once it is out of sight, past the view distance at most.)
     for (let i = this.cars.length - 1; i >= 0; i--) {
@@ -299,7 +312,8 @@ export class Traffic {
     const dT = mix(1.8, 1.0), dS0 = mix(2.6, 1.6), dA = big ? 1.1 : mix(1.3, 2.4), dB = big ? 1.6 : mix(1.8, 3.0), dV = mix(0.88, 1.08), gapT = mix(3.4, 1.8);
     const model: TruckModel | null = kind.id === "ryder" ? (r() < 0.5 ? "box16" : "box26") : null;
     this.cars.push({ kind, path, next, s: 0, v, dodge: cable ? -3 : 0, dodgeTarget: cable ? -3 : 0, dodgeV: 0, holdT: 0, stillT: 0, committed: -1, stopFor: -1, blockedBy: -1, slowT: 0, pedT: 0, acc: 0,
-      color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model, dT, dS0, dA, dB, dV, gapT });
+      color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model, dT, dS0, dA, dB, dV, gapT,
+      odo: kind.rig ? r() * 10 : 0, podo: 0 });
   }
   // How many of kind `id` there are (within TRAFFIC_DESPAWN of `near`, if given: not far ones kept on
   // in sight down a long street).
@@ -1351,7 +1365,7 @@ export class Traffic {
       const g1 = this.truckGap(c, c.s + ds, c.dodge, truck);
       if (g1 < Math.min(TRUCK_ROOM, this.truckGap(c, c.s, c.dodge, truck)) && !(g1 >= 0 && this.slidesBy(c, truck))) { ds = 0; c.v = 0; c.acc = 0; }
     }
-    c.s += ds;
+    c.s += ds; c.odo = (c.odo ?? 0) + ds;
     c.stillT = c.v < 0.05 ? c.stillT + dt : 0;
     c.slowT = c.v < 0.5 ? c.slowT + dt : 0;
     c.blockedBy = gap < 3 ? gapOwner : -1;
@@ -1434,9 +1448,46 @@ export class Traffic {
     }
   }
 
+  // Test renders (main.ts DEBUG_VIEW "traffic"): the vehicle (not a Ryder truck) nearest (x, z),
+  // or one by its id, as it stands: where, its heading and length.
+  vehicleNear(x: number, z: number): number { let best = -1, bd = Infinity; for (const c of this.cars) { if (c.model) continue; const d = Math.hypot(c.x - x, c.z - z); if (d < bd) { bd = d; best = c.id; } } return best; }
+  vehiclePose(id: number): { x: number; z: number; h: number; len: number } | null { const c = this.cars.find((o) => o.id === id); return c ? { x: c.x, z: c.z, h: c.h, len: c.kind.len } : null; }
+
+  // A storybook contraption's parts, posed (storyvehicles.ts) and placed by `base`.
+  private material: THREE.Material;
+  // A contraption's parts as instanced meshes, made the first time (its first part's pure white
+  // apart, tinted per vehicle).
+  private rigMeshesOf(k: VehicleKind) {
+    if (k.rigMeshes) return k.rigMeshes;
+    const meshes: { mesh: THREE.InstancedMesh; part: number; tint: boolean }[] = [];
+    k.rig!.parts.forEach((build, part) => {
+      const b = new Batch(); build(b);
+      const g = b.build(this.material)!.geometry;
+      (part === 0 ? splitWhite(g) : [g, null]).forEach((geo, i) => {
+        if (!geo) return;
+        const mesh = new THREE.InstancedMesh(geo, this.material, k.cap + LIFT_CAP);
+        mesh.count = 0; mesh.frustumCulled = false; mesh.visible = false;
+        for (let j = 0; j < k.cap + LIFT_CAP; j++) mesh.setColorAt(j, this.col.set(0xffffff));
+        this.scene.add(mesh); meshes.push({ mesh, part, tint: i === 1 });
+      });
+    });
+    return (k.rigMeshes = meshes);
+  }
+  private rigPose: THREE.Matrix4[] = Array.from({ length: 16 }, () => new THREE.Matrix4());
+  private rigM = new THREE.Matrix4();
+  private drawRig(k: VehicleKind, base: THREE.Matrix4, s: { odo: number; v: number; t: number; seed: number }, color: number) {
+    k.rig!.pose(s, this.rigPose);
+    for (const r of this.rigMeshesOf(k)) {
+      if (r.mesh.count >= r.mesh.instanceMatrix.count) continue;
+      const i = r.mesh.count++;
+      r.mesh.setMatrixAt(i, this.rigM.multiplyMatrices(base, this.rigPose[r.part]));
+      r.mesh.setColorAt(i, this.col.set(r.tint ? color : 0xffffff));
+    }
+  }
+
   // Write instance matrices and colours, `alpha` of the way from the last step's poses to these.
   draw(alpha: number) {
-    for (const k of this.kinds) if (k.mesh) k.mesh.count = 0;
+    for (const k of this.kinds) { if (k.mesh) k.mesh.count = 0; if (k.rigMeshes) for (const r of k.rigMeshes) r.mesh.count = 0; }
     let beacon = 0;
     const live = new Set<number>();
     this.drawn.length = 0;
@@ -1449,9 +1500,15 @@ export class Traffic {
       if (c.model) {
         let g = this.groups.get(c.id);
         if (g && g.userData.model !== c.model) { this.release(g); this.groups.delete(c.id); g = undefined; }   // ids restart in each city
-        if (!g) { g = this.spare.get(c.model)?.pop() ?? this.ryder?.(c.model) ?? undefined; if (!g) continue; g.userData.model = c.model; this.scene.add(g); this.groups.set(c.id, g); }
+        if (g && (g.userData.toon ?? 0) !== this.ryderToon) { this.release(g); this.groups.delete(c.id); g = undefined; }
+        if (!g) { g = this.spare.get(`${c.model}/${this.ryderToon}`)?.pop() ?? this.ryder?.(c.model, this.ryderToon) ?? undefined; if (!g) continue; g.userData.model = c.model; g.userData.toon = this.ryderToon; this.scene.add(g); this.groups.set(c.id, g); }
         live.add(c.id);
         g.position.set(x, 0, z); g.rotation.set(0, h, 0); g.position.addScaledVector(this.v3.set(Math.cos(h), 0, -Math.sin(h)), -3.0);   // the model's origin is its rear axle
+        continue;
+      }
+      if (c.kind.rig) {
+        const odo = (c.podo ?? 0) + ((c.odo ?? 0) - (c.podo ?? 0)) * alpha;
+        this.drawRig(c.kind, this.m4.compose(this.v3.set(x, 0, z), this.q, this.one), { odo, v: c.v, t: this.time, seed: c.id * 0.37 }, c.color);
         continue;
       }
       const mesh = c.kind.mesh!;
@@ -1476,12 +1533,14 @@ export class Traffic {
         const key = -1 - L.car.id;
         let g = this.groups.get(key);
         if (g && g.userData.model !== L.car.model) { this.release(g); this.groups.delete(key); g = undefined; }
-        if (!g) { g = this.spare.get(L.car.model)?.pop() ?? this.ryder?.(L.car.model) ?? undefined; if (!g) continue; g.userData.model = L.car.model; this.scene.add(g); this.groups.set(key, g); }
+        if (g && (g.userData.toon ?? 0) !== this.ryderToon) { this.release(g); this.groups.delete(key); g = undefined; }
+        if (!g) { g = this.spare.get(`${L.car.model}/${this.ryderToon}`)?.pop() ?? this.ryder?.(L.car.model, this.ryderToon) ?? undefined; if (!g) continue; g.userData.model = L.car.model; g.userData.toon = this.ryderToon; this.scene.add(g); this.groups.set(key, g); }
         live.add(key);
         g.position.set(L.x, L.y, L.z); g.quaternion.copy(this.q); g.position.addScaledVector(this.v3.set(Math.cos(L.h), 0, -Math.sin(L.h)), -3.0);
         continue;
       }
       const k = this.kinds.find((o) => o.id === L.car.kind), mesh = k?.mesh;
+      if (k?.rig) { this.drawRig(k, this.m4.compose(this.v3.set(L.x, L.y, L.z), this.q, this.one), { odo: 0, v: 0, t: this.time, seed: L.car.id * 0.37 }, L.car.color); continue; }
       if (!mesh || mesh.count >= mesh.instanceMatrix.count) continue;
       const i = mesh.count++;
       mesh.setMatrixAt(i, this.m4.compose(this.v3.set(L.x, L.y, L.z), this.q, this.one));
@@ -1491,6 +1550,9 @@ export class Traffic {
       this.release(g); this.groups.delete(id);
     }
     for (const k of this.kinds) if (k.mesh) { k.mesh.instanceMatrix.needsUpdate = true; if (k.mesh.instanceColor) k.mesh.instanceColor.needsUpdate = true; }
+    for (const k of this.kinds) if (k.rigMeshes) for (const { mesh } of k.rigMeshes) {
+      mesh.visible = mesh.count > 0; mesh.instanceMatrix.needsUpdate = true; if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
     this.beacons.count = beacon;
     this.beacons.instanceMatrix.needsUpdate = true;
     if (this.beacons.instanceColor) this.beacons.instanceColor.needsUpdate = true;
@@ -1617,4 +1679,17 @@ function nearestStreet(G: CityGraph, x: number, z: number, cable: boolean): numb
       if (d < bd || (d === bd && id < best)) { bd = d; best = id; }
     }
   return best;
+}
+
+// A geometry's triangles split in two: those not all pure white, and those that are (or null when
+// none are): a storybook contraption's tinted body apart from the rest.
+function splitWhite(g: THREE.BufferGeometry): [THREE.BufferGeometry, THREE.BufferGeometry | null] {
+  const C = g.getAttribute("color"), names = Object.keys(g.attributes), out: [number[][], number[][]] = [names.map(() => []), names.map(() => [])];
+  const white = (i: number) => C.getX(i) > 0.999 && C.getY(i) > 0.999 && C.getZ(i) > 0.999;
+  for (let i = 0; i + 2 < C.count; i += 3) {
+    const o = out[white(i) && white(i + 1) && white(i + 2) ? 1 : 0];
+    names.forEach((n, j) => { const a = g.getAttribute(n); for (let v = i; v < i + 3; v++) for (let k = 0; k < a.itemSize; k++) o[j].push(a.getComponent(v, k)); });
+  }
+  const make = (o: number[][]) => { const r = new THREE.BufferGeometry(); names.forEach((n, j) => r.setAttribute(n, new THREE.BufferAttribute(new Float32Array(o[j]), g.getAttribute(n).itemSize))); r.computeBoundingSphere(); return r; };
+  return [make(out[0]), out[1][0].length ? make(out[1]) : null];
 }

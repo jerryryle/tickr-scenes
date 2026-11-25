@@ -161,6 +161,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     buildSea();
     seaLife.build(journey.plan);
     FIG_STYLE.storybook = !!journey.plan.style.storybook;
+    if (traffic) traffic.ryderToon = journey.plan.style.storybook ? 1 : 0;
     worksFx.build(journey.plan, (bx, bz) => { const L = siteLayout(journey.plan, bx, bz); return L.kind === "dock" ? L : null; });
     engine.seaFar = journey.plan.outline.sea === null ? 0 : SEA_FAR;
     engine.setSky(journey.plan.style.sky);
@@ -330,11 +331,22 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
 
   const siteEdgeAt = new THREE.Vector3();   // (the siteEdge view's streaming centre)
   // Test renders only: a tour camera on the downtown core nearest the start.
+  let trafficFollow = -1, trafficFollowT = 0;   // (DEBUG_VIEW "traffic": the vehicle followed, since when)
   let tourT = 0, tourTrain = -1, tourBend: { x: number; z: number; nx: number; nz: number; ex: number; ez: number } | null = null;   // (tourBend: lineBend's shot)
   let jamShot: { x: number; y: number; z: number; lx: number; lz: number } | null = null;   // (DEBUG_VIEW "jam": the fixed shot, once set up)
   function tourCamera(dt: number): boolean {
     if (!DEBUG_VIEW || DEBUG_VIEW === "countryTop" || DEBUG_VIEW === "scrub") return false;
     tourT += dt;
+    // "traffic": the vehicle nearest the truck, from its front quarter, a new one every 8 s.
+    if (DEBUG_VIEW === "traffic") {
+      if (trafficFollow < 0 || tourT - trafficFollowT > 8 || !traffic.vehiclePose(trafficFollow)) { trafficFollow = traffic.vehicleNear(truck.root.position.x, truck.root.position.z); trafficFollowT = tourT; }
+      const v = traffic.vehiclePose(trafficFollow);
+      if (!v) return false;
+      const fx = Math.cos(v.h), fz = -Math.sin(v.h), d = 4 + v.len * 0.8;
+      engine.camera.position.set(v.x + fx * d - fz * d * 0.8, 2.6, v.z + fz * d + fx * d * 0.8);
+      engine.camera.lookAt(v.x, 1.3, v.z);
+      return true;
+    }
     const plan = journey.plan;
     let best = Infinity, bx = 0, bz = 0;
     for (let z = -12; z <= 12; z++) for (let x = -12; x <= 12; x++) {
@@ -978,7 +990,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // driver for a moment.
       const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers);
       const people = engine.mats.ground.clone(); applyLampGlow(people); applyLampLight(people);
-      traffic = new Traffic(engine.scene, movers, (model) => fleet.build([{ model, x: 0, z: 0, h: 0 }]));
+      traffic = new Traffic(engine.scene, movers, (model, toon) => fleet.build([{ model, x: 0, z: 0, h: 0, toon }]));
       crowd = new Crowd(engine.scene, people, movers);
       cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);
