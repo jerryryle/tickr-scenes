@@ -29,6 +29,9 @@
 #   make draft SCENE=long-day ARGS="<style> [candidates]"
 #                              draft five new city files of a style into
 #                              scenes/long-day/src/city-<style>/ (tools/draftcities.ts)
+#   make maps SCENE=long-day [ARGS="<city id> ..."]
+#                              write each catalogue city's layered SVG map into
+#                              build/<scene>-maps/city-<style>/ (tools/maps.ts), TEST_JOBS at a time
 #   make clean / distclean
 #
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
@@ -59,7 +62,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -194,6 +197,16 @@ draft: | $(DEPS)
 	@$(FLATTEN) scenes/$(SCENE)/tools/draftcities.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts
 	@$(call node-bundle,build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts,build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs)
 	@node build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs $(ARGS)
+
+# The city maps (scenes/<scene>/tools/maps.ts), each city in a process of its own, TEST_JOBS at a
+# time; ARGS names the cities to draw, all of them by default.
+maps: | $(DEPS)
+	@test -f "scenes/$(SCENE)/tools/maps.ts" || { echo "usage: make maps SCENE=<scene> [ARGS='<city id> ...']" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-maps
+	@$(FLATTEN) scenes/$(SCENE)/tools/maps.ts --root scenes/$(SCENE)/src > build/$(SCENE)-maps/scene.ts
+	@$(call node-bundle,build/$(SCENE)-maps/scene.ts,build/$(SCENE)-maps/maps.mjs)
+	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-maps/maps.mjs --list; fi; } | \
+	  xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-maps/maps.mjs
 
 # One test scene from a scene's tools/, rendered a frame a second for SECS seconds, its frames
 # tiled 2 across at 2x into one PNG (needs ffmpeg).

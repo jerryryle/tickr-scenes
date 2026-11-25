@@ -63,7 +63,8 @@ export function frameApply(f: Frame2, x: number, z: number): [number, number] {
 // What a chunk build has placed so far, in its tile's coordinates, so later pieces keep out of it
 // (city.ts cityBatches clears it; inFrame keeps `frames`, the parts' frames being drawn in, inner
 // last): trees' trunks (x, z pairs) and buildings' footprints (four corners each, x, z pairs).
-export const PLACED = { frames: [] as Frame2[], trees: [] as number[], foot: [] as number[] };
+// (lots: each block lot's four corners in tile coordinates, city.ts buildLots, for the city maps: tools/mapsvg.ts.)
+export const PLACED = { frames: [] as Frame2[], trees: [] as number[], foot: [] as number[], lots: [] as number[] };
 // (x, z) in the frame being drawn in, in the tile's coordinates.
 export function toTile(x: number, z: number): [number, number] {
   for (let i = PLACED.frames.length - 1; i >= 0; i--) [x, z] = frameApply(PLACED.frames[i], x, z);

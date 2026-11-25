@@ -123,8 +123,9 @@ The design has seven parts, and the rest of this document uses these names for t
 21. The world map shows only the graph. It has one node per city, labelled and coloured by style, and
     one line per country road, labelled with the road's id and length. Node positions are stored in
     the world file, so the map keeps its shape between regenerations.
-22. The maps are committed. `make maps` regenerates every map, and `make check` fails if a committed
-    map differs from what its plan produces.
+22. The maps are build output: `make maps` writes every map into `build/long-day-maps/`, in a
+    folder for each style, and none is committed. A city's map runs to a few MB, and the 35 to
+    about 65 MB, too much to keep in the repo.
 
 ### Correctness and cost
 
@@ -236,11 +237,9 @@ Everything below is under `scenes/long-day/src/`.
 
 ```
 world.ts                                 the world graph, roads and planner settings
-world.svg                                the world map
 city-metro/
   metro-style.ts                         the metro style, moved out of styles.ts
   metro-city-grand-central.ts            a city file
-  metro-city-grand-central.svg           its map
   metro-grand-central-vignette-busker.ts an asset for this city alone
   metro-vehicle-tram.ts                  an asset shared by every metro city
 city-coastal/  city-desert/  city-brick/  city-mainstreet/  city-port/
@@ -288,7 +287,11 @@ every stage.
    each style moved into its folder. The journey takes each city's turn from the catalogue, and the
    city's hash key stands in for the old city seed wherever the seed was used, so every default rule
    gives the drafted city what the generator saw. `cityMinutes` stops sizing cities.
-2. **Maps.** The layered city maps and `make maps`, with the staleness check.
+2. **Maps.** The layered city maps and `make maps`.
+   The world map, and the gates' labels naming their roads and neighbouring cities, come in stage
+   3 with the world graph they show. Until stage 6 gives blocks explicit lots, the lots,
+   buildings and trees on a map are where the city's builders put them, and their ids number
+   them within their block.
 3. **World graph and visit planner.** Roads with fixed lengths, per-edge gates, the planner and its
    simulation test. `countrySeconds` is removed.
 4. **Visits.** The `Visit` record and its seeds, so dressing varies between visits to one city, and

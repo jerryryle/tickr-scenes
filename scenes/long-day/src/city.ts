@@ -743,7 +743,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   const district = plan.district(cx, cz);
   const plates = takeSlot ? new PlateSet() : null;
   const city = T.blocks.map((b) => G.blocks[b]).filter((b) => b.inCity), water = T.blocks.map((b) => G.blocks[b]).filter((b) => b.water);
-  PLACED.frames.length = 0; PLACED.trees.length = 0; PLACED.foot.length = 0;
+  PLACED.frames.length = 0; PLACED.trees.length = 0; PLACED.foot.length = 0; PLACED.lots.length = 0;
   Object.assign(DC, { plates, lamps, quads: [], ads: false, mquads: [], roofs: [], fac: city.length ? facilityAt(plan, city[0].kx, city[0].kz) : "residence", plan, cx, cz, pools: new PoolBuilder(), lampSites: [] as number[] });
   for (const n of T.nodes) buildNode(ground, solid, lamps, plan, G.nodes[n], ox, oz, plates);
   for (const sid of T.streets) buildStreetPart(ground, solid, plan, G.streets[sid], ox, oz, city.length ? district : "residential", rnd);
@@ -1061,6 +1061,7 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
     doorSpot(blk.sides.indexOf(f), a, n);
   };
   for (const L of lots) {
+    for (const [x, z] of L.pts) PLACED.lots.push(...toTile(x, z));
     const P = G.facePt(L.f, 0, 0), fr: Frame2 = { ox: P.x - ox, oz: P.z - oz, rot: P.h };
     inFrame(fr, [g, s, DC.lamps], () => {
       const b: Rect = { x0: L.a0 + 0.3, z0: 0.4, x1: L.a1 - 0.3, z1: L.d - 0.3 };
@@ -2706,6 +2707,7 @@ function gridLots(B: Rect, nx: number, nz: number): { r: Rect; edge: boolean }[]
     for (let j = 0; j < nz; j++)
       out.push({ r: { x0: B.x0 + i * w, z0: B.z0 + j * d, x1: B.x0 + (i + 1) * w, z1: B.z0 + (j + 1) * d },
                  edge: i === 0 || j === 0 || i === nx - 1 || j === nz - 1 });
+  for (const { r } of out) for (const [x, z] of [[r.x0, r.z1], [r.x1, r.z1], [r.x1, r.z0], [r.x0, r.z0]]) PLACED.lots.push(...toTile(x, z));   // (for the city maps)
   return out;
 }
 
