@@ -1,6 +1,6 @@
-// The facade atlas (facade.ts), painted at startup instead of loaded: 64 tiles of 128x128 in an
-// 8x8 grid, the 16 kinds in FACADE (facadetiles.ts) in four variants each (tile = kind + 16 *
-// variant; facadeBox picks a building's variant). Two 1024x1024 canvases, colour and a mask in
+// The facade atlas (facade.ts), painted at startup instead of loaded: 128 tiles of 128x128 in an
+// 8x16 grid, room for FACADE_KINDS kinds (FACADE, facadetiles.ts) in four variants each (tile =
+// kind + FACADE_KINDS * variant; facadeBox picks a building's variant). Two 1024x2048 canvases, colour and a mask in
 // the same layout (separate, so a far-off wall's mipmaps never blend the one into the other):
 //   R  the building's vertex colour tints this (wall), or it keeps its own colour (glass, frames)
 //   G  glass: lit from inside after dark
@@ -9,9 +9,10 @@
 // across a wall (fract in the shader), so whatever touches a tile's edge matches the opposite one.
 import { mulberry32 } from "./rng.ts";
 import { makeCanvas } from "./canvas.ts";
+import { FACADE_KINDS } from "./facadetiles.ts";
 
-export const FACADE_TILE = 128, FACADE_GRID = 8, FACADE_VARIANTS = 4;
-const FA_S = FACADE_TILE, FA_SIDE = FA_S * FACADE_GRID;
+export const FACADE_TILE = 128, FACADE_GRID = 8, FACADE_ROWS = 16, FACADE_VARIANTS = 4;
+const FA_S = FACADE_TILE, FA_W = FA_S * FACADE_GRID, FA_H = FA_S * FACADE_ROWS;
 
 interface FaMask { t: number; g: number; l: number }
 const FA_WALL: FaMask = { t: 1, g: 0, l: 0 }, FA_TRIM: FaMask = { t: 0, g: 0, l: 0 };
@@ -70,6 +71,28 @@ class FaPainter {
     if (opts.mullion) this.rect(x + w / 2 - 1, y, 2, h, f, FA_TRIM);
     if (opts.transom) this.rect(x, y + opts.transom, w, 2, f, FA_TRIM);
     if (opts.sill !== false) this.rect(x - s - 2, y + h + s, w + 2 * s + 4, 3, "#c9c7bd", FA_TRIM);
+  }
+  // A disc, as one whole-pixel row after another (so its mask's edges are as exact as a rect's).
+  disc(cx: number, cy: number, r: number, col: string, m: FaMask, lower = -Infinity) {
+    for (let y = Math.floor(-r); y < r; y++) {
+      if (y < lower) continue;
+      const h = y + 0.5, w = Math.sqrt(Math.max(0, r * r - h * h));
+      this.rect(cx - w, cy + y, 2 * w, 1, col, m);
+    }
+  }
+  // An arch: a rectangle w wide from y + w/2 down to y + h, under a half disc whose top is at y.
+  arch(x: number, y: number, w: number, h: number, col: string, m: FaMask) {
+    const r = w / 2;
+    for (let k = Math.floor(-r); k < 0; k++) { const hh = k + 0.5, ww = Math.sqrt(Math.max(0, r * r - hh * hh)); this.rect(x + r - ww, y + r + k, 2 * ww, 1, col, m); }
+    this.rect(x, y + r, w, h - r, col, m);
+  }
+  // Glass in an arch or a disc: the room's back wall darker below the sill line, lit after dark.
+  archGlass(x: number, y: number, w: number, h: number, l = 1, col = FA_GL, dark = FA_GL_DEEP) {
+    this.arch(x, y, w, h, col, FA_GLASS(l));
+    this.rect(x, y + h * 0.62, w, h * 0.38, dark, FA_GLASS(l * 0.75));
+  }
+  discGlass(cx: number, cy: number, r: number, l = 1) {
+    this.disc(cx, cy, r, FA_GL, FA_GLASS(l)); this.disc(cx, cy, r, FA_GL_DEEP, FA_GLASS(l * 0.75), Math.round(r * 0.25));
   }
   // Texture on a wall (tinted with it): fine speckle, slightly darker or lighter than `base`.
   speckle(rnd: () => number, n: number, x0 = 0, y0 = 0, w = FA_S, h = FA_S) {
@@ -309,15 +332,63 @@ const faRibbon: FaKind = (p, v, rnd) => {
   if (v === 3) p.paint(0, top + h + 3, FA_S, 6, "rgba(0,0,0,0.12)");
 };
 
-const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon];
+
+// ---- the storybook city's ----------------------------------------------------------------------
+// Thick dark or bright trim (keeping its own colour) round round and arched glass, on a wall the
+// building's colour tints; the variants differ in shape so a tower's storeys don't repeat.
+const FA_STORY_TRIM = ["#2a2440", "#fff3dc", "#e8333a", "#1fb5b0"];
+const faStorybook: FaKind = (p, v, rnd) => {
+  p.wall(0, 0, FA_S, FA_S, "#f6f2ea"); p.speckle(rnd, 70);
+  const t = FA_STORY_TRIM[v];
+  if (v === 0) {   // a porthole, crossed
+    p.disc(64, 54, 30, t, FA_TRIM); p.discGlass(64, 54, 21);
+    p.rect(62, 33, 4, 42, t, FA_TRIM); p.rect(43, 52, 42, 4, t, FA_TRIM);
+  } else if (v === 1) {   // a tall arch, a sill with a pot of tuft flowers
+    p.arch(38, 12, 52, 86, t, FA_TRIM); p.archGlass(45, 19, 38, 76, 1, FA_GL, FA_GL_DEEP);
+    p.rect(34, 98, 60, 6, t, FA_TRIM); p.rect(52, 104, 24, 10, "#e8333a", FA_TRIM);
+    for (let i = 0; i < 3; i++) p.disc(56 + i * 8, 94, 5, ["#ff7fb5", "#f2c230", "#9a6cf0"][i], FA_TRIM);
+  } else if (v === 2) {   // two small portholes, out of line, and a stripe round the storey
+    p.paint(0, 104, FA_S, 10, "rgba(0,0,0,0.10)");
+    p.disc(40, 44, 20, t, FA_TRIM); p.discGlass(40, 44, 13);
+    p.disc(88, 64, 20, t, FA_TRIM); p.discGlass(88, 64, 13, 0.8);
+  } else {   // a crooked window: its frame stepping over as it goes up, and a striped shutter
+    for (let y = 0; y < 80; y++) { const dx = Math.round(y * 0.12); p.rect(30 + dx, 98 - y, 56, 1, t, FA_TRIM); }
+    for (let y = 6; y < 74; y++) { const dx = Math.round(y * 0.12); p.rect(37 + dx, 98 - y, 42, 1, y < 30 ? FA_GL_DEEP : FA_GL, FA_GLASS(y < 30 ? 0.75 : 1)); }
+    for (let y = 22; y < 100; y++) p.rect(92 + Math.round((100 - y) * 0.12), y, 14, 1, Math.floor(y / 8) % 2 ? "#ff7fb5" : "#fff3dc", FA_TRIM);
+  }
+};
+const faStoryShop: FaKind = (p, v, rnd) => {
+  p.wall(0, 0, FA_S, FA_S, "#f4eee4"); p.speckle(rnd, 50);
+  const t = FA_STORY_TRIM[v], sc = [["#e8333a", "#fff3dc"], ["#1fb5b0", "#fff3dc"], ["#9a6cf0", "#f2c230"], ["#ff9a2e", "#fff3dc"]][v];
+  for (let x = 0; x < FA_S; x += 16) { p.rect(x, 4, 16, 12, sc[(x / 16) % 2], FA_TRIM); p.disc(x + 8, 16, 8, sc[(x / 16) % 2], FA_TRIM, 0); }   // a scalloped valance
+  p.arch(4, 30, 86, 88, t, FA_TRIM); p.archGlass(9, 35, 76, 81, 0.7, "#4a6a7a", "#3b5664");
+  const goods = ["#ff7fb5", "#f2c230", "#6fe0e8", "#9a6cf0", "#a6e05a"];
+  for (let i = 0; i < 6; i++) p.disc(18 + i * 12, 98 - (rnd() * 8 | 0), 5, goods[(i + v) % 5], FA_GLASS(0.8));   // balls of yarn in the window
+  p.rect(0, 116, 92, 12, t, FA_TRIM);
+  // the door, round-topped
+  p.arch(95, 34, 30, 94, t, FA_TRIM); p.arch(98, 37, 24, 91, ["#5e3a28", "#2b3a55", "#6b1f1f", "#2f4a3a"][v], FA_TRIM);
+  p.disc(110, 56, 7, FA_GL, FA_GLASS(0.8));
+  p.rect(116, 80, 3, 8, "#d4b050", FA_TRIM);
+};
+const faStoryDoor: FaKind = (p, v, rnd) => {
+  p.wall(0, 0, FA_S, FA_S, "#f6f2ea"); p.speckle(rnd, 60);
+  const t = FA_STORY_TRIM[(v + 1) % 4], door = ["#e8333a", "#1fb5b0", "#9a6cf0", "#f2c230"][v];
+  p.arch(38, 18, 52, 110, t, FA_TRIM); p.arch(44, 24, 40, 104, door, FA_TRIM);
+  for (let y = 48; y < 124; y += 12) p.paint(44, y, 40, 2, "rgba(0,0,0,0.15)");   // planks
+  p.disc(64, 44, 8, FA_GL, FA_GLASS(0.8)); p.rect(76, 80, 3, 8, "#d4b050", FA_TRIM);
+  p.disc(104, 40, 6, "#ffe08a", FA_GLASS(1));   // a round porch lamp
+  if (v % 2) for (let i = 0; i < 5; i++) p.disc(18 + (i % 2) * 6, 120 - i * 10, 5, ["#a6e05a", "#5fd3a0"][i % 2], FA_TRIM);   // a climber up the side
+};
+
+const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon, faStorybook, faStoryShop, faStoryDoor];
 
 // The whole atlas, on two new canvases.
 export function paintFacadeAtlas(): { colour: any; mask: any } {
-  const c = makeCanvas(FA_SIDE, FA_SIDE), m = makeCanvas(FA_SIDE, FA_SIDE);
-  for (const x of [c.g, m.g]) { x.imageSmoothingEnabled = false; x.fillStyle = "#000"; x.fillRect(0, 0, FA_SIDE, FA_SIDE); }
+  const c = makeCanvas(FA_W, FA_H), m = makeCanvas(FA_W, FA_H);
+  for (const x of [c.g, m.g]) { x.imageSmoothingEnabled = false; x.fillStyle = "#000"; x.fillRect(0, 0, FA_W, FA_H); }
   for (let v = 0; v < FACADE_VARIANTS; v++)
     for (let k = 0; k < FA_KINDS.length; k++) {
-      const id = k + 16 * v, x = (id % FACADE_GRID) * FA_S, y = Math.floor(id / FACADE_GRID) * FA_S;
+      const id = k + FACADE_KINDS * v, x = (id % FACADE_GRID) * FA_S, y = Math.floor(id / FACADE_GRID) * FA_S;
       const p = new FaPainter(c.g, m.g, x, y);
       for (const g of [c.g, m.g]) { g.save(); g.beginPath(); g.rect(x, y, FA_S, FA_S); g.clip(); }
       FA_KINDS[k](p, v, mulberry32(0xfa0ade + id * 7919));

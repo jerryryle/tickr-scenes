@@ -4,15 +4,16 @@
 // colour tints (wall) and what keeps its own colour (glass, frames, doors), so one tile serves
 // every wall colour.
 // The atlas is the one facadeart.ts paints once canvases exist (the first frame, before anything is
-// drawn: setFacadeAtlas): 8x8 tiles of 128 px, each kind in FACADE_VARIANTS variants (tile = kind
-// + 16 * variant), its mask also saying which pixels are glass lit from inside after dark, and how
+// drawn: setFacadeAtlas): 8x16 tiles of 128 px, each kind in FACADE_VARIANTS variants (tile = kind
+// + FACADE_KINDS * variant), its mask also saying which pixels are glass lit from inside after dark, and how
 // brightly. Primitives in the same batch keep aux.z = -1 and render as plain vertex colour, so a
 // chunk's buildings, roofs and trim are a single draw call.
 import * as THREE from "three@0.187.0";
 import { Batch, PLACED, toTile } from "./geom.ts";
 import { NIGHT_GLOW } from "./atmosphere.ts";
 import { hash2 } from "./rng.ts";
-import { FACADE_GRID, FACADE_TILE, FACADE_VARIANTS } from "./facadeart.ts";
+import { FACADE_GRID, FACADE_ROWS, FACADE_TILE, FACADE_VARIANTS } from "./facadeart.ts";
+import { FACADE_KINDS } from "./facadetiles.ts";
 
 function atlasTexture(image: CanvasImageSource): THREE.Texture {
   const tex = new THREE.Texture(image as any);
@@ -45,13 +46,13 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
       .replace("#include <color_fragment>", `
   // Gradients and samples are taken unconditionally: derivatives inside non-uniform control flow
   // are undefined in GLSL, and some GPUs return garbage there.
-  const float GRID = ${glslFloat(FACADE_GRID)};
-  vec2 tsz = vec2(1.0 / GRID);   // one tile, in texture coordinates
+  const float GRID = ${glslFloat(FACADE_GRID)}, ROWS = ${glslFloat(FACADE_ROWS)};
+  vec2 tsz = vec2(1.0 / GRID, 1.0 / ROWS);   // one tile, in texture coordinates
   vec2 gx = dFdx(vAux.xy) * tsz, gy = dFdy(vAux.xy) * tsz;
   float tileId = floor(max(vAux.z, 0.0) + 0.5); // interpolation can turn 8.0 into 7.9999
-  float kind = mod(tileId, 16.0);
+  float kind = mod(tileId, ${glslFloat(FACADE_KINDS)});
   // Tile i sits at column i % cols, row i / cols from the top of the image (flipY puts row 0 at the top of v).
-  vec2 cell = vec2(mod(tileId, GRID), GRID - 1.0 - floor(tileId / GRID));
+  vec2 cell = vec2(mod(tileId, GRID), ROWS - 1.0 - floor(tileId / GRID));
   // Keep half a texel inside the tile so filtering never picks up the neighbour; gradients come
   // from the unwrapped coordinates, so fract() seams don't drop to the smallest mip.
   const float INSET = ${glslFloat(0.5 / FACADE_TILE)};
@@ -82,7 +83,7 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
     if (vAux.z < -1.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.86, 0.55) * 1.3;
   }`);
   };
-  mat.customProgramCacheKey = () => "facade-v7";
+  mat.customProgramCacheKey = () => "facade-v8";
   return mat;
 }
 
@@ -100,7 +101,7 @@ export function setFacadeChunk(cx: number, cz: number, seed: number) { FACADE_SA
 function buildingVariant(x: number, z: number): number {
   return Math.floor(hash2(Math.round(x * 2), Math.round(z * 2), FACADE_SALT, 0xfacade) * FACADE_VARIANTS);
 }
-const withVariant = (tile: number, v: number) => tile < 0 ? tile : tile % 16 + 16 * v;
+const withVariant = (tile: number, v: number) => tile < 0 ? tile : tile % FACADE_KINDS + FACADE_KINDS * v;
 
 // A band of identical storeys. `tile` may instead list one tile per side (+z, +x, -z, -x), e.g.
 // dock doors on a warehouse's yard side only.

@@ -16,7 +16,7 @@ import { LAMP_SITES, PoolBuilder } from "./atmosphere.ts";
 import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
-import { FACADE, PAINTED_DOORS } from "./facadetiles.ts";
+import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -1824,7 +1824,7 @@ function paintedDoorWalls(v: ReturnType<Batch["view"]>): DoorWall[] {
     const k = i * 3, tile = aux[k + 2];
     if (tile < 0) { i++; continue; }
     i += 6;
-    const pd = PAINTED_DOORS[tile % 16];
+    const pd = PAINTED_DOORS[tile % FACADE_KINDS];
     if (pd) out.push({ ax: pos[k], ay: pos[k + 1], az: pos[k + 2], bx: pos[k + 3], bz: pos[k + 5], y1: pos[k + 7], u0: aux[k], u1: aux[k + 3], v0: aux[k + 1], v1: aux[k + 7], pd });
   }
   return out;

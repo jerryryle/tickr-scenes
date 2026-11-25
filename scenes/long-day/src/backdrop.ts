@@ -97,6 +97,26 @@ export class Backdrop {
         }
         break;
       }
+      case "storyhills": {
+        // The storybook city's: round hills banded in contour stripes (each a stack of domes, each
+        // smaller and higher than the last, so their rims show as stripes), and tall bent spires
+        // striped up their length, leaning over.
+        const bands = [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0];
+        for (let i = 0; i < 46; i++) {
+          const a = (i / 46) * Math.PI * 2 + r() * 0.06, [x, z] = at(a, BACKDROP_R + r() * 220), rad = 80 + r() * 110, k0 = Math.floor(r() * 5);
+          for (let k = 0; k < 4; k++) { const f = 1 - k * 0.2; b.ico(x, -rad * 0.55 + rad * k * 0.16, z, rad * f, haze(bands[(k0 + k) % bands.length], 0.35), 0.55, a + k * 1.12); }
+        }
+        for (let i = 0; i < 14; i++) {
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 60 + r() * 120), H = 70 + r() * 90, bend = (r() - 0.5) * 50, tx = -Math.sin(a), tz = Math.cos(a);
+          const seg = 7, cols = [haze(0x1fb5b0, 0.35), haze(r() < 0.5 ? 0xff7fb5 : 0xfbe58a, 0.35)];
+          for (let k = 0; k < seg; k++) {
+            const u = (k + 0.5) / seg, off = bend * u * u, rad = 9 * (1 - u) + 1.2;
+            b.cyl(x + tx * off, H * u, z + tz * off, rad, H / seg + 0.5, cols[k % 2], 8, 0, 0, a + k);
+          }
+          b.ico(x + tx * bend, H + 2, z + tz * bend, 3.5, haze(0xf2c230, 0.3));
+        }
+        break;
+      }
       case "evergreens": {
         // A big snowy peak over dark forested hills.
         const a0 = r() * Math.PI * 2, [px, pz] = at(a0, BACKDROP_R + 500);
