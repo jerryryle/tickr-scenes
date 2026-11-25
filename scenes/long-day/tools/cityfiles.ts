@@ -2,7 +2,8 @@
 // writes a generated city's plan out with cityFileOfPlan, and it and test/catalogue.ts check a
 // city with cityProblems.
 import * as THREE from "three@0.187.0";
-import { CityPlan, CITY_HI, CITY_LO, cityDistance, makeCityChunkBuilder } from "../src/city.ts";
+import { CityPlan, CITY_HI, CITY_LO, cityDistance, kerbDoors, makeCityChunkBuilder } from "../src/city.ts";
+import type { KerbDoor } from "../src/city.ts";
 import { FURNITURE, PK } from "../src/decor.ts";
 import { angleDiff } from "../src/citygraph.ts";
 import { BLOCK, RING } from "../src/grid.ts";
@@ -85,6 +86,13 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
     if (!B.inCity) out.outside = true;
     const lots = plan.fileLots(B.id);
     if (lots) out.lots = lots;
+    // (Its facility's doors, as the scene would find them on its buildings: kerbDoors, which reads
+    // a file's own when it has them.)
+    if (out.facility) {
+      const ds = kerbDoors(plan, B.kx, B.kz).filter((d): d is KerbDoor => !!d), c2 = (v: number) => Math.round(v * 100) / 100;
+      if (ds.length || siteLayout(plan, B.kx, B.kz).kind === "kerb") out.doors = ds.map((d) => ({ side: d.side, a: c2(d.a), n: c2(d.n), frame: d.frame, panel: d.panel, half: c2(d.half), h: c2(d.h),
+        ...(d.plain ? { plain: true as const } : {}), ...(d.wide ? { wide: true as const } : {}), ...(d.y !== undefined ? { y: c2(d.y) } : {}) }));
+    }
     return out;
   });
   // (Its sea as the outline holds it; its freeway's gate slot, whether the truck comes in on it and

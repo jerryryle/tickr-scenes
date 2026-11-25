@@ -7,7 +7,7 @@
 // where the city's own builders put them: every chunk is built as the scene builds it, and what it
 // recorded in geom.ts PLACED is read back.
 import * as THREE from "three@0.187.0";
-import { CityPlan, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI, siteSquare } from "../src/city.ts";
+import { CityPlan, kerbDoors, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI, siteSquare } from "../src/city.ts";
 import type { CityFile } from "../src/cityfile.ts";
 import { facilityAt, facilityName, siteLayout } from "../src/facilities.ts";
 import { PAVEMENT, PK } from "../src/decor.ts";
@@ -34,7 +34,7 @@ const DISTRICT_FILL: Record<string, string> = { downtown: "#c9b8d8", commercial:
 const LAYERS = [
   ["ground", "Ground and districts"], ["water", "Water and shore"], ["streets", "Streets and pavements"],
   ["names", "Street names"], ["controls", "Junction controls"], ["lots", "Lots"], ["buildings", "Buildings"],
-  ["sites", "Sites"], ["trees", "Trees and parks"], ["furniture", "Street furniture"], ["lines", "Freeway and elevated lines"], ["gates", "Gates"],
+  ["sites", "Sites"], ["doors", "Doors"], ["trees", "Trees and parks"], ["furniture", "Street furniture"], ["lines", "Freeway and elevated lines"], ["gates", "Gates"],
   ["pins", "Pinned dressing"], ["markup", "Markup"],
 ] as const;
 type LayerId = typeof LAYERS[number][0];
@@ -146,6 +146,14 @@ export function citySvg(F: CityFile): string {
   for (const e of numbered(built.furniture.filter((o) => o.kind !== PK.tree), (o) => [o.x, o.z])) {
     const kind = KIND[e.t.kind] ?? "other";
     add("furniture", `<circle id="${kind}-${e.id}" cx="${dmOf(e.t.x)}" cy="${dmOf(e.t.z)}" r="${dmOf(Math.max(0.35, Math.min(e.t.r, 2)))}" fill="${FURNITURE_FILL[kind] ?? "#555"}"><title>${kind}</title></circle>`);
+  }
+
+  // The facilities' front doors, as the city file lists them (city.ts kerbDoors): each a bar
+  // across its width in its frame's colour, at the foot of its wall.
+  for (const B of G.blocks) for (const d of B.inCity ? kerbDoors(plan, B.kx, B.kz) : []) {
+    if (!d) continue;
+    const tx = -d.nz * d.half, tz = d.nx * d.half, hex = `#${d.panel.toString(16).padStart(6, "0")}`;
+    add("doors", `<line id="door-${B.kx}_${B.kz}-${d.side}" x1="${cmOf(d.x - tx)}" y1="${cmOf(d.z - tz)}" x2="${cmOf(d.x + tx)}" y2="${cmOf(d.z + tz)}" stroke="${hex}" stroke-width="0.6"><title>${esc(`door, block ${B.kx},${B.kz} side ${d.side}, ${d.a.toFixed(2)} m along${d.wide ? ", wide" : ""}`)}</title></line>`);
   }
 
   // Gates, each with the world road it serves (world-roads.ts) and the city at the road's far end.

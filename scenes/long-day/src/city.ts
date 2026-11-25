@@ -43,7 +43,7 @@ import type { FurnitureItem } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, FacilityId, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { graphOfFile } from "./cityfile.ts";
-import type { CityFile, CityFileLot } from "./cityfile.ts";
+import type { CityFile, CityFileDoor, CityFileLot } from "./cityfile.ts";
 import { cityByKey } from "./visits.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
@@ -373,17 +373,21 @@ export class CityPlan {
   private districts = new Map<number, District>();
   private facilities: Map<number, FacilityId> | null = null;
   private lotsOf = new Map<number, CityFileLot[]>();
+  private doorsOf = new Map<number, CityFileDoor[]>();
   private fileBlocks(G: CityGraph, F: CityFile) {
     this.facilities = new Map();
     for (const L of F.blocks) {
       const B = G.blockAt(L.at[0], L.at[1])!, key = (B.kx + 4096) * 1e7 + (B.kz + 5e6);
       if (L.lots) this.lotsOf.set(B.id, L.lots);
+      if (L.doors) this.doorsOf.set(B.id, L.doors);
       this.districts.set(key, L.district);
       if (L.facility) this.facilities.set(key, L.facility);
     }
   }
   // A hand-shaped block's lots, as its file lists them (buildLots), or undefined.
   fileLots(block: number): CityFileLot[] | undefined { void this.graph; return this.lotsOf.get(block); }
+  // A block's facility's doors, as its file lists them (kerbDoors), or undefined.
+  fileDoors(block: number): CityFileDoor[] | undefined { void this.graph; return this.doorsOf.get(block); }
   // A catalogue city's facility on block (bx, bz), as its file has it (facilities.ts facilityAt).
   fileFacility(bx: number, bz: number): FacilityId | undefined { void this.graph; return this.facilities?.get((bx + 4096) * 1e7 + (bz + 5e6)); }
   district(bx: number, bz: number): District {
@@ -1518,16 +1522,27 @@ export function parkedObstacles(plan: CityPlan, bx: number, bz: number): ParkedO
 
 export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | null)[] {
   if (plan.seed !== kerbDoorsSeed) { KERB_DOORS.clear(); kerbDoorsSeed = plan.seed; }   // one city's doors at a time
-  const key = `${plan.seed}|${plan.style.id}|${bx},${bz}`;
+  const G = plan.graph, blk = plan.blockOf(bx, bz), own = blk ? plan.fileDoors(blk.id) : undefined;
+  const key = `${plan.seed}|${plan.style.id}|${bx},${bz}${own ? "|file" : ""}`;   // (a file's doors apart from those worked out: test/doors.ts compares them)
   const hit = KERB_DOORS.get(key);
   if (hit) return hit;
-  const G = plan.graph, blk = plan.blockOf(bx, bz);
   const none: (KerbDoor | null)[] = (blk?.sides ?? [0, 0, 0, 0]).map(() => null);
   const fac = facilityAt(plan, bx, bz), site = siteLayout(plan, bx, bz);
   if (!blk) { KERB_DOORS.set(key, none); return none; }
   // A side's frontage point (world) and the way out of the block to the street there.
   const fp = (side: number, a: number, n: number) => G.facePt(blk.sides[side], a, n);
   const outward = (side: number, a: number): [number, number] => { const h = fp(side, a, 0).h; return [-Math.sin(h), -Math.cos(h)]; };
+  // A catalogue city's doors: its file's. (Only a city with none listed for the block works them
+  // out from its buildings, below: the drafting tool, tools/cityfiles.ts.)
+  if (own) {
+    const out = none.map((_, side) => {
+      const d = own.find((o) => o.side === side);
+      if (!d) return null;
+      const P = fp(side, d.a, d.n), [nx, nz] = outward(side, d.a);
+      return { side, a: d.a, n: d.n, x: P.x, z: P.z, nx, nz, frame: d.frame, panel: d.panel, half: d.half, h: d.h, plain: !!d.plain, wide: !!d.wide, ...(d.y !== undefined ? { y: d.y } : {}) };
+    });
+    KERB_DOORS.set(key, out); return out;
+  }
   if (fac && site.kind === "garage") {
     // On the roof: the stair tower's door, beside the lane where trucks stop.
     const [a0, n] = GARAGE_DOOR, a = a0 + plan.siteDelta(bx, bz), P = fp(site.side, a, n), [nx, nz] = outward(site.side, a), out = none.slice();

@@ -45,10 +45,10 @@ make draft SCENE=long-day ARGS="metro 40"   # five new metro cities into src/cit
 
 `make maps` draws each city's and each road's layered SVG map (`tools/mapsvg.ts`) into `build/long-day-maps/`, to
 open in an editor and mark up on its markup layer: the plan's blocks, streets, junctions, sites
-and gates, and the lots, buildings, trees, street furniture, signal poles and stop signs where
+and gates, and the lots, buildings, trees, street furniture, signal poles, stop signs and doors where
 the city's builders put them (`PLACED` in `src/geom.ts`, `PAVEMENT` in `src/decor.ts`). The
-street furniture, signal poles and stop signs come from the city file, as do a block's lots when
-the file lists them; the rest are placed by rule. The maps are build output, too big to commit, and nothing reads them back:
+street furniture, signal poles, stop signs and facilities' front doors come from the city file,
+as do a block's lots when the file lists them; the rest are placed by rule. The maps are build output, too big to commit, and nothing reads them back:
 
 ```bash
 make maps SCENE=long-day                      # every city's and road's map; ARGS="metro-midtown r40" for some

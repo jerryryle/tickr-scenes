@@ -384,7 +384,10 @@ every stage.
    file lists its furniture, with their draws discarded, so the random draws after them (lots,
    buildings, trees) stay where they were. A block's `lots` replace the lots the rules pick on the
    kerb-layout path of `buildLots`, and each lot may fix its building's floors and wall colour;
-   the building on it is still chosen by rule. `test/lots.ts` checks a listed lot, and
+   the building on it is still chosen by rule. A block's `doors` list its facility's front doors,
+   at most one a side, where the scene once worked them out by probing its buildings
+   (`city.ts` kerbDoors); `test/doors.ts` works them out again and checks the file still agrees
+   with its buildings. `test/lots.ts` checks a listed lot, and
    `test/catalogue.ts` checks that every file reads back as it was written.
 7. **Mapped country roads.** Each world road gets a map of its own, as a city has: its curves,
    biomes, trees, set pieces (truck stops, rail crossings, ferries, attractions, billboards) and

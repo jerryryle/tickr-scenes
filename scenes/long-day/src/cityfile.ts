@@ -74,7 +74,14 @@ export interface CityFileBlock {
   water?: true; park?: true;
   outside?: true;                 // (The block is not part of the town.)
   lots?: CityFileLot[];           // (Its lots, when it is hand-shaped: in place of those the rules pick, city.ts buildLots.)
+  doors?: CityFileDoor[];         // (Its facility's front doors, at most one a side; an empty list when it has none: city.ts kerbDoors.)
 }
+// A facility's front door on side `side` of its block (the side's index in the block's faces, as
+// the city's graph numbers them): `a` metres along that side's frontage and `n` metres in from its
+// edge, its frame's and panel's colours, its half width and height, whether its facade paints it
+// itself (`plain`), whether it is a wide service door, and its sill's height when that is not the
+// kerb's (a garage roof's stair tower).
+export interface CityFileDoor { side: number; a: number; n: number; frame: number; panel: number; half: number; h: number; plain?: true; wide?: true; y?: number }
 // A lot of a hand-shaped block: on the face along `street` on its `side` looking from its first node
 // to its second, from `a0` to `a1` metres along that face's frontage (from the node it starts at:
 // the first node for the right side, the second for the left) and `depth` metres in. Its building
