@@ -28,3 +28,8 @@ DEBUG_SCRUBTEST=50 DEBUG_SEED=11 DEBUG_SKIP_MINUTES=309.9 DEBUG_HOUR=18 DEBUG_CL
 # then scrubbed back across it to 80 s. If the journey changes and the hand-over moves, find it
 # again in a DEBUG_CAMLOG render ("arrived in city 1") and move the skip.
 DEBUG_SCRUBTEST=160 DEBUG_SEED=659803215 DEBUG_SKIP_MINUTES=30 DEBUG_HOUR=12 DEBUG_CLIMATE=autumn/clear
+
+# The storybook city (styles.ts storybook, forced): its own traffic (bubble cars, the puff bus),
+# costumed street life and the knitting works' trade (every job its bolts of knitting), played and
+# scrubbed back a few minutes in.
+DEBUG_SCRUBTEST=40 DEBUG_SEED=3 DEBUG_STYLE=storybook DEBUG_CARGO=knitwear DEBUG_SKIP_MINUTES=4 DEBUG_HOUR=13 DEBUG_CLIMATE=summer/clear

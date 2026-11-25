@@ -26,7 +26,7 @@ import { drain } from "./slices.ts";
 import type { Steps } from "./slices.ts";
 type Writable<T> = { -readonly [K in keyof T]: T[K] };
 
-export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands";
+export type BiomeId = "coastal" | "forest" | "desert" | "farmland" | "prairie" | "wetlands" | "storybook";
 type PieceKind = "leave" | "distance" | "welcome" | "truckstop" | "rail" | "construction" | "billboards" | "attraction"
   | "weigh" | "fruit" | "watertower" | "bridge" | "gas" | "tunnel" | "overpass" | "fwsign" | "ferry" | "cattle" | "tractor";
 export interface RoadPiece { kind: PieceKind; s: number; side: 1 | -1; len: number; variant: number; text?: string; n?: number; open?: boolean }
@@ -251,7 +251,7 @@ function arriveS(u: number) {
 function arriveV(u: number) { return V_GATE + (V_JOIN - V_GATE) * (1 - smooth(THREE.MathUtils.clamp(u / ARRIVE_DUR, 0, 1))); }
 
 // Hills: how hilly each land is (0 flat to 1), and the steepest grade the road takes.
-export const HILLS: Record<BiomeId, number> = { coastal: 0.9, forest: 1, desert: 0.7, farmland: 0.55, prairie: 0.35, wetlands: 0 };
+export const HILLS: Record<BiomeId, number> = { coastal: 0.9, forest: 1, desert: 0.7, farmland: 0.55, prairie: 0.35, wetlands: 0, storybook: 1 };
 const MAX_GRADE = 0.055;
 const HILL_FLAT = 35, HILL_EASE = 90;   // set pieces sit on the level: this far either side, then eased over this
 const SIDE_HILL = 16;                   // the land beside the road rises or falls up to about this much (m)
@@ -264,7 +264,7 @@ export const BORE_HALF = 5.2, BORE_H = 6.6, CUT_N = 7.6, CUT_RUN = 80;
 export const OVER_DECK = 6.6, OVER_HALF = 7, OVER_ABUT = 10.5;
 export const tunnelTop = (p: RoadPiece) => 11 + 3 * p.variant;   // the hill over a tunnel's portals
 
-export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands" };
+export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook" };
 
 export function citySeedOf(seed: number, N: number) { return N === 0 ? seed : Math.floor(hash2(N, 0, seed, 0xc17) * 2 ** 31); }
 
@@ -399,7 +399,7 @@ export class CountryRoad {
     // Signs and the rest of the set pieces, wherever there is room (never near the cities, so
     // nothing the cities' ends can see depends on how long the drive turns out to be).
     if (!arrival) {
-      this.pieces.push({ kind: "leave", s: LAND_SEAM + 60, side: 1, len: 40, variant: 0, text: `LEAVING ${inp.fromName.toUpperCase()}` });
+      this.pieces.push({ kind: "leave", s: LAND_SEAM + 60, side: 1, len: 40, variant: inp.fromStyle.storybook ? 1 : 0, text: `LEAVING ${inp.fromName.toUpperCase()}` });
       if (SB > 1700) this.pieces.push({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: 0,
         text: `${inp.toName.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` });
     }
@@ -410,7 +410,7 @@ export class CountryRoad {
         this.pieces.push({ kind: "fwsign", s: L + FW_OFF_D - 4, side: 1, len: 6, variant: 2, n: 3.7 });
       }
     }
-    this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 940 : 230), side: 1, len: 40, variant: 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city, on the left: the freeway is on the right)
+    this.pieces.push({ kind: "welcome", s: L - (inp.toFreeway ? 940 : 230), side: 1, len: 40, variant: inp.toStyle.storybook ? 1 : 0, text: `WELCOME TO ${inp.toName.toUpperCase()}`, n: inp.toFreeway ? -12 : undefined });   // (into a freeway city it stands on the left: the freeway is on the right)
     if (!arrival) {
       // Farm country: a cattle crossing and a tractor to pass, now and then (where the land at
       // both ends of them is farmland or prairie).
@@ -1054,10 +1054,26 @@ export class CountryRoad {
   // The land changes from the last city's to the next city's around the middle of the drive, along
   // a ragged line: patches of the next land become more and more common. Settled well before the
   // hand-over (the arrival straight is all the next city's).
+  //   A drive into or out of the storybook city changes slowly instead: from soon after the
+  // last city's edge to the arrival straight (storyAt), the land takes on more and more of the
+  // storybook's, and its trees and colours creep into the real land as well (countryworld.ts).
   blendAt(s: number) {
     if (this.inp.kind === "arrival") return 1;
+    if (this.toBiome === "storybook" && this.fromBiome !== "storybook") return this.storyAt(s);
+    if (this.fromBiome === "storybook" && this.toBiome !== "storybook") return 1 - this.storyAt(s);
     const SB = this.SB, b0 = Math.max(LAND_SEAM + 400, SB * 0.5 - 350), b1 = Math.max(b0 + 200, Math.min(SB - 350, SB * 0.5 + 350));
     return smooth(THREE.MathUtils.clamp((s - b0) / (b1 - b0), 0, 1));
+  }
+  // storyAt is how much of the storybook there is at s (0..1). There is none on a drive that has nothing to do with
+  // it and all of it in its own town's land; between, it grows from soon after one city's edge to
+  // the other's arrival straight, slowly at first (a tinted tree or two) and fastest near the
+  // end. Out of the storybook city it does the same backwards.
+  storyAt(s: number) {
+    const to = this.toBiome === "storybook", from = this.fromBiome === "storybook";
+    if (to === from || this.inp.kind === "arrival") return to ? 1 : 0;
+    const b0 = LAND_SEAM + 200, b1 = Math.max(b0 + 400, this.SB - 350);
+    const k = THREE.MathUtils.clamp((to ? s - b0 : b1 - s) / (b1 - b0), 0, 1);
+    return k * k * (1.6 - 0.6 * k);   // (it is eased in: k², softened so the last stretch isn't sudden)
   }
   isFrom(s: number, n = 0) { return hash2(Math.floor(s / 12), Math.floor(n / 12), this.inp.seed, 0xb10) >= this.blendAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.isFrom(s, n) ? this.fromBiome : this.toBiome; }

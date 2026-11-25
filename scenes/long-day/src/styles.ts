@@ -6,9 +6,9 @@ import { hash2, mulberry32 } from "./rng.ts";
 import { DEBUG_STYLE } from "./debug.ts";
 import { FACADE } from "./facadetiles.ts";
 
-export type StyleId = "coastal" | "metro" | "desert" | "brick" | "mainstreet" | "port";
-export type TreeKind = "broad" | "palm" | "conifer";
-type BackdropKind = "bridge" | "skyline" | "mesas" | "stacks" | "farmhills" | "evergreens";
+export type StyleId = "coastal" | "metro" | "desert" | "brick" | "mainstreet" | "port" | "storybook";
+export type TreeKind = "broad" | "palm" | "conifer" | "tuft" | "pancake" | "droop" | "spiral";
+type BackdropKind = "bridge" | "skyline" | "mesas" | "stacks" | "farmhills" | "evergreens" | "storyhills";
 
 export interface CityStyle {
   id: StyleId;
@@ -34,6 +34,8 @@ export interface CityStyle {
   cranes?: boolean;                   // container cranes and stacks in industrial blocks
   rail?: boolean;                     // rail spurs through industrial yards
   townSquare?: boolean;               // courthouse clock tower and a water tower with the town name
+  storybook?: boolean;                // it is set for the fantasy city: bent towers, tuft trees, striped hills, the knitting works
+  snowTufts?: boolean;                // (it is set for a storybook city under snow: its trees keep their colours, capped with snow)
   // How likely each street layout is (city.ts CityPlan.layout): the square grid, a grid bent out
   // of square, an organic town with no grid. Relative weights; organic only where nothing needs a
   // straight line through town (no freeway, elevated line or cable car), else its share goes to
@@ -144,14 +146,46 @@ export const STYLES: Record<StyleId, CityStyle> = {
     houses: "detached", neon: 0.2, billboards: 0.15, ghostSigns: 0.1, waterTanks: 0.1, fireEscapes: false,
     backdrop: "evergreens", backdropColor: 0x2f5a4a, sky: 0x0b4cb8, cranes: true,
   },
+  storybook: {
+    // The fantasy town is a storybook place of bent, bulging towers in hats, crooked shop rows under
+    // scalloped awnings, tuft trees on striped trunks, striped contour hills and a knitting works.
+    id: "storybook", storybook: true, layouts: { grid: 0, warp: 0.35, organic: 0.65 },
+    names: ["Wumbleton", "Fizzlebury", "Snickerwick", "Tumbledown Tuft", "Higgle-on-the-Wobble", "Puddlewump"],
+    walls: {
+      downtown: [0xff5a4e, 0xff7fb5, 0xf2c230, 0x5fd3a0, 0x1fb5b0, 0x9a6cf0, 0x6fe0e8, 0xff9a2e],
+      commercial: [0xff5a4e, 0xff7fb5, 0xf2c230, 0x5fd3a0, 0x9a6cf0, 0xff9a2e, 0xa6e05a, 0xd83a9a],
+      residential: [0xfbe58a, 0xff7fb5, 0x6fe0e8, 0xa6e05a, 0xff9a2e, 0x9a6cf0, 0x5fd3a0],
+      industrial: [0xfff3dc, 0xe8333a, 0x1fb5b0, 0xf2c230],
+    },
+    roofs: [0x9a6cf0, 0x1fb5b0, 0xe8333a], gables: [0xe8333a, 0x6a3a9a, 0x1fb5b0, 0xf2c230, 0xff7fb5],
+    awnings: [0xe8333a, 0x1fb5b0, 0x9a6cf0, 0xff9a2e],
+    trees: { kinds: ["tuft", "tuft", "pancake", "droop", "spiral"], greens: [0xff7fb5, 0xff9a2e, 0xf2c230, 0x9a6cf0, 0xd83a9a, 0x6fe0e8] },
+    grass: 0x92d85c, pavers: 0xffe2dc,
+    core: 1.8, towerScale: 0.6, maxShopFloors: 3, industrial: 0.3,
+    towerTiles: [FACADE.STORYBOOK], upperTiles: [FACADE.STORYBOOK],
+    houses: "detached", neon: 0, billboards: 0, ghostSigns: 0, waterTanks: 0, fireEscapes: false,
+    backdrop: "storyhills", backdropColor: 0x5fcf8a, sky: 0x34b6e0,
+  },
 };
-const STYLE_IDS = Object.keys(STYLES) as StyleId[];
+const STYLE_IDS = (Object.keys(STYLES) as StyleId[]).filter((id) => !STYLES[id].storybook);   // these are the real cities' styles
 
-// The style for city number `city` of a journey: the first is coastal (an SF nod), then the
-// journey cycles through all six in an order shuffled from its seed, so no two cities in a row
-// share a style and each style comes round every six cities.
+// The storybook city comes now and then: a city of the journey is the fantasy town in place of the real
+// style its turn would have had. It is never one of the first two cities (the journey starts somewhere real),
+// never within STORYBOOK_GAP cities of the last one, and otherwise comes with STORYBOOK_ODDS: about one
+// city in eight over a long journey. isStorybookCity is a pure function of the seed.
+export const STORYBOOK_ODDS = 1 / 2, STORYBOOK_GAP = 6;
+export function isStorybookCity(seed: number, city: number): boolean {
+  let last = -Infinity;
+  for (let k = 2; k <= city; k++) if (k - last > STORYBOOK_GAP && hash2(seed, k, 0x5b, 0x5e055) < STORYBOOK_ODDS) last = k;
+  return last === city;
+}
+
+// This picks the style for city number `city` of a journey: the journey cycles through the six real styles in
+// an order shuffled from its seed, so no two cities in a row share a style and each style comes
+// round every six cities; now and then (isStorybookCity) the storybook city takes a city's turn.
 export function journeyStyle(seed: number, city: number): CityStyle {
   if (DEBUG_STYLE && DEBUG_STYLE in STYLES) return STYLES[DEBUG_STYLE as StyleId];
+  if (isStorybookCity(seed, city)) return STYLES.storybook;
   const order = [...STYLE_IDS];   // every style once per six cities, in a shuffled order
   const r = mulberry32(seed ^ 0x57f1e5);
   for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }

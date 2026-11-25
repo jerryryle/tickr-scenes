@@ -11,13 +11,13 @@ import type { StallPose } from "./city.ts";
 interface FleetPart { material: THREE.Material; names: string[]; arrays: Float32Array[]; count: number }
 
 export class FleetBaker {
-  private parts = new Map<TruckModel, FleetPart[]>();
+  private glass: THREE.Material | null = null;   // (this holds the glass every template's trucks are baked with: see flatten)
   constructor(private kit: TruckKit) {}
 
   build(stalls: StallPose[]): THREE.Object3D | null {
     const groups = new Map<THREE.Material, { part: FleetPart; stalls: StallPose[] }[]>();
     for (const st of stalls)
-      for (const part of this.partsFor(st.model)) {
+      for (const part of this.partsFor(st.model, st.toon ?? 0)) {
         let list = groups.get(part.material);
         if (!list) groups.set(part.material, (list = []));
         const entry = list.find((e) => e.part === part);
@@ -54,9 +54,13 @@ export class FleetBaker {
     return root.children.length ? root : null;
   }
 
-  private partsFor(model: TruckModel): FleetPart[] {
-    let p = this.parts.get(model);
-    if (!p) { p = this.flatten(new Truck(this.kit, model)); this.parts.set(model, p); }
+  // (A stall's `toon` is how cartoonish its truck is, in and near the storybook city (truck.ts
+  // toonWarp), and it is baked in its quarters.)
+  private parts = new Map<string, FleetPart[]>();
+  private partsFor(model: TruckModel, toon: number): FleetPart[] {
+    const q = Math.round(THREE.MathUtils.clamp(toon, 0, 1) * 4) / 4, key = `${model}/${q}`;
+    let p = this.parts.get(key);
+    if (!p) { const t = new Truck(this.kit, model); t.toon = q; t.update(0); p = this.flatten(t); this.parts.set(key, p); }
     return p;
   }
 
@@ -66,8 +70,17 @@ export class FleetBaker {
     const byMat = new Map<THREE.Material, { names: string[]; chunks: Float32Array[][]; count: number }>();
     const m = new THREE.Matrix4(), nm = new THREE.Matrix3(), v = new THREE.Vector3();
     const keep = (mat: THREE.Material) => mat instanceof THREE.MeshLambertMaterial || (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map);
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4) => {
+    const tint = new THREE.Color();
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, toon = 0, inst: THREE.Color | null = null) => {
+      // (Every template's glass is the same see-through tint: one material is shared by all, so a lot whose
+      // trucks come from different templates, as a country stop's cartoons do, draws its glass at once.)
+      if (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map) mat = this.glass ??= mat;
       const g = geo.index ? geo.toNonIndexed() : geo;
+      // (A cartoon's shape and colours come from its morph target, as far as the truck has it.)
+      const morph = (n: string, a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, i: number, k: number) => {
+        const m = toon > 0 ? (g.morphAttributes as Record<string, THREE.BufferAttribute[] | undefined>)[n]?.[0] : undefined, b = a.getComponent(i, k);
+        return m ? b + m.getComponent(i, k) * toon : b;   // (the targets are relative)
+      };
       const names = ["position", "normal", "color", "uv"].filter((n) => g.getAttribute(n));
       if (!names.includes("position") || !names.includes("normal")) return;
       let entry = byMat.get(mat);
@@ -78,9 +91,9 @@ export class FleetBaker {
       entry.names.forEach((n, ai) => {
         const a = g.getAttribute(n), size = n === "uv" ? 2 : 3, arr = new Float32Array(count * size);
         for (let i = 0; i < count; i++) {
-          if (n === "position") { v.fromBufferAttribute(a as THREE.BufferAttribute, i).applyMatrix4(world); arr.set([v.x, v.y, v.z], i * 3); }
-          else if (n === "normal") { v.fromBufferAttribute(a as THREE.BufferAttribute, i).applyMatrix3(nm).normalize(); arr.set([v.x, v.y, v.z], i * 3); }
-          else for (let k = 0; k < size; k++) arr[i * size + k] = a.getComponent(i, k);
+          if (n === "position") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix4(world); arr.set([v.x, v.y, v.z], i * 3); }
+          else if (n === "normal") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix3(nm).normalize(); arr.set([v.x, v.y, v.z], i * 3); }
+          else for (let k = 0; k < size; k++) arr[i * size + k] = morph(n, a, i, k) * (inst && n === "color" ? (k === 0 ? inst.r : k === 1 ? inst.g : inst.b) : 1);   // (an instance's colour makes a cartoon's rims pink)
         }
         entry!.chunks[ai].push(arr);
       });
@@ -90,8 +103,8 @@ export class FleetBaker {
     t.root.traverseVisible((o: any) => {
       if (!o.isMesh || Array.isArray(o.material) || !keep(o.material)) return;
       if (o.isInstancedMesh) {
-        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); add(o.geometry, o.material, m.premultiply(o.matrixWorld)); }
-      } else add(o.geometry, o.material, o.matrixWorld);
+        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); if (o.instanceColor) o.getColorAt(i, tint); add(o.geometry, o.material, m.premultiply(o.matrixWorld), 0, o.instanceColor ? tint : null); }
+      } else add(o.geometry, o.material, o.matrixWorld, o.morphTargetInfluences?.[0] ?? 0);
     });
     const out: FleetPart[] = [];
     for (const [material, e] of byMat) {

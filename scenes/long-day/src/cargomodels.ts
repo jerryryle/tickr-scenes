@@ -56,6 +56,71 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   carTires: { size: [0.66, 0.66, 0.22], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.33, z, 0.33, 0.22, CK.black, 12, Math.PI / 2); b.cyl(x, y + 0.33, z, 0.17, 0.23, 0xb8bcc2, 8, Math.PI / 2);
   } },
+  // A bolt of knitting is a fat roll of striped knit on its edge, wound in the works' dyes.
+  knitwear: { size: [0.8, 0.8, 1.1], round: true, build: (b, x, y, z, i) => {
+    const pair = vpick([[CK.pink, CK.white], [0x6fe0e8, CK.white], [0xf2c230, CK.red], [CK.pink, 0x6fe0e8]], i);
+    for (let k = 0; k < 5; k++) b.cyl(x, y + 0.4, z - 0.44 + k * 0.22, 0.4 - (k % 2) * 0.01, 0.222, pair[k % 2], 12, Math.PI / 2, 0, k * 0.26);
+    b.cyl(x, y + 0.4, z, 0.08, 1.12, 0x6b4a2c, 6, Math.PI / 2);
+  } },
+  // ---- the storybook city's wonders (cargo.ts STORY_CARGO) ----
+  // Bottled rainbows are a pale crate of six jars, each a rainbow in bands under a cork.
+  rainbowJars: { size: [0.5, 0.36, 0.4], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.08, z, 0.5, 0.16, 0.4, vpick([0xfff3dc, 0xffd9e0, 0xd8f4ff], i));
+    b.box(x, y + 0.155, z, 0.52, 0.03, 0.42, vpick([0xff7fb5, 0x6fe0e8, 0xf2c230], i));
+    const bands = [0xe8333a, 0xff9a2e, 0xf2c230, 0x5fd3a0, 0x4f9cf0, 0x9a6cf0];
+    for (let a = 0; a < 3; a++) for (let c = 0; c < 2; c++) {
+      const jx = x - 0.15 + a * 0.15, jz = z - 0.09 + c * 0.18;
+      for (let k = 0; k < 6; k++) b.cyl(jx, y + 0.135 + k * 0.03 + 0.015, jz, 0.055 - (k % 2) * 0.002, 0.03, bands[(k + a + c + i) % 6], 8);
+      b.cyl(jx, y + 0.33, jz, 0.045, 0.06, 0xa47a4a, 6);
+    }
+  } },
+  // Giant lollipops are three swirled discs on sticks standing in a striped tub.
+  lollipops: { size: [0.5, 0.95, 0.36], build: (b, x, y, z, i) => {
+    b.cyl(x, y + 0.13, z, 0.2, 0.26, vpick([0xff7fb5, 0x6fe0e8, 0xf2c230], i), 10);
+    b.cyl(x, y + 0.24, z, 0.21, 0.05, CK.white, 10);
+    const cols = [[0xff5a4e, CK.white], [0x9a6cf0, 0xfbe58a], [0x5fd3a0, 0xff7fb5]];
+    // (They fan out: the middle one is tallest, and the others lean away from it.)
+    [-1, 0, 1].forEach((s, k) => {
+      const [a, c] = vpick(cols, i + k), hy = y + (k === 1 ? 0.76 : 0.62), dx = s * 0.06, dz = s * 0.17;
+      b.cyl(x + dx * 0.5, (y + 0.2 + hy) / 2, z + dz * 0.5, 0.015, hy - y - 0.2, CK.white, 5, s * 0.25);
+      for (let r = 0; r < 4; r++) b.cyl(x + dx + 0.003 * r, hy, z + dz, 0.17 - r * 0.038, 0.05 + r * 0.004, r % 2 ? c : a, 12, 0, Math.PI / 2);
+    });
+  } },
+  // Cloud cushions are a puffy cloud, white with a blush of colour underneath.
+  cloudCushions: { size: [0.7, 0.42, 0.5], build: (b, x, y, z, i) => {
+    const under = vpick([0xffd9e0, 0xd8f4ff, 0xfff3c8], i);
+    b.ico(x, y + 0.13, z, 0.26, under, 0.5);
+    for (const [dx, dy, dz, r] of [[-0.2, 0.2, 0.02, 0.17], [0.01, 0.25, -0.04, 0.2], [0.21, 0.19, 0.03, 0.15], [-0.04, 0.2, 0.13, 0.13], [0.07, 0.17, -0.15, 0.12]] as const)
+      b.ico(x + dx, y + dy, z + dz, r, 0xfffdf8, 0.9);
+  } },
+  // Wind-up toys are a striped crate with a big brass key on top and a tin toy peeping out.
+  windupToys: { size: [0.5, 0.42, 0.45], build: (b, x, y, z, i) => {
+    const c = vpick([0x9a6cf0, 0x1fb5b0, 0xff5a4e], i);
+    b.box(x, y + 0.14, z, 0.5, 0.28, 0.45, c);
+    for (const dx of [-0.17, 0, 0.17]) b.box(x + dx, y + 0.15, z, 0.06, 0.28, 0.47, 0xfff3dc);   // (these are bands round it, clearly proud: a hair off its faces flickers)
+    b.cyl(x, y + 0.31, z, 0.03, 0.08, 0xd4af37, 6);
+    b.box(x, y + 0.38, z, 0.04, 0.08, 0.26, 0xd4af37);
+    for (const dz of [-0.1, 0.1]) b.cyl(x, y + 0.38, z + dz, 0.06, 0.04, 0xd4af37, 8, Math.PI / 2);
+  } },
+  // Balloon bunches are three balloons on ribbons over a little weight.
+  balloons: { size: [0.5, 1.1, 0.5], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.06, z, 0.16, 0.12, 0.16, 0xd4af37);
+    const cols = [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0x5fd3a0, 0xff5a4e];
+    [[-0.12, 0.84, -0.06], [0.1, 0.9, 0.08], [0.0, 0.94, -0.1]].forEach(([dx, dy, dz], k) => {
+      const tx = x + dx, tz = z + dz, ty = y + dy;
+      b.cyl((x + tx) / 2, (y + 0.12 + ty - 0.17) / 2, (z + tz) / 2, 0.006, Math.hypot(dx, ty - 0.17 - y - 0.12, dz), 0xfffdf8, 3, Math.atan2(dz, ty - 0.17 - y - 0.12), -Math.atan2(dx, ty - 0.17 - y - 0.12));
+      b.ico(tx, ty, tz, 0.15, cols[(k * 2 + i) % cols.length], 1.2);
+    });
+  } },
+  // A music box is a little lacquered box, its lid ajar, with a gold crank on its side.
+  musicBoxes: { size: [0.36, 0.28, 0.26], build: (b, x, y, z, i) => {
+    const c = vpick([0xd83a9a, 0x2b3f8a, 0x1fb5b0, 0xff9a2e], i);
+    b.box(x, y + 0.08, z, 0.36, 0.16, 0.26, c);
+    b.box(x - 0.02, y + 0.162, z, 0.32, 0.006, 0.22, 0xfff3dc);
+    b.boxR(x + 0.02, y + 0.21, z, 0.36, 0.03, 0.26, c, 0, 0, 0.3);
+    b.box(x, y + 0.085, z + 0.134, 0.3, 0.02, 0.006, 0xd4af37);
+    b.box(x - 0.12, y + 0.09, z - 0.145, 0.03, 0.03, 0.03, 0xd4af37); b.box(x - 0.12, y + 0.12, z - 0.155, 0.02, 0.06, 0.02, 0xd4af37);
+  } },
   truckTires: { size: [1.0, 1.0, 0.3], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.5, z, 0.5, 0.3, CK.black, 14, Math.PI / 2); b.cyl(x, y + 0.5, z, 0.26, 0.31, 0x8a9096, 8, Math.PI / 2);
   } },

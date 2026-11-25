@@ -54,6 +54,8 @@ export const FAC = {
   ryderService: { label: "Ryder Service Bay", w: { industrial: 1.5 } },
   rentalLot: { label: "Ryder Rental", w: { industrial: 2.5 } },
   construction: { label: "Construction Site", w: { industrial: 1, commercial: 1, downtown: 1.5, residential: 0.6 } },
+  // The storybook city's knitting works (one to a storybook city: CityPlan.worksBlock) is never drawn by district.
+  knittingWorks: { label: "Knitting Works", w: {}, dock: true },
   // Shops, restaurants and services.
   retail: { label: "Retail", w: { commercial: 6 } },
   bigBox: { label: "Big-Box Store", w: { commercial: 3 }, dock: true },
@@ -139,6 +141,7 @@ for (const d of ["downtown", "commercial", "residential", "industrial", "park"] 
 }
 
 export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
+  if (plan.style.storybook && plan.worksBlock >= 0 && plan.blockOf(bx, bz)?.id === plan.worksBlock) return "knittingWorks";
   const park = !!plan.blockOf(bx, bz)?.park, wf = park ? null : waterfrontAt(plan, bx, bz);
   if (wf) return wf;
   const t = FAC_BY_DISTRICT.get(park ? "park" : plan.district(bx, bz))!;
@@ -185,8 +188,24 @@ const wrapIndex = (n: number, len: number) => ((n % len) + len) % len;
 export const streetNameEW = (iz: number) => `${ordinal(wrapIndex(iz, 48) + 1)} St`;
 export const streetNameNS = (ix: number) => `${AVENUES[wrapIndex(ix, AVENUES.length)]} Ave`;
 
+// These are the storybook city's names for its trades (a few of each), in place of the usual ones.
+const STORY_NAMES: Partial<Record<FacilityId, string[]>> = {
+  retail: ["Whatnots & Whosits", "The Thingamajiggery", "Oddments Emporium"], grocery: ["Grubbleworth's Grocery", "The Turnip Tumble"],
+  cornerStore: ["Pickle & Fizz", "The Snack Nook"], restaurant: ["The Wobbly Noodle", "Soup on a Stilt"], diner: ["The Flapjack Flip"],
+  bar: ["The Hiccup Inn", "Fizzwhistle Tavern"], bakery: ["The Bakery of Bewildering Buns", "Crumplecrust Bakers"], cafe: ["Topsy Tea & Toast", "The Kettle Wobble"],
+  hardware: ["Gizmos & Gadgetry", "Sprocket & Spring"], florist: ["Petal Puzzle Florist"], iceCream: ["Scoop-de-Loop"], toyStore: ["The Whirligig Shop"],
+  outfitter: ["Scarves for All Weathers", "Hat Hat Hats"], pharmacy: ["Dr. Dibble's Remedies"], barber: ["Snip-Snap Barbers"], laundromat: ["Sock Swap Suds"],
+  office: ["Department of Doodads"], officeTower: ["The Tippy Tower"], hotel: ["The Upside Inn"], museum: ["Museum of Mismatched Mittens"],
+  school: ["Twiddledee Primary"], theater: ["The Tumbledown Playhouse"], dentist: ["Smilewhistle Dental"], musicStore: ["Kazoo & Co."],
+  doughnutShop: ["The Holy Holey Doughnut"], deli: ["The Pickled Pickle"], bigBox: ["Everything Bigger"],
+};
 export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: number): string {
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
+  if (plan.style.storybook) {
+    if (id === "knittingWorks") return `${plan.name} Knitting Works`;
+    const sn = STORY_NAMES[id];
+    if (sn && h(7) < 0.7) return sn[Math.floor(h(8) * sn.length)];
+  }
   const label = (FAC[id] as FacilityDef).label;
   const jokes = IN_JOKES[id];
   if (jokes && h(1) < 0.12) return jokes[Math.floor(h(2) * jokes.length)];
@@ -269,7 +288,7 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   // (Never on the far side of a one-way street, whose kerb the truck can't drive along: the next
   // side round instead, or, anchored there, at the kerb.)
   const blk = plan.blockOf(bx, bz), G = plan.graph, anchored = !!blk && !blk.square && !!blk.anchor;
-  if (blk && !blk.square && (!anchored || !G.drivable(blk.anchor!.face))) return { kind: "kerb" };
+  if (blk && (!blk.square || plan.style.storybook) && (!anchored || !G.drivable(blk.anchor!.face))) return { kind: "kerb" };   // (the storybook city's blocks are all lotted: city.ts buildBlockPart)
   const fac = facilityAt(plan, bx, bz);
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
   let side = anchored ? blk!.sides.indexOf(blk!.anchor!.face) : Math.floor(h(0x51de) * 4);
@@ -288,7 +307,8 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
     return { kind: "stand", side, a: STAND_DOOR_A, stand: STANDS[fac] ?? "farmStand", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
   }
   // Stores that take pallets by tractor-trailer have a truck yard as deep as an industrial one.
-  const deep = plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery";
+  // (The knitting works has a shallow van dock with its process laid out beside it: storybook.ts.)
+  const deep = fac !== "knittingWorks" && (plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery");
   const edge = deep ? 22.5 : 12;
   const a0 = 11.5, a1 = deep ? 48.5 : 29.5;
   // Bay spacing varies by site: tight van docks to wide truck bays.

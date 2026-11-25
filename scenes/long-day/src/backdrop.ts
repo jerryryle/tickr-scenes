@@ -5,6 +5,7 @@
 // streamed city. Colours are hazed towards the sky; it is unlit (MeshBasic).
 import * as THREE from "three@0.187.0";
 import { mulberry32 } from "./rng.ts";
+import { sbCurve, sbTube } from "./storybook.ts";
 import { Batch } from "./geom.ts";
 import type { CityStyle } from "./styles.ts";
 import { shade } from "./city.ts";
@@ -94,6 +95,32 @@ export class Backdrop {
         for (let i = 0; i < 6; i++) {   // a few silos and a farm water tower on the hills
           const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R - 50);
           b.cyl(x, 14, z, 4, 28, haze(0xb8bcc0, 0.4), 8); b.cone(x, 30, z, 4.4, 5, haze(0x8a9096, 0.4), 8);
+        }
+        break;
+      }
+      case "storyhills": {
+        // The storybook city's are round hills banded in contour stripes (each is a stack of domes, each
+        // smaller and higher than the last, so their rims show as stripes), and tall bent spires
+        // striped up their length, leaning over.
+        const bands = [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0];
+        for (let i = 0; i < 46; i++) {
+          const a = (i / 46) * Math.PI * 2 + r() * 0.06, [x, z] = at(a, BACKDROP_R + r() * 220), rad = 80 + r() * 110, k0 = Math.floor(r() * 5);
+          for (let k = 0; k < 4; k++) { const f = 1 - k * 0.2; b.ico(x, -rad * 0.55 + rad * k * 0.16, z, rad * f, haze(bands[(k0 + k) % bands.length], 0.35), 0.55, a + k * 1.12); }
+        }
+        for (let i = 0; i < 14; i++) {
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 60 + r() * 120), H = 70 + r() * 90, bend = (r() - 0.5) * 50, tx = -Math.sin(a), tz = Math.cos(a);
+          const seg = 7, cols = [haze(0x1fb5b0, 0.35), haze(r() < 0.5 ? 0xff7fb5 : 0xfbe58a, 0.35)];
+          for (let k = 0; k < seg; k++) {
+            const u = (k + 0.5) / seg, off = bend * u * u, rad = 9 * (1 - u) + 1.2;
+            b.cyl(x + tx * off, H * u, z + tz * off, rad, H / seg + 0.5, cols[k % 2], 8, 0, 0, a + k);
+          }
+          b.ico(x + tx * bend, H + 2, z + tz * bend, 3.5, haze(0xf2c230, 0.3));
+        }
+        // Curly clouds are heaps of puffs, each with a curl of cloud at its end.
+        for (let i = 0; i < 12; i++) {
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R - 100 + r() * 150), y = 150 + r() * 110, ex = -Math.sin(a), ez = Math.cos(a), w = haze(0xfffaf0, 0.12);
+          for (let k = 0; k < 4; k++) b.ico(x + ex * (k - 1.5) * 16, y + Math.sin(k * 1.7 + i) * 6, z + ez * (k - 1.5) * 16, 13 + Math.sin(k * 2.1 + i) * 4, w, 0.65, a + k);
+          sbTube(b, sbCurve(7, (t) => [x + ex * (34 + Math.cos(t * 7) * 9 * (1 - t)), y + Math.sin(t * 7) * 9 * (1 - t), z + ez * (34 + Math.cos(t * 7) * 9 * (1 - t))]), () => 3.2, () => w, 6, a);
         }
         break;
       }
