@@ -1110,6 +1110,9 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   let teamTrail: number[] | null = null;
   const walk = (group: ChoreGroup, a: [number, number, number], b: [number, number, number], speed: number, extra: Partial<Chore> = {}) => {
     const team = !!extra.helper && !!extra.item, last = out[out.length - 1];
+    // (Going nowhere, straight after a walk that ends here with the same in hand: none. Stood still
+    // with a hand truck, the walk swung the driver round its wheels.)
+    if (last?.kind === "walk" && last.b && dist3(a, b) < 0.05 && dist3(last.b, a) < 0.05 && (last.tool ?? null) === (extra.tool ?? null) && (last.item ?? null) === (extra.item ?? null)) return last;
     if (!team) teamTrail = null;
     else if (!teamTrail || !(last && last.kind === "walk" && last.helper && last.item)) teamTrail = [a[0], a[2]];
     const legsFor = (obstacles: WalkObstacle[]) => route(a, b, extra, obstacles);

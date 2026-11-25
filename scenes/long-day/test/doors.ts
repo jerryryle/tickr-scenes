@@ -16,7 +16,7 @@ import { facilityAt, siteLayout } from "../src/facilities.ts";
   const errs: string[] = [];
   for (const blk of j.plan.graph.blocks) {
     const bx = blk.kx, bz = blk.kz;
-    if (!blk.inCity || ((bx + bz) & 1)) continue;   // (every other block)
+    if (!blk.inCity || ((bx + bz) & 1) || blk.id === j.plan.plaza) continue;   // (every other block; not the town's plaza, all paving and trees, where no job goes: journey.ts)
     const L = siteLayout(j.plan, bx, bz);
     if (L.kind !== "kerb" && L.kind !== "stand") continue;
     const ds = kerbDoors(j.plan, bx, bz);
