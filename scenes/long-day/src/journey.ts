@@ -36,7 +36,7 @@ import { hash2, hash3 } from "./rng.ts";
 import { journeyPeriod } from "./env.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
-import { GATE_LEN, truckExtents, truckLayout } from "./truck.ts";
+import { GATE_LEN, SPECS, truckExtents, truckLayout } from "./truck.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import type { TruckModel } from "./truck.ts";
@@ -142,6 +142,10 @@ interface JourneyState {
   stopsDone: number; events: string[];
 }
 
+// The truck's nose ahead of its rear axle, which its path is drawn for, and its body's tail behind
+// it (route.ts Route.nose, Route.tail): a tractor's its cab's (its trailer swings on its own: hitch.ts).
+const truckNose = (m: TruckModel) => SPECS[m].noseFront + 0.05;
+const truckTail = (m: TruckModel) => SPECS[m].fifthWheel === undefined ? -truckExtents(m).rear : 1.5;
 export const SIM_DT = 0.1;              // the fixed simulation step
 const KEYFRAME_STEPS = 100;       // a keyframe every 10 s of journey within the current city
 const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is never planned shorter than this
@@ -716,6 +720,7 @@ export class Journey {
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
     if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
     st.route.wide = st.truck === "tractor" || undefined;
+    st.route.nose = truckNose(st.truck); st.route.tail = truckTail(st.truck);
     this.path = new Path(this.plan.graph, st.route);
     st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0; st.holdT = 0; st.jamT = 0; st.jamGo = 0; st.jamMoved = 0;
     st.stopS = this.path.length;
@@ -1556,6 +1561,7 @@ export class Journey {
       if (!route) continue;
       if (at.lane !== undefined) route.lane = at.lane;
       route.wide = st.truck === "tractor" || undefined;
+      route.nose = truckNose(st.truck); route.tail = truckTail(st.truck);
       const len = new Path(G, route).length;
       const dEst = Math.round((this.period - st.cityTime - len / GATE_SPEED) * 10) / 10;
       const cost = len + (turn !== 0 && dEst < 50 ? 1500 : 0);

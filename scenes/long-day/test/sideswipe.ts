@@ -18,6 +18,8 @@
 // wait measured along its path, which swings round into the lane), an SUV driving into it side on
 // and the two stuck so (life.ts outAt; the SUV, stuck, could not back out either, which
 // traffic.ts clearWay's finer circles against the truck fix, but which this no longer reaches).
+// Seed 2539665337's city 16 again: a van in the kerb lane moving over into the truck's lane to turn,
+// across its nose as it came up behind, its tail swinging into it (traffic.ts TRUCK_CUT_ROOM).
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";

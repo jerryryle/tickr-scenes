@@ -71,7 +71,7 @@ export interface DockDoor { x: number; z: number; w: number; h: number; lx: numb
 // `lane`: the lane it starts in (the kerb lane unless the last route ended in the inner one).
 // `wide`: a tractor-trailer's (its right turns wide ones), kept with the route so that rebuilding
 // its path (journey.ts restore) gives the same path whatever truck the journey has by then.
-export interface Route { d: number; before: number; edges: number[]; after: number; lane?: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom; wide?: boolean }
+export interface Route { d: number; before: number; edges: number[]; after: number; lane?: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom; wide?: boolean; nose?: number; tail?: number }
 
 // A parking garage's rooftop stop (facilities.ts "garage", garage.ts builds it): from the kerb
 // lane a right turn into the block, a ramp up along its side, a left turn onto the level lane
@@ -465,7 +465,31 @@ export class Path {
     out.z = p.z0 - sh * u + ch * o;
     out.h = p.h - Math.atan(od);
     out.k = -odd / Math.pow(1 + od * od, 1.5);
+    // The truck's (route.nose, route.tail): its path is its rear axle's, and its body, on the path's
+    // heading, would swing its nose out past the new lane in a change over to the kerb lane (up to
+    // 2.5 m over the kerb, in a short one), and its tail out over the kerb in a change away from it.
+    // Instead, over to the kerb, it points at where the path will be a nose's length on, so its nose
+    // keeps to the path; away from it, from where the path was a tail's length back, so its tail does.
+    const L = p.o1 > p.o0 ? this.route.nose ?? 0 : -(this.route.tail ?? 0);
+    // (A street's lane changes only: not a ramp's shift off it.)
+    if (L !== 0 && p.tc > 0 && Math.max(Math.abs(p.o0), Math.abs(p.o1)) <= LANE_KERB && u > p.c0 - Math.max(L, 0) && u < p.c0 + p.tc - Math.min(L, 0)) {
+      // (Its curvature, for the wheels' steer, the turned heading's rate along the path.)
+      const h0 = this.bodyH(p, u, L), E = 0.25;
+      const u1 = u + E <= p.len ? u + E : u - E;   // (stepping back where the line ends)
+      out.h = h0; out.k = (this.bodyH(p, u1, L) - h0) / (u1 - u);
+    }
     return out;
+  }
+  // The truck's heading at u along line piece p, turned to keep its nose (L > 0) or tail (L < 0) to
+  // the path through a lane change (eval).
+  private bodyH(p: Extract<Piece, { kind: "line" }>, u: number, L: number) {
+    const lane = (v: number) => { const w = Math.min(1, Math.max(0, (v - p.c0) / p.tc)); return p.o0 + (p.o1 - p.o0) * smooth(w); };
+    const w = (u - p.c0) / p.tc, od = w > 0 && w < 1 ? (p.o1 - p.o0) * smoothD(w) / p.tc : 0;
+    // (Eased in over the line's first few metres, where the nose looks on into a change that close
+    // to its start, and out over its last, where the tail looks back at one that close to its end:
+    // the turn either side is on the path's own heading.)
+    const b = smooth(Math.min(1, Math.max(0, L > 0 ? u / Math.min(L, 4) : (p.len - u) / Math.min(-L, 4))));
+    return p.h - Math.atan(od) * (1 - b) - Math.atan((lane(u + L) - lane(u)) / L) * b;
   }
 
   // Speed limit at s from turns and lane changes ahead (braking at `brake` m/s^2), looking

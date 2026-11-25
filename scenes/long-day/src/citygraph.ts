@@ -488,6 +488,30 @@ export class CityGraph {
   }
 }
 const EMPTY_TILE = { nodes: [] as number[], streets: [] as number[], blocks: [] as number[] };
+// The sidewalk between node n's arm j (its left side) and the next arm round (its right side),
+// as city.ts buildNode lays it, in world (x, z): `corner`, a corner [arm j's kerb at its mouth,
+// its sidewalk's back there, where the backs meet (the block's corner), arm k's back and kerb at
+// its mouth, where the kerb lines meet (the asphalt's corner)]; else, nearly straight on or so
+// far round that the corners are a long way off, the sidewalk running straight across [j's kerb
+// and back at its mouth, k's back and kerb at its]. (Signal poles stand on it: signals.ts.)
+export function sidewalkCorner(G: CityGraph, n: CNode, j: number): { corner: boolean; pts: [number, number][] } {
+  const A = n.arms, k = (j + 1) % A.length, sj = G.streets[A[j].street], sk = G.streets[A[k].street];
+  const rj = sj.half - sj.kerb, rk = sk.half - sk.kerb;
+  // (Points at distance t along arm i, o to its right; where arm j's line oj to its right meets arm k's ok.)
+  const pt = (i: number, t: number, o: number): [number, number] => { const h = A[i].h; return [n.x + Math.cos(h) * t + Math.sin(h) * o, n.z - Math.sin(h) * t + Math.cos(h) * o]; };
+  const meet = (oj: number, ok: number): [number, number] => {
+    const hj = A[j].h, hk = A[k].h, dj = [Math.cos(hj), -Math.sin(hj)], dk = [Math.cos(hk), -Math.sin(hk)];
+    const [px, pz] = pt(j, 0, oj), [qx, qz] = pt(k, 0, ok), den = dj[0] * dk[1] - dj[1] * dk[0];
+    if (Math.abs(den) < 1e-9) return [px, pz];
+    const t = ((qx - px) * dk[1] - (qz - pz) * dk[0]) / den;
+    return [px + dj[0] * t, pz + dj[1] * t];
+  };
+  let gap = (A[k].h - A[j].h + 2 * Math.PI) % (2 * Math.PI); if (A.length === 2 && j === 1) gap = 2 * Math.PI - ((A[1].h - A[0].h + 2 * Math.PI) % (2 * Math.PI));
+  const kc = meet(-rj, rk), P = meet(-sj.half, sk.half), far = 3 * Math.max(A[j].mouth, A[k].mouth, sj.half, sk.half);
+  if (Math.abs(gap - Math.PI) > 0.05 && Math.hypot(kc[0] - n.x, kc[1] - n.z) < far && Math.hypot(P[0] - n.x, P[1] - n.z) < far)
+    return { corner: true, pts: [pt(j, A[j].mouth, -rj), pt(j, A[j].mouth, -sj.half), P, pt(k, A[k].mouth, sk.half), pt(k, A[k].mouth, rk), kc] };
+  return { corner: false, pts: [pt(j, A[j].mouth, -rj), pt(j, A[j].mouth, -sj.half), pt(k, A[k].mouth, sk.half), pt(k, A[k].mouth, rk)] };
+}
 export const tileKey = (cx: number, cz: number) => (cx + 4096) * 8192 + (cz + 4096);
 // The part of a polygon (convex, or else its pieces come out joined by zero-width seams) where nx*x + nz*z <= c.
 export function clipHalf(poly: [number, number][], nx: number, nz: number, c: number): [number, number][] {

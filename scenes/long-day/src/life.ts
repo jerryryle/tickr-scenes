@@ -17,7 +17,7 @@ import type { Obstacle } from "./traffic.ts";
 import { Crowd } from "./crowd.ts";
 import type { KerbParked } from "./vignettes.ts";
 import { Ambient } from "./ambient.ts";
-import { DEBUG_BLOCK } from "./debug.ts";
+import { DEBUG_AT, DEBUG_BLOCK } from "./debug.ts";
 import { RAMP_HOLD, RAMP_LINEUP } from "./chores.ts";
 
 // m/s: a vehicle beside the truck going slower than this, or than the truck, is one it waits for if
@@ -212,6 +212,7 @@ export class StreetLife implements LifeHook {
     const cf = tf;
     // (Test renders watching one block, "block:kx,kz": the traffic round that block instead.)
     if (DEBUG_BLOCK) { const B = j.plan.graph.block(DEBUG_BLOCK[0], DEBUG_BLOCK[1]); if (B) tf = { x: B.cx, z: B.cz }; }
+    if (DEBUG_AT) tf = { x: DEBUG_AT[0], z: DEBUG_AT[1] };
     // (Driving on its path, the truck has traffic give way where their ways cross. Arriving, in
     // its last 8 s before the gate, traffic gives way at the junction inside it: the truck's first.)
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)

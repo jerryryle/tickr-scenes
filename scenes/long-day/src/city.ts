@@ -19,7 +19,7 @@ import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, PAINTED_DOORS } from "./facadetiles.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
-import { buildSignals, buildStopSigns, linkSignals } from "./signals.ts";
+import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
 import { cityName, STYLES } from "./styles.ts";
 import type { CityStyle } from "./styles.ts";
 import { BARE, seasonGreens, seasonGround, SNOW } from "./climate.ts";
@@ -44,7 +44,7 @@ import type { SignMesh, SignStyle } from "./signs.ts";
 import { BIOME_OF } from "./country.ts";
 import { BIOMES, landTree } from "./countryworld.ts";
 import { BLOCK, STREET, KERB, CURB_H, LOT_TOP, RING } from "./grid.ts";
-import { angleDiff, CityGraph, clipHalf, inPoly, polyDist } from "./citygraph.ts";
+import { angleDiff, CityGraph, clipHalf, inPoly, polyDist, sidewalkCorner } from "./citygraph.ts";
 import type { CBlock, CGate, CNode, CStreet } from "./citygraph.ts";
 import { cityGraphSteps, trimToOutlineSteps } from "./citygen.ts";
 import type { OrganicAvenue } from "./citygen.ts";
@@ -805,32 +805,22 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
   if (A.length >= 2) {
     // Points at distance `t` along arm i, `o` to its right (negative: left).
     const pt = (i: number, t: number, o: number): [number, number] => { const h = A[i].h; return [cx + Math.cos(h) * t + Math.sin(h) * o, cz - Math.sin(h) * t + Math.cos(h) * o]; };
-    const meet = (i: number, oi: number, j: number, oj: number): [number, number] => {
-      // Arm i's line `oi` to its right meets arm j's line `oj` to its right.
-      const hi = A[i].h, hj = A[j].h, di = [Math.cos(hi), -Math.sin(hi)], dj = [Math.cos(hj), -Math.sin(hj)];
-      const [px, pz] = pt(i, 0, oi), [qx, qz] = pt(j, 0, oj), den = di[0] * dj[1] - di[1] * dj[0];
-      if (Math.abs(den) < 1e-9) return [px, pz];
-      const t = ((qx - px) * dj[1] - (qz - pz) * dj[0]) / den;
-      return [px + di[0] * t, pz + di[1] * t];
-    };
     const ring: [number, number][] = [];
     for (let i = 0; i < A.length; i++) {
       const j = (i + 1) % A.length, si = G.streets[A[i].street], sj = G.streets[A[j].street];
-      const ri = si.half - si.kerb, rj = sj.half - sj.kerb, hi = si.half, hj = sj.half;
-      let gap = (A[j].h - A[i].h + 2 * Math.PI) % (2 * Math.PI); if (A.length === 2 && i === 1) gap = 2 * Math.PI - ((A[1].h - A[0].h + 2 * Math.PI) % (2 * Math.PI));
+      const ri = si.half - si.kerb, rj = sj.half - sj.kerb;
       ring.push(pt(i, A[i].mouth, ri), pt(i, A[i].mouth, -ri));
-      // Where the kerb lines meet (the asphalt's corner) and the sidewalks' backs meet (the
-      // block's corner): the sidewalk between them, out to each street's mouth (where its own
-      // sidewalk starts), at any angle, on the outside of a bend too. (Nearly straight on, or
-      // so far round that the corners are a long way off: the sidewalk runs straight across.)
-      const k = meet(i, -ri, j, rj), P = meet(i, -hi, j, hj), far = 3 * Math.max(A[i].mouth, A[j].mouth, hi, hj);
-      if (Math.abs(gap - Math.PI) > 0.05 && Math.hypot(k[0] - cx, k[1] - cz) < far && Math.hypot(P[0] - cx, P[1] - cz) < far) {
-        ring.push(k);
-        slab(g, [pt(i, A[i].mouth, -ri), pt(i, A[i].mouth, -hi), P, pt(j, A[j].mouth, hj), pt(j, A[j].mouth, rj), k], 0, CURB_H, C.sidewalk);
+      // The sidewalk between them, out to each street's mouth (where its own sidewalk starts), at
+      // any angle, on the outside of a bend too: round the corner where the kerb lines meet (the
+      // asphalt's corner) and the sidewalks' backs (the block's); or straight on across, with its
+      // kerb (citygraph.ts sidewalkCorner).
+      const sc = sidewalkCorner(G, n, i), local = sc.pts.map(([x, z]): [number, number] => [x - ox, z - oz]);
+      if (sc.corner) {
+        ring.push(local[5]);
+        slab(g, local, 0, CURB_H, C.sidewalk);
       } else {
-        // No street between: the sidewalk runs straight on across, with its kerb.
-        const a = pt(i, A[i].mouth, -ri), b = pt(i, A[i].mouth, -hi), c = pt(j, A[j].mouth, hj), d = pt(j, A[j].mouth, rj);
-        slab(g, [a, b, c, d], 0, CURB_H, C.sidewalk);
+        const [a, , , d] = local;
+        slab(g, local, 0, CURB_H, C.sidewalk);
         const e0 = pt(i, A[i].mouth, -ri - 0.25), e1 = pt(j, A[j].mouth, rj + 0.25);
         slab(g, [a, e0, e1, d], CURB_H + 0.004, CURB_H + 0.012, C.curb);
       }
@@ -840,6 +830,9 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates);
   buildStopSigns(solid, G, n, ox, oz);
+  // (Their poles and posts, for the driver's walks and the street life.)
+  for (const p of signalPoles(G, n)) pavementObstacle(p.px - ox, p.pz - oz, 0.16);
+  for (const [x, z] of stopSignPosts(G, n).values()) pavementObstacle(x - ox, z - oz, 0.05);
 }
 
 // A street between two intersections (tile-local), drawn by buildStreet in the street's own
@@ -859,6 +852,22 @@ function lineExt(G: CityGraph, st: CStreet, end: 0 | 1, tag: "elevated" | "cable
     return Math.max(gridOwn ? 9 : 0, w * Math.tan(Math.min(turn, 1.2) / 2) + 0.15);
   }
   return 9;
+}
+// The signal poles and stop sign posts of the junctions at either end that stand on street st's
+// sidewalks (signals.ts), for its furniture and street trees to keep clear of: whether on the
+// right of the way from n0 to n1, how far along (from n0), and how far each way along they reach (a
+// pole's radius, a stop sign's half width).
+function junctionPosts(G: CityGraph, st: CStreet): { right: boolean; s: number; r: number }[] {
+  const out: { right: boolean; s: number; r: number }[] = [];
+  const put = (x: number, z: number, r: number) => {
+    const [s, o] = G.toStreet(st.id, x, z);
+    if (s > 0 && s < st.len && Math.abs(o) >= st.half - st.kerb && Math.abs(o) <= st.half) out.push({ right: o > 0, s, r });
+  };
+  for (const n of [G.nodes[st.n0], G.nodes[st.n1]]) {
+    for (const p of signalPoles(G, n)) put(p.px, p.pz, 0.16);
+    for (const [x, z] of stopSignPosts(G, n).values()) put(x, z, STOP_PLATE);
+  }
+  return out;
 }
 function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: number, oz: number, district: District, rnd: Rand) {
   const G = plan.graph, A = G.nodes[st.n0];
@@ -894,7 +903,7 @@ function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: nu
   inFrame(f, [g, s, DC.lamps], () => {
     buildStreet(g, s, axis, district, rnd, front(loFace), front(hiFace), along(loFace), along(hiFace), 9 + mA, 9 + st.len - mB,
       { el: !!st.tags.elevated && axis === 0, fw: !!fw || fwCurve, icClear: ic?.clear ?? null, oneway: st.oneway, ring: !!st.ring, loading: [zone(loFace), zone(hiFace)], wet: [water(loFace), water(hiFace)], median: plan.avenueMedian(st, district) && !front(loFace).drive && !front(hiFace).drive, salt: st.id * 31 + plan.seed,
-        stops: [G.nodes[st.n0].control === "stop", G.nodes[st.n1].control === "stop"] });
+        posts: junctionPosts(G, st) });
     // (Node to node, a little on past each end where the line bends on along the next street, so the
     // two close up on the outside of the bend; at the line's end, on over the junction as on the grid.)
     if (st.tags.elevated && axis === 0) buildElevated(s, 9 - lineExt(G, st, 0, "elevated", 4.6), 9 + st.len + lineExt(G, st, 1, "elevated", 4.6));
@@ -2063,7 +2072,7 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
   }
 }
 function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
-  loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; stops?: boolean[] }) {
+  loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[] }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
     axis === 0 ? b.box(al, y, ac, lal, h, lac, color) : b.box(ac, y, al, lac, h, lal, color);
   const len = a1 - a0, mid = (a0 + a1) / 2, cl = STREET / 2;
@@ -2170,12 +2179,12 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (sg !== null) busy[i].push([sg - 1.4, sg + 1.4]);
     if (F.free && cz) busy[i].push(cz);
   }
-  // A stop sign's post, at an all-way stop, just short of the stop line on the arriving traffic's
-  // right (buildStopSigns): forward traffic, arriving at a1, keeps to the +z half on an east-west
-  // street, the low-x half on a north-south one.
+  // The junctions' signal poles and stop sign posts that stand on these sidewalks (junctionPosts):
+  // the right of the way from the first node to the next is the +z half on an east-west street,
+  // the low-x half on a north-south one; `along` 9 m on from the first node.
   const fwdRight = axis === 0 ? 1 : 0;
-  if (feat.stops?.[1]) busy[fwdRight].push([a1 - STOP_BACK + 0.1, a1 - STOP_BACK + 1.7]);
-  if (feat.stops?.[0] && !feat.oneway) busy[1 - fwdRight].push([a0 + STOP_BACK - 1.7, a0 + STOP_BACK - 0.1]);
+  const posts = (feat.posts ?? []).map((p) => ({ i: p.right ? fwdRight : 1 - fwdRight, a: 9 + p.s, r: p.r }));
+  for (const p of posts) busy[p.i].push([p.a - p.r - 0.6, p.a + p.r + 0.6]);
   // Under an elevated line (on an east-west street: elevatedLine), its bents: about every 17 m, at
   // the first spot near each where neither sidewalk has a driveway, streetlight or sign in the way
   // (a dock's side view is kept clear too, unless there is nowhere else). No street trees here.
@@ -2221,6 +2230,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       for (let p = a0 + 6.5 + (side > cl ? 4 : 0); p < a1 - 5; p += step) {
         if (Math.abs(p - (a0 + 10)) < 2.5 || Math.abs(p - (a0 + 31)) < 2.5) continue; // clear of lights
         if (inDrive(d, p, 2) || inDrive(cz, p, 0) || (sg !== null && Math.abs(p - sg) < 3.4)) continue;   // driveways, signs, dock corners
+        if (posts.some((q) => q.i === (side < cl ? 0 : 1) && Math.abs(q.a - p) < q.r + 1.3)) continue;   // a junction's pole or post
         const [tx, tz] = axis === 0 ? [p, side] : [side, p];
         g.box(tx, CURB_H + 0.0125, tz, 1.4, 0.025, 1.4, 0x5a4a38); // tree pit (its top over a path's it can meet: shared planes flicker)
         busy[side < cl ? 0 : 1].push([p - 1.0, p + 1.0]);

@@ -9,7 +9,7 @@ import { hash2 } from "./rng.ts";
 import { drain } from "./slices.ts";
 import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
-import { DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
+import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
@@ -449,6 +449,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (B) { cx = B.cx; cz = B.cz; }
       const a = tourT * 0.12;
       cam.position.set(cx + Math.cos(a) * 55, 38, cz + Math.sin(a) * 55); cam.lookAt(cx, 0, cz);
+    } else if (DEBUG_AT) {
+      // Circling low over a point ("at:x,z"), a junction's poles and its traffic.
+      cx = DEBUG_AT[0]; cz = DEBUG_AT[1];
+      const a = tourT * 0.25;
+      cam.position.set(cx + Math.cos(a) * 30, 22, cz + Math.sin(a) * 30); cam.lookAt(cx, 0, cz);
     } else if (DEBUG_VIEW === "street") {
       cam.position.set(cx - 1.5, 3.2, cz + 150 - tourT * 3);
       cam.lookAt(cx - 1.5, 9, cz - 100);

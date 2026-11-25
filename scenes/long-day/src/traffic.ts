@@ -66,6 +66,7 @@ interface Car {
 const TRAFFIC_SPAWN = [70, 150], TRAFFIC_DESPAWN = 175;
 const STUCK_GONE = 55;   // s a vehicle may stand before it is gone (longer than a red light lasts: signals.ts, five phases at most)
 const CABLE_LAYOVER = 8;   // s: how long a cable car stands at the end of its line before it turns round (turnRound)
+const TRUCK_CUT_ROOM = 4;   // m: the least room a car leaves before the truck's nose, moving over in front of it (and a second and a half at its speed)
 const TRUCK_ROOM = 0.1;   // m: the least a car's circles leave the truck's, moving (truckGap)
 const DROP_DEEP = 0.6;   // m: how deep inside a parked truck's circles a car is dropped (dropInside)
 const SLIDE_LOOK = 6;     // m on along its way a car beside the truck may slide by it to come clear (slidesBy)
@@ -1238,6 +1239,11 @@ export class Traffic {
       // (A car alongside, or the truck, level or ahead, in the lane this one's path is moving it
       // into: it waits, so the other goes on by, and then moves over behind it.)
       if (!ped && !o.sweep && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
+      // (And the truck coming up close behind in that lane, moving: the car doesn't move over across
+      // its nose, which can't stop in the room left (seed 2539665337's city 16: a van moving over to
+      // turn, its tail swinging into the truck's nose). It waits, and moves over once the truck has
+      // gone by.)
+      if (isTruck && !o.still && Math.abs(this.truckPath?.v ?? 0) > 0.3 && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along <= -0.5 && -along - half - o.r < TRUCK_CUT_ROOM + Math.abs(this.truckPath?.v ?? 0) * 1.5 && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && sameDirT && 0.5 < gap) { gap = 0.5; truckAhead = Math.min(truckAhead, 0.5); }
       // (Turning, straight ahead of its heading is off its way but for just in front of it.)
       const inLine = (Math.abs(sideEff) < rLat + c.kind.width * 0.5 || Math.abs(sideLane) < rLat + c.kind.width * 0.5) && (!turningNow || ped || along < half + o.r + 1.5);
       if (along > half && along < look + o.r && (onWay || inLine) && o.owner !== ignoreId) {
