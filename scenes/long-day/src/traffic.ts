@@ -311,9 +311,10 @@ export class Traffic {
     const big = kind.len > 7;   // (a bus or truck: steady, whoever drives it)
     const dT = mix(1.8, 1.0), dS0 = mix(2.6, 1.6), dA = big ? 1.1 : mix(1.3, 2.4), dB = big ? 1.6 : mix(1.8, 3.0), dV = mix(0.88, 1.08), gapT = mix(3.4, 1.8);
     const model: TruckModel | null = kind.id === "ryder" ? (r() < 0.5 ? "box16" : "box26") : null;
+    const odo = kind.rig ? r() * 10 : 0;   // (a rig starts part way through its stride, the same at its first draw)
     this.cars.push({ kind, path, next, s: 0, v, dodge: cable ? -3 : 0, dodgeTarget: cable ? -3 : 0, dodgeV: 0, holdT: 0, stillT: 0, committed: -1, stopFor: -1, blockedBy: -1, slowT: 0, pedT: 0, acc: 0,
       color, x: this.pose.x, z: this.pose.z, h: this.pose.h, px: this.pose.x, pz: this.pose.z, ph: this.pose.h, cable, id: this.nextId++, model, dT, dS0, dA, dB, dV, gapT,
-      odo: kind.rig ? r() * 10 : 0, podo: 0 });
+      odo, podo: odo });
   }
   // How many of kind `id` there are (within TRAFFIC_DESPAWN of `near`, if given: not far ones kept on
   // in sight down a long street).
