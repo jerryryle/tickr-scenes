@@ -182,8 +182,8 @@ export class KnittingWorksFx {
     W.spoolsA.forEach((sa, i) => {
       const c = worksAt(F, sa, L.wall - 1.0, W.spoolY), f0 = worksAt(F, sa, L.wall - 1.6, W.spoolY), f1 = worksAt(F, sa, L.wall - 0.4, W.spoolY);
       const m = piece((b) => {
-        sbTube(b, [f0, f1], () => W.spoolR, () => W.dyes[i], 12, 0);
-        for (const [p, q] of [[L.wall - 1.75, L.wall - 1.62], [L.wall - 0.38, L.wall - 0.25]]) sbTube(b, [worksAt(F, sa, p, W.spoolY), worksAt(F, sa, q, W.spoolY)], () => 0.95, () => SB.cream, 10, 0.2);
+        sbTube(b, [f0, f1], () => W.spoolR, () => W.dyes[i], 16, 0, true);
+        for (const [p, q] of [[L.wall - 1.75, L.wall - 1.62], [L.wall - 0.38, L.wall - 0.25]]) sbTube(b, [worksAt(F, sa, p, W.spoolY), worksAt(F, sa, q, W.spoolY)], () => 0.95, () => SB.cream, 14, 0.2, true);
         for (let k = 0; k < 4; k++) { const a2 = k * 1.57; const p = worksAt(F, sa + Math.cos(a2) * 0.6, L.wall - 1.8, W.spoolY + Math.sin(a2) * 0.6); b.ico(p[0], p[1], p[2], 0.14, SB.red, 1, k); }
         for (let k = 0; k < 3; k++) { const a2 = k * 2.1 + 0.4; const p = worksAt(F, sa + Math.cos(a2) * 1.25, L.wall - 1.62, W.spoolY + Math.sin(a2) * 1.25); b.ico(p[0], p[1], p[2], 0.16, SB.white, 1, k); }
       }, c);
@@ -274,7 +274,7 @@ export class KnittingWorksFx {
 // A gear lying in the hall's front plane (its axis in from it), centred at (a, n, y): a disc, a
 // ring of teeth and three spokes.
 function worksGear(b: Batch, F: WorksFrame, a: number, n: number, y: number, r: number, color: number, teeth: number) {
-  sbTube(b, [worksAt(F, a, n - 0.12, y), worksAt(F, a, n + 0.12, y)], () => r, () => color, 14, 0);
+  sbTube(b, [worksAt(F, a, n - 0.12, y), worksAt(F, a, n + 0.12, y)], () => r, () => color, 18, 0, true);
   for (let i = 0; i < teeth; i++) {
     const a2 = (i / teeth) * Math.PI * 2, p = worksAt(F, a + Math.cos(a2) * (r + 0.15), n, y + Math.sin(a2) * (r + 0.15));
     b.ico(p[0], p[1], p[2], 0.2, color, 1, a2);

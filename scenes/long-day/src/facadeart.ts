@@ -334,50 +334,106 @@ const faRibbon: FaKind = (p, v, rnd) => {
 
 
 // ---- the storybook city's ----------------------------------------------------------------------
-// Thick dark or bright trim (keeping its own colour) round round and arched glass, on a wall the
-// building's colour tints; the variants differ in shape so a tower's storeys don't repeat.
+// Thick trim (keeping its own colour, bevelled light above and dark below) round round and arched
+// glass with curtains, muntins and plants behind it, on walls the building's colour tints, papered
+// in a pattern of its own (dots, wavy stripes, diamonds, scallops), shaded under the storey's eave
+// and over a dado band. The variants differ in shape so a tower's storeys don't repeat.
 const FA_STORY_TRIM = ["#2a2440", "#fff3dc", "#e8333a", "#1fb5b0"];
+const FA_STORY_CURT = ["#ff7fb5", "#f2c230", "#9a6cf0", "#6fe0e8"];
+// The wall: tinted, a pattern papered over it in a slightly lighter and darker tone, the eave's
+// shadow along its top and a dado band along its foot.
+function faStoryWall(p: FaPainter, v: number, rnd: () => number, base = "#f6f2ea") {
+  p.wall(0, 0, FA_S, FA_S, base); p.speckle(rnd, 50);
+  const lt = "rgba(255,255,255,0.22)", dk = "rgba(0,0,0,0.06)";
+  if (v === 0) for (let y = 4; y < FA_S; y += 16) for (let x = (y / 16) % 2 ? 12 : 4; x < FA_S; x += 16) p.paint(x, y, 4, 4, lt);   // polka dots
+  else if (v === 1) for (let x = 0; x < FA_S; x += 16) for (let y = 0; y < FA_S; y++) p.paint(x + Math.round(Math.sin(y / 9) * 3), y, 5, 1, lt);   // wavy stripes
+  else if (v === 2) for (let y = 0; y < FA_S; y += 16) for (let x = 0; x < FA_S; x += 16) for (let k = 0; k < 6; k++) p.paint(x + 8 - k, y + 2 + k, 2 * k + 1, 1, (x / 16 + y / 16) % 2 ? lt : dk);   // diamonds
+  else for (let y = 10; y < FA_S; y += 14) for (let x = 0; x < FA_S; x += 14) for (let k = 0; k < 4; k++) p.paint(x + k, y + Math.round(Math.sqrt(16 - (k - 2) * (k - 2))), 1, 1, dk);   // scallops
+  p.paint(0, 0, FA_S, 4, "rgba(0,0,0,0.16)"); p.paint(0, 4, FA_S, 3, "rgba(0,0,0,0.07)");                       // under the eave
+  p.paint(0, 112, FA_S, 2, "rgba(255,255,255,0.18)"); p.paint(0, 114, FA_S, 14, "rgba(0,0,0,0.07)");           // dado
+}
+// A trim ring round a porthole, bevelled; rivets round it.
+function faRing(p: FaPainter, cx: number, cy: number, r: number, w: number, col: string) {
+  p.disc(cx, cy, r, col, FA_TRIM);
+  p.disc(cx - 1, cy - 1, r - 1, col, FA_TRIM);
+  for (let y = -r; y < r; y++) { const h = y + 0.5, ww = Math.sqrt(Math.max(0, r * r - h * h)); if (y < -r * 0.3) p.paint(cx - ww, cy + y, ww * 2, 1, "rgba(255,255,255,0.18)"); else if (y > r * 0.35) p.paint(cx - ww, cy + y, ww * 2, 1, "rgba(0,0,0,0.18)"); }
+  for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2, rr = r - w / 2; p.rect(cx + Math.cos(a) * rr - 1, cy + Math.sin(a) * rr - 1, 2, 2, "#d4b050", FA_TRIM); }
+}
+// Glass in a disc: a room behind it, curtains drawn to the sides, a sheen.
+function faPortGlass(p: FaPainter, cx: number, cy: number, r: number, curt: string, l = 1) {
+  p.discGlass(cx, cy, r, l);
+  // (Curtains drawn to either side, gathered in at the middle by their ties.)
+  for (let y = -r; y < r; y++) { const h = y + 0.5, w = Math.sqrt(Math.max(0, r * r - h * h)), cw = Math.min(w, r * (0.18 + 0.22 * Math.abs(h) / r)); if (cw > 0.5) { p.rect(cx - w, cy + y, cw, 1, curt, FA_GLASS(l * 0.5)); p.rect(cx + w - cw, cy + y, cw, 1, curt, FA_GLASS(l * 0.5)); } }
+  p.paint(cx - r * 0.45, cy - r * 0.55, Math.max(2, r * 0.25), 2, "rgba(255,255,255,0.45)");
+}
 const faStorybook: FaKind = (p, v, rnd) => {
-  p.wall(0, 0, FA_S, FA_S, "#f6f2ea"); p.speckle(rnd, 70);
-  const t = FA_STORY_TRIM[v];
-  if (v === 0) {   // a porthole, crossed
-    p.disc(64, 54, 30, t, FA_TRIM); p.discGlass(64, 54, 21);
-    p.rect(62, 33, 4, 42, t, FA_TRIM); p.rect(43, 52, 42, 4, t, FA_TRIM);
-  } else if (v === 1) {   // a tall arch, a sill with a pot of tuft flowers
-    p.arch(38, 12, 52, 86, t, FA_TRIM); p.archGlass(45, 19, 38, 76, 1, FA_GL, FA_GL_DEEP);
-    p.rect(34, 98, 60, 6, t, FA_TRIM); p.rect(52, 104, 24, 10, "#e8333a", FA_TRIM);
-    for (let i = 0; i < 3; i++) p.disc(56 + i * 8, 94, 5, ["#ff7fb5", "#f2c230", "#9a6cf0"][i], FA_TRIM);
-  } else if (v === 2) {   // two small portholes, out of line, and a stripe round the storey
-    p.paint(0, 104, FA_S, 10, "rgba(0,0,0,0.10)");
-    p.disc(40, 44, 20, t, FA_TRIM); p.discGlass(40, 44, 13);
-    p.disc(88, 64, 20, t, FA_TRIM); p.discGlass(88, 64, 13, 0.8);
-  } else {   // a crooked window: its frame stepping over as it goes up, and a striped shutter
-    for (let y = 0; y < 80; y++) { const dx = Math.round(y * 0.12); p.rect(30 + dx, 98 - y, 56, 1, t, FA_TRIM); }
-    for (let y = 6; y < 74; y++) { const dx = Math.round(y * 0.12); p.rect(37 + dx, 98 - y, 42, 1, y < 30 ? FA_GL_DEEP : FA_GL, FA_GLASS(y < 30 ? 0.75 : 1)); }
+  faStoryWall(p, v, rnd);
+  const t = FA_STORY_TRIM[v], cu = FA_STORY_CURT[v];
+  if (v === 0) {   // a porthole, crossed, in a riveted ring, a little hood over it
+    faRing(p, 64, 56, 31, 9, t); faPortGlass(p, 64, 56, 21, cu);
+    p.rect(62, 35, 4, 42, t, FA_TRIM); p.rect(43, 54, 42, 4, t, FA_TRIM);
+    for (let k = 0; k < 5; k++) { const hx = 44 + k * 10, c = k % 2 ? t : "#fff3dc"; p.rect(hx - 5, 14, 10, 6, c, FA_TRIM); p.disc(hx, 20, 5, c, FA_TRIM, 0); }   // a scalloped hood
+    p.rect(38, 12, 52, 3, t, FA_TRIM);
+    p.rect(52, 96, 24, 8, "#e8333a", FA_TRIM); for (let i = 0; i < 4; i++) p.disc(55 + i * 6, 93, 4, ["#ff7fb5", "#f2c230", "#a6e05a", "#9a6cf0"][i], FA_TRIM);
+  } else if (v === 1) {   // a tall arch, its keystone, muntins and tied curtains; a box of flowers
+    p.arch(36, 10, 56, 90, t, FA_TRIM); p.paint(37, 11, 3, 88, "rgba(255,255,255,0.2)"); p.paint(88, 30, 3, 70, "rgba(0,0,0,0.18)");
+    p.archGlass(43, 17, 42, 80, 1, FA_GL, FA_GL_DEEP);
+    for (let y = 26; y < 97; y++) { const cw = Math.max(0, 9 - Math.abs(y - 60) * 0.25); p.rect(43, y, cw, 1, cu, FA_GLASS(0.5)); p.rect(85 - cw, y, cw, 1, cu, FA_GLASS(0.5)); }
+    p.rect(63, 17, 2, 80, t, FA_TRIM); p.rect(43, 55, 42, 2, t, FA_TRIM);
+    p.rect(58, 6, 12, 10, "#fff3dc", FA_TRIM); p.paint(58, 6, 12, 2, "rgba(255,255,255,0.3)");   // keystone
+    p.rect(32, 100, 64, 5, t, FA_TRIM); p.rect(40, 105, 48, 9, "#e8333a", FA_TRIM);
+    for (let x = 40; x < 88; x += 6) p.paint(x, 105, 3, 9, "rgba(255,255,255,0.25)");
+    for (let i = 0; i < 6; i++) p.disc(44 + i * 8, 99 - (i % 2) * 2, 4, ["#ff7fb5", "#f2c230", "#9a6cf0", "#a6e05a"][i % 4], FA_TRIM);
+  } else if (v === 2) {   // two small portholes out of line, a striped band round the storey
+    for (let x = 0; x < FA_S; x += 8) p.rect(x, 104, 8, 7, (x / 8) % 2 ? "#fff3dc" : t, FA_TRIM);
+    faRing(p, 40, 44, 21, 7, t); faPortGlass(p, 40, 44, 14, cu);
+    faRing(p, 88, 66, 21, 7, t); faPortGlass(p, 88, 66, 14, FA_STORY_CURT[(v + 1) % 4], 0.8);
+  } else {   // a crooked window with muntins, a striped shutter hung off true
+    for (let y = 0; y < 80; y++) { const dx = Math.round(y * 0.12); p.rect(30 + dx, 98 - y, 56, 1, t, FA_TRIM); if (y > 2 && y < 78) p.paint(30 + dx, 98 - y, 2, 1, "rgba(255,255,255,0.2)"); }
+    for (let y = 6; y < 74; y++) { const dx = Math.round(y * 0.12); p.rect(37 + dx, 98 - y, 42, 1, y < 30 ? FA_GL_DEEP : FA_GL, FA_GLASS(y < 30 ? 0.75 : 1)); p.rect(37 + dx, 98 - y, 8, 1, cu, FA_GLASS(0.5)); p.rect(57 + dx, 98 - y, 2, 1, t, FA_TRIM); }
+    for (let x = 37; x < 79; x++) p.rect(x + 5, 98 - 40, 1, 2, t, FA_TRIM);
     for (let y = 22; y < 100; y++) p.rect(92 + Math.round((100 - y) * 0.12), y, 14, 1, Math.floor(y / 8) % 2 ? "#ff7fb5" : "#fff3dc", FA_TRIM);
+    p.rect(104, 30, 3, 3, "#2a2440", FA_TRIM); p.rect(104, 88, 3, 3, "#2a2440", FA_TRIM);   // hinges
   }
 };
 const faStoryShop: FaKind = (p, v, rnd) => {
-  p.wall(0, 0, FA_S, FA_S, "#f4eee4"); p.speckle(rnd, 50);
+  faStoryWall(p, (v + 2) % 4, rnd, "#f4eee4");
   const t = FA_STORY_TRIM[v], sc = [["#e8333a", "#fff3dc"], ["#1fb5b0", "#fff3dc"], ["#9a6cf0", "#f2c230"], ["#ff9a2e", "#fff3dc"]][v];
-  for (let x = 0; x < FA_S; x += 16) { p.rect(x, 4, 16, 12, sc[(x / 16) % 2], FA_TRIM); p.disc(x + 8, 16, 8, sc[(x / 16) % 2], FA_TRIM, 0); }   // a scalloped valance
-  p.arch(4, 30, 86, 88, t, FA_TRIM); p.archGlass(9, 35, 76, 81, 0.7, "#4a6a7a", "#3b5664");
-  const goods = ["#ff7fb5", "#f2c230", "#6fe0e8", "#9a6cf0", "#a6e05a"];
-  for (let i = 0; i < 6; i++) p.disc(18 + i * 12, 98 - (rnd() * 8 | 0), 5, goods[(i + v) % 5], FA_GLASS(0.8));   // balls of yarn in the window
-  p.rect(0, 116, 92, 12, t, FA_TRIM);
-  // the door, round-topped
+  // a signboard and a scalloped, striped valance under it
+  p.rect(0, 0, FA_S, 6, t, FA_TRIM); p.paint(0, 5, FA_S, 1, "rgba(0,0,0,0.3)");
+  for (let x = 0; x < FA_S; x += 16) { const c = sc[(x / 16) % 2]; p.rect(x, 6, 16, 10, c, FA_TRIM); p.disc(x + 8, 16, 8, c, FA_TRIM, 0); p.paint(x, 6, 16, 2, "rgba(255,255,255,0.25)"); for (let y = 16; y < 24; y++) p.paint(x + 2, y, 12 - Math.abs(y - 16) * 1.5 > 0 ? 12 - Math.abs(y - 16) * 1.5 : 0, 1, "rgba(0,0,0,0.12)"); }
+  // the shop window: an arch, its frame bevelled, muntins, a display of yarn on a shelf
+  p.arch(4, 30, 86, 86, t, FA_TRIM); p.paint(5, 52, 3, 62, "rgba(255,255,255,0.22)"); p.paint(85, 52, 3, 62, "rgba(0,0,0,0.2)");
+  p.archGlass(9, 35, 76, 79, 0.75, "#4a6a7a", "#3b5664");
+  p.rect(46, 35, 2, 79, t, FA_TRIM); p.rect(9, 70, 76, 2, t, FA_TRIM);
+  p.rect(10, 102, 74, 3, "#8a5a34", FA_GLASS(0.6));
+  const goods = ["#ff7fb5", "#f2c230", "#6fe0e8", "#9a6cf0", "#a6e05a", "#ff9a2e"];
+  for (let i = 0; i < 7; i++) { const gx = 16 + i * 10, gy = 96 - (rnd() * 6 | 0), c = goods[(i + v) % 6]; p.disc(gx, gy, 5, c, FA_GLASS(0.8)); p.paint(gx - 2, gy - 3, 2, 2, "rgba(255,255,255,0.5)"); }
+  for (let i = 0; i < 4; i++) { const gx = 20 + i * 16; p.rect(gx, 80, 8, 10, goods[(i + v + 2) % 6], FA_GLASS(0.8)); p.rect(gx + 3, 78, 2, 2, "#ffffff", FA_GLASS(0.8)); }   // hats on stands
+  // a chequered stall riser
+  for (let x = 0; x < 92; x += 6) for (let y = 116; y < 128; y += 6) p.rect(x, y, 6, 6, ((x + y) / 6) % 2 ? t : "#fff3dc", FA_TRIM);
+  // the door, round-topped, panelled, a round light in it
   p.arch(95, 34, 30, 94, t, FA_TRIM); p.arch(98, 37, 24, 91, ["#5e3a28", "#2b3a55", "#6b1f1f", "#2f4a3a"][v], FA_TRIM);
-  p.disc(110, 56, 7, FA_GL, FA_GLASS(0.8));
-  p.rect(116, 80, 3, 8, "#d4b050", FA_TRIM);
+  p.paint(98, 37, 2, 91, "rgba(255,255,255,0.15)");
+  p.paint(101, 76, 18, 18, "rgba(0,0,0,0.15)"); p.paint(101, 100, 18, 22, "rgba(0,0,0,0.15)");
+  p.disc(110, 56, 7, "#d4b050", FA_TRIM); p.disc(110, 56, 5, FA_GL, FA_GLASS(0.8));
+  p.rect(116, 86, 3, 8, "#d4b050", FA_TRIM);
 };
 const faStoryDoor: FaKind = (p, v, rnd) => {
-  p.wall(0, 0, FA_S, FA_S, "#f6f2ea"); p.speckle(rnd, 60);
+  faStoryWall(p, (v + 1) % 4, rnd);
   const t = FA_STORY_TRIM[(v + 1) % 4], door = ["#e8333a", "#1fb5b0", "#9a6cf0", "#f2c230"][v];
-  p.arch(38, 18, 52, 110, t, FA_TRIM); p.arch(44, 24, 40, 104, door, FA_TRIM);
-  for (let y = 48; y < 124; y += 12) p.paint(44, y, 40, 2, "rgba(0,0,0,0.15)");   // planks
-  p.disc(64, 44, 8, FA_GL, FA_GLASS(0.8)); p.rect(76, 80, 3, 8, "#d4b050", FA_TRIM);
-  p.disc(104, 40, 6, "#ffe08a", FA_GLASS(1));   // a round porch lamp
-  if (v % 2) for (let i = 0; i < 5; i++) p.disc(18 + (i % 2) * 6, 120 - i * 10, 5, ["#a6e05a", "#5fd3a0"][i % 2], FA_TRIM);   // a climber up the side
+  // the doorway: a bevelled arch, a keystone, the door's planks, two hinges, a knocker and a light
+  p.arch(36, 16, 56, 112, t, FA_TRIM); p.paint(37, 30, 3, 98, "rgba(255,255,255,0.22)"); p.paint(88, 30, 3, 98, "rgba(0,0,0,0.2)");
+  p.rect(58, 12, 12, 9, "#fff3dc", FA_TRIM);
+  p.arch(43, 23, 42, 105, door, FA_TRIM);
+  for (let x = 50; x < 85; x += 7) p.paint(x, 40, 1, 88, "rgba(0,0,0,0.13)");
+  for (const y of [52, 104]) p.rect(43, y, 16, 3, "#2a2440", FA_TRIM);
+  p.disc(64, 44, 9, "#d4b050", FA_TRIM); faPortGlass(p, 64, 44, 7, FA_STORY_CURT[v], 0.8); p.rect(63, 37, 2, 14, "#d4b050", FA_TRIM);
+  p.disc(64, 74, 4, "#d4b050", FA_TRIM); p.disc(64, 74, 2, door, FA_TRIM);   // the knocker
+  p.rect(77, 84, 3, 8, "#d4b050", FA_TRIM);
+  p.rect(98, 30, 10, 2, "#2a2440", FA_TRIM); p.disc(104, 40, 6, "#ffe08a", FA_GLASS(1)); p.rect(100, 32, 8, 3, "#2a2440", FA_TRIM);   // a lamp on its bracket
+  if (v % 2) for (let i = 0; i < 6; i++) p.disc(18 + (i % 2) * 6, 124 - i * 12, 5, ["#a6e05a", "#5fd3a0"][i % 2], FA_TRIM);   // a climber up the side
+  else { p.rect(12, 104, 16, 12, "#e8333a", FA_TRIM); for (let i = 0; i < 3; i++) p.disc(15 + i * 5, 101, 4, FA_STORY_CURT[(i + v) % 4], FA_TRIM); }   // a pot of tufts
 };
 
 const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon, faStorybook, faStoryShop, faStoryDoor];

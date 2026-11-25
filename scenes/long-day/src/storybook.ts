@@ -24,18 +24,37 @@ export const SB_TUFTS = [SB.pink, SB.orange, SB.mustard, SB.violet, SB.magenta, 
 export const SB_STREET = { asphalt: 0x5e5070, sidewalk: 0xffd9e0, curb: 0xfff3dc, white: 0xfff8ee, yellow: 0xff7fb5, pole: 0x2a2440, lampHead: 0xffe08a, pavers: 0xffe2dc, plaza: 0xfff1d6, path: 0xf6d9a8 };
 
 // A chain of cylinders through `pts`: r and colour per piece (i, and t from 0 to 1 along it).
+// Pieces overlap a little, so they are open (Batch.tubeSeg: no end caps, half the triangles),
+// except where the radius steps between pieces, or `capped` (a spool, a disc: its ends seen).
 const SB_UP = new THREE.Vector3(0, 1, 0), SB_DV = new THREE.Vector3(), SB_Q = new THREE.Quaternion(), SB_E = new THREE.Euler(), SB_Q2 = new THREE.Quaternion();
-export function sbTube(b: Batch, pts: SbP3[], r: (i: number, t: number) => number, col: (i: number) => number, seg = 6, spin = 0) {
+export function sbTube(b: Batch, pts: SbP3[], r: (i: number, t: number) => number, col: (i: number) => number, seg = 6, spin = 0, capped = false) {
+  const R = (i: number) => r(i, i / Math.max(1, pts.length - 2));
   for (let i = 0; i + 1 < pts.length; i++) {
     const [ax, ay, az] = pts[i], [bx, by, bz] = pts[i + 1];
     SB_DV.set(bx - ax, by - ay, bz - az); const L = SB_DV.length(); if (L < 1e-4) continue;
     // Turned about its own axis half a sector more each piece, then laid along the chain.
     SB_Q.setFromUnitVectors(SB_UP, SB_DV.normalize()); SB_Q2.setFromAxisAngle(SB_UP, spin + (i % 2) * Math.PI / seg);
     SB_E.setFromQuaternion(SB_Q.multiply(SB_Q2), "XYZ");
-    const rr = r(i, i / Math.max(1, pts.length - 2)) * (i % 2 ? 1.025 : 1);
-    b.cyl((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2, rr, L + rr * 0.3, col(i), seg, SB_E.x, SB_E.z, SB_E.y);
+    const r0 = R(i), rr = r0 * (i % 2 ? 1.025 : 1);
+    const step = (i > 0 && Math.abs(R(i - 1) - r0) > 0.05 * r0) || (i + 2 < pts.length && Math.abs(R(i + 1) - r0) > 0.05 * r0);
+    if (capped || step) b.cyl((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2, rr, L + rr * 0.3, col(i), seg, SB_E.x, SB_E.z, SB_E.y);
+    else b.tubeSeg((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2, rr, L + rr * 0.3, col(i), seg, SB_E.x, SB_E.z, SB_E.y);
   }
 }
+// A tapered piece from a (radius r0) to b (radius r1): a smooth open frustum (a turned line).
+export function sbTaper(b: Batch, a: SbP3, c: SbP3, r0: number, r1: number, color: number, seg = 10, spin = 0) {
+  SB_DV.set(c[0] - a[0], c[1] - a[1], c[2] - a[2]); const L = SB_DV.length(); if (L < 1e-4) return;
+  SB_Q.setFromUnitVectors(SB_UP, SB_DV.normalize()); SB_Q2.setFromAxisAngle(SB_UP, spin);
+  SB_E.setFromQuaternion(SB_Q.multiply(SB_Q2), "XYZ");
+  const k = Math.max(0, Math.min(1, Math.round((r1 / r0) * 20) / 20));
+  b.lathe(`taper${k}`, [[1, 0], [k, 1]], a[0], a[1], a[2], r0, L, color, seg, SB_E.y, SB_E.x, SB_E.z);
+}
+// Turned profiles ([radius, height] from the foot up, Batch.lathe): smooth shapes for domes, bulbs,
+// pom-poms and discs, where an icosahedron's facets read as coarse.
+export const SB_ONION: readonly (readonly [number, number])[] = [[0, 0], [0.8, 0.08], [1, 0.32], [0.66, 0.62], [0.2, 0.86], [0, 1]];
+export const SB_BULB: readonly (readonly [number, number])[] = [[0, 0], [0.8, 0.12], [1, 0.46], [0.74, 0.86], [0, 1]];
+export const SB_PUFF: readonly (readonly [number, number])[] = [[0, 0], [0.8, 0.12], [1, 0.42], [0.9, 0.66], [0.62, 0.9], [0, 1]];
+export const SB_LENS: readonly (readonly [number, number])[] = [[0, 0], [1, 0.42], [0.82, 0.8], [0, 1]];
 export const sbCurve = (n: number, f: (t: number) => SbP3): SbP3[] => Array.from({ length: n + 1 }, (_, i) => f(i / n));
 // A hash in [0, 1) of where something stands (to turn it its own way, pick its colour, ...).
 export const sbSpot = (x: number, z: number, k = 0) => { const v = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
@@ -86,7 +105,7 @@ export function storyGate(s: Batch, x: number, z: number, fx: number, fz: number
   cols.forEach(([cx, cz], k) => {
     s.cyl(cx, y0 + 0.4, cz, 1.3, 0.8, SB.cream, 10, 0, 0, k);
     sbTube(s, sbCurve(18, (t) => [cx + Math.cos(t * 13 + k) * 0.45, y0 + 0.7 + t * (H - 0.7), cz + Math.sin(t * 13 + k) * 0.45]), () => 0.6, (i) => (i % 2 ? SB.white : SB.red), 8, k);
-    s.ico(cx, y0 + H + 0.9, cz, 1.05, SB.mustard, 1, k * 0.7);
+    s.lathe("bulb", SB_BULB, cx, y0 + H - 0.15, cz, 1.05, 2.1, SB.mustard, 16, k * 0.7);
   });
   const arc = sbCurve(20, (t) => [cols[0][0] + (cols[1][0] - cols[0][0]) * t, y0 + H + Math.sin(t * Math.PI) * rise, cols[0][1] + (cols[1][1] - cols[0][1]) * t]);
   sbTube(s, arc, () => 0.5, (i) => (i % 2 ? SB.white : SB.teal), 8, 0.3);
@@ -130,7 +149,7 @@ export interface TowerRoom { x: number; zf: number; zb: number }   // how far a 
 // How many sides a tower's foot of radius R has: as many as leave each 3.2 m wide at least, so its
 // front side takes any door (a service door's two leaves too), and an even number, 6 at least.
 export function sbFootSides(R: number) { return Math.max(6, 2 * Math.floor(Math.PI / Math.asin(Math.min(1, 1.6 / R)) / 2)); }
-const sbPodSides = (r: number) => (r < 3.2 ? 8 : r < 4.6 ? 10 : 12);
+const sbPodSides = (r: number) => (r < 3.2 ? 10 : r < 4.6 ? 12 : 14);
 export function storyTower(s: Batch, cx: number, cz: number, R: number, room: TowerRoom, y0: number, look: TowerLook, rnd: SbRand): { top: number; front: number } {
   let n = sbFootSides(R), step = (2 * Math.PI) / n;
   // (Leaning toward the street or away from it, a little to one side.)
@@ -163,25 +182,24 @@ export function storyTower(s: Batch, cx: number, cz: number, R: number, room: To
 export function storyHat(s: Batch, x: number, y: number, z: number, r: number, dir: number, rnd: SbRand) {
   r = Math.min(r * 0.8, 3.4);
   const kind = Math.floor(rnd() * 4), c = sbPick(rnd, SB_WALLS), c2 = sbPick(rnd, SB_TRIMS), t = x * 1.7 + z;
-  if (kind === 0) {
-    s.ico(x, y + r * 0.5, z, r * 0.95, c, 0.95, t); s.cone(x, y + r * 1.45, z, r * 0.32, r * 0.9, c, 7, 0, t);
-    s.cyl(x, y + r * 2.05, z, 0.06, 0.8, SB.ink, 4, 0, 0, t); s.ico(x, y + r * 2.5, z, 0.32, SB.mustard, 1, t);
-  } else if (kind === 1) {
-    const H = r * 3, bend = r * (0.8 + rnd() * 0.8);
-    s.cyl(x, y + 0.12, z, r * 1.15, 0.24, c2, 10, 0, 0, t);
-    for (let i = 0; i < 4; i++) {
-      const u0 = i / 4, u1 = (i + 1) / 4, B = (u: number) => u * u * u * bend;
-      sbTube(s, [[x + Math.cos(dir) * B(u0), y + u0 * H, z + Math.sin(dir) * B(u0)], [x + Math.cos(dir) * B(u1), y + u1 * H, z + Math.sin(dir) * B(u1)]], () => r * (1 - (u0 + u1) / 2) * 0.95 + 0.1, () => (i % 2 ? c : c2), 9, t + i);
-    }
-  } else if (kind === 2) {
-    s.cyl(x, y + 0.2, z, r * 0.85, 0.4, c2, 10, 0, 0, t);
-    const pts = sbCurve(7, (u) => [x + Math.cos(u * 8 + dir) * r * 0.35 * (1 - u * 0.5), y + 0.4 + u * r * 2.3, z + Math.sin(u * 8 + dir) * r * 0.35 * (1 - u * 0.5)]);
-    sbTube(s, pts, () => 0.28, (i) => (i % 3 ? c : SB.ink), 5, t);
-    const e = pts[pts.length - 1]; s.cone(e[0], e[1] + 0.3, e[2], 0.5, 0.6, SB.ink, 7, Math.PI, t);
-  } else {
-    let yy = y, rr = r * 0.8;
-    for (let i = 0; i < 3; i++) { s.ico(x + Math.sin(i * 1.7 + t) * 0.3, yy + rr * 0.6, z, rr, i % 2 ? c : c2, 0.75, t + i); yy += rr * 1.1; rr *= 0.66; }
-    s.cone(x, yy + 0.5, z, 0.15, 1.2, SB.ink, 4, 0, t);
+  if (kind === 0) {   // an onion dome, a spike and a gold ball
+    s.lathe("onion", SB_ONION, x, y - 0.05, z, r * 1.02, r * 2.1, c, 10, t);
+    s.tubeSeg(x, y + r * 2.25, z, 0.06, 0.8, SB.ink, 4, 0, 0, t); s.lathe("bulb", SB_BULB, x, y + r * 2.55, z, 0.32, 0.62, SB.mustard, 8, t);
+  } else if (kind === 1) {   // a witch's hat, tapering smoothly as it bends over, banded
+    const H = r * 3, bend = r * (0.8 + rnd() * 0.8), B = (u: number) => u * u * u * bend;
+    s.cyl(x, y + 0.12, z, r * 1.15, 0.24, c2, 14, 0, 0, t);
+    const at = (u: number): SbP3 => [x + Math.cos(dir) * B(u), y + 0.2 + u * H, z + Math.sin(dir) * B(u)], rad = (u: number) => r * (1 - u) * 0.95 + 0.06;
+    for (let i = 0; i < 5; i++) { const u0 = i / 5, u1 = (i + 1) / 5; sbTaper(s, at(u0), at(u1 + 0.02), rad(u0), rad(u1 + 0.02), i % 2 ? c : c2, 10, t + i * 0.31); }
+    s.lathe("bulb", SB_BULB, ...at(1), 0.16, 0.3, SB.mustard, 6, t);
+  } else if (kind === 2) {   // a curly chimney
+    s.cyl(x, y + 0.2, z, r * 0.85, 0.4, c2, 12, 0, 0, t);
+    const pts = sbCurve(9, (u) => [x + Math.cos(u * 8 + dir) * r * 0.35 * (1 - u * 0.5), y + 0.4 + u * r * 2.3, z + Math.sin(u * 8 + dir) * r * 0.35 * (1 - u * 0.5)]);
+    sbTube(s, pts, () => 0.28, (i) => (i % 3 ? c : SB.ink), 6, t);
+    const e = pts[pts.length - 1]; s.cone(e[0], e[1] + 0.3, e[2], 0.5, 0.6, SB.ink, 8, Math.PI, t);
+  } else {   // a stack of shrinking bulbs and a spike
+    let yy = y - 0.05, rr = r * 0.8;
+    for (let i = 0; i < 3; i++) { s.lathe("bulb", SB_BULB, x + Math.sin(i * 1.7 + t) * 0.3, yy, z, rr, rr * 1.3, i % 2 ? c : c2, 9, t + i); yy += rr * 1.18; rr *= 0.66; }
+    s.cone(x, yy + 0.5, z, 0.15, 1.2, SB.ink, 5, 0, t);
   }
 }
 // A crooked row building on a lot b (x0..x1 along the street, z0..z1 in from it; street at -z):
@@ -265,9 +283,9 @@ export function storyTree(s: Batch, kind: string, x: number, y: number, z: numbe
     const bend = (u - 0.5) * 2.2, H = h * 0.8, at = (v: number): SbP3 => [x + bx * bend * v * v, y + v * H, z + bz * bend * v * v];
     sbTube(s, sbCurve(2, at), (i) => 0.24 - i * 0.05, () => 0x7a4a32, 5, t);
     let rr = r * 1.45;
-    for (let i = 0; i < 3; i++) { const p = at(0.5 + i * 0.25); s.ico(p[0], p[1] + i * 0.35, p[2], rr, i % 2 ? shadeC(color, 0.8) : color, 0.3, t + i * 0.7); rr *= 0.7; }
+    for (let i = 0; i < 3; i++) { const p = at(0.5 + i * 0.25); s.lathe("lens", SB_LENS, p[0], p[1] + i * 0.35 - rr * 0.3, p[2], rr, rr * 0.6, i % 2 ? shadeC(color, 0.8) : color, 7, t + i * 0.7); rr *= 0.7; }
     const p = at(1); if (snow) s.ico(p[0], p[1] + 0.9, p[2], r * 0.5, 0xf4f6f8, 0.4, t);
-    else s.ico(p[0], p[1] + 0.95, p[2], 0.3, SB.red, 1, t);
+    else s.lathe("bulb", SB_BULB, p[0], p[1] + 0.65, p[2], 0.3, 0.6, SB.red, 6, t);
     return;
   }
   if (kind === "droop") {
@@ -275,7 +293,7 @@ export function storyTree(s: Batch, kind: string, x: number, y: number, z: numbe
     const L = h * 0.5, at = (v: number): SbP3 => [x + bx * Math.sin(v * 2.1) * L, y + Math.sin(v * 1.8) * h * 0.95, z + bz * Math.sin(v * 2.1) * L];
     sbTube(s, sbCurve(3, at), (i) => 0.26 - i * 0.05, () => SB.plum, 5, t);
     const [ex, ey, ez] = at(1);
-    s.ico(ex, ey + 0.2, ez, r * 0.85, snow ? 0xf4f6f8 : color, 0.8, t);
+    s.lathe("puff", SB_PUFF, ex, ey + 0.2 - r * 0.68, ez, r * 0.85, r * 1.36, snow ? 0xf4f6f8 : color, 7, t);
     for (let i = 0; i < 4; i++) { const a = t + i * 1.57; s.cone(ex + Math.cos(a) * r * 0.7, ey - r * 0.55 - (i % 2) * 0.4, ez + Math.sin(a) * r * 0.7, 0.2, 1.6 + (i % 2) * 0.7, shadeC(color, 0.8), 3, Math.PI, a); }
     return;
   }
@@ -283,7 +301,7 @@ export function storyTree(s: Batch, kind: string, x: number, y: number, z: numbe
     // topiary: a pot, and balls clipped in a spiral up a stake
     s.cyl(x, y + 0.4, z, 0.7, 0.8, SB.coral, 6, 0, 0, t); s.cyl(x, y + 0.84, z, 0.8, 0.12, SB.cream, 6, 0, 0, t + 0.5);
     const g = color === SB.pink || color === SB.magenta ? SB.mint : SB.lime;
-    for (let i = 0; i < 4; i++) { const v = i / 4, a = t + v * 9; s.ico(x + Math.cos(a) * 0.65 * (1 - v), y + 1.4 + v * h * 0.55, z + Math.sin(a) * 0.65 * (1 - v), 0.62 * (1 - v * 0.45), snow && i === 3 ? 0xf4f6f8 : g, 1, a); }
+    for (let i = 0; i < 4; i++) { const v = i / 4, a = t + v * 9, rr = 0.62 * (1 - v * 0.45); s.lathe("bulb", SB_BULB, x + Math.cos(a) * 0.65 * (1 - v), y + 1.4 + v * h * 0.55 - rr, z + Math.sin(a) * 0.65 * (1 - v), rr, rr * 2, snow && i === 3 ? 0xf4f6f8 : g, 6, a); }
     return;
   }
   // tuft: a thin striped trunk with a kink, a pom-pom crown and a ragged fringe under it
@@ -291,8 +309,7 @@ export function storyTree(s: Batch, kind: string, x: number, y: number, z: numbe
   const at = (v: number): SbP3 => [x + bx * bend * v * v + Math.sin(v * 5 + t) * 0.15, y + v * H, z + bz * bend * v * v];
   sbTube(s, sbCurve(3, at), () => 0.15, (i) => (i % 2 ? c1 : c0), 5, t);
   const [tx, ty, tz] = at(1);
-  s.ico(tx, ty + r * 0.35, tz, r * 0.95, snow ? 0xf4f6f8 : color, 0.85, t);
-  s.ico(tx + bx * r * 0.45, ty + r * 0.7, tz + bz * r * 0.45, r * 0.6, shadeC(color, 1.12), 0.9, t + 1.12);
+  s.lathe("puff", SB_PUFF, tx, ty - r * 0.5, tz, r * 1.0, r * 1.75, snow ? 0xf4f6f8 : color, 7, t);
   for (let i = 0; i < 3; i++) { const a = t + i * 2.09; s.cone(tx + Math.cos(a) * r * 0.7, ty - r * 0.25, tz + Math.sin(a) * r * 0.7, 0.24, 0.9, color, 3, Math.PI, a); }
 }
 
@@ -305,14 +322,14 @@ export function storyBubbleCar(b: Batch) {
   const W = 1.8;
   for (const x of [-1.1, 1.1]) for (const z of [-0.78, 0.78]) b.cyl(x, 0.36, z, 0.36, 0.3, 0x161616, 10, Math.PI / 2);
   b.box(0, 0.62, 0, 3.3, 0.42, W - 0.1, 0xffffff);
-  b.ico(-0.15, 1.35, 0, 1.15, 0xffffff, 1.0, 0.3);
-  b.ico(0.42, 1.45, 0, 0.82, 0x26313d, 0.95, 1.4);   // the windscreen, bulging out of the front of the dome
+  b.lathe("bulb", SB_BULB, -0.15, 0.25, 0, 1.15, 2.25, 0xffffff, 12, 0.3);
+  b.lathe("bulb", SB_BULB, 0.45, 0.72, 0, 0.82, 1.5, 0x26313d, 10, 1.4);   // the windscreen, bulging out of the front of the dome
   b.box(1.66, 0.62, 0, 0.06, 0.26, W - 0.3, 0x2a2440);
   headLamp(b, 1.66, 0.82, -0.6, 0.04, 0.16, 0.22); headLamp(b, 1.66, 0.82, 0.6, 0.04, 0.16, 0.22);
   tailLamp(b, -1.66, 0.82, -0.6, 0.04, 0.14, 0.22); tailLamp(b, -1.66, 0.82, 0.6, 0.04, 0.14, 0.22);
   sbTube(b, sbCurve(4, (t) => [-1.55 - t * 0.35, 0.55 + t * 1.2 + Math.sin(t * 7) * 0.12, 0.6 + Math.cos(t * 7) * 0.12]), () => 0.07, () => 0x2a2440, 4, 0.2);
   sbTube(b, sbCurve(3, (t) => [-0.25 + Math.cos(t * 9) * 0.06, 2.45 + t * 0.6, Math.sin(t * 9) * 0.06]), () => 0.035, () => 0x2a2440, 4, 0.5);
-  b.ico(-0.25, 3.12, 0, 0.17, SB.mustard, 1, 0.2);
+  b.lathe("bulb", SB_BULB, -0.25, 2.95, 0, 0.17, 0.34, SB.mustard, 6, 0.2);
 }
 // The puff bus: a fat round-ended coral body banded in cream, round windows down both sides, a
 // little striped onion on its roof.
@@ -321,11 +338,11 @@ export function storyPuffBus(b: Batch) {
   for (const x of [-2.9, 2.9]) for (const z of [-1.05, 1.05]) b.cyl(x, 0.48, z, 0.48, 0.34, 0x161616, 10, Math.PI / 2);
   b.cyl(0, y, 0, R, L - 2 * R * 0.8, SB.coral, 12, 0, Math.PI / 2);
   b.cyl(0, y - 0.35, 0, R + 0.03, L - 2 * R * 0.8 - 0.2, SB.cream, 12, 0, Math.PI / 2);   // (not quite as long: its ends inside the body's)
-  b.ico(L / 2 - R * 0.8, y, 0, R, SB.coral, 1, 0.4); b.ico(-L / 2 + R * 0.8, y, 0, R, SB.coral, 1, 1.1);
-  b.ico(L / 2 - R * 0.55, y + 0.25, 0, R * 0.78, 0x26313d, 0.75, 0.9);   // windscreen
+  b.lathe("bulb", SB_BULB, L / 2 - R * 0.8, y - R, 0, R, 2 * R, SB.coral, 12, 0.4); b.lathe("bulb", SB_BULB, -L / 2 + R * 0.8, y - R, 0, R, 2 * R, SB.coral, 12, 1.1);
+  b.lathe("bulb", SB_BULB, L / 2 - R * 0.5, y + 0.25 - R * 0.58, 0, R * 0.78, R * 1.17, 0x26313d, 10, 0.9);   // windscreen
   for (let i = 0; i < 5; i++) for (const z of [-1, 1]) b.cyl(-2.6 + i * 1.3, y + 0.35, z * (R - 0.02), 0.34, 0.08, 0x26313d, 8, Math.PI / 2, 0, i * 0.3);
   b.cyl(0, y + R + 0.15, 0, 0.5, 0.3, SB.teal, 8);
-  b.ico(0, y + R + 0.75, 0, 0.55, SB.mustard, 1.2, 0.3); b.cone(0, y + R + 1.45, 0, 0.12, 0.5, SB.ink, 4);
+  b.lathe("onion", SB_ONION, 0, y + R + 0.25, 0, 0.6, 1.3, SB.mustard, 10, 0.3); b.cone(0, y + R + 1.45, 0, 0.12, 0.5, SB.ink, 4);
   headLamp(b, L / 2 + 0.25, 0.95, -0.7, 0.04, 0.16, 0.3); headLamp(b, L / 2 + 0.25, 0.95, 0.7, 0.04, 0.16, 0.3);
   tailLamp(b, -L / 2 - 0.25, 0.95, -0.7, 0.04, 0.14, 0.3); tailLamp(b, -L / 2 - 0.25, 0.95, 0.7, 0.04, 0.14, 0.3);
 }
