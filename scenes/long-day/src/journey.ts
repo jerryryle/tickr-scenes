@@ -833,8 +833,8 @@ export class Journey {
 
   // How far the stop's front door (kerbDoor) stands open, 0..1, for the driver's trips through it
   // (FrontDoorFx): opened with the truck's door (or, at a stop without one to open, as the driver
-  // reaches it the first time), held open between trips, and closed behind the driver once the
-  // last load is through (as they turn away from it at the end of the last fetch).
+  // reaches it the first time), held open between trips, and closed once everyone's done with
+  // it: as the last load goes into the truck (a pickup), or as the truck is closed up (a drop).
   get frontDoorOpen(): number {
     if (this.st.mode !== "dwell" || !this.chores.length) return 0;
     const tc = this.st.modeTime - DWELL.park, ch = this.chores, S = this.choreStart;
@@ -844,7 +844,16 @@ export class Journey {
     for (let i = first; i < ch.length; i++) if (ch[i].kind === "fetch") last = i;
     const u = (i: number) => (tc - S[i]) / ch[i].len, ss = THREE.MathUtils.smoothstep;
     const o = ch.findIndex((c, i) => i < first && (c.kind === "doorOpen" || c.kind === "doorsOpen"));
-    return (o >= 0 ? ss(u(o), 0.2, 1) : ss(u(first), 0.05, 0.3)) * (1 - ss(u(last), 0.7, 0.95));
+    // (Shut once everyone is well clear of it: on a pickup, as the driver puts the last load in
+    // the truck; on a drop, as they get ready to close the truck up (its door, or whatever
+    // closing up it has).)
+    const pickup = this.st.stops[0]?.kind === "pickup";
+    let k = -1;
+    if (pickup) for (let i = last; i < ch.length; i++) { if (ch[i].kind === "stow") k = i; }
+    else k = ch.findIndex((c, i) => i > last && (c.kind === "doorClose" || c.kind === "doorsClose"));
+    if (k < 0) k = ch.findIndex((c, i) => i > last && c.group === "close");
+    const shut = k < 0 ? ss(tc - S[last] - ch[last].len, 0.3, 1.2) : pickup ? ss(u(k), 0.1, 0.9) : ss(u(k), 0, 0.6);
+    return (o >= 0 ? ss(u(o), 0.2, 1) : ss(u(first), 0.05, 0.3)) * (1 - shut);
   }
 
   // The city's front doors (city.ts kerbDoors; set by the scene, absent in tests) and the one

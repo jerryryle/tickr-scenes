@@ -11,6 +11,9 @@
 // away from a door) is walked backwards, drawing it along, as people do in a tight space.
 // Down a walk ramp with it (Chore.noTurn) the driver turns nothing: on the way they face,
 // forwards or backwards, until it is off the ramp.
+// A hand truck can't be pushed sideways: walking with one, it rolls straight along the way it
+// faces and is turned on its wheels, the driver walking round them (wheelWalk), never swung round
+// the driver.
 // A pallet jack's moves are planned (jackplan.ts, Chore.jack): it and the driver on its handle are
 // placed from them exactly, and between them it stays where they left it. (A walk with it that
 // wasn't planned, rarely: held straight out ahead of the driver.)
@@ -22,16 +25,19 @@ import { jackDriverAt, jackEase, jackPoseAt, jackWheel } from "./jackplan.ts";
 // driver turns (a spring's rate, 1/s, and the most rad/s).
 // A pallet jack's `tip`: its middle, this far on from its steering wheel, which is `lead` ahead
 // of the feet.
-export interface Hold { lead: number; pivot: number; omega: number; rate: number; tip?: number }
+// `wheels`: a hand truck, which only rolls along the way it faces or turns on its wheels.
+export interface Hold { lead: number; pivot: number; omega: number; rate: number; tip?: number; wheels?: boolean }
 export const EMPTY_HOLD: Hold = { lead: 0, pivot: 0, omega: 9, rate: 7 };
 
 // Where a chore puts the driver at progress u (truck frame), the facing it wants (NaN: whatever
 // the driver has), and whether that spot is exact (the door, the ramp's end, the cab steps:
 // any drift from a turn is taken up quickly there).
-export interface Nominal { x: number; z: number; yaw: number; exact: boolean }
+// (snap: exactly there, facing so, at once: out of sight, turned round inside a doorway.)
+export interface Nominal { x: number; z: number; yaw: number; exact: boolean; snap?: boolean }
 
 // (jx, jz, jyaw: a pallet jack in hand, its steering wheel and heading; NaN when there is none.)
-export interface CrewPath { rate: number; x: Float32Array; z: Float32Array; yaw: Float32Array; steps: Float32Array; travel: Float32Array; jx: Float32Array; jz: Float32Array; jyaw: Float32Array; starts: number[] }
+// (lead: a hand truck's wheels this far ahead of the driver, walked with as planned (wheelWalk); NaN otherwise.)
+export interface CrewPath { rate: number; x: Float32Array; z: Float32Array; yaw: Float32Array; steps: Float32Array; travel: Float32Array; jx: Float32Array; jz: Float32Array; jyaw: Float32Array; lead: Float32Array; starts: number[] }
 
 const RATE = 30;              // samples a second
 const AVG = 8;                // samples either side over which a move's sideways share is judged (samplePath)
@@ -44,12 +50,13 @@ const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // `nominal(c, u)`: the chore's spot and facing; `hold(c, u)`: what is in hand; `yaw0`: the facing
 // as the plan starts.
-export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => Nominal, hold: (c: Chore, u: number) => Hold, yaw0: number): CrewPath {
+// `clear(x, z)`: whether the driver may stand there (not in the truck), turning a hand truck.
+export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => Nominal, hold: (c: Chore, u: number) => Hold, yaw0: number, clear: (x: number, z: number) => boolean = () => true): CrewPath {
   const starts: number[] = [];
   let total = 0;
   for (const c of plan) { starts.push(total); total += c.len; }
   const n = Math.max(2, Math.ceil(total * RATE) + 2), dt = 1 / RATE;
-  const P: CrewPath = { rate: RATE, x: new Float32Array(n), z: new Float32Array(n), yaw: new Float32Array(n), steps: new Float32Array(n), travel: new Float32Array(n), jx: new Float32Array(n).fill(NaN), jz: new Float32Array(n).fill(NaN), jyaw: new Float32Array(n).fill(NaN), starts };
+  const P: CrewPath = { rate: RATE, x: new Float32Array(n), z: new Float32Array(n), yaw: new Float32Array(n), steps: new Float32Array(n), travel: new Float32Array(n), jx: new Float32Array(n).fill(NaN), jz: new Float32Array(n).fill(NaN), jyaw: new Float32Array(n).fill(NaN), lead: new Float32Array(n).fill(NaN), starts };
   const isWalk = (c?: Chore) => !!c && c.kind === "walk";
   // Walking: the point `look` metres on along this walk and the ones straight after it (on past
   // the last one's end), and the direction to it from (x, z).
@@ -72,6 +79,8 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
   };
   let ci = 0, x = 0, z = 0, yaw = yaw0, v = 0, ex = 0, ez = 0, steps = 0, first = true, back = false, entered = -1, travel = 0, dir = 1;
   let jack = false, rx = 0, rz = 0, jth = 0;   // a pallet jack where its last planned move left it: its middle, its heading
+  let snapAt: { i: number; ex: number; ez: number; ey: number; jdx: number; jdz: number; jh: number } | null = null;   // a snapped chore's start, as it really was
+  let wheel: WheelWalk | null = null, wheelTo = -1, wheelT0 = 0, wheelT1 = 0;   // walks with a hand truck, as rolled and turned (wheelWalk): to chore wheelTo, from time wheelT0 to wheelT1
   for (let s = 0; s < n; s++) {
     const t = Math.min(s * dt, total - 1e-6);
     while (ci < plan.length - 1 && t >= starts[ci + 1]) ci++;
@@ -80,7 +89,20 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
     if (entered !== ci) {
       // Into a new chore: a walk back the way the driver faces away from, holding something, is
       // walked backwards.
-      entered = ci; back = false;
+      entered = ci; back = false; snapAt = null;
+      if (ci > wheelTo) wheel = null;
+      const plain = (q?: Chore) => !!q && isWalk(q) && !!hold(q, 0).wheels && !q.round && !q.noTurn && !q.backward && !q.jack;
+      if (!wheel && plain(c) && !first) {
+        // (A run of walks with it, one after another, taken as one: the wheels through each corner,
+        // and at the end, where the driver should stand, facing the way the next chore wants,
+        // turned there on the wheels.)
+        let j = ci;
+        while (plain(plan[j + 1]) && !plan[j + 1].forward === !c.forward) j++;
+        const next = plan[j + 1];
+        const fy = next && (!isWalk(next) || next.round) ? nominal(next, 0).yaw : NaN;   // (round it next: facing its wheels)
+        wheel = wheelWalk(x, z, yaw, plan.slice(ci, j + 1).map((q) => q.b!), h.lead, fy, !!c.forward, clear, c.a![1]);
+        wheelTo = j; wheelT0 = starts[ci]; wheelT1 = starts[j] + plan[j].len;
+      }
       if (isWalk(c) && h.pivot > 0 && !c.round) {
         const dx = c.b![0] - c.a![0], dz = c.b![2] - c.a![2], len = Math.hypot(dx, dz);
         const off = Math.abs(wrap(Math.atan2(-dz, dx) - yaw));
@@ -88,7 +110,8 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       }
     }
     let target = nm.yaw;
-    if (back) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]) + Math.PI; }
+    if (c.faceYaw && isWalk(c)) target = c.faceYaw[0] + wrap(c.faceYaw[1] - c.faceYaw[0]) * u;   // (faced so all the way: turning a load, side-stepping it)
+    else if (back) { const a = c.a!, b = c.b!; target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]) + Math.PI; }
     else if (c.round) target = nm.yaw;   // (round what's held: facing it)
     else if (c.backward && isWalk(c)) { const f = ahead(ci, u, nm.x, nm.z); if (!Number.isNaN(f)) target = f + Math.PI; }   // (backing along it, facing back the way it comes)
     else if (c.noTurn) { const a = c.a!, b = c.b!; if (Math.hypot(b[0] - a[0], b[2] - a[2]) > 0.05) target = Math.atan2(-(b[2] - a[2]), b[0] - a[0]); }   // (straight on, not turning early for what comes next; on no way at all, as they are)
@@ -104,7 +127,37 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
     if (Number.isNaN(target)) target = yaw;
     if (first) { x = nm.x; z = nm.z; first = false; }
     let nx: number, nz: number, dy: number;
-    if (c.jack) {
+    if (nm.snap) {
+      // Placed exactly (a fetch turned round inside a doorway), from wherever the driver and what
+      // they hold really were as it began (the end of a pallet jack's planned moves, say), closing
+      // on it over the walk in; turned round out of sight, what's held straight out ahead.
+      if (!snapAt) {
+        const [jx0, jz0] = jack ? [rx, rz] : [NaN, NaN];
+        snapAt = { i: ci, ex: x - nm.x, ez: z - nm.z, ey: wrap(yaw - nm.yaw), jdx: jx0 - x, jdz: jz0 - z, jh: jth };
+      }
+      const k = u < 0.5 ? 1 - jackEase(Math.min(1, u / 0.35)) : 0;
+      nx = nm.x + snapAt.ex * k; nz = nm.z + snapAt.ez * k;
+      const y1 = nm.yaw + snapAt.ey * k;
+      dy = wrap(y1 - yaw); yaw = y1; v = 0; ex = ez = 0;
+      if (h.tip) {
+        jack = true;
+        if (u < 0.5 && !Number.isNaN(snapAt.jdx)) { rx = nx + snapAt.jdx; rz = nz + snapAt.jdz; jth = snapAt.jh; }   // (going in: pushed straight on, as it was)
+        else { jth = yaw; rx = nx + Math.cos(yaw) * (h.lead + h.tip); rz = nz - Math.sin(yaw) * (h.lead + h.tip); }
+        const [wx, wz] = jackWheel({ x: rx, z: rz, h: jth });
+        P.jx[s] = wx; P.jz[s] = wz; P.jyaw[s] = jth;
+      } else jack = false;
+      if (Math.abs(dy) > 1) dy = 0;   // (turned round out of sight: no steps for it)
+    } else if (wheel) {
+      // A walk with a hand truck: rolled and turned on its wheels as worked out (wheelWalk).
+      const q = wheelAt(wheel, Math.min(1, Math.max(0, (t - wheelT0) / (wheelT1 - wheelT0))));
+      nx = q[0]; nz = q[1];
+      dy = wrap(q[2] - yaw); yaw = q[2]; v = 0; ex = ez = 0; jack = false;   // (each part eased to a stop: still at its end)
+      P.lead[s] = q[3];
+    } else if (c.round && h.wheels && !Number.isNaN(nm.yaw)) {
+      // Round a hand truck: facing its wheels all the way, which stay where they are.
+      nx = nm.x; nz = nm.z;
+      dy = wrap(nm.yaw - yaw); yaw += dy; v = dy / dt; ex = ez = 0; jack = false;
+    } else if (c.jack) {
       // A pallet jack's planned move (jackplan.ts): the jack and the driver just as planned, eased
       // in and out; the driver facing the handle's end, and the jack's state carried on for
       // whatever comes next.
@@ -140,6 +193,12 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       ex *= k; ez *= k;
       const m = Math.hypot(ex, ez); if (m > 1.5) { ex *= 1.5 / m; ez *= 1.5 / m; }
       nx = nm.x + ex; nz = nm.z + ez;
+      if (h.wheels && !isWalk(c) && c.kind !== "toolGet" && c.kind !== "toolPut" && Math.abs(dy) < 1e-4) {
+        // (Holding a hand truck, still, closing on the chore's spot: only along the way it faces,
+        // as its wheels roll, never sideways.)
+        const fx = Math.cos(yaw), fz = -Math.sin(yaw), along = (nx - x) * fx + (nz - z) * fz;
+        nx = x + fx * along; nz = z + fz * along; ex = nx - nm.x; ez = nz - nm.z;
+      }
       if (h.tip) {
         // (A walk with the jack that wasn't planned: held straight out ahead, and left where it is
         // after, for a chore that follows.)
@@ -162,11 +221,109 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
   return P;
 }
 
+// Walks with a hand truck (`lead` from the driver's feet to its wheels), from the driver at (x, z)
+// facing `yaw` through the walks' ends `pts`: at each, turned on its wheels to the way on and
+// rolled there, the driver to each corner; the last, to where the driver is to stand, turned
+// there on its wheels to face `face` (NaN: the way it rolled). A single short walk back the way
+// the driver faces away from is rolled backwards instead, drawn after them.
+// Each part takes its share of the time by how far the driver goes in it.
+interface WheelPart { kind: "turn" | "roll"; wx0: number; wz0: number; wx1: number; wz1: number; h0: number; h1: number; w: number; near: number }
+interface WheelWalk { lead: number; parts: WheelPart[]; total: number }
+// (Turning it on its wheels where walking round them at arm's length would take the driver into
+// something, the truck: held more upright, nearer, the nearest this, through the middle of the turn.)
+const WHEEL_NEAR = [0.9, 0.75, 0.6];
+function wheelWalk(x: number, z: number, yaw: number, pts: number[][], lead: number, face: number, forward: boolean, clear: (x: number, z: number) => boolean, y0 = 0): WheelWalk {
+  const fw = (h: number): [number, number] => [Math.cos(h), -Math.sin(h)];
+  const [f0x, f0z] = fw(yaw);
+  let wx = x + f0x * lead, wz = z + f0z * lead, h = yaw;
+  const parts: WheelPart[] = [];
+  // (Whether turning it by d on its wheels where they are leaves the driver room at r, nearest.)
+  const fits = (d: number, r: number) => { for (let i = 1; i < 12; i++) { const u = i / 12, rr = lead - (lead - r) * Math.sin(Math.PI * u), [fx, fz] = fw(h + d * u); if (!clear(wx - fx * rr, wz - fz * rr)) return false; } return true; };
+  const room = (to: number) => fits(wrap(to - h), WHEEL_NEAR[WHEEL_NEAR.length - 1]);
+  const turn = (to: number) => {
+    const d = wrap(to - h);
+    if (Math.abs(d) > 0.01) {
+      // (As far out as there is room for.)
+      const near = fits(d, lead) ? lead : WHEEL_NEAR.find((r) => fits(d, r)) ?? WHEEL_NEAR[WHEEL_NEAR.length - 1];
+      parts.push({ kind: "turn", wx0: wx, wz0: wz, wx1: wx, wz1: wz, h0: h, h1: h + d, w: Math.abs(d) * (lead + near) / 2, near });
+    }
+    h += d;
+  };
+  const roll = (tx: number, tz: number, back: boolean) => {
+    const dist = Math.hypot(tx - wx, tz - wz);
+    if (dist < 0.02) return;
+    const go = Math.atan2(-(tz - wz), tx - wx);
+    turn(back ? go + Math.PI : go);
+    parts.push({ kind: "roll", wx0: wx, wz0: wz, wx1: tx, wz1: tz, h0: h, h1: h, w: dist, near: lead });
+    wx = tx; wz = tz;
+  };
+  // Each leg to its end, the driver (not the wheels) coming to it: pushed ahead, or a short way
+  // back the way the driver faces away from, drawn after them, backing (in the bed, too narrow to
+  // turn it round in). At a corner it is turned on its wheels, out ahead of the driver, who swings
+  // out round them, away from what the way goes round (the truck's corner, say).
+  // (Drawn backwards only for a short run all told: further, it is turned round where it starts
+  // and pushed, not drawn on and on, to be turned at last somewhere with no room.)
+  let runLen = 0;
+  for (let k = 0, qx = x, qz = z; k < pts.length; k++) { runLen += Math.hypot(pts[k][0] - qx, pts[k][2] - qz); qx = pts[k][0]; qz = pts[k][2]; }
+  let px = x, pz = z;
+  for (let k = 0; k < pts.length; k++) {
+    const p1 = pts[k], d = Math.hypot(p1[0] - px, p1[2] - pz), lastLeg = k === pts.length - 1;
+    const dir = d > 0.05 ? Math.atan2(-(p1[2] - pz), p1[0] - px) : h;
+    // (Back the way the driver faces away from: drawn after them, a short way. Where there is no
+    // room to turn it round (at the bed's front wall, say), drawn back first until there is.)
+    // (Up off the ground, in the bed or out of it onto a dock, drawn back a leg at a time: there is
+    // no room to turn it round in there.)
+    const up = p1[1] > 0.5 && (k ? pts[k - 1][1] : y0) > 0.5;
+    let back = !forward && d > 0.05 && Math.abs(wrap(dir - h)) > BACK_TURN && d <= BACK_LEN && (runLen <= BACK_LEN || up);
+    if (!forward && !back && d > 0.05 && Math.abs(wrap(dir - h)) > BACK_TURN && !room(dir)) {
+      const [ux, uz] = fw(dir), x0 = wx, z0 = wz;
+      for (let sb = 0.25; sb < d - 0.3; sb += 0.25) {
+        wx = x0 + ux * sb; wz = z0 + uz * sb;
+        if (room(dir)) { const tx = wx, tz = wz; wx = x0; wz = z0; roll(tx, tz, true); break; }
+        wx = x0; wz = z0;
+      }
+    }
+    // (The last leg, to face the way the next chore wants: rolled forwards if that is the way it
+    // goes, backwards if the other.)
+    if (lastLeg && !Number.isNaN(face) && d > 0.05) back = Math.abs(wrap(dir - face)) > Math.PI / 2;
+    const hd = lastLeg && !Number.isNaN(face) ? face : back ? dir + Math.PI : dir, [fx, fz] = fw(hd);
+    if (lastLeg && !Number.isNaN(face) && !back) {
+      // (Into a doorway, say, coming at it at an angle: the wheels to just short of it first,
+      // square to it, so they never cut across beside it, then straight on in.)
+      const qx = p1[0] + fx * Math.min(lead, 0.3), qz = p1[2] + fz * Math.min(lead, 0.3);
+      if ((qx - wx) * fx + (qz - wz) * fz > 0.05 && Math.abs(wrap(Math.atan2(-(qz - wz), qx - wx) - face)) > 0.4) roll(qx, qz, false);   // (only with it still ahead)
+    }
+    // (At a corner, the wheels on past it no further than they stay clear: not into the truck's
+    // side, where the way turns along it.)
+    let o = lead;
+    if (!lastLeg) {
+      const ok = (r: number) => { for (let i = 1; i <= 8; i++) { const f = i / 8, x1 = p1[0] + fx * r, z1 = p1[2] + fz * r; if (!clear(wx + (x1 - wx) * f, wz + (z1 - wz) * f)) return false; } return true; };
+      while (o > 0.05 && !ok(o)) o -= 0.15;
+      o = Math.max(0, o);
+    }
+    roll(p1[0] + fx * o, p1[2] + fz * o, back);
+    px = p1[0]; pz = p1[2];
+  }
+  if (!Number.isNaN(face)) turn(face);
+  return { lead, parts, total: parts.reduce((s, p) => s + p.w, 0) };
+}
+// The driver (x, z), their facing, and how far ahead the wheels are, at u through a hand truck's
+// walk: each part eased in and out.
+function wheelAt(m: WheelWalk, u: number): [number, number, number, number] {
+  let at = u * m.total, p = m.parts[0];
+  for (const q of m.parts) { p = q; if (at <= q.w) break; at -= q.w; }
+  if (!p) return [NaN, NaN, NaN, m.lead];
+  const v = p.w > 1e-6 ? Math.min(1, Math.max(0, at / p.w)) : 1, k = jackEase(v);
+  const wx = p.wx0 + (p.wx1 - p.wx0) * k, wz = p.wz0 + (p.wz1 - p.wz0) * k, h = p.h0 + (p.h1 - p.h0) * k;
+  const r = m.lead - (m.lead - p.near) * Math.sin(Math.PI * v);
+  return [wx - Math.cos(h) * r, wz + Math.sin(h) * r, h, r];
+}
+
 // The path at time t (seconds into the plan): x, z, yaw, steps taken so far, ground covered (both
 // counting back when walking backwards), speed (m/s), how much of the move is along the facing
 // (along, 0..1), and a pallet jack's steering wheel and
 // heading (jx, jz, jyaw; NaN with none in hand).
-export function samplePath(P: CrewPath, t: number, out: { x: number; z: number; yaw: number; steps: number; travel: number; speed: number; along: number; jx: number; jz: number; jyaw: number }) {
+export function samplePath(P: CrewPath, t: number, out: { x: number; z: number; yaw: number; steps: number; travel: number; speed: number; along: number; jx: number; jz: number; jyaw: number; lead?: number }) {
   const f = Math.max(0, t * P.rate), n = P.x.length, i = Math.min(n - 2, Math.floor(f)), k = Math.min(1, f - i);
   out.x = P.x[i] + (P.x[i + 1] - P.x[i]) * k;
   out.z = P.z[i] + (P.z[i + 1] - P.z[i]) * k;
@@ -184,6 +341,7 @@ export function samplePath(P: CrewPath, t: number, out: { x: number; z: number; 
     fw += Math.abs(mx * Math.cos(P.yaw[j]) - mz * Math.sin(P.yaw[j])); mm += Math.hypot(mx, mz);
   }
   out.along = mm > 1e-5 ? Math.min(1, fw / mm) : 1;
+  out.lead = Number.isNaN(P.lead[i]) || Number.isNaN(P.lead[i + 1]) ? (Number.isNaN(P.lead[i]) ? P.lead[i + 1] : P.lead[i]) : P.lead[i] + (P.lead[i + 1] - P.lead[i]) * k;
   out.jx = P.jx[i] + (P.jx[i + 1] - P.jx[i]) * k;
   out.jz = P.jz[i] + (P.jz[i + 1] - P.jz[i]) * k;
   out.jyaw = P.jyaw[i] + wrap(P.jyaw[i + 1] - P.jyaw[i]) * k;

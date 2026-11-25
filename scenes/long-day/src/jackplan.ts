@@ -15,6 +15,11 @@ export const JACK_MID = 0.68;
 const JK_BACK = -0.2, JK_END = 1.37, JK_HALF = 0.33, JK_LOAD_AT = 0.77, JK_HANDLE = 1.0;
 // The driver keeps this clear of walls and things (their body's half width, m).
 const JK_BODY = 0.3;
+// Pivoting it, the driver nearer its middle than this stands beside its back, not behind it (m).
+const JK_CLOSE = JACK_MID - JK_BACK + JK_BODY * 0.8;
+// (There, this far to the side, beside the pump and steering wheel, the narrow part at its back:
+// any further and it no longer turns round in a box truck's bed, jackStays.)
+const JK_PUMP = 0.26;
 
 // The jack's middle (truck frame) and heading (its forks along (cos h, -sin h)).
 export interface JPose { x: number; z: number; h: number }
@@ -71,6 +76,12 @@ export function jackWheel(p: JPose): [number, number] { const [fx, fz] = jackFwd
 export function jackDriverAt(m: JMove, u: number): [number, number] {
   const p = jackPoseAt(m, u), [fx, fz] = jackFwd(p.h), lead = m.lead ?? JACK_MID + JK_HANDLE, r = lead * (m.kind === "pivot" ? 1 - (1 - (m.tight ?? 1)) * Math.sin(Math.PI * u) : 1);
   let dx = p.x - fx * r, dz = p.z - fz * r;
+  if (m.kind === "pivot" && r < JK_CLOSE) {
+    // (In closer than its back, the handle folded up: beside the pump, on the side it is pushed
+    // round from, not in the jack.)
+    const k = Math.min(1, (JK_CLOSE - r) / 0.25), s = Math.sign(jackTurn(m)) || 1, side = k * JK_PUMP * s;
+    dx += -fz * side; dz += fx * side;
+  }
   if (m.kind === "arc") {
     // (Round a curve the handle is swung towards it, steering: along the way the wheel goes, behind
     // the jack, easing in and out at the curve's ends.)
@@ -193,11 +204,15 @@ export function jackMoveClear(w0: JackWorld, m: JMove): boolean {
   const n = Math.max(2, Math.ceil(jackArcLen(m) / 0.2), m.kind === "roll" ? 0 : Math.ceil(Math.abs(jackTurn(m)) / 0.15));
   jkChecks -= (n + 1) * jackOffsets(w0.load).length / 3 / 2000;   // (a move of 20 poses of 100 points each: one)
   let px = NaN, pz = NaN;
+  const bedBack = Math.min(w.L.rear, w.L.bedRear), inBedPivot = m.kind === "pivot" && m.p0.x > bedBack && Math.abs(m.p0.z) < w.L.hw;
   for (let i = 0; i <= n; i++) {
     const u = i / n;
     if (!jackPoseClear(w, jackPoseAt(m, u))) return false;
     const [dx, dz] = jackDriverAt(m, u);
     if (!(m.from && u < 0.3) && !(m.to && u > 0.7) && !jackDriverClear(w, dx, dz)) return false;
+    // (Turning it in the bed, the driver stays in the bed with it, or up on the ramp's top: never
+    // out beside it, down off the floor, through the bed's corner posts.)
+    if (inBedPivot && dx < bedBack + JK_BODY * 0.5 && !(dx > bedBack - 1.2 && Math.abs(dz) < w.rampHW - JK_BODY)) return false;   // (or up on the walk ramp's top, a dock's platform)
     if (!Number.isNaN(px) && Math.hypot(dx - px, dz - pz) > 0.6) return false;
     px = dx; pz = dz;
   }
@@ -277,7 +292,7 @@ export function jackPivot(w: JackWorld, p: JPose, h: number): JMove | null {
   const least = w.load ? (JACK_MID - (JK_LOAD_AT - w.load[0] / 2) + JK_BODY + (w.load[1] > 1.2 ? 0.15 : 0)) / (w.lead ?? jackLead(w.load)) : 0;
   // (A half turn, either way round.)
   const d = jackWrap(h - p.h), turns = Math.abs(d) > Math.PI - 0.35 ? [d, d - Math.sign(d) * 2 * Math.PI] : [d];
-  for (const tight of [1, 0.8, 0.62, 0.5]) {
+  for (const tight of [1, 0.8, 0.62, 0.5]) {   // (the nearest, the handle folded up, beside the pump: JK_CLOSE)
     if (tight < least) continue;
     for (const turn of turns) {
       const m: JMove = { kind: "pivot", p0: p, p1: { x: p.x, z: p.z, h }, tight, turn };

@@ -952,12 +952,17 @@ export class CountryWorld {
   // ---- scenery ------------------------------------------------------------------------------
   // (Not within 1.6 m of a tree already in this segment: trees placed at random stood in each other,
   // their faces sharing planes.)
+  // (Nor with its crown's underside within a hair of one near enough that their crowns overlap:
+  // they would share a plane, and flicker.)
   private treesHere: number[] = [];
   private tree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand) {
-    const T = this.treesHere;
-    for (let i = 0; i < T.length; i += 2) if (Math.hypot(T[i] - x, T[i + 1] - z) < 1.6) return;
-    T.push(x, z);
-    landTree(s, x, z, kind, green, rnd);
+    const T = this.treesHere, near: number[] = [];
+    for (let i = 0; i < T.length; i += 3) {
+      const d = Math.hypot(T[i] - x, T[i + 1] - z);
+      if (d < 1.6) return;
+      if (d < 5) near.push(T[i + 2]);
+    }
+    T.push(x, z, landTree(s, x, z, kind, green, rnd, near));
   }
   // A post-and-rail fence along the land, 14.5 m out, in 6 m bays: bay i runs from 6i to 6i + 6.
   // Whether a bay stands is hashed from its index, so a segment can see its neighbours' bays and
@@ -1518,13 +1523,18 @@ function freightTrain(b: Batch) {
 
 // A tree (or cactus or shrub) of a biome's kind, on the ground at (x, z): the road's land and the
 // countryside round a city (city.ts) share it.
-export function landTree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand) {
+// (`near`: the undersides of the crowns of trees close by, kept clear of. Returns its own.)
+export function landTree(s: Batch, x: number, z: number, kind: string, green: number, rnd: Rand, near: number[] = []): number {
+  const base = s.dy;   // (raised to the land's height there)
   // (Its size a little by where it stands too: neighbours that came out the same size, as in a
   // row planted from one stream, had their boughs' undersides in one plane, and flickered.)
-  const k = 0.8 + rnd() * 0.6 + (Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1) * 0.03;
+  let k = 0.8 + rnd() * 0.6 + (Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1) * 0.03;
+  // (The underside of its crown, by kind, kept clear of its neighbours'.)
+  const under = (k: number) => kind === "conifer" ? 0.85 * k : kind === "cypress" ? 2.19 * k : kind === "broad" ? 1.5 * k : kind === "palm" ? 6.2 * k - 0.49 : 0.4 * k;
+  for (let n = 0; n < 8 && near.some((q) => Math.abs(q - base - under(k)) < 0.006); n++) k += 0.013;
   if (BARE.includes(green) && (kind === "broad" || kind === "cypress" || kind === "palm" || kind === "shrub")) {
     if (kind === "shrub") s.ico(x, 0.35 * k, z, 0.7 * k, 0x6e5a48, 0.6, rnd() * 6); else bareTree(s, x, 0, z, 4.6 * k, rnd() * 6);
-    return;
+    return base + under(k);
   }
   switch (kind) {
     case "conifer": s.cyl(x, 0.6 * k, z, 0.2 * k, 1.2 * k, CW.trunk, 5); s.cone(x, 3.6 * k, z, 1.7 * k, 5.5 * k, green, 7, 0, x * 1.7 + z); break;   // (turned its own way: two alike side by side could share a plane, which flickers)
@@ -1539,6 +1549,7 @@ export function landTree(s: Batch, x: number, z: number, kind: string, green: nu
     }
     case "shrub": s.ico(x, 0.4 * k, z, 0.8 * k, shade(green, 0.9 + rnd() * 0.3), 0.7, rnd() * 6); break;
   }
+  return base + under(k);
 }
 
 function smooth01(x: number) { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); }

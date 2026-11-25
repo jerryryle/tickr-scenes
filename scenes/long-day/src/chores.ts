@@ -48,8 +48,13 @@ export interface Chore {
   round?: boolean;                  // walked round what's held, from a to b on its far side, turning it about itself (crew.ts)
   jack?: JMove;                     // a pallet jack's planned move (jackplan.ts): the jack and the driver placed from it exactly (crewpath.ts)
   backward?: boolean;               // walked facing back the way it comes from, whichever way it turns (a team lift: facing the load)
+  flip?: number;                    // fetch at a doorway: in this far, out of sight, turned round there, and back out facing out (crew.ts)
+  flipYaw?: [number, number];       // (and the driver's heading going in and coming out, from `face`: default [0, π]. A team lift's: the
+                                    // driver faces the load, backing in with it or out; a load drawn on its jack: backed out with it)
   roundStill?: number;              // (round a crate on its dolly: it stays as it is, the driver stepping round it this far out to its side)
   forklift?: boolean;               // a wait during which the dock worker makes one forklift trip
+  mate?: [[number, number], [number, number]];   // a team lift's walk with the load held rigid: the worker's end from and to (x, z), placed from the driver (crew.ts)
+  faceYaw?: [number, number];       // a walk faced so from start to end, whichever way it goes (crewpath.ts): turning a load, side-stepping it
   over?: number;                    // a walk climbing over a load this tall (its top above the floor), on hands and knees (crew.ts)
 }
 
@@ -77,6 +82,17 @@ export const GATE_STAND = 0.3, GATE_LINEUP = 1.0, GATE_OFF = 0.6;
 // about) this far on from that; and the near end of a pushed load this far (pushGap: further
 // behind a tall one, so leaning into it keeps the head out of it).
 export const HT_LEAD = 1.15, JACK_LEAD = 1.0, JACK_PIVOT_AT = 0.68;
+// The driver walks round a hand truck's wheels, turning it, this fast (m/s).
+const HT_TURN_V = 0.9;
+// And rolls it along no faster than this (m/s), at the most.
+const HT_WALK_V = 1.2;
+// Fetching at a doorway (Chore.flip): how far in the driver goes, out of sight with what they hold
+// ahead of them (and, turned round, behind them), and how fast (m, m/s).
+const FLIP_DEPTH: Record<string, number> = { handTruck: 2.2, palletJack: 2.9, none: 0.9 };
+const FLIP_V = 1.1;
+// The driver's heading going into a doorway for a flip fetch, and coming out of it.
+export const flipYawIn = (c: Chore) => (c.face ?? 0) + (c.flipYaw?.[0] ?? 0);
+export const flipYawOut = (c: Chore) => (c.face ?? 0) + (c.flipYaw?.[1] ?? Math.PI);
 export function pushGap(h: number) { return h > 1.6 ? 0.8 : h > 1.15 ? 0.65 : 0.4; }
 // Walking round what's held (Chore.round), the driver goes this fast along the way round (m/s).
 const ROUND_SPEED = 1.1;
@@ -85,6 +101,9 @@ const BACKING = 0.8;
 // Taking something wheeled up it, the driver lines up on the ramp this far short of its foot, walks
 // round it there, and backs up the ramp drawing it after them.
 export const RAMP_LINEUP = 3.6;
+// A team lift lined up square to a front door (square, planChores): turned about the load's middle
+// this far clear of the walk ramp's foot (m), and that much slower turning it, and side-stepping it.
+const TEAM_RAMP_CLEAR = 0.5, TEAM_TURN_V = 0.55, TEAM_SIDE_V = 0.6;
 // A team lift turns onto and off the walk ramp this much wider than the load is long (the two
 // carriers' bodies either end of it, and room).
 const TEAM_TURN = 1.2;
@@ -666,7 +685,7 @@ function jackRuns(out: Chore[], k: JackCtx, canTurn: boolean): boolean {
     const prev: Chore = out[i - 1] ?? { kind: "wait", group: first.group, len: 0, face: way(first) };
     const next: Chore = out[j + 1] ?? { kind: "wait", group: last.group, len: 0, face: way(last) };
     const item = first.item ?? null, loaded = !!item, load = loaded ? k.size : null;
-    const A = prev.kind === "toolGet" && prev.rest ? rest(prev) : held(first.a, prev.face ?? 0);
+    const A = prev.kind === "toolGet" && prev.rest ? rest(prev) : held(first.a, prev.flip ? flipYawOut(prev) : prev.face ?? 0);   // (turned round inside a doorway: out ahead, facing out)
     const B = next.kind === "toolPut" && next.rest ? rest(next) : held(last.b, next.face ?? 0);
     // The bed as it is for this run: which trip (by the stows before it), what's in it: a pickup's
     // trips so far, a drop's still to go. `under`: the trip under the forks as it starts (just set
@@ -695,7 +714,8 @@ function jackRuns(out: Chore[], k: JackCtx, canTurn: boolean): boolean {
       const m: JMove = { kind: "roll", p0: p, p1: { x, z: p.z, h: p.h } };
       return jackMoveClear(world(bedOut), m) ? m : null;
     };
-    const doorWays = (w: JackWorld, r: JPose, curves: boolean) => jackDoorWays(w, r, reach + 1.5, curves);
+    // (Out of a doorway it was turned round inside: already facing out, nothing to draw it back out of.)
+    const doorWays = (w: JackWorld, r: JPose, curves: boolean) => prev.flip && Math.hypot(r.x - A.x, r.z - A.z) < 0.05 && Math.abs(r.h - A.h) < 0.05 ? [[]] : jackDoorWays(w, r, reach + 1.5, curves);
     // At a stop with no doorway, a load set down on the pavement just now (or about to be taken
     // up): drawn straight back out from under it first (or pushed in under it last), and kept
     // clear of otherwise. (Where its forks hold it: crew.ts stageLocal.)
@@ -961,6 +981,26 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   };
   // At a door: up to it, it opens, the load goes in (or comes out), it closes.
   const fetchLen = kerbDoor ? 2.6 : 1.3, faceDoor = kerbDoor ? kerbDoor.yaw : null;
+  // At a doorway, the driver goes in, with whatever they hold, far enough to be out of sight, turns
+  // round in there, and comes back out facing out, the load (or the tool) ahead: never turned in
+  // the doorway itself. A drop's load is left in there; a pickup's comes out. The fetch takes the
+  // walk in and out on top of the time inside. A team lift: the driver, facing the load, backs in
+  // with it (the worker following, all the way in) and walks out, or walks in and backs out with
+  // it (the worker inside with its far end); either way not turning. A load that rides into the
+  // bed left on its jack: the jack pushed in empty and drawn back out loaded, the driver backing.
+  const flipIn = (pickup: boolean, door = !!kerbDoor): Partial<Chore> => {
+    if (!door) return {};
+    const len = (d: number) => (kerbDoor ? 2.6 : 1.3) + 2 * d / FLIP_V;
+    if (st.helper) {
+      const d = pickup ? 1.4 : teamSpan(stop.cargo, size[0]) + 1.3;
+      return { flip: d, len: len(d), flipYaw: pickup ? [0, 0] : [Math.PI, Math.PI] };
+    }
+    const d = FLIP_DEPTH[st.tool ?? "none"] + (st.tool ? 0 : size[0] / 2);
+    return { flip: d, len: len(d), ...(pickup && jackStays(L, stop.cargo) ? { flipYaw: [0, 0] as [number, number] } : {}) };
+  };
+  // (A dock's building door. Not a pallet jack: the platform is too shallow to hold it turned
+  // round out of the doorway, short of the bed; it is drawn straight back out and turned on it.)
+  const goIn = (pickup: boolean) => st.tool === "palletJack" ? {} : flipIn(pickup, true);
   // (To and from the door with a pallet jack: through these, square to it.)
   const squared = st.tool === "palletJack" && !!kerbDoor;
   const doorOff = (d: number): [number, number, number] => [facility[0] - Math.cos(faceDoor ?? 0) * d, 0, facility[2] + Math.sin(faceDoor ?? 0) * d];
@@ -1099,7 +1139,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         const last = !!store && pickup && i === trips - 1, first = !!store && !pickup && i === 0;
         if (pickup) {
           walk("load", atRear, inside, WALK, ex);
-          add({ kind: "fetch", group: "load", len: 1.3, face: faceIn, tool: st.tool });
+          add({ kind: "fetch", group: "load", len: 1.3, face: faceIn, tool: st.tool, ...goIn(true) });
           // (Pushed into the bed, turned on the platform first, not drawn in backwards: it is set
           // down at its place ahead of the driver.)
           walk("load", inside, sill, st.speed, { ...ex, item, helper, ...(stays ? { noTurn: true } : { forward: true }) });
@@ -1124,7 +1164,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
           } else if (spots) { const p = first ? getToolTo(i, sill) : bed.toSpot(i, { tool: st.tool }); if (helper) teamWait(); add({ kind: "stow", group: "load", len: 1.0, face: stowFace }); bed.back(p, { tool: st.tool, item, helper }); }
           else add({ kind: "stow", group: "load", len: 1.0, face: stowFace });
           walk("load", sill, inside, st.speed, { ...ex, item, helper });
-          add({ kind: "fetch", group: "load", len: 1.3, face: faceIn, tool: st.tool });
+          add({ kind: "fetch", group: "load", len: 1.3, face: faceIn, tool: st.tool, ...goIn(false) });
           walk("load", inside, atRear, WALK, ex);
         }
       }
@@ -1140,7 +1180,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     // (A load left on the pallet jack: its moves planned, as at the kerb.)
     if (jackPlan && st.tool === "palletJack" && !jackLegs(out, { L, model, stop, slot0, aboard, kerbDoor: null, obstacles: [], size, speed: st.speed, dock: true, dockDoor }))
       return planChores(model, stop, dockStair, slot0, rearBefore, rearAfter, kerbDoor, obstacles0, boxes, stack, aboard, false, pave, facade, dockDoor);
-    return out;
+    return finishChores(out, L, obstacles0);
   }
 
   walk("load", door, side, WALK);
@@ -1274,6 +1314,67 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     }
     uZ = bestU;
     const teamOn: [number, number, number] = [teamX, 0, uZ], teamSwing: [number, number, number] = [teamX, 0, swingZ];
+    // Through a front door along the pavement: lined up square to it, so the load goes in (and
+    // comes out) straight through the doorway. Off the ramp in line, on until the load is clear of
+    // it, turned a quarter round about its middle (the driver to the door's side), side-stepped out
+    // to the line of the door, the driver's end at it, and along to it; then in. A pickup, the
+    // other way round: backed out square, along, back in and turned onto the ramp's line. The load
+    // held rigid between the two all the while (Chore.mate). Where that won't go (no room on the
+    // pavement for the load's length beside the ramp or the truck, something standing in the
+    // way), round by the turn above instead.
+    const square = (() => {
+      if (!ramp || !st.helper || !kerbDoor || faceDoor === null) return null;
+      const nx = Math.cos(faceDoor), nz = -Math.sin(faceDoor), ds = Math.sign(facility[2] || 1);
+      if (Math.abs(nx) > 0.2 || Math.sign(nz) !== ds) return null;
+      const B = teamBack, h = B / 2, w = Math.max(BODY_R, teamWidth / 2) + 0.15;
+      const cx = foot[0] - h - TEAM_RAMP_CLEAR;
+      const S: [number, number] = [facility[0], facility[2]], O: [number, number] = [S[0] - nx * B, S[1] - nz * B];
+      const mid: [number, number] = [(S[0] + O[0]) / 2, (S[1] + O[1]) / 2];
+      // (The outer end on the door's side of the ramp and the truck where it slides past them.)
+      const x0 = Math.min(cx, mid[0]) - w, x1 = Math.max(cx, mid[0]) + w;
+      if (x1 > foot[0] - 0.3 && ds * O[1] < RAMP_HW + w) return null;
+      if (x1 > L.rear - 0.3 && x0 < L.front + 0.3 && ds * O[1] < L.hw + w) return null;
+      // (Nothing standing where it turns, nor where it's side-stepped.)
+      const R = (o: WalkObstacle) => { const hh = o.hand ?? o.r; return (Number.isNaN(hh) ? o.r : Math.max(o.r, hh)) + w; };
+      const inRect = (o: WalkObstacle, ax: number, bx: number, az: number, bz: number) =>
+        o.x > Math.min(ax, bx) - R(o) && o.x < Math.max(ax, bx) + R(o) && o.z > Math.min(az, bz) - R(o) && o.z < Math.max(az, bz) + R(o);
+      for (const o of obstacles) {
+        if (Math.hypot(o.x - cx, o.z) < h + R(o)) return null;
+        if (inRect(o, cx, cx, -h * ds, mid[1] + h * ds)) return null;
+        if (inRect(o, cx, mid[0], O[1], S[1])) return null;
+      }
+      return { cx, h, ds, mid, S, O };
+    })();
+    // (Its legs: rigid, the driver facing the worker.)
+    const yawTo = (a: [number, number], b: [number, number]) => Math.atan2(-(b[1] - a[1]), b[0] - a[0]);
+    const rigid = (d0: [number, number], d1: [number, number], w0: [number, number], w1: [number, number], speed: number, ex: Partial<Chore>) => {
+      teamTrail?.push(d1[0], d1[1]);   // (the way the load goes, for the walks after: walk)
+      return add({ kind: "walk", group: "load", len: Math.max(0.4, Math.max(Math.hypot(d1[0] - d0[0], d1[1] - d0[1]), Math.hypot(w1[0] - w0[0], w1[1] - w0[1])) / speed),
+        a: [d0[0], 0, d0[1]], b: [d1[0], 0, d1[1]], ...ex, backward: true, mate: [w0, w1], faceYaw: [yawTo(d0, w0), yawTo(d1, w1)] });
+    };
+    // (Turned about its middle at (cx, 0), the driver's end from angle p0 to p1, in steps.)
+    const turnAbout = (cx: number, h: number, p0: number, p1: number, speed: number, ex: Partial<Chore>) => {
+      const n = 6, at = (p: number): [number, number] => [cx + Math.cos(p) * h, Math.sin(p) * h], op = (p: number): [number, number] => [cx - Math.cos(p) * h, -Math.sin(p) * h];
+      for (let k = 0; k < n; k++) { const a = p0 + (p1 - p0) * k / n, b = p0 + (p1 - p0) * (k + 1) / n; rigid(at(a), at(b), op(a), op(b), speed * TEAM_TURN_V, ex); }
+    };
+    // (Moved as it is, the bar from centre m0 to m1, the driver's end `e` along it from the middle.)
+    const sideStep = (m0: [number, number], m1: [number, number], e: [number, number], speed: number, ex: Partial<Chore>) =>
+      rigid([m0[0] + e[0], m0[1] + e[1]], [m1[0] + e[0], m1[1] + e[1]], [m0[0] - e[0], m0[1] - e[1]], [m1[0] - e[0], m1[1] - e[1]], speed * TEAM_SIDE_V, ex);
+    const squareIn = (speed: number, ex: Partial<Chore>) => {
+      const q = square!, e: [number, number] = [0, q.ds * q.h];
+      walk("load", teamIn, [q.cx - q.h, 0, 0], speed, ex);
+      turnAbout(q.cx, q.h, Math.PI, q.ds * Math.PI / 2, speed, ex);
+      sideStep([q.cx, 0], [q.cx, q.mid[1]], e, speed, ex);
+      sideStep([q.cx, q.mid[1]], q.mid, e, speed, ex);
+    };
+    const squareOut = (speed: number, ex: Partial<Chore>) => {
+      const q = square!, e: [number, number] = [0, -q.ds * q.h];
+      rigid(q.S, q.O, [q.S[0] + (q.S[0] - q.O[0]), q.S[1] + (q.S[1] - q.O[1])], q.S, speed * BACKING, ex);   // (backed out, the worker coming out after)
+      sideStep(q.mid, [q.cx, q.mid[1]], e, speed, ex);
+      sideStep([q.cx, q.mid[1]], [q.cx, 0], e, speed, ex);
+      turnAbout(q.cx, q.h, -q.ds * Math.PI / 2, 0, speed, ex);
+      walk("load", [q.cx + q.h, 0, 0], teamIn, speed, ex);
+    };
     const upFrom = (item: ItemKind | null, t: Chore["tool"] = st.tool): [number, number, number] => !ramp ? lineup : drawnBy(item, t) ? [foot[0] - RAMP_LINEUP, 0, 0] : team(item) ? teamIn : foot;
     // Into the bed. Drawn up the ramp, on in backing until it is all aboard with room behind it to
     // go round it (no further in than `free`, where the bed is taken: by the loads, or the front
@@ -1316,6 +1417,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         // (Not deeper in first, from a load taken up at the bed's back: straight out from there.)
         const edge = from[0] > sill[0] ? sill : from;
         if (edge !== from) walk("load", from, sill, speed, { ...ex, linear: true });
+        if (team(item) && square) { walk("load", edge, teamIn, speed * 0.95, ex); squareIn(speed, ex); street = facility; return; }
         if (team(item)) { walk("load", edge, teamIn, speed * 0.95, ex); walk("load", teamIn, teamOn, speed, ex); walk("load", teamOn, teamSwing, speed, ex); street = teamSwing; return; }
         // (Drawn back down it: on until it is all off it, before it is turned for the door.)
         street = foot; walk("load", edge, street, speed * 0.95, ex);
@@ -1347,8 +1449,9 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
           walk("load", onRamp, street, WALK, { tool: st.tool });
         }
         toDoor(street, WALK, { tool: st.tool }, facilityFor(i));
-        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L, pave).face, tool: st.tool });
-        if (team(item)) { const ex = { item, tool: st.tool, helper }; fromDoor(teamSwing, st.speed, ex); walk("load", teamSwing, teamOn, st.speed, ex); walk("load", teamOn, teamIn, st.speed, ex); }
+        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L, pave).face, tool: st.tool, ...flipIn(true) });
+        if (team(item) && square) squareOut(st.speed, { item, tool: st.tool, helper });
+        else if (team(item)) { const ex = { item, tool: st.tool, helper }; fromDoor(teamSwing, st.speed, ex); walk("load", teamSwing, teamOn, st.speed, ex); walk("load", teamOn, teamIn, st.speed, ex); }
         // (What's drawn up the ramp comes to where the driver walks round it pushed ahead, never
         // drawn after them: so it is ahead of them there, where the way round goes.)
         else fromDoor(upFrom(item), st.speed, { item, tool: st.tool, helper, ...(drawnBy(item, st.tool) ? { forward: true } : {}) }, facilityFor(i));
@@ -1374,8 +1477,8 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
           add({ kind: "stow", group: "load", len: 1.0, face: stowFace });
           outOfBed(p, item, st.tool, slotFront(p[0]));
         } else { add({ kind: "stow", group: "load", len: 1.0, face: stowFace }); outOfBed(inAt, item); }
-        toDoor(street, st.speed, { item, tool: st.tool, helper }, facilityFor(i));
-        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L, pave).face, tool: st.tool });
+        if (!(square && team(item))) toDoor(street, st.speed, { item, tool: st.tool, helper }, facilityFor(i));
+        add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L, pave).face, tool: st.tool, ...flipIn(false) });
         fromDoor(upFrom(null), WALK, { tool: st.tool, ...(drawnBy(null, st.tool) ? { forward: true } : {}) }, facilityFor(i));
       }
     }
@@ -1412,6 +1515,18 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   if (jackPlan && st.tool === "palletJack" && L.loader === "ramp" && !stack
     && !jackLegs(out, { L, model, stop, slot0, aboard, kerbDoor, obstacles, size, speed: st.speed, facade }))
     return planChores(model, stop, dockStair, slot0, rearBefore, rearAfter, kerbDoor, obstacles0, boxes, stack, aboard, false, pave, facade, dockDoor);
+  return finishChores(out, L, obstacles0);
+}
+
+// Last touches to a stop's chores, wherever it is: walks in the bed round a pallet jack lying there,
+// and time for turning what's held.
+// (`obstacles`: what stands on the pavement, kept with the chores for the driver's way round it
+// with what they hold, crewpath.ts: choreObstacles.)
+const CHORE_OBSTACLES = new WeakMap<Chore[], WalkObstacle[]>();
+export function choreObstacles(plan: Chore[]): WalkObstacle[] { return CHORE_OBSTACLES.get(plan) ?? []; }
+function finishChores(out: Chore[], L: TruckLayout, obstacles: WalkObstacle[] = []): Chore[] {
+  CHORE_OBSTACLES.set(out, obstacles);
+  roundRestingJack(out, L);
   // With a pallet jack in hand, a walk that sets off another way from the driver's facing first
   // turns the jack (about its middle, the driver walking round it): time for that.
   let facing = NaN;
@@ -1425,10 +1540,54 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         const turn = Math.abs(Math.atan2(Math.sin(dir - facing), Math.cos(dir - facing)));
         if (turn > 0.3) c.len += turn / (c.item ? JACK_TURN_LOADED : JACK_TURN);
       }
+      // (With a hand truck, turned on its wheels, the driver walking round them: at the start,
+      // the way on (a short way back is rolled backwards, not turned), and at the end, the way
+      // the next chore faces.)
+      if (c.tool === "handTruck" && !c.noTurn && !c.round && !c.backward) {
+        const by = (p: number, q: number) => Math.abs(Math.atan2(Math.sin(p - q), Math.cos(p - q)));
+        let turn = Number.isNaN(facing) ? 0 : by(dir, facing);
+        if (turn > 2.2 && Math.hypot(dx, dz) <= 3.2 && !c.forward) turn = Math.PI - turn;
+        const next = out[out.indexOf(c) + 1];
+        if (next && next.kind !== "walk" && next.face !== undefined) turn += by(next.face, dir);
+        if (turn > 0.3) c.len += turn * HT_LEAD / HT_TURN_V;
+        c.len = Math.max(c.len, Math.hypot(dx, dz) / HT_WALK_V + 0.3);   // (never hurried: rolled at a walk, eased in and out)
+      }
       facing = dir;
-    } else if (c.face !== undefined) facing = c.face;
+    } else if (c.face !== undefined) facing = c.flip ? flipYawOut(c) : c.face;   // (turned round inside a doorway: facing out)
   }
   return out;
+}
+
+// A pallet jack left lying along the bed (put back at its rest, or not yet taken from it): the
+// driver's walks in the bed while it lies there go round it, along its side, never through it.
+function roundRestingJack(out: Chore[], L: TruckLayout) {
+  let lying: ToolRest | null = null;
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i];
+    if (c.kind === "toolPut" && c.rest) { if (out.slice(0, i).reverse().find((q) => q.tool)?.tool === "palletJack") lying = c.rest; continue; }
+    if (c.kind === "toolGet") { lying = null; continue; }
+    if (!lying || c.kind !== "walk" || c.tool || c.over || !c.a || !c.b || c.a[1] < L.floor - 0.01 || c.b[1] < L.floor - 0.01) continue;
+    const r = lying, fx = Math.cos(r.yaw), fz = -Math.sin(r.yaw);
+    if (Math.abs(fz) > 0.3) continue;   // (lying across the bed, at its front wall: out of the way)
+    // Its footprint from the steering wheel (`at`) to the forks' ends, the driver's width round it.
+    const xa = Math.min(r.at[0] - fx * 0.2, r.at[0] + fx * 1.37) - BODY_R, xb = Math.max(r.at[0] - fx * 0.2, r.at[0] + fx * 1.37) + BODY_R;
+    const za = r.at[2] - 0.33 - BODY_R, zb = r.at[2] + 0.33 + BODY_R;
+    const [ax, , az] = c.a, [bx, , bz] = c.b;
+    let hits = false;
+    for (let k = 0; k <= 20 && !hits; k++) { const x = ax + (bx - ax) * k / 20, z = az + (bz - az) * k / 20; hits = x > xa && x < xb && z > za && z < zb; }
+    if (!hits) continue;
+    // (Along whichever side has room in the bed, the nearer first.)
+    const room = L.hw - BODY_R - 0.02, sides = [zb, za].filter((z) => Math.abs(z) <= room).sort((p, q) => Math.abs(p - az) - Math.abs(q - az));
+    if (!sides.length) continue;
+    const zs = sides[0], y = c.a[1], dx = Math.sign(bx - ax) || 1;
+    const p1: [number, number, number] = [ax, y, zs];   // (a step aside first, then along it)
+    const p2: [number, number, number] = [dx > 0 ? Math.max(xb, ax) : Math.min(xa, ax), y, zs];
+    const pts = [c.a, p1, p2, c.b].filter((p, k, all) => k === 0 || Math.hypot(p[0] - all[k - 1][0], p[2] - all[k - 1][2]) > 0.05);
+    const total = pts.slice(1).reduce((s, p, k) => s + Math.hypot(p[0] - pts[k][0], p[2] - pts[k][2]), 0), straight = Math.hypot(bx - ax, bz - az) || 1;
+    const legs: Chore[] = pts.slice(1).map((p, k) => ({ ...c, a: pts[k], b: p, len: c.len * Math.max(1, total / straight) * Math.hypot(p[0] - pts[k][0], p[2] - pts[k][2]) / total }));
+    out.splice(i, 1, ...legs);
+    i += legs.length - 1;
+  }
 }
 
 // Swap: climb down from the old truck, walk to the new one (world space, see swapWalkPoint),

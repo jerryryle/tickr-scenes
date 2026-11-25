@@ -111,6 +111,7 @@ export class FrontDoorFx {
     scene.add(this.hole, ...this.leaves);
   }
 
+  shown = false;   // whether the door was drawn open (swung in) at the last update
   update(j: Journey, worker: THREE.Object3D | null, forkOpen = 0) {
     const d = j.st.mode === "dwell" ? j.kerbDoor : null;
     let open = 0;
@@ -120,6 +121,7 @@ export class FrontDoorFx {
       open = Math.max(open, forkOpen);
     }
     const show = !!d && open > 0.01;
+    this.shown = show;
     this.hole.visible = show;
     const two = !!d && d.wide;
     this.leaves[0].visible = show; this.leaves[1].visible = show && two;

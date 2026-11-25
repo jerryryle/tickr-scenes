@@ -1,0 +1,86 @@
+// Test scene: one stop staged on its own (src/stage.ts), the crew working it at the kerb by a
+// building's door, filmed from a fixed camera, to see the chores quickly without a journey round
+// them. Build and render it (and a clip of it) with
+//   make stage [STAGE="box26 boxes drop"] [VIEW=quarter] [FROM=0] [SECS=12] [SPEED=1]
+//     -> build/long-day-stage/stage.mp4
+// STAGE: model cargo kind [nodoor | door=x (the door's middle along the truck)] [tree=x,out ...]; VIEW: quarter (from behind, by the street), side (along the
+// truck's kerb side), rear (straight behind), top (straight down); FROM: seconds into the stop.
+import * as THREE from "three@0.187.0";
+import { Batch } from "../src/geom.ts";
+import { Crew } from "../src/crew.ts";
+import { Truck, TruckKit, LIVERY_ASSETS } from "../src/truck.ts";
+import type { LiveryName, TruckModel } from "../src/truck.ts";
+import { CURB_H } from "../src/grid.ts";
+import { makeStage, stageSpec } from "../src/stage.ts";
+import { uploadable } from "../src/canvas.ts";
+import { FrontDoorFx } from "../src/dockfx.ts";
+
+const STAGE_SPEC: string = "box26 boxes drop";
+const STAGE_VIEW: string = "quarter";
+const STAGE_FROM: number = 0;
+const STAGE_SPEED: number = 1;
+
+export default function createScene({ sys, assets }: SceneInputs): Scene {
+  let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera, crew: Crew, truck: Truck;
+  let door: FrontDoorFx | null = null, shut: THREE.Mesh | null = null;
+  const spec = stageSpec(STAGE_SPEC.split(/\s+/)), S = makeStage(spec), model = spec.model;
+  let last = -1;
+  return {
+    async setup() {
+      const gl = sys.gl({ antialias: true });
+      r = new THREE.WebGLRenderer({ canvas: gl.canvas as any, context: gl }); r.setSize(sys.width, sys.height, false);
+      scene = new THREE.Scene(); cam = new THREE.PerspectiveCamera(40, sys.width / sys.height, 0.2, 300);
+      const sun = new THREE.DirectionalLight(0xffffff, 2.2); sun.position.set(-30, 50, -20);
+      scene.add(sun, new THREE.HemisphereLight(0xcfe6ff, 0x4a4030, 1.8));
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+      // The street, the pavement up its kerb, and the building's front with its doorway into a dark
+      // room (the driver turns round in there, out of sight).
+      const b = new Batch(), W = S.wallZ, d = S.kerbDoor;
+      b.box(0, -0.05, 0, 80, 0.1, 30, 0x34363a);
+      b.box(0, CURB_H / 2, (S.kerbZ + W + 8) / 2, 80, CURB_H, W + 8 - S.kerbZ, 0x9a9890);
+      const x0 = -40, x1 = 40, dx0 = d ? d.x - d.half : 0, dx1 = d ? d.x + d.half : 0, H = 6, T = 6;
+      if (d) {
+        b.box((x0 + dx0) / 2, H / 2, W + T / 2, dx0 - x0, H, T, 0x7a5040);
+        b.box((dx1 + x1) / 2, H / 2, W + T / 2, x1 - dx1, H, T, 0x7a5040);
+        b.box(d.x, (d.h + H) / 2, W + 0.15, 2 * d.half, H - d.h, 0.3, 0x7a5040);
+        // (The room: a floor at the pavement's height, its walls and ceiling dark.)
+        b.box(d.x, d.h + 0.05, W + 3, 2 * d.half + 6, 0.1, 6, 0x111111);
+        b.box(d.x, CURB_H, W + 3, 2 * d.half + 6, 0.02, 6, 0x222222);
+        for (const s of [-1, 1]) b.box(d.x + s * (d.half + 3), H / 2, W + 3, 0.1, H, 6, 0x111111);
+        b.box(d.x, H / 2, W + 5.95, 2 * d.half + 6, H, 0.1, 0x111111);
+      } else b.box(0, H / 2, W + T / 2, 80, H, T, 0x7a5040);
+      // (Street trees: a trunk and a crown.)
+      for (const o of S.obstacles) { b.box(o.x, 1.4, o.z, 0.3, 2.8, 0.3, 0x5a3c22); b.box(o.x, 3.6, o.z, 2.2, 1.8, 2.2, 0x3f7a3a); }
+      scene.add(b.build(mat)!);
+      const images = {} as Record<LiveryName, CanvasImageSource>;
+      const imgs = await Promise.all(LIVERY_ASSETS.map((n) => (assets as any)[n].loadImage()));
+      LIVERY_ASSETS.forEach((n, i) => { images[n] = uploadable(imgs[i]); });
+      truck = new Truck(new TruckKit(images), model, null); scene.add(truck.root);
+      truck.follow(0, 0, 0, 0, 0);
+      crew = new Crew(scene, new THREE.MeshLambertMaterial({ vertexColors: true }));
+      // (The front door: swung open as the journey has it (FrontDoorFx), and shut, its panel.)
+      if (d) {
+        door = new FrontDoorFx(scene);
+        shut = new THREE.Mesh(new THREE.BoxGeometry(2 * d.half, d.h, 0.06), new THREE.MeshLambertMaterial({ color: d.panel }));
+        shut.position.set(d.x, CURB_H + d.h / 2, W - 0.02); scene.add(shut);
+      }
+    },
+    render(ctx, f) {
+      const t = STAGE_FROM + f.t * STAGE_SPEED, dt = last < 0 ? 0 : Math.max(0, t - last);
+      last = t;
+      S.setTime(Math.min(t, S.length));
+      crew.update(dt, S.journey, truck, null, cam);
+      truck.update(dt);
+      if (door && shut) { door.update(S.journey, crew.workerRoot); shut.visible = !door.shown; }
+      // The camera: on the action, the driver, held level.
+      const p = crew.driver.root.getWorldPosition(new THREE.Vector3());
+      const fx = THREE.MathUtils.clamp(p.x, -12, 4), fz = THREE.MathUtils.clamp(p.z, -1, S.wallZ);
+      if (STAGE_VIEW === "top") { cam.position.set(fx, 16, fz + 0.01); cam.lookAt(fx, 0, fz); cam.fov = 40; }
+      else if (STAGE_VIEW === "side") { cam.position.set(fx - 7, 2.2, S.kerbZ + 1.2); cam.lookAt(fx, 1.0, fz); cam.fov = 48; }
+      else if (STAGE_VIEW === "rear") { cam.position.set(-15, 3.2, 1.5); cam.lookAt(fx, 1.0, fz); cam.fov = 34; }
+      else { cam.position.set(fx - 7.5, 3.4, -5.5); cam.lookAt(fx, 1.0, fz); cam.fov = 40; }
+      cam.updateProjectionMatrix();
+      r.setClearColor(0x7aa7d9); r.render(scene, cam); ctx.drawImage(r.domElement as any, 0, 0);
+    },
+  };
+}

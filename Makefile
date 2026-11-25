@@ -20,6 +20,9 @@
 #   make tool SCENE=long-day TOOL=showroom [SECS=17 DEFINE=...]
 #                              render a test scene from scenes/<scene>/tools/<tool>.ts (one frame a
 #                              second) to build/<scene>-<tool>/, every frame tiled into <tool>.png
+#   make stage [STAGE="reefer frozen drop door=0.2" VIEW=quarter FROM=0 SECS=12 SPEED=1]
+#                              one stop of Long Day's staged on its own, its crew filmed from a fixed
+#                              camera, to build/long-day-stage/stage.mp4 in seconds (tools/stage.ts)
 #   make citymap SCENE=long-day [SEED=1 CITIES=4 DEFINE=...]
 #                              draw the street graphs of a journey's first cities, top down, to
 #                              build/<scene>-citymap/city<N>.png (needs ffmpeg)
@@ -194,6 +197,25 @@ tool: | $(DEPS)
 	@ffmpeg -loglevel error -y -i $(TOOL_OUT)/dist/frames/frame-%03d.png -frames:v 1 \
 	  -vf "scale=iw*2:ih*2:flags=neighbor,tile=2x$$(( ($(SECS) + 1) / 2 ))" $(TOOL_OUT)/$(TOOL).png
 	@echo "$(SCENE) $(TOOL) -> $(TOOL_OUT)/$(TOOL).png"
+
+# One stop staged on its own (scenes/long-day/tools/stage.ts): its crew filmed from a fixed camera,
+# as a clip at 10 frames a second, build/long-day-stage/stage.mp4. The quick way to see a chore.
+#   make stage STAGE="reefer frozen drop" VIEW=quarter FROM=20 SECS=40 SPEED=1
+STAGE ?= box26 boxes drop
+VIEW  ?= quarter
+FROM  ?= 0
+SPEED ?= 1
+stage: | $(DEPS)
+	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
+	@mkdir -p build/long-day-stage
+	@$(FLATTEN) scenes/long-day/tools/stage.ts --root scenes/long-day/src --define 'STAGE_SPEC=$(STAGE)' --define STAGE_VIEW=$(VIEW) --define STAGE_FROM=$(FROM) --define STAGE_SPEED=$(SPEED) $(DEFINES) > build/long-day-stage/scene.ts
+	@cp scenes/long-day/scene.json build/long-day-stage/
+	@$(call copy-assets,scenes/long-day/assets,build/long-day-stage/assets)
+	@rm -rf build/long-day-stage/dist
+	@$(TICKR) render build/long-day-stage --seconds $(SECS) --every 100 | tail -1
+	@ffmpeg -loglevel error -y -framerate 10 -i build/long-day-stage/dist/frames/frame-%03d.png -vf "scale=1152:384:flags=neighbor" -c:v libx264 -pix_fmt yuv420p -crf 18 build/long-day-stage/stage.mp4 2>/dev/null || \
+	  ffmpeg -loglevel error -y -framerate 10 -i build/long-day-stage/dist/frames/frame-%04d.png -vf "scale=1152:384:flags=neighbor" -c:v libx264 -pix_fmt yuv420p -crf 18 build/long-day-stage/stage.mp4
+	@echo "stage $(STAGE) -> build/long-day-stage/stage.mp4"
 
 # Top-down maps of a journey's cities (scenes/<scene>/tools/citymap.ts).
 SEED   ?= 1

@@ -229,6 +229,8 @@ const STRAIGHT_IN = 150;                 // straight before the hand-over (and t
 // Into a freeway city (freeway.ts) the road runs straight on for longer, beside the freeway, and
 // the land is level for longer still, under it.
 const FW_STRAIGHT_IN = 560, FW_FLAT_IN = 760;
+// The least road left between the straights to turn onto the next city's way in (m).
+const TURN_ROOM = 360;
 // The slowing on the freeway for its off-ramp: about 90 m, just so that the arrival ends on a
 // simulation step (the city's route takes over there, exactly at the off-ramp).
 export const ONRAMP_SHOT = 99999;   // featureShot's key for the on-ramp's shot (no piece of the road's)
@@ -495,15 +497,19 @@ export class CountryRoad {
     // gate is chosen so that is never more than a quarter turn.
     const n = Math.ceil((this.length + 40) / ROAD_DS) + 1;
     this.X = new Float64Array(n); this.Z = new Float64Array(n); this.H = new Float64Array(n);
+    // (Into a freeway city on a short road, the straight beside the freeway shortened, and its
+    // first sign curved past, so there is still a stretch to turn on: else the road would end
+    // turned the wrong way for the next city's way in.)
+    const sIn = inp.toFreeway ? Math.max(STRAIGHT_IN, Math.min(FW_STRAIGHT_IN, SB - STRAIGHT_OUT - TURN_ROOM)) : STRAIGHT_IN, short = inp.toFreeway && sIn < FW_STRAIGHT_IN;
     const kap = new Float64Array(n), msk = new Float64Array(n);
     const A = [0.0011 + 0.0011 * h(80), 0.0007 * h(81)], W = [2 * Math.PI / (700 + 500 * h(82)), 2 * Math.PI / (260 + 200 * h(83))], P = [h(84) * 6.3, h(85) * 6.3];
     let base = 0, wsum = 0;
     for (let i = 0; i < n; i++) {
       if (i % 256 === 255) yield;
       const s = i * ROAD_DS;
-      let mask = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / 120, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - (inp.toFreeway ? FW_STRAIGHT_IN : STRAIGHT_IN) - s) / 120, 0, 1));
+      let mask = arrival ? 0 : smooth(THREE.MathUtils.clamp((s - STRAIGHT_OUT) / 120, 0, 1)) * smooth(THREE.MathUtils.clamp((SB - sIn - s) / 120, 0, 1));
       for (const p of this.pieces) {
-        if (p.kind === "billboards" || p.kind === "leave" || p.kind === "distance" || p.kind === "welcome") continue;
+        if (p.kind === "billboards" || p.kind === "leave" || p.kind === "distance" || p.kind === "welcome" || (short && p.kind === "fwsign")) continue;
         const d = Math.max(p.s - 150 - s, s - (p.s + p.len + 150), 0);
         mask = Math.min(mask, smooth(Math.min(1, d / 120)));
       }
