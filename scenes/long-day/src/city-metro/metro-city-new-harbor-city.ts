@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_METRO_NEW_HARBOR_CITY: CityFile = {
   format: 1, id: "metro-new-harbor-city", name: "New Harbor City", style: "metro", key: 1620757656,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: 12, iz: -7, dir: 0 }, merge: true, exit: "slip" },
   nodes: [
     { id: 0, x: 249, z: -711, k: [4, -12], control: "none" },
     { id: 1, x: 309, z: -711, k: [5, -12] },

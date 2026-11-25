@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_METRO_GRAND_CENTRAL: CityFile = {
   format: 1, id: "metro-grand-central", name: "Grand Central", style: "metro", key: 1071104322,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: 12, iz: 7, dir: 0 }, merge: false },
   nodes: [
     { id: 0, x: -711, z: -711, k: [-12, -12], control: "none" },
     { id: 1, x: -651, z: -711, k: [-11, -12] },

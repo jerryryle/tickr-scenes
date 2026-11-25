@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_STORYBOOK_HIGGLE_ON_THE_WOBBLE: CityFile = {
   format: 1, id: "storybook-higgle-on-the-wobble", name: "Higgle-on-the-Wobble", style: "storybook", key: 213975972,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -591, z: -651, k: [-10, -11], control: "stop" },
     { id: 1, x: -531, z: -651, k: [-9, -11] },

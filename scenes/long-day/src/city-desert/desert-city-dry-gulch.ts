@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_DESERT_DRY_GULCH: CityFile = {
   format: 1, id: "desert-dry-gulch", name: "Dry Gulch", style: "desert", key: 505383881,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -653.81, z: -711, k: [-11, -12], control: "none" },
     { id: 1, x: -654.73, z: -653.72, k: [-11, -11] },

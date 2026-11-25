@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_MAINSTREET_PLEASANTVILLE: CityFile = {
   format: 1, id: "mainstreet-pleasantville", name: "Pleasantville", style: "mainstreet", key: 1024427892,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -51, z: -711, k: [-1, -12] },
     { id: 1, x: 9, z: -711, k: [0, -12] },

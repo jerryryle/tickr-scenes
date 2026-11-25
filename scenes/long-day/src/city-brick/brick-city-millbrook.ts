@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_BRICK_MILLBROOK: CityFile = {
   format: 1, id: "brick-millbrook", name: "Millbrook", style: "brick", key: 1623436219,
   layout: "organic", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: 669, z: 729, k: [11, 12], control: "none" },
     { id: 1, x: 729, z: 729, k: [12, 12], control: "none" },

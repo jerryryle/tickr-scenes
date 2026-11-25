@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_BRICK_BRICKPORT: CityFile = {
   format: 1, id: "brick-brickport", name: "Brickport", style: "brick", key: 84753555,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: 189, z: -711, k: [3, -12], control: "none" },
     { id: 1, x: 249, z: -711, k: [4, -12] },

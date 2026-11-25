@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_DESERT_RED_ROCK: CityFile = {
   format: 1, id: "desert-red-rock", name: "Red Rock", style: "desert", key: 208954641,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: -12, iz: 7, dir: 2 }, merge: true, exit: "slip" },
   nodes: [
     { id: 0, x: -531, z: -711, k: [-9, -12] },
     { id: 1, x: -471, z: -711, k: [-8, -12] },

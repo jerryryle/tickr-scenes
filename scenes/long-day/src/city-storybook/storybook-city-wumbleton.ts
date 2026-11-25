@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_STORYBOOK_WUMBLETON: CityFile = {
   format: 1, id: "storybook-wumbleton", name: "Wumbleton", style: "storybook", key: 1373781366,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -591, z: -651, k: [-10, -11], control: "stop" },
     { id: 1, x: -531, z: -651, k: [-9, -11], control: "stop" },

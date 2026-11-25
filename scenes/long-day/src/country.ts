@@ -817,8 +817,8 @@ export class CountryRoad {
   private fwFrom: Frame | null | undefined;
   get fromFreewayFrame(): Frame | null {
     if (this.fwFrom === undefined) {
-      const i = this.inp, cs = citySeedOf(i.seed, i.city), g = i.kind === "exit" ? freewayGate(cs, i.fromStyle) : null;
-      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs, i.fromStyle) !== null, i.fromCurve !== undefined ? i.fromCurve : new CityPlan(cs, i.fromStyle).fwCurve) : null;   // (an organic town's curves: CityPlan.fwCurve)
+      const i = this.inp, cs = citySeedOf(i.seed, i.city), g = i.kind === "exit" ? freewayGate(cs) : null;
+      this.fwFrom = g ? Frame.ofCitySeed(cs, i.fromName, false, g, seaSide(cs) !== null, i.fromCurve !== undefined ? i.fromCurve : new CityPlan(cs, i.fromStyle).fwCurve) : null;   // (an organic town's curves: CityPlan.fwCurve)
     }
     return this.fwFrom;
   }

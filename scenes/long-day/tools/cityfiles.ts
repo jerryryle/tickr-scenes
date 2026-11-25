@@ -3,7 +3,7 @@
 // city with cityProblems.
 import { CityPlan } from "../src/city.ts";
 import { insidePoint, STREET_HALF, STREET_KERB } from "../src/cityfile.ts";
-import type { CityFile, CityFileBlock, CityFileGate, CityFileNode, CityFileStreet, StreetTag } from "../src/cityfile.ts";
+import type { CityFile, CityFileBlock, CityFileFreeway, CityFileGate, CityFileNode, CityFileStreet, StreetTag } from "../src/cityfile.ts";
 import { inPoly } from "../src/citygraph.ts";
 import { facilityAt, siteLayout } from "../src/facilities.ts";
 import type { StyleId } from "../src/styles.ts";
@@ -41,8 +41,14 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
     if (!B.inCity) out.outside = true;
     return out;
   });
+  // (Its sea as the outline holds it; its freeway's gate slot, whether the truck comes in on it and
+  // by which exit, and its curve through an organic town, to the millimetre.)
+  const cut = plan.outlineCut, fw = plan.freeway, c = plan.fwCurve, r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const freeway: CityFileFreeway | undefined = fw ? { gate: { ix: fw.ix, iz: fw.iz, dir: fw.dir }, merge: plan.freewayMerge,
+    ...(plan.interchange ? { exit: plan.interchange.kind } : {}),
+    ...(c ? { curve: { ...c, pts: c.pts.map(([x, z]) => [r3(x), r3(z)] as [number, number]), cum: c.cum.map(r3), len: r3(c.len), ex: r3(c.ex), ez: r3(c.ez), dx: r3(c.dx), dz: r3(c.dz) } } : {}) } : undefined;
   return { format: 1, id, name, style: plan.style.id, key: plan.seed, layout: plan.layout,
-    outline: { scale: O.insetScale, ...(O.seaOff ? { seaOff: true as const } : {}) }, nodes, streets, gates, blocks };
+    outline: { scale: cut.scale, ...(cut.seaOff ? { seaOff: true as const } : {}) }, sea: O.data, ...(freeway ? { freeway } : {}), nodes, streets, gates, blocks };
 }
 
 // What is wrong with a city, for normal play: an empty list when nothing is. Its streets must let

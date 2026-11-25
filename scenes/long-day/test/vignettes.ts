@@ -6,6 +6,7 @@
 import * as THREE from "three@0.187.0";
 import { CityPlan } from "../src/city.ts";
 import { STYLES } from "../src/styles.ts";
+import { citiesOfStyle } from "../src/visits.ts";
 import type { StyleId } from "../src/styles.ts";
 import { Crowd } from "../src/crowd.ts";
 import { CLOCK, VIG_KINDS } from "../src/vignettes.ts";
@@ -25,7 +26,7 @@ let failed = false;
 const fail = (m: string) => { console.log("FAIL " + m); failed = true; };
 
 for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
-  const plan = new CityPlan(1000 + i * 7919, STYLES[style]);
+  const towns = citiesOfStyle(style), plan = new CityPlan(towns[i % towns.length].key, STYLES[style]);   // (the catalogue's cities of the style in turn)
   plan.climate = { season: season as any, weather: weather as any, snowCover: snow };
   CLOCK.hourAt = () => hour;
   const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshLambertMaterial({ vertexColors: true }));   // (with the props material, as in the scene)

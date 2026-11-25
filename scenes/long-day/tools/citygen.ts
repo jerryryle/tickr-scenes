@@ -4,12 +4,12 @@
 // iz*60 + 9), every block 42 m square, gate streets running one block straight out of town); moved
 // a little (a warped town) or a lot and evened out (an organic one), the streets move with them.
 // Every feature (avenues, rings, parks, the river, one-ways...) is laid the same in any of them.
-import { CityGraph, clipHalf, inPoly } from "./citygraph.ts";
-import type { CGate, CStreet } from "./citygraph.ts";
-import { BLOCK, RING, STREET } from "./grid.ts";
-import { hash2 } from "./rng.ts";
-import { drain } from "./slices.ts";
-import type { Steps } from "./slices.ts";
+import { CityGraph, clipHalf, inPoly } from "../src/citygraph.ts";
+import type { CGate, CStreet } from "../src/citygraph.ts";
+import { BLOCK, RING, STREET } from "../src/grid.ts";
+import { hash2 } from "../src/rng.ts";
+import { drain } from "../src/slices.ts";
+import type { Steps } from "../src/slices.ts";
 
 export interface GridGate { ix: number; iz: number; dir: number }
 export interface GridOpts {
@@ -90,7 +90,7 @@ type Seg = { ix: number; iz: number; ew: boolean };
 // sea's): from a junction with a street heading straight in (within EXIT_ALIGN), straight out
 // across nothing else, off the sea, the river and the lines running out of town (exitClear), clear
 // of the corners and of the way in; up to three a side, EXIT_GAP apart, the straightest first.
-export interface TrimOutline {
+export interface CutOutline {
   readonly X0: number; readonly X1: number; readonly Z0: number; readonly Z1: number;
   readonly sea: number | null;
   inLand(x: number, z: number): boolean;
@@ -101,9 +101,9 @@ export interface TrimOutline {
 }
 const SPLIT_MIN = 24, GATE_REACH = 4.5 * BLOCK;
 const EXIT_ALIGN = Math.cos(35 * Math.PI / 180), EXIT_SIDE = 0.5, EXIT_CORNER = 1.5 * BLOCK, EXIT_ENTRY = 2.5 * BLOCK, EXIT_GAP = 3 * BLOCK, EXIT_PER_SIDE = 3, EXIT_SEA_LAT = 13;
-export function trimToOutline(G: CityGraph, O: TrimOutline, entry: GridGate, seed: number): CityGraph | null { return drain(trimToOutlineSteps(G, O, entry, seed)); }
+export function trimToOutline(G: CityGraph, O: CutOutline, entry: GridGate, seed: number): CityGraph | null { return drain(trimToOutlineSteps(G, O, entry, seed)); }
 // (The same a piece at a time: slices.ts.)
-export function* trimToOutlineSteps(G: CityGraph, O: TrimOutline, entry: GridGate, seed: number): Steps<CityGraph | null> {
+export function* trimToOutlineSteps(G: CityGraph, O: CutOutline, entry: GridGate, seed: number): Steps<CityGraph | null> {
   const kind = G.blocks.map((b) => (O.inLand(b.cx, b.cz) ? (b.water ? 2 : 1) : 0));
   const keepSt = G.streets.map((st) => st.gate < 0 && [G.faceBlock[st.id * 2], G.faceBlock[st.id * 2 + 1]].some((b) => b >= 0 && kind[b] > 0));
   const g = new CityGraph(), nodeOf = new Map<number, number>();

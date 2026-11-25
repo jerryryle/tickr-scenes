@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_DESERT_PALM_VISTA: CityFile = {
   format: 1, id: "desert-palm-vista", name: "Palm Vista", style: "desert", key: 662029950,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: -12, iz: 0, dir: 2 }, merge: true, exit: "helix" },
   nodes: [
     { id: 0, x: -711, z: -711, k: [-12, -12], control: "none" },
     { id: 1, x: -651, z: -711, k: [-11, -12] },

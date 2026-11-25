@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_STORYBOOK_TUMBLEDOWN_TUFT: CityFile = {
   format: 1, id: "storybook-tumbledown-tuft", name: "Tumbledown Tuft", style: "storybook", key: 443368285,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -711, z: -711, k: [-12, -12], control: "none" },
     { id: 1, x: -651, z: -711, k: [-11, -12] },

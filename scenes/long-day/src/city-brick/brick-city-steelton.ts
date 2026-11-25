@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_BRICK_STEELTON: CityFile = {
   format: 1, id: "brick-steelton", name: "Steelton", style: "brick", key: 1733766519,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: 0, iz: -12, dir: 1 }, merge: true, exit: "helix" },
   nodes: [
     { id: 0, x: -591, z: -711, k: [-10, -12], control: "none" },
     { id: 1, x: -531, z: -711, k: [-9, -12] },

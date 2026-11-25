@@ -22,7 +22,7 @@ const dwSeed0 = Number(dwProc.argv[2] ?? 1);
 const MIN_ROADS = 5, MIN_STYLES = 3, MAX_HOPS = 4, MAX_ROADS = 7;
 
 interface Town { id: string; style: string; gates: { id: string; dir: number }[]; freeway: boolean }
-const towns: Town[] = CATALOGUE.map((F) => ({ id: F.id, style: F.style, freeway: !!freewayGate(F.key, STYLES[F.style]),
+const towns: Town[] = CATALOGUE.map((F) => ({ id: F.id, style: F.style, freeway: !!freewayGate(F.key),
   gates: F.gates.flatMap((g) => g ? [{ id: g.id, dir: g.dir }] : []) }));
 
 function draft(seed: number): WorldRoad[] | null {

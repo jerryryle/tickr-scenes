@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_METRO_MIDTOWN: CityFile = {
   format: 1, id: "metro-midtown", name: "Midtown", style: "metro", key: 840995782,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -411, z: -711, k: [-7, -12], control: "none" },
     { id: 1, x: -351, z: -711, k: [-6, -12] },

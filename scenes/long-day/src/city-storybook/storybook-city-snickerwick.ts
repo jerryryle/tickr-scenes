@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_STORYBOOK_SNICKERWICK: CityFile = {
   format: 1, id: "storybook-snickerwick", name: "Snickerwick", style: "storybook", key: 430297004,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: 249, z: -651, k: [4, -11] },
     { id: 1, x: 309, z: -651, k: [5, -11] },

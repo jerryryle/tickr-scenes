@@ -1,103 +1,50 @@
-// A city's outline: which of the city's square is land, and where the sea is. Every layout
-// (citygen.ts) lays its streets out over the whole square; trimToOutline (citygen.ts) then cuts
-// the graph back to this, each side's land edge standing in from the square by `inset` (smooth
-// noise, up to INSET_MAX), and in a coastal or port city the sea coming in over one side to its
-// `shore` line, with bays and headlands. The way in keeps its slot (GATE_SLOTS) and its outer end; its
-// street runs in to wherever the land begins. The ways out are where the land's streets meet its
-// edge, off the sea and the lines running out of town (exitClear).
-//
-// The sea is always on the left of the way into town (the entry gate's side turned a quarter
-// left), so it is never the side the truck comes in by, nor the far side the freeway leaves by;
-// the freeway (freeway.ts) bends away from it at both ends. Insets fade out where anything runs
-// straight out of town (the freeway's line and its interchange, elevated lines, cable cars), and
-// the shore keeps clear of the way in. Out past the town on the way in, its shore bends in to run
-// COAST_LAT off the road by the edge of its outskirts, where the country road's coast runs
-// (country.ts SEA_N, coastAt): the road in comes along one coast into the town's sea. (Over another
-// gate's road out on that side, if one runs between: when the truck leaves by it, its own country
-// land lies over the sea there.)
+// A town's sea (docs/fixed-cities.md): which side of the town's square it is on, and how far in it
+// reaches along that side, as the city file holds it (SeaData). Out past the town on the way in
+// (gate g0's side), its shore bends in to run COAST_LAT off the road by the edge of its outskirts,
+// where the country road's coast runs (country.ts SEA_N, coastAt): the road in comes along one
+// coast into the town's sea. The drafting tools lay the sea out (tools/outlinegen.ts) and cut the
+// town's streets back to it and to its land's edges (tools/citygen.ts trimToOutline).
 import { BLOCK, STREET } from "./grid.ts";
-import { hash2 } from "./rng.ts";
-import { CITY_HI, CITY_LO, entryGateOf } from "./city.ts";
-import type { Gate } from "./city.ts";
-import type { CityStyle } from "./styles.ts";
-import { DEBUG_SEA } from "./debug.ts";
+import { CITY_HI, CITY_LO } from "./city.ts";
+import { cityByKey } from "./visits.ts";
 
-export const INSET_MAX = 1.5 * BLOCK;
-const SHORE_MIN = 0.8 * BLOCK, SHORE_MAX = 3.5 * BLOCK;
 const DX = [1, 0, -1, 0], DZ = [0, -1, 0, 1];
 export const SEA_REACH = 40;
 // (The country road's coast: its sea from 75 m off on the left, country.ts SEA_N; a literal, as
 // country.ts loads after this. The bend runs over the outskirts, RING blocks.)
 const COAST_LAT = 75, COAST_BEND = 240;
+export const smoothStep = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-// The side of town the sea is on (0 east, 1 north, 2 west, 3 south), or null: a pure function of
-// the city's seed and style (a country road into or out of the city asks it too).
-export function seaSide(citySeed: number, style: CityStyle): number | null {
-  if (DEBUG_SEA === "none" || (style.id !== "coastal" && style.id !== "port")) return null;
-  return (entryGateOf(citySeed).dir + 3) % 4;
-}
+// The side of a catalogue city the sea is on (0 east, 1 north, 2 west, 3 south), or null: its
+// file's (a country road into or out of the city asks it too).
+export function seaSide(citySeed: number): number | null { return cityByKey(citySeed)?.sea?.side ?? null; }
 
-// Smooth 1D noise in [-1, 1] along t (metres), wavelength `wave`.
-function noise1(t: number, wave: number, seed: number, salt: number) {
-  const u = t / wave, i = Math.floor(u), f = u - i, s = f * f * (3 - 2 * f);
-  const h = (k: number) => hash2(k, salt, seed, 0x0b1) * 2 - 1;
-  return h(i) + (h(i + 1) - h(i)) * s;
-}
-const smoothStep = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+// A town's sea as a city file holds it: its side, the way in the shore keeps clear of (gate g0's
+// side, and how far its line lies from the sea's edge), and how far the sea reaches in from its
+// side, every `step` metres along it from `t0` (held at its ends beyond them).
+export interface SeaData { side: number; entryDir: number; entryLat: number; t0: number; step: number; depth: number[] }
 
-export interface OutlineOpts {
-  freeway: Gate | null;
-  straightRows: number[];   // node rows (iz) of lines running east-west straight out of town (elevated lines)
-  straightCols: number[];   // node columns (ix) running north-south (cable cars)
-  insetScale?: number;      // (trimToOutline's retries: 1, then 0.5, then 0)
-  seaOff?: boolean;         // (the last resort: no sea at all)
-}
 export class CityOutline {
   readonly sea: number | null;
   readonly X0: number; readonly X1: number; readonly Z0: number; readonly Z1: number;
-  private shoreCap = SHORE_MAX;
-  // The way in: its side of the square (the entry gate's dir), and how far its line lies from the
-  // sea's edge.
-  private eDir = 0; private eLat = 0;
-  // (How far in its land's edges were drawn, and whether its sea was left off: for a city file, cityfile.ts.)
-  get insetScale() { return this.o.insetScale ?? 1; }
-  get seaOff() { return !!this.o.seaOff; }
-  constructor(readonly seed: number, readonly style: CityStyle, private readonly o: OutlineOpts) {
-    this.sea = o.seaOff ? null : seaSide(seed, style);
+  protected eDir = 0; protected eLat = 0;
+  constructor(readonly data: SeaData | null) {
     const at = (i: number) => i * BLOCK + STREET / 2;
     this.X0 = at(CITY_LO); this.X1 = at(CITY_HI + 1); this.Z0 = this.X0; this.Z1 = this.X1;
-    // (The shore stays two blocks clear of the way in: the entry gate's line runs parallel to it.)
-    if (this.sea !== null) {
-      const g = entryGateOf(seed);
-      this.eDir = g.dir; this.eLat = this.edgeDist(this.sea, g.dir === 0 || g.dir === 2 ? at(g.iz) : at(g.ix));
-      this.shoreCap = Math.max(0.3 * BLOCK, Math.min(SHORE_MAX, this.eLat - 2 * BLOCK));
-    }
+    this.sea = data ? data.side : null;
+    if (data) { this.eDir = data.entryDir; this.eLat = data.entryLat; }
   }
   // How far coordinate `c` (z for a north or south side, x for east or west) lies in from side s's edge.
-  private edgeDist(s: number, c: number) { return s === 0 ? this.X1 - c : s === 1 ? c - this.Z0 : s === 2 ? c - this.X0 : this.Z1 - c; }
+  protected edgeDist(s: number, c: number) { return s === 0 ? this.X1 - c : s === 1 ? c - this.Z0 : s === 2 ? c - this.X0 : this.Z1 - c; }
   // How far in from side s the point (x, z) is, and where along that side.
-  private inward(s: number, x: number, z: number) { return this.edgeDist(s, s === 0 || s === 2 ? x : z); }
-  private along(s: number, x: number, z: number) { return s === 0 || s === 2 ? z : x; }
+  protected inward(s: number, x: number, z: number) { return this.edgeDist(s, s === 0 || s === 2 ? x : z); }
+  protected along(s: number, x: number, z: number) { return s === 0 || s === 2 ? z : x; }
   // How far the sea reaches in from its side at t along it.
   shore(t: number) {
-    if (this.sea === null) return -Infinity;
-    const n = 0.5 + 0.38 * noise1(t, 5 * BLOCK, this.seed, 11) + 0.12 * noise1(t, 2.2 * BLOCK, this.seed, 12);
-    return Math.min(this.shoreCap, SHORE_MIN + (SHORE_MAX - SHORE_MIN) * n);
-  }
-  // How far side s's land edge stands in from the square at t along it (none on the sea side).
-  inset(s: number, t: number) {
-    if (s === this.sea) return 0;
-    const sc = this.o.insetScale ?? 1;
-    if (sc <= 0) return 0;
-    // (Long, gentle swells: shorter ones bite single blocks out of the edge, a comb of teeth.)
-    let v = INSET_MAX * Math.max(0, 0.4 + 0.6 * noise1(t, 5.5 * BLOCK, this.seed, 20 + s) + 0.1 * noise1(t, 2.5 * BLOCK, this.seed, 30 + s));
-    // (Fading out where a line runs straight out of town across this side.)
-    const at = (i: number) => i * BLOCK + STREET / 2, ew = s === 0 || s === 2;
-    const lines: number[] = (ew ? this.o.straightRows : this.o.straightCols).map(at);
-    const fw = this.o.freeway;
-    if (fw && (fw.dir === 0 || fw.dir === 2) === ew) lines.push(at(ew ? fw.iz : fw.ix));
-    for (const c of lines) v *= smoothStep(2 * BLOCK, 3.5 * BLOCK, Math.abs(t - c));
-    return Math.min(INSET_MAX, v * sc);
+    const D = this.data;
+    if (!D) return -Infinity;
+    const f = Math.min(Math.max((t - D.t0) / D.step, 0), D.depth.length - 1), i = Math.min(Math.floor(f), D.depth.length - 2);
+    return D.depth[i] + (D.depth[i + 1] - D.depth[i]) * (f - i);
   }
   inSea(x: number, z: number) { return this.sea !== null && this.inward(this.sea, x, z) < this.shore(this.along(this.sea, x, z)); }
   // Out past the square on the way in: the shore bending in towards the road (for the land and the
@@ -129,42 +76,8 @@ export class CityOutline {
     const inside = x > this.X0 && x < this.X1 && z > this.Z0 && z < this.Z1;
     return inside && this.inSea(x + DX[this.sea] * SEA_REACH, z + DZ[this.sea] * SEA_REACH);
   }
-  // On the town's land: inside every side's inset, and not in the sea.
-  inLand(x: number, z: number) {
-    for (let s = 0; s < 4; s++) if (s !== this.sea && this.inward(s, x, z) < this.inset(s, this.along(s, x, z))) return false;
-    return !this.inSea(x, z) && x >= this.X0 - 1 && x <= this.X1 + 1 && z >= this.Z0 - 1 && z <= this.Z1 + 1;
-  }
-  // A gate slot's line: its outer end (the gate street's outer node) and the way in.
-  gateLine(g: Gate) {
-    const at = (k: number) => k * BLOCK + STREET / 2;
-    return { x: at(g.ix + DX[g.dir]), z: at(g.iz + DZ[g.dir]), dx: -DX[g.dir], dz: -DZ[g.dir] };
-  }
-  // Whether a gate slot can be open: not on the sea side, and its line not out in the sea
-  // (trimToOutline also refuses one whose street in would cross the sea).
-  gatePossible(g: Gate) {
-    if (g.dir === this.sea) return false;
-    const L = this.gateLine(g);
-    for (let d = 0; d <= BLOCK + INSET_MAX + BLOCK; d += 6) if (this.inSea(L.x + L.dx * d, L.z + L.dz * d)) return false;
-    return true;
-  }
-  // Whether a way out through side s at `along` (z on the east or west, x on the north or south)
-  // keeps clear of the lines running straight out across that side (elevated lines, cable cars, the
-  // freeway's line and where its curve leaves).
-  exitClear(s: number, along: number) {
-    const at = (i: number) => i * BLOCK + STREET / 2, ew = s === 0 || s === 2;
-    const lines: number[] = (ew ? this.o.straightRows : this.o.straightCols).map(at);
-    const fw = this.o.freeway;
-    if (fw && (fw.dir === 0 || fw.dir === 2) === ew) lines.push(at(ew ? fw.iz : fw.ix));
-    return lines.every((c) => Math.abs(c - along) >= 0.75 * BLOCK);
-  }
-  // The deepest the sea comes in (for the sea plane under the town): a line along its side.
-  get shoreDeepest() {
-    if (this.sea === null) return null;
-    let m = 0;
-    const lo = this.sea === 0 || this.sea === 2 ? this.Z0 : this.X0, hi = this.sea === 0 || this.sea === 2 ? this.Z1 : this.X1;
-    for (let t = lo - 600; t <= hi + 600; t += 10) m = Math.max(m, this.shore(t));
-    return m;
-  }
+  // The deepest the sea comes in (for the sea plane under the town).
+  get shoreDeepest() { return this.data ? Math.max(...this.data.depth) : null; }
   // Whether block (bx, bz)'s middle lies within `blocks` blocks of the shore (on land).
   nearShore(bx: number, bz: number, blocks = 1.3) { return this.nearShoreAt(bx * BLOCK + 39, bz * BLOCK + 39, blocks); }
   // Whether the point (x, z) lies within `blocks` blocks of the shore (on land).

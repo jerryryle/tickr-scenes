@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_MAINSTREET_MAPLE_FALLS: CityFile = {
   format: 1, id: "mainstreet-maple-falls", name: "Maple Falls", style: "mainstreet", key: 2121701320,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: 69, z: -711, k: [1, -12], control: "none" },
     { id: 1, x: 129, z: -711, k: [2, -12] },

@@ -1694,10 +1694,10 @@ export class Journey {
     const gt = this.planOf(N).graph.gates[gate]!, e = gateEnd(gt), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
     const toStyle = this.styleOf(N1), fromStyle = this.styleOf(N), way = this.leaveOf(N);
     const inward = (way.to.gates[way.in]!.dir + 2) % 4;
-    const toFreeway = way.in === 0 && !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && this.takesFreeway(N1);
+    const toFreeway = way.in === 0 && !!freewayGate(citySeedOf(this.cfg.seed, N1)), toFreewayMerge = toFreeway && this.takesFreeway(N1);
     // (The freeway's curve out of this city as it was laid: its graph built first, so a town whose
     // organic layout fell back, straight, has none.)
-    const P = freewayGate(citySeedOf(this.cfg.seed, N), fromStyle) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
+    const P = freewayGate(citySeedOf(this.cfg.seed, N)) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
     return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1), fromCurve,
       seed: this.cfg.seed, city: N, kind: "exit", roadKey: roadKeyOf(way), driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.startTruck(N1),
@@ -1747,7 +1747,7 @@ export class Journey {
     return P;
   }
   // Whether city N is on the sea: only built out to see when it could be (seaSide).
-  private onSea(N: number) { return seaSide(citySeedOf(this.cfg.seed, N), this.styleOf(N)) !== null && this.planOf(N).outline.sea !== null; }
+  private onSea(N: number) { return seaSide(citySeedOf(this.cfg.seed, N)) !== null && this.planOf(N).outline.sea !== null; }
   // The arrival straight into this city (pure: from the seed alone).
   private arrivalCache: CountryRoad | null = null;
   get arrivalRoad(): CountryRoad {

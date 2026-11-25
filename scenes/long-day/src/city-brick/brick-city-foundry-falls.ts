@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_BRICK_FOUNDRY_FALLS: CityFile = {
   format: 1, id: "brick-foundry-falls", name: "Foundry Falls", style: "brick", key: 762755194,
   layout: "warp", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: 0, iz: 12, dir: 3 }, merge: false },
   nodes: [
     { id: 0, x: -711, z: -711, k: [-12, -12], control: "none" },
     { id: 1, x: -651, z: -711, k: [-11, -12] },

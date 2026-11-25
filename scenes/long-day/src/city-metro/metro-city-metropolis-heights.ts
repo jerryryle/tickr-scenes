@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_METRO_METROPOLIS_HEIGHTS: CityFile = {
   format: 1, id: "metro-metropolis-heights", name: "Metropolis Heights", style: "metro", key: 456257388,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -711, z: -711, k: [-12, -12], control: "none" },
     { id: 1, x: -651, z: -711, k: [-11, -12], control: "stop" },

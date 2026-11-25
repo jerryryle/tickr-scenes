@@ -315,8 +315,13 @@ every stage.
    and `DEBUG_VISIT` for a render). The seeds' defaults are the values the journey used before,
    so a seed's jobs and drives play out as they did. `swap` still runs on seeds: no spec yet says
    which truck a visit's jobs swap into.
-5. **Generator out of the scene.** The freeway, outline, sea and elevated lines become explicit
-   fields, and `citygen.ts` and the outline trim move to `tools/`.
+5. **Generator out of the scene.** The freeway (its gate slot, whether the truck comes in on it,
+   its exit and its curve) and the sea (its side and its shore's depth every 5 m) become explicit
+   fields. `citygen.ts`, the outline's land edges and gate checks (`tools/outlinegen.ts`), the
+   freeway's layout rules (`tools/freewaygen.ts`) and the layout methods of `CityPlan`
+   (`tools/generatedplan.ts`, a `CityPlan` with no file) move to `tools/`. The scene keeps
+   `src/outline.ts` for the sea alone, and decides where to draw outskirts from the town's outer
+   street edge. Elevated and cable-car lines need no field: their streets are tagged in the file.
 6. **Explicit lots and street furniture.** `buildLots` and the furniture, signal-pole and stop-sign
    placing split from their drawing. Blocks may list their own lots and buildings, and every city
    file lists its furniture, signal poles and stop signs (requirement 5a). The maps already show

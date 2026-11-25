@@ -14,6 +14,9 @@ import type { District } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
 import type { StyleId } from "./styles.ts";
 import type { Steps } from "./slices.ts";
+import type { SeaData } from "./outline.ts";
+import type { FwCurve } from "./freeway.ts";
+import type { ExitKind } from "./route.ts";
 
 export interface CityFile {
   format: 1;
@@ -23,11 +26,17 @@ export interface CityFile {
   key: number;                    // (The default rules hash it. It is the seed the city was drafted from.)
   layout: "grid" | "warp" | "organic";
   outline: { scale: number; seaOff?: true };   // (It says how the town's outline was cut, outline.ts.)
+  sea?: SeaData | null;           // (The town's sea, outline.ts SeaData; null on no sea.)
+  freeway?: CityFileFreeway;      // (The town's freeway, if it has one.)
   nodes: CityFileNode[];
   streets: CityFileStreet[];
   gates: (CityFileGate | null)[]; // (The way in comes first, then the ways out; null stands for a gate the sea closed.)
   blocks: CityFileBlock[];
 }
+// A town's freeway (freeway.ts): the gate slot whose line it runs out along (its way in, gate g0),
+// whether the truck comes in on it (merge) and by which kind of exit, and its curve through an
+// organic town.
+export interface CityFileFreeway { gate: { ix: number; iz: number; dir: number }; merge: boolean; exit?: ExitKind; curve?: FwCurve }
 export interface CityFileNode {
   id: number; x: number; z: number;
   k: [number, number];            // (It is the node's hash key, the old grid's ix and iz.)

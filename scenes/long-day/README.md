@@ -43,8 +43,9 @@ make maps SCENE=long-day                      # every city's map; ARGS="metro-mi
 
 `src/citygraph.ts` is the city as a street graph: intersections, straight streets, the blocks
 they enclose and each block's faces along its streets (a face's frontage frame, `facePt`, is
-where everything along a street is placed). `src/citygen.ts` makes it from a seed for the
-drafting tool: the
+where everything along a street is placed). The generator that drafts a city's file lives in
+`tools/` and is not part of the scene (`tools/generatedplan.ts`, `tools/citygen.ts`). From a seed
+it lays out the
 square grid; one bent out of square, with dropped streets, rivers, superblock parks, diagonal
 avenues, old towns, sweeping avenues, radial circuses and one-way roundabouts (where traffic
 yields on entry); or, in towns without a freeway, an organic town with no grid at all (a relaxed
@@ -60,8 +61,8 @@ big block's middle, past its lots, is filled for its district: set-back towers d
 where people live, a fenced back garden behind each house, with trees beyond. Routing, signals,
 traffic, the crowd and the city's drawing all work from the graph.
 
-`src/outline.ts` gives each town its outline. Every layout is laid over the whole square, then
-`trimToOutline` (`src/citygen.ts`) cuts it back: each side's land edge stands in by up to a block
+The generator's outline (`tools/outlinegen.ts`) shapes each town. Every layout is laid over the
+whole square, then `trimToOutline` (`tools/citygen.ts`) cuts it back: each side's land edge stands in by up to a block
 and a half (long, gentle swells, none where the freeway, an elevated line or a cable car runs out
 of town), and every coastal and port town has the sea along one side, always the side on the
 left of the way in, its shore 1 to 3.5 blocks in with bays and headlands. The gates keep their
@@ -70,7 +71,7 @@ the streets begin, and a gate on the sea side (or out in the sea) is closed, whi
 of town skips. A port's shore is a stone quay with boats and piers on piles; a coastal town's a
 sandy beach below the promenade, with lifeguard towers and, in summer, umbrellas. The sea is one
 plane under the town, and the land round it (the outskirts) stops at the water. In about two cities in three,
-downtown's streets are one-way, alternate lattice lines each way (`oneWays` in `src/citygen.ts`,
+downtown's streets are one-way, alternate lattice lines each way (`oneWays` in `tools/generatedplan.ts`,
 kept only where the network stays strongly connected): traffic keeps to the right half, and the
 other half is a green bike lane and a loading lane of parked vans and cars. Sites never face the
 far side of a one-way street, whose kerb the truck can't drive along. Downtown and commercial

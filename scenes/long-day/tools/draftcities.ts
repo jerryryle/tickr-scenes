@@ -5,7 +5,7 @@
 //   make draft SCENE=long-day ARGS="<style> [candidates]"
 //
 // A candidate's seed is a hash of the style and its number, so a run is repeatable.
-import { CityPlan } from "../src/city.ts";
+import { GeneratedPlan } from "./generatedplan.ts";
 import { hash2 } from "../src/rng.ts";
 import { STYLES } from "../src/styles.ts";
 import type { StyleId } from "../src/styles.ts";
@@ -19,12 +19,12 @@ if (!(draftStyle in STYLES)) throw new Error(`usage: draftcities <style> [candid
 const draftDir = path.resolve("scenes/long-day/src", `city-${draftStyle}`);
 const draftNames = STYLES[draftStyle].names.slice(0, 5);
 
-type Draft = { seed: number; plan: CityPlan; traits: ReturnType<typeof cityTraits> };
+type Draft = { seed: number; plan: GeneratedPlan; traits: ReturnType<typeof cityTraits> };
 const drafts: Draft[] = [];
 for (let k = 0; drafts.length < draftWant && k < draftWant * 6; k++) {
   const seed = Math.floor(hash2(k, Object.keys(STYLES).indexOf(draftStyle), 0xd2af7, 0xc17) * 2 ** 31) || 1;
   if (cityByKey(seed)) continue;
-  const plan = new CityPlan(seed, STYLES[draftStyle]);
+  const plan = new GeneratedPlan(seed, STYLES[draftStyle]);
   const problems = cityProblems(plan), traits = cityTraits(plan);
   if (problems.length || traits.docks < 6) { console.log(`seed ${seed}: skipped (${problems[0] ?? `${traits.docks} docks`})`); continue; }
   drafts.push({ seed, plan, traits });
@@ -66,6 +66,8 @@ chosen.forEach((d, i) => {
     `export const ${constOf(draftStyle, name)}: CityFile = {`,
     `  format: 1, id: ${item(F.id)}, name: ${item(F.name)}, style: ${item(F.style)}, key: ${F.key},`,
     `  layout: ${item(F.layout)}, outline: ${item(F.outline)},`,
+    `  sea: ${F.sea ? item(F.sea) : "null"},`,
+    ...(F.freeway ? [`  freeway: ${item(F.freeway)},`] : []),
     list("nodes", F.nodes), list("streets", F.streets), list("gates", F.gates), list("blocks", F.blocks),
     `};`, ``,
   ].join("\n");

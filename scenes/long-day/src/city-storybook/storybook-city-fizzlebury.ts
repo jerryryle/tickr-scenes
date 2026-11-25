@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_STORYBOOK_FIZZLEBURY: CityFile = {
   format: 1, id: "storybook-fizzlebury", name: "Fizzlebury", style: "storybook", key: 863018782,
   layout: "organic", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -711, z: -642.21, k: [-12, -11], control: "none" },
     { id: 1, x: -642.21, z: -657.08, k: [-11, -11] },

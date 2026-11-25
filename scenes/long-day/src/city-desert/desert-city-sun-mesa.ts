@@ -5,6 +5,8 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_DESERT_SUN_MESA: CityFile = {
   format: 1, id: "desert-sun-mesa", name: "Sun Mesa", style: "desert", key: 836505027,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
+  freeway: { gate: { ix: -12, iz: 7, dir: 2 }, merge: true, exit: "helix" },
   nodes: [
     { id: 0, x: 69, z: -711, k: [1, -12], control: "none" },
     { id: 1, x: 129, z: -711, k: [2, -12] },

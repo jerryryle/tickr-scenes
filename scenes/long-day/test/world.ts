@@ -30,8 +30,8 @@ for (const r of WORLD_ROADS) {
   if (ia < 0 || ib < 0) { fail(`${r.id}: a gate that isn't there`); continue; }
   if (A.gates[ia]!.dir === B.gates[ib]!.dir) fail(`${r.id}: its gates face the same way`);
   for (const k of [`${A.id}/${r.a.gate}`, `${B.id}/${r.b.gate}`]) { if (usedGates.has(k)) fail(`${r.id}: gate ${k} serves two roads`); usedGates.add(k); }
-  if (freewayGate(A.key, STYLES[A.style]) && ia === 0) fail(`${r.id}: leaves ${A.id} by its freeway's way in`);
-  if (freewayGate(B.key, STYLES[B.style]) && ib === 0 && !r.oneway) fail(`${r.id}: into ${B.id}'s freeway way in, but driven both ways`);
+  if (freewayGate(A.key) && ia === 0) fail(`${r.id}: leaves ${A.id} by its freeway's way in`);
+  if (freewayGate(B.key) && ib === 0 && !r.oneway) fail(`${r.id}: into ${B.id}'s freeway way in, but driven both ways`);
   if (r.seconds < 30) fail(`${r.id}: ${r.seconds} s is too short a drive`);
   near.get(A.id)!.add(B.id); near.get(B.id)!.add(A.id);
 }

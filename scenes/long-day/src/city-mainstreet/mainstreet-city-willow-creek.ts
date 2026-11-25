@@ -5,6 +5,7 @@ import type { CityFile } from "../cityfile.ts";
 export const CITY_MAINSTREET_WILLOW_CREEK: CityFile = {
   format: 1, id: "mainstreet-willow-creek", name: "Willow Creek", style: "mainstreet", key: 1439186264,
   layout: "grid", outline: { scale: 1 },
+  sea: null,
   nodes: [
     { id: 0, x: -171, z: -711, k: [-3, -12], control: "none" },
     { id: 1, x: -111, z: -711, k: [-2, -12], control: "stop" },
