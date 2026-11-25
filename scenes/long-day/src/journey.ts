@@ -1083,15 +1083,16 @@ export class Journey {
   // ---- simulation -----------------------------------------------------------------------------
   // One fixed step of the simulation, then street life.
   step() {
-    const x0 = this.pose.x, z0 = this.pose.z, h0 = this.pose.h, city = this.st.city;
-    this.stepJourney(); this.hitchStep(x0, z0, h0, city); this.life?.step(this); this.prefetch(); this.exitAhead();
+    const x0 = this.pose.x, z0 = this.pose.z, h0 = this.pose.h, city = this.st.city, truck = this.st.truck;
+    this.stepJourney(); this.hitchStep(x0, z0, h0, city, truck); this.life?.step(this); this.prefetch(); this.exitAhead();
   }
   // A tractor's trailer, as it swings behind on a turn (the same tractrix truck.ts draws: its
   // axles dragged along the line to the kingpin), stepped with the journey so that street life
   // and the tests know where it is: its yaw off the tractor's heading. Reversing into a bay, the
   // bay path's (blended in over the first 4 m back from however it was, as main.ts draws it); anew
   // (straight) on a jump, as into a new city.
-  private hitchStep(x0: number, z0: number, h0: number, city: number) {
+  // (A swap's hand-over is a jump too: another rig, parked straight.)
+  private hitchStep(x0: number, z0: number, h0: number, city: number, truck: TruckModel) {
     const st = this.st;
     if (st.truck !== "tractor") { st.hitchYaw = 0; st.hitchFrom = undefined; return; }
     if (st.mode === "reverse" && this.path) {
@@ -1101,7 +1102,11 @@ export class Journey {
       return;
     }
     st.hitchFrom = undefined;
-    if (st.city !== city || Math.hypot(this.pose.x - x0, this.pose.z - z0) > 20) { st.hitchYaw = 0; return; }
+    if (st.city !== city || st.truck !== truck || Math.hypot(this.pose.x - x0, this.pose.z - z0) > 20) {
+      st.hitchYaw = 0;
+      if (st.truck !== truck) this.prevHitch = 0;   // (drawn straight from now, as the pose is: doStop's settlePrev)
+      return;
+    }
     const th0 = h0 + (st.hitchYaw ?? 0);
     const kx0 = x0 + Math.cos(h0) * FIFTH_WHEEL, kz0 = z0 - Math.sin(h0) * FIFTH_WHEEL;
     const ax = kx0 - Math.cos(th0) * KINGPIN_TO_AXLES, az = kz0 + Math.sin(th0) * KINGPIN_TO_AXLES;

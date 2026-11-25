@@ -69,7 +69,7 @@ export class Crew {
   // Where the hands go this frame (world), and how firmly (0 free .. 1 on it).
   private gripL = new THREE.Vector3(); private gripR = new THREE.Vector3(); private wL = 0; private wR = 0;
   private gripMate: { L: THREE.Vector3; R: THREE.Vector3 } | null = null;
-  private v3 = new THREE.Vector3(); private v4 = new THREE.Vector3();
+  private v3 = new THREE.Vector3(); private v4 = new THREE.Vector3(); private v5 = new THREE.Vector3(); private v6 = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
     this.driver = new Character(material, DRIVER_LOOK);
@@ -728,9 +728,8 @@ export class Crew {
   // with the ground covered, easing in and out with the pace), and turning as they slow at the
   // new door to face its handle, as the climb in starts.
   private walkBetween(oldT: Truck, newT: Truck, p: THREE.Vector3, t: number, len: number) {
-    const a = oldT.anchors.cabDoorGround.getWorldPosition(this.v3), D = Math.hypot(newT.anchors.cabDoorGround.getWorldPosition(this.v4).x - a.x, this.v4.z - a.z);
     const u = swapWalkU(t, len), pace = swapWalkPace(t, len), ss = THREE.MathUtils.smoothstep;
-    this.driver.apply(walkPose(D * u / STRIDE, idlePose(this.time, this.pose), true, pace));
+    this.driver.apply(walkPose(this.swapWalked(oldT, newT, u) / STRIDE, idlePose(this.time, this.pose), true, pace));
     const out = climbKeys(oldT.model, false), y0 = oldT.heading + out[out.length - 1].root[3];
     const y2 = newT.heading + climbKeys(newT.model, true)[0].root[3];
     let yaw = y0 + wrapYaw(oldT.heading - y0) * ss(u, 0, 0.12);
@@ -738,6 +737,23 @@ export class Crew {
     this.yaw = yaw; this.yawV = 0;
     this.driver.root.position.copy(p);
     this.driver.root.rotation.set(0, yaw, 0);
+  }
+
+  // The ground covered `u` of the way along a truck change's walk: along swapClear's path, out
+  // round the wider truck and back in (the stride keeps time with it).
+  private swapWalked(oldT: Truck, newT: Truck, u: number): number {
+    const a = oldT.anchors.cabDoorGround.getWorldPosition(this.v3), b = newT.anchors.cabDoorGround.getWorldPosition(this.v4);
+    const N = 24, q = this.v5, r = this.v6;
+    let d = 0;
+    r.copy(a);
+    for (let i = 1; i <= N; i++) {
+      const w = Math.min(u, i / N);
+      swapClear(q.copy(a).lerp(b, w), oldT, newT, w);
+      d += Math.hypot(q.x - r.x, q.z - r.z);
+      r.copy(q);
+      if (w >= u) break;
+    }
+    return d;
   }
 
   // Chores on foot around the parked truck. The driver's place and facing come from the stop's

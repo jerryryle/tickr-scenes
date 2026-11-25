@@ -1832,7 +1832,7 @@ function roundRestingJack(out: Chore[], L: TruckLayout) {
 }
 
 // Swap: climb down from the old truck, walk to the new one (world space, see swapWalkPoint),
-// look it over, climb in.
+// climb in.
 export function swapChores(walkLen: number): Chore[] {
   return [
     { kind: "climbDown", group: "exit", len: DWELL.exit },
