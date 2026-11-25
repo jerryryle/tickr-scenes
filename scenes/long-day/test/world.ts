@@ -10,6 +10,7 @@
 // city's visits stay within 25% of its style's mean, and two visits to one city differ in dressing. It prints the frequencies it saw.
 // Args (all optional): journeys (default 300), cities each (default 60).
 import { CATALOGUE } from "../src/world.ts";
+import { roadMetres } from "../src/country.ts";
 import { WORLD_ROADS } from "../src/world-roads.ts";
 import { cityById, gateIndex, RECENT, visitOf, waysFrom } from "../src/visits.ts";
 import { STORYBOOK_GAP, STYLES } from "../src/styles.ts";
@@ -32,7 +33,7 @@ for (const r of WORLD_ROADS) {
   for (const k of [`${A.id}/${r.a.gate}`, `${B.id}/${r.b.gate}`]) { if (usedGates.has(k)) fail(`${r.id}: gate ${k} serves two roads`); usedGates.add(k); }
   if (freewayGate(A.key) && ia === 0) fail(`${r.id}: leaves ${A.id} by its freeway's way in`);
   if (freewayGate(B.key) && ib === 0 && !r.oneway) fail(`${r.id}: into ${B.id}'s freeway way in, but driven both ways`);
-  if (r.metres < 600) fail(`${r.id}: ${r.metres} m is too short a drive`);
+  if (roadMetres(r) < 600) fail(`${r.id}: ${roadMetres(r)} m is too short a drive`);
   near.get(A.id)!.add(B.id); near.get(B.id)!.add(A.id);
 }
 for (const F of CATALOGUE) {

@@ -29,7 +29,7 @@ import { BLOCK } from "../src/grid.ts";
     const rr: { road: CountryRoad; dx: number; dz: number }[] = [{ road: j.arrivalRoad, dx: 0, dz: 0 }];
     const ex = j.exitRoad, pv = j.previousExit;
     if (ex) rr.push({ road: ex, dx: 0, dz: 0 });
-    if (pv && pv !== ex) { pv.center(pv.SB, q); j.arrivalRoad.center(0, a); rr.push({ road: pv, dx: a.x - q.x, dz: a.z - q.z }); }
+    if (pv && pv !== ex) { pv.center(pv.SB, q); j.arrivalRoad.center(j.arrivalRoad.SB, a); rr.push({ road: pv, dx: a.x - q.x, dz: a.z - q.z }); }
     const key = `${j.st.city}|${rr.map((r) => `${r.road.inp.city}:${r.road.inp.kind}:${r.road.inp.dEst}:${r.dx.toFixed(1)}`).join(";")}`;
     if (key === lastKey) continue;
     lastKey = key;

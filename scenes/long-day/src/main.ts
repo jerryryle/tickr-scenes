@@ -667,7 +667,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const r = pickRoad0();
     if (!r) return null;
     // The last city's road, after the hand-over: moved into this city's coordinates.
-    if (r.road === journey.previousExit) { r.road.center(r.road.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2); return { ...r, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }; }
+    if (r.road === journey.previousExit) { r.road.center(r.road.SB, tmpPose); journey.arrivalRoad.center(journey.arrivalRoad.SB, tmpPose2); return { ...r, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }; }
     return { ...r, dx: 0, dz: 0 };
   }
   function pickRoad0(): { road: CountryRoad; u: number; s: number } | null {
@@ -680,12 +680,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
     const arr = journey.arrivalRoad;
     let sArr: number;
-    if (st.mode === "inbound") sArr = arr.sAt(journey.countryU + journey.frac);
-    else { arr.center(ARRIVE_LEN, tmpPose); sArr = ARRIVE_LEN + Math.hypot(p.x - tmpPose.x, p.z - tmpPose.z); }
+    // (sArr: from where the arrival straight begins, its road's hand-over.)
+    if (st.mode === "inbound") sArr = arr.sAt(journey.countryU + journey.frac) - arr.SB;
+    else { arr.center(arr.gateS, tmpPose); sArr = ARRIVE_LEN + Math.hypot(p.x - tmpPose.x, p.z - tmpPose.z); }
     if (sArr > ARRIVE_LEN + 450) return null;
     const prev = journey.previousExit;
     if (prev) return { road: prev, u: prev.duration + st.cityTime + journey.frac, s: prev.SB + sArr };
-    return { road: arr, u: st.cityTime + journey.frac, s: sArr };
+    return { road: arr, u: st.cityTime + journey.frac, s: arr.SB + sArr };
   }
   // The world moved by (dx, dz): the next city took over out on the road. Everything on screen
   // that isn't placed from the journey each frame moves with it, so nothing visibly changes.
@@ -795,7 +796,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (journey.st.city !== presCity) {
       const prev = journey.previousExit;
       if (!fresh && presCity >= 0 && journey.st.city === presCity + 1 && prev) {
-        prev.center(prev.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2);
+        prev.center(prev.SB, tmpPose); journey.arrivalRoad.center(journey.arrivalRoad.SB, tmpPose2);
         rebase(tmpPose2.x - tmpPose.x, tmpPose2.z - tmpPose.z);
         presCity = journey.st.city;
         buildCity();
@@ -828,7 +829,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     {
       const rr = [{ road: journey.arrivalRoad, dx: 0, dz: 0 }], ex = journey.exitRoadAhead, pv = journey.previousExit;
       if (ex) rr.push({ road: ex, dx: 0, dz: 0 });
-      if (pv && pv !== ex) { pv.center(pv.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2); rr.push({ road: pv, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }); }
+      if (pv && pv !== ex) { pv.center(pv.SB, tmpPose); journey.arrivalRoad.center(journey.arrivalRoad.SB, tmpPose2); rr.push({ road: pv, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }); }
       elevatedReach.update(journey.plan, rr);
       freewayReach.update(journey.plan, rr);
     }
@@ -893,7 +894,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       return s < mid ? { city: st.city, p: fall(s) } : { city: st.city + 1, p: rise(L - s) };
     }
     if (pr && pr.road === journey.previousExit) return { city: st.city, p: rise(pr.road.gateS - pr.s) };
-    if (pr && pr.road === journey.arrivalRoad) return { city: st.city, p: rise(ARRIVE_LEN - pr.s) };
+    if (pr && pr.road === journey.arrivalRoad) return { city: st.city, p: rise(pr.road.gateS - pr.s) };
     return { city: st.city, p: 1 };
   }
   let fogClear = -1;   // the view distance in use (eased through the edge of town)
@@ -944,7 +945,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       base = DEBUG_SKIP_MINUTES * 60;   // (from the start: the skip, test renders only)
       setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
-      journey = new Journey(cfg, base, realSeason(), DEBUG_VISIT ? { 0: parseVisitSpec(DEBUG_VISIT) } : undefined);
+      journey = new Journey(cfg, base, realSeason(), DEBUG_VISIT ? Object.fromEntries(DEBUG_VISIT.split("+").map((t, i) => [i, parseVisitSpec(t)])) : undefined);
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).

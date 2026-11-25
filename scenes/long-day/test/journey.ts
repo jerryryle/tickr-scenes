@@ -65,11 +65,11 @@ import { Journey } from "../src/journey.ts";
         }
       }
       // The land stays well under any freeway out in it (the city's it leaves, the next city's).
-      if (r.nearFreeways) {
+      if (r.geo.nearFreeways) {
         const q = { x: 0, z: 0, h: 0, k: 0 };
         out: for (let s = r.landFrom; s <= r.landTo; s += 12) for (let n = -160; n <= 160; n += 8) {
           r.point(s, n, q);
-          if (r.fwDist(q.x, q.z) < 9 && r.groundAt(s, n) > 3) { err(`land up under a freeway at s${s.toFixed(0)} n${n}: ${r.groundAt(s, n).toFixed(1)} m (c${j.st.city})`); break out; }
+          if (r.geo.fwDist(q.x, q.z) < 9 && r.groundAt(s, n) > 3) { err(`land up under a freeway at s${s.toFixed(0)} n${n}: ${r.groundAt(s, n).toFixed(1)} m (c${j.st.city})`); break out; }
         }
       }
       // By the freeway: the truck's way up the on-ramp, and along the freeway to its off-ramp.

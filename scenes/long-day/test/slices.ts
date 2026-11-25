@@ -36,7 +36,7 @@ import { citySeedOf } from "../src/country.ts";
   // The road out, built ahead a piece at a time over the steps after the way out is planned
   // (Journey.exitRoadAhead), is the same road as one built at once; and a seek into the next city
   // while it is half built doesn't hand it on as the road just driven (previousExit).
-  const roadSig = (r: any) => JSON.stringify([r.SB, r.length, r.gateS, r.pieces, r.stops, r.duration, Array.from(r.S), Array.from(r.V), Array.from(r.X), Array.from(r.Z), Array.from(r.H), Array.from(r.Y), Array.from(r.SM), Array.from(r.PM), r.meetings, r.trainT]);
+  const roadSig = (r: any) => JSON.stringify([r.SB, r.length, r.gateS, r.pieces, r.stops, r.duration, Array.from(r.S), Array.from(r.V), r.geo.map.id, r.dir, r.meetings, r.trainT]);
   let roads = 0, seeks = 0;
   for (let seed = 1; seed <= seeds; seed++) {
     const j: any = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
@@ -54,7 +54,8 @@ import { citySeedOf } from "../src/country.ts";
         if (n < 4) errs.push(`seed ${seed} city ${st.city}: the road out in only ${n} pieces`);
         if (roadSig(A) !== roadSig(B)) errs.push(`seed ${seed} city ${st.city}: the road out built ahead differs`);
       }
-      if (!sought && st.city === 0 && st.step === (st.exitStep ?? -9) + 3 && !j.exitCache.road.built) {
+      // (A step after the way out is planned: a road out from its map takes a few steps' pieces.)
+      if (!sought && st.city === 0 && st.step === (st.exitStep ?? -9) + 1 && !j.exitCache.road.built) {
         sought = true; seeks++;
         const k: any = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
         k.keyframing = true;

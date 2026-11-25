@@ -29,6 +29,9 @@
 #   make draft SCENE=long-day ARGS="<style> [candidates]"
 #                              draft five new city files of a style into
 #                              scenes/long-day/src/city-<style>/ (tools/draftcities.ts)
+#   make draftroads SCENE=long-day [ARGS="<road id> ..."]
+#                              draft the roads' maps into scenes/long-day/src/roads/
+#                              (tools/draftroads.ts)
 #   make draftworld SCENE=long-day [ARGS="<seed>"]
 #                              draft the world graph's roads into
 #                              scenes/long-day/src/world-roads.ts (tools/draftworld.ts)
@@ -65,7 +68,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft draftworld maps FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -207,6 +210,17 @@ draftworld: | $(DEPS)
 	@$(FLATTEN) scenes/$(SCENE)/tools/draftworld.ts --root scenes/$(SCENE)/src > build/$(SCENE)-draftworld/scene.ts
 	@$(call node-bundle,build/$(SCENE)-draftworld/scene.ts,build/$(SCENE)-draftworld/draftworld.mjs)
 	@node build/$(SCENE)-draftworld/draftworld.mjs $(ARGS)
+
+# The road maps' drafting tool (scenes/<scene>/tools/draftroads.ts): each road in a process of its
+# own, TEST_JOBS at a time (ARGS names the roads to draft again, else those with no map yet), then
+# the world file rewritten to import them all.
+draftroads: | $(DEPS)
+	@mkdir -p build/$(SCENE)-draftroads
+	@$(FLATTEN) scenes/$(SCENE)/tools/draftroads.ts --root scenes/$(SCENE)/src > build/$(SCENE)-draftroads/scene.ts
+	@$(call node-bundle,build/$(SCENE)-draftroads/scene.ts,build/$(SCENE)-draftroads/draftroads.mjs)
+	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-draftroads/draftroads.mjs --list; fi; } | \
+	  xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-draftroads/draftroads.mjs
+	@node build/$(SCENE)-draftroads/draftroads.mjs --world
 
 # The city maps (scenes/<scene>/tools/maps.ts), each city in a process of its own, TEST_JOBS at a
 # time; ARGS names the cities to draw, all of them by default.

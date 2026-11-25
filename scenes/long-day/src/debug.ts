@@ -9,7 +9,7 @@ export const DEBUG_JAM_SHOT: string = "";   // DEBUG_VIEW "jam": "x,z,h", where 
 export const DEBUG_HOUR: number = -1;     // pin the hour of day, 0..24 (test renders only)
 export const DEBUG_CLIMATE: string = "";  // "season/weather", e.g. "winter/snow", for every city (test renders only)
 export const DEBUG_MEMLOG: number = 0;     // log GPU and heap counters every N scene seconds (test renders only)
-export const DEBUG_VISIT: string = "";     // test renders: the first visit's spec (visits.ts VisitSpec), as "city=metro-midtown,truck=tractor,season=winter,weather=snow,arriveBy=r12,dressing=7"
+export const DEBUG_VISIT: string = "";     // test renders: the first visits' specs (visits.ts VisitSpec), as "city=metro-midtown,truck=tractor,season=winter,weather=snow,arriveBy=r12,dressing=7", the next visit's after a "+"
 export const DEBUG_SEED: number = 0;       // test renders: this journey seed instead of the env's (0: the env's)
 export const DEBUG_SCRUBTEST: number = 0;  // test renders: play forward this many seconds, scrub back half way and play again, logging every tick
 export const DEBUG_VIGNETTE: string = "";  // test renders: spawn this street vignette (vignettes.ts VK) near the truck; DEBUG_VIEW "vignette" watches it

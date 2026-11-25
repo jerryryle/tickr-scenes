@@ -244,6 +244,53 @@ city's position on the world map. It lists each road with its id, the `{ city, g
 end, its length in metres, its own hash key, and any set pieces placed explicitly at a distance
 along it. It also holds the visit planner's settings from requirement 14.
 
+### Road maps
+
+A **road map** holds one country road as a physical road between two gates, and a drive either
+way reads the same map. It holds the road's shape, heights and land, its set pieces, and every
+item that stands beside it. It is a TypeScript data module in `src/roads/`, one per world road,
+named `road-<id>.ts` and exporting `ROAD_<ID>`. The world file imports each one.
+
+The map uses the road's own coordinates. The distance `s` runs from the end of gate a's street (0)
+to the end of gate b's street (the road's `length`, in metres), and the offset `n` is to the right
+looking from a to b. The map holds these fields.
+
+1. Its `length`, which is the drive's length: the planner's drive time is the length over its
+   pace, and the world file holds no length of its own.
+2. Its centre line as a heading every 2 m, and its height and side-hill amount every 2 m. The
+   samples run from 40 m before gate a to 40 m past gate b, or past the end of the freeway stretch
+   on a freeway city's way in.
+3. Its land every 10 m: how much of it is b's (the rest is a's), how much of the storybook's
+   creeps in, and how much of it is coast. The coast's sea is on the left looking from a to b.
+4. Its set pieces, each as `country.ts` RoadPiece has it, plus the way it faces.
+5. Its items: trees, rocks, ponds, wind turbines, pylons, farms, grazing cows, utility poles and
+   fence bays, each with its place and what it is.
+
+A set piece's `way` says whose coordinates its fields use and which drivers it faces: 1 for a
+driver from a to b, -1 for one from b to a. Signs that only make sense one way come in pairs, one
+for each way: the leaving, distance and welcome signs. A weigh station serves only its own way, so
+it is open only on a drive that way, and a tractor pulls out of its fields only ahead of a driver
+its way. Every other piece is a single object that a driver from the other side sees from behind
+or across the road. A ferry's two terminals are alike, so it serves both ways. A rail crossing, a
+cattle crossing and a work zone stop or slow the truck from either side, and their warning signs
+and a row of billboards stand at both ends of the piece, facing each way.
+
+The land's noise, its colour bands and fields, the ferry water's wave streaks and the broken ends
+of utility wires stay hashed from the map's key: they are the land's surface, not items. Weather,
+seasons, oncoming cars, the herd crossing, the tractor's run, the train, the turbines' speeds and
+whether a weigh station is open belong to the drive, as requirement 27 says, and hash its drive
+seed.
+
+A drive from b to a maps its distance `s` to `length - s` and its offset `n` to `-n`. The road's
+drawing (`countryworld.ts`) always works in the map's coordinates, so both drives draw the same
+road. What moves (the truck, the camera, oncoming cars, the herd, the tractor, the boat) works in
+the drive's coordinates. The arrival straight that a seek into a city's slot needs is the last
+stretch of the same map.
+
+The drafting tool (`tools/draftroads.ts`) writes each road's map from today's rules, driven from a
+to b with both cities' freeways considered, and records the items as the segment builder places
+them. Like a city file, a road map is hand-owned once drafted.
+
 ## Folder layout
 
 Everything below is under `scenes/long-day/src/`.
@@ -347,6 +394,15 @@ every stage.
    road's map from today's rules as its first draft. What varies per drive (weather, season,
    traffic, the truck-stop swap, oncoming cars, cattle, the train) stays with the visit's drive
    seed. The build order's count of six stages becomes seven.
+
+   As built, the 89 maps take 6.8 MB. Three choices were made along the way.
+   1. A road's coast is on one side for its whole length. It is on the right looking from a to b
+      when a is on the sea and the road meets it at a's way in (g0), where a's shore bends in to
+      meet it, unless b's does the same; otherwise it is on the left, as every coast was before.
+   2. A truck stop, an attraction, a fruit stand and a gas station keep their one sign, facing the
+      way the map was drafted. A driver the other way sees its back.
+   3. Under `DEBUG_STYLE` the made-up road between two cities of one style borrows a catalogue
+      road's map that turns the same way, so its signs name that road's cities.
 
 The flattener (`scripts/flatten.ts`) joins every module into one scope and accepts no default
 imports, so a city file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL`, in

@@ -87,7 +87,9 @@ for (const kind of ["gas", "truckstop", "fruit", "attraction"] as const)
       const road = new Journey(readConfig({ seed } as SceneEnv), m * 60, "autumn").country;
       if (!road || seen.has(road.key)) continue;
       seen.add(road.key);
-      for (const p of road.pieces) if (p.kind === "gas" || p.kind === "truckstop" || p.kind === "fruit" || p.kind === "attraction") {
+      // (The road's own pieces, as its map has them: those facing a to b, in its coordinates.)
+      const G = road.geo, own = G.pieces.filter((p) => p.way === 1);
+      for (const p of own) if (p.kind === "gas" || p.kind === "truckstop" || p.kind === "fruit" || p.kind === "attraction") {
         const where = `seed ${seed} city ${road.inp.city} s${p.s.toFixed(0)}`;
         check(p, where); n++;
         // Its paving on level ground, the road's own level, with no scenery on it.
@@ -95,15 +97,15 @@ for (const kind of ["gas", "truckstop", "fruit", "attraction"] as const)
         for (const v of piecePaving(p)) for (let s = v.s[0]; s <= v.s[v.s.length - 1]; s += 4) {
           const x = paveAt(v, s)!;
           for (let m = x[0]; m <= x[1]; m += 2) {
-            if (Math.abs(road.groundAt(s, v.side * m) - road.baseAt(p.s)) > 0.05) bad++;
-            if (Math.abs(m) >= 11 && road.clearAt(s, v.side * m)) clear++;
+            if (Math.abs(G.groundAt(s, v.side * m) - G.baseAt(p.s)) > 0.05) bad++;
+            if (Math.abs(m) >= 11 && G.clearAt(s, v.side * m)) clear++;
           }
         }
         if (bad) errs.push(`${where}: ${p.kind}'s paving on uneven ground at ${bad} points`);
         if (clear) errs.push(`${where}: ${p.kind}'s paving open to scenery at ${clear} points`);
       }
-      const biz = road.pieces.filter((p) => piecePaving(p).length);
-      for (const p of biz) for (const o of road.pieces) if (o !== p) {
+      const biz = own.filter((p) => piecePaving(p).length);
+      for (const p of biz) for (const o of own) if (o !== p) {
         const [a, b] = pieceSpan(p), [c, d] = pieceSpan(o);
         if (a < d && c < b && o.kind !== "tractor" && o.kind !== "fwsign") errs.push(`seed ${seed} city ${road.inp.city}: ${p.kind} s${p.s.toFixed(0)} overlaps ${o.kind} s${o.s.toFixed(0)}`);
       }

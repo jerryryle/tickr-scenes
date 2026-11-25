@@ -25,7 +25,6 @@ import { cityByKey } from "./visits.ts";
 import type { CityPlan, Gate } from "./city.ts";
 import type { CityStyle } from "./styles.ts";
 import type { CountryRoad } from "./country.ts";
-import { citySeedOf } from "./country.ts";
 import { seaSide } from "./outline.ts";
 import { PlateSet } from "./signs.ts";
 import { CarFleet, carKindAt } from "./cars.ts";
@@ -163,7 +162,7 @@ export class Frame {
     const out = new Frame(q.x + dx, q.z + dz, q.h);
     out.merge = !!road.inp.toFreewayMerge;
     const i = road.inp;
-    return out.label(citySeedOf(i.seed, i.kind === "exit" ? i.city + 1 : i.city), i.toName);
+    return out.label(i.toKey, i.toName);
   }
   // The deck's centre line out of town, as x, z pairs every `step` metres: the entry side, and for
   // a city's frame the far side too (a road's frame knows only its own side).

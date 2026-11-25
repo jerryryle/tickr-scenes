@@ -33,7 +33,7 @@ function draft(seed: number): WorldRoad[] | null {
   const styles = (t: Town) => new Set([...near.get(t.id)!].map((n) => byId.get(n)!.style));
   const add = (a: Town, ga: string, b: Town, gb: string, oneway: boolean) => {
     const n = roads.length, key = Math.floor(hash2(n, seed, 0x70ad, 0x5eed) * 2 ** 31) || 1;
-    roads.push({ id: `r${n}`, a: { city: a.id, gate: ga }, b: { city: b.id, gate: gb }, metres: Math.round((60 + 240 * hash2(n, seed, 0x5ec, 0x70ad)) * 18 / 10) * 10, key, ...(oneway ? { oneway: true as const } : {}) });
+    roads.push(({ id: `r${n}`, a: { city: a.id, gate: ga }, b: { city: b.id, gate: gb }, metres: Math.round((60 + 240 * hash2(n, seed, 0x5ec, 0x70ad)) * 18 / 10) * 10, key, ...(oneway ? { oneway: true as const } : {}) } as unknown as WorldRoad));
     used.get(a.id)!.add(ga); used.get(b.id)!.add(gb); near.get(a.id)!.add(b.id); near.get(b.id)!.add(a.id);
   };
   // (A pair of free gates facing different ways, the first found from a shuffled start.)

@@ -67,7 +67,7 @@ export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null
 // Out of a garage, the street leg back towards its node starts this far from it (garage.ts:
 // the way down ends 36 m along the frontage, in the far kerb lane).
 const GARAGE_OUT_BEFORE = 36;
-import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from "./country.ts";
+import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, roadMetres, V_GATE, V_JOIN } from "./country.ts";
 import { bedRearX, fetchSpots, RAMP_HOLD, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, STYLE, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
@@ -153,7 +153,6 @@ const KEYFRAME_STEPS = 100;       // a keyframe every 10 s of journey within the
 const DRIVE_PACE = 18;          // m/s a drive averages, stops and all (for planning a city's time)
 const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is never planned shorter than this
 // A world road's key, driven one way or the other: each way is a road of its own, the same each time.
-const roadKeyOf = (w: RoadWay) => (w.back ? w.road.key ^ 0x2b7e1516 : w.road.key) || 1;
 // A rig pulling up at a kerb is lined up straight over this run in (m: hitchStep).
 const STRAIGHTEN = 18;
 const THROUGH = 1e9;              // stopS of a path driven straight through its end (JSON has no Infinity)
@@ -248,7 +247,7 @@ export class Journey {
   private leaveOf(N: number) { return visitOf(this.cfg.seed, N + 1).arrive; }
   // (Planned at an average drive's pace, DRIVE_PACE: the drive itself takes as long as its road's
   // length, the truck's speed and its stops make it, country.ts.)
-  private driveOf(N: number) { return Math.round(this.leaveOf(N).road.metres / DRIVE_PACE); }
+  private driveOf(N: number) { return Math.round(roadMetres(this.leaveOf(N).road) / DRIVE_PACE); }
   periodOf(N: number) { return this.cfg.cityMinutes * 60 + this.driveOf(N); }
   get period() { return this.periodOf(this.st.city); }
   // City N's nominal start: the periods of the cities before it, end to end.
@@ -1690,22 +1689,26 @@ export class Journey {
   // The last city's road out, while it is still at hand (continuous playback: main.ts keeps drawing
   // it behind the truck after the hand-over).
   // City N's road out by gate `gate` (a pure function of the seed and these: the gate is its graph's,
-  // so the city's plan is built for it, the last city's too after a seek). Its land and set pieces
-  // are its world road's, driven this way (roadKeyOf); it ends heading in at the next city's gate,
-  // up beside the freeway when that gate is the freeway's way in (g0).
-  private makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel, ahead = false): CountryRoad {
-    const gt = this.planOf(N).graph.gates[gate]!, e = gateEnd(gt), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
-    const toStyle = this.styleOf(N1), fromStyle = this.styleOf(N), way = this.leaveOf(N);
-    const inward = (way.to.gates[way.in]!.dir + 2) % 4;
-    const toFreeway = way.in === 0 && !!freewayGate(citySeedOf(this.cfg.seed, N1)), toFreewayMerge = toFreeway && this.takesFreeway(N1);
-    // (The freeway's curve out of this city as it was laid: its graph built first, so a town whose
-    // organic layout fell back, straight, has none.)
-    const P = freewayGate(citySeedOf(this.cfg.seed, N)) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
-    return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1), fromCurve,
-      seed: this.cfg.seed, city: N, kind: "exit", roadKey: roadKeyOf(way), metres: way.road.metres, driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, endH: inward * Math.PI / 2,
-      fromTruck, toTruck: this.startTruck(N1),
-      fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
-    }, ahead);
+  // so the city's plan is built for it, the last city's too after a seek): its world road's map,
+  // driven this way (from b to a when the road's b is this city), on to the next city's gate, up
+  // beside the freeway when that gate is the freeway's way in (g0).
+  makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel, ahead = false): CountryRoad {
+    const gt = this.planOf(N).graph.gates[gate]!, e = gateEnd(gt), N1 = N + 1;
+    return new CountryRoad({ ...this.roadInputs(N, N1, this.leaveOf(N)), seed: this.cfg.seed, city: N, kind: "exit", driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, fromTruck, toTruck: this.startTruck(N1) }, ahead);
+  }
+  // A drive's road and its cities, from city N to city N1 along `way`.
+  private roadInputs(N: number, N1: number, way: RoadWay) {
+    const fromKey = citySeedOf(this.cfg.seed, N), toKey = citySeedOf(this.cfg.seed, N1), toStyle = this.styleOf(N1), fromStyle = this.styleOf(N);
+    const toFreeway = way.in === 0 && !!freewayGate(toKey), toFreewayMerge = toFreeway && this.takesFreeway(N1);
+    // (The freeways' curves as the cities were laid out: their graphs built first.)
+    const P = freewayGate(fromKey) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
+    const Q = freewayGate(toKey) && !toFreeway ? this.planOf(N1) : null;
+    return {
+      map: way.road.map, back: way.back, toFreeway, toFreewayMerge, fromCurve, fromKey, toKey,
+      toGateEnd: Q ? gateEnd(Q.graph.gates[way.in]!) : null, toCurve: Q ? Q.fwCurve : null,
+      fromStyle, toStyle, fromClimate: this.climateOf(N), toClimate: this.climateOf(N1),
+      fromName: cityName(fromKey, fromStyle), toName: cityName(toKey, toStyle),
+    };
   }
   // The last city's road out, while it is still at hand: main.ts keeps drawing it behind the truck
   // after the hand-over. From the journey state, so a seek within this city finds it too.
@@ -1754,17 +1757,15 @@ export class Journey {
   // The arrival straight into this city (pure: from the seed alone).
   private arrivalCache: CountryRoad | null = null;
   get arrivalRoad(): CountryRoad {
-    const st = this.st, key = `${this.cfg.seed}/${st.city}`;
+    const st = this.st;
     if (!this.arrivalCache || this.arrivalCache.inp.city !== st.city || this.arrivalCache.inp.seed !== this.cfg.seed) {
-      const e = gateEnd(this.plan.graph.gates[this.entry]!), h = e.h + Math.PI, fw = this.entry === 0 && !!this.plan.freeway;
-      const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
+      const e = gateEnd(this.plan.graph.gates[this.entry]!), N0 = Math.max(0, st.city - 1);
+      // (Its last stretch: the drive before it is the last city's. Placed by its end, at this gate.)
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival", roadKey: roadKeyOf(this.arriveOf(st.city)), driveSeed: this.visit.drive, toSea: this.plan.outline.sea !== null, toFreeway: fw, toFreewayMerge: fw && this.takesFreeway(st.city),
-        frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
-        fromTruck: st.truck, toTruck: st.truck,
-        fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,
+        ...this.roadInputs(N0, st.city, this.arriveOf(st.city)), seed: this.cfg.seed, city: st.city, kind: "arrival", driveSeed: this.visit.drive,
+        endFrame: { x: e.x, z: e.z, h: e.h + Math.PI }, dEst: 0, fromTruck: st.truck, toTruck: st.truck,
+        toStyle: this.plan.style, toClimate: this.climate, toName: this.plan.name,
       });
-      void key;
     }
     return this.arrivalCache;
   }
