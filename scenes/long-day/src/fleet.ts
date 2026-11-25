@@ -69,7 +69,8 @@ export class FleetBaker {
     const byMat = new Map<THREE.Material, { names: string[]; chunks: Float32Array[][]; count: number }>();
     const m = new THREE.Matrix4(), nm = new THREE.Matrix3(), v = new THREE.Vector3();
     const keep = (mat: THREE.Material) => mat instanceof THREE.MeshLambertMaterial || (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map);
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, toon = 0) => {
+    const tint = new THREE.Color();
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, toon = 0, inst: THREE.Color | null = null) => {
       const g = geo.index ? geo.toNonIndexed() : geo;
       // (A cartoon's shape and colours: its morph target, as far as the truck has it.)
       const morph = (n: string, a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, i: number, k: number) => {
@@ -88,7 +89,7 @@ export class FleetBaker {
         for (let i = 0; i < count; i++) {
           if (n === "position") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix4(world); arr.set([v.x, v.y, v.z], i * 3); }
           else if (n === "normal") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix3(nm).normalize(); arr.set([v.x, v.y, v.z], i * 3); }
-          else for (let k = 0; k < size; k++) arr[i * size + k] = morph(n, a, i, k);
+          else for (let k = 0; k < size; k++) arr[i * size + k] = morph(n, a, i, k) * (inst && n === "color" ? (k === 0 ? inst.r : k === 1 ? inst.g : inst.b) : 1);   // (an instance's colour: a cartoon's pink rims)
         }
         entry!.chunks[ai].push(arr);
       });
@@ -98,7 +99,7 @@ export class FleetBaker {
     t.root.traverseVisible((o: any) => {
       if (!o.isMesh || Array.isArray(o.material) || !keep(o.material)) return;
       if (o.isInstancedMesh) {
-        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); add(o.geometry, o.material, m.premultiply(o.matrixWorld)); }
+        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); if (o.instanceColor) o.getColorAt(i, tint); add(o.geometry, o.material, m.premultiply(o.matrixWorld), 0, o.instanceColor ? tint : null); }
       } else add(o.geometry, o.material, o.matrixWorld, o.morphTargetInfluences?.[0] ?? 0);
     });
     const out: FleetPart[] = [];

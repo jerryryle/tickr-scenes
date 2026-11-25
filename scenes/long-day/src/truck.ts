@@ -274,6 +274,7 @@ export class Truck {
   // shape to morph to.
   toon = 0;
   private toonShown = 0;
+  private toonMade = false;
   private toonMeshes: THREE.Mesh[] = [];
   private toonAnchors: [THREE.Object3D, THREE.Vector3, THREE.Vector3][] = [];
   private toonCol = new THREE.Color();
@@ -337,7 +338,6 @@ export class Truck {
     this.wheels.frustumCulled = false;
     this.root.add(this.wheels);
     for (const a of Object.values(this.anchors)) this.body.add(a);
-    this.makeToon();
     this.update(0);
   }
 
@@ -583,6 +583,8 @@ export class Truck {
   update(dt: number, time?: number) {
     this.time = time ?? this.time + dt;
     const s = this.spec;
+    // (The cartoon made the first time it is wanted: most trucks never meet a storybook city.)
+    if (this.toon > 0 && !this.toonMade) { this.toonMade = true; this.makeToon(); }
     // Wheels (trailer pose first, so its wheels use this frame's articulation).
     let i = 0;
     if (this.trailer) { this.trailer.rotation.y = this.trailerYaw; this.trailer.updateMatrix(); }
@@ -687,6 +689,10 @@ export class Truck {
   // nothing. (Not the roll-up door's slats, rebuilt as they move, nor shared kit geometry.)
   private makeToon() {
     this.toonEyes();
+    // (Worked out with the driver's door shut and the trailer straight, as the parts were built;
+    // update() sets them back after.)
+    this.driverDoor.rotation.y = 0;
+    if (this.trailer) this.trailer.rotation.y = 0;
     this.root.updateMatrixWorld(true);
     const s = this.spec, bodyRegions = toonRegions(s);
     const invB = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), invT = this.trailer ? new THREE.Matrix4().copy(this.trailer.matrixWorld).invert() : null;

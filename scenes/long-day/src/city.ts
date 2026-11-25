@@ -1572,7 +1572,7 @@ function buildBlockPart(ground: Batch, solid: Batch, plan: CityPlan, blk: CBlock
         inFrame(fr, [ground, solid, DC.lamps], () => {
           const sign = takeSlot ? facilitySign(plan, cx, cz) : null, uv = sign ? takeSlot!(sign.text, sign.style) : null;
           ground.box((STREET + BLOCK) / 2, -0.05, (STREET + BLOCK) / 2, BLOCK - STREET, 0.1, BLOCK - STREET, C.asphalt);
-          if (L.kind === "garage") buildGarage(ground, solid, 0, rnd, plan.seed);
+          if (L.kind === "garage") buildGarage(ground, solid, 0, rnd, plan.seed, !CS.storybook);
           else if (L.kind === "dock") buildDockSite(ground, solid, L, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
           else if (L.kind === "lot") stalls = buildRentalLot(ground, solid, L, rnd, DC.quads, uv);
           else if (L.kind === "stand") {
@@ -1601,7 +1601,7 @@ function buildBlockPart(ground: Batch, solid: Batch, plan: CityPlan, blk: CBlock
     // Asphalt under the block (where its buildings leave it bare).
     ground.box((STREET + BLOCK) / 2, -0.05, (STREET + BLOCK) / 2, BLOCK - STREET, 0.1, BLOCK - STREET, C.asphalt);
     const B = { x0: STREET, z0: STREET, x1: BLOCK, z1: BLOCK };
-    if (site.kind === "garage") buildGarage(ground, solid, site.side, rnd, plan.seed);
+    if (site.kind === "garage") buildGarage(ground, solid, site.side, rnd, plan.seed, !CS.storybook);
     else if (site.kind === "dock") buildDockSite(ground, solid, site, district, plan.downtownHeight(cx, cz), rnd, DC.quads, uv);
     else if (site.kind === "lot") stalls = buildRentalLot(ground, solid, site, rnd, DC.quads, uv);
     else if (CS.townSquare && district === "downtown" && plan.coreDistance(cx, cz) < 0.8) buildTownSquare(ground, solid, B, rnd);
@@ -2136,7 +2136,7 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
   for (let i = 0; i < n; i++) {
     const p = b0 + (i + 0.5) * 6.5, r = hash2(Math.round(p * 10), salt, 0x10ad, Math.round(a0));
     if (i % 3 === 1) box(g, p, CURB_H + 0.01, kerb + sg * 0.05, 6.3, 0.02, 0.1, C.yellow);
-    if (r < 0.55) {
+    if (r < 0.55 && !CS.storybook) {   // (none in the storybook city: its own vehicles only, storyvehicles.ts)
       // (Parked facing the traffic's way: +along.)
       const kind: CarKind = i % 3 === 1 ? "van" : carKindAt(r * 7 % 1, false), [x, z] = axis === 0 ? [p, lane] : [lane, p];
       parkedCar(s, kind, x, 0.005, z, axis === 0 ? 0 : -Math.PI / 2, carPaintAt(r));

@@ -840,7 +840,7 @@ const K: Record<VK, Kind> = {
   // A food truck parked just inside a park, its hatch open; a queue on the pavement, longer
   // at lunch, shuffling up as each customer gets their food and goes.
   foodTruck: {
-    w: (d, c) => (d === "park" && !c.snow && day(c, 10, 20) && c.w.storm < 0.5 ? 2.2 : 0), trigger: 0,
+    w: (d, c) => (d === "park" && !c.snow && !c.plan.style.storybook && day(c, 10, 20) && c.w.storm < 0.5 ? 2.2 : 0), trigger: 0,   // (not in the storybook city: its own vehicles only)
     place(v, c, r, V) {
       const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, sp.a0 + 3, sp.mid - 4) ?? freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, sp.mid + 4, sp.a1 - 3);
       if (a === null) return false;
