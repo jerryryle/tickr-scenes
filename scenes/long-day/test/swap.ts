@@ -23,7 +23,7 @@ const STROLL = 0.5;   // m/s: slower than this on the walk, away from its ends, 
 const kit = new TruckKit(new Proxy({}, { get: () => ({ width: 1, height: 1 }) }) as any);
 const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
 const turnBy = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-let handovers = 0, walked = 0;
+let handovers = 0, walked = 0, intoTractor = 0;
 
 for (const run of runs) {
   const [seed, minutes] = run.split(":").map(Number);
@@ -32,14 +32,14 @@ for (const run of runs) {
   const trucks = new Map<TruckModel, Truck>(), trucks2 = new Map<TruckModel, Truck>();
   const truckFor = (m: TruckModel, map = trucks) => { let t = map.get(m); if (!t) { t = new Truck(kit, m, null); scene.add(t.root); map.set(m, t); } return t; };
   const pose = {} as Pose, rp = {} as Pose;
-  let lastYaw: number | null = null, lastKind = "", lastAt: THREE.Vector3 | null = null;
+  let lastYaw: number | null = null, lastKind = "", lastAt: THREE.Vector3 | null = null, runHandovers = 0;
   for (let i = 0, n = Math.round(minutes * 60 / SIM_DT); i < n; i++) {
     const before = j.st.truck;
     j.step();
     const st = j.st;
     // The hand-over: half a step on, the new truck is drawn where it stands, its trailer straight.
     if (st.truck !== before && st.mode === "dwell") {
-      handovers++;
+      handovers++; runHandovers++; if (st.truck === "tractor") intoTractor++;
       const frac = j.frac;
       j.frac = -SIM_DT / 2;
       j.renderPose(rp);
@@ -74,7 +74,9 @@ for (const run of runs) {
       fail(`seed ${seed} t${st.simTime.toFixed(1)} ${lastKind}->${ph.chore.kind} (${ph.phase} ${ph.t.toFixed(2)}/${ph.len.toFixed(2)} s): the driver turns ${turnBy(yaw - lastYaw).toFixed(2)} rad in a step`);
     lastYaw = yaw; lastKind = ph.chore.kind;
   }
+  // (Each run is here for its swap: if the journey changes and one moves out of its minutes, find it again.)
+  if (!runHandovers) fail(`seed ${seed}: no swap hand-over in ${minutes} min: find it again (test/journey.ts with JTLOG lists them) and move the run`);
 }
 console.log(`swap: ${handovers} hand-overs, ${(walked * SIM_DT).toFixed(0)} s of walks between trucks watched`);
-if (!handovers) fail("no swap hand-over in the runs: find one again (test/journey.ts with JTLOG lists them) and move the run");
+if (!proc.argv[2] && !intoTractor) fail("no swap into a tractor in the runs (its trailer straight at the hand-over): find one again (test/journey.ts with JTLOG lists them) and move the run");
 if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
