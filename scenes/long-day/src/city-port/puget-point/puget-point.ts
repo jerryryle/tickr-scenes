@@ -1,4 +1,4 @@
-// Puget Point, a port city (docs/fixed-cities.md). Drafted from seed 919294541 by tools/draftcities.ts;
+// Puget Point, a port city (docs/long-day-cities.md). Drafted from seed 919294541 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

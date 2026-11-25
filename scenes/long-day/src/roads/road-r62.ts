@@ -1,5 +1,5 @@
 // World road r62: brick-ironworks (gate g8) to mainstreet-maple-falls (gate g1). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R62: RoadMap = {

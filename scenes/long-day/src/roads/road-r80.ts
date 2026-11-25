@@ -1,5 +1,5 @@
 // World road r80: metro-new-harbor-city (gate g3) to coastal-fogcrest (gate g2). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R80: RoadMap = {

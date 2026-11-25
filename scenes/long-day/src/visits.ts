@@ -1,4 +1,4 @@
-// The visit planner (docs/fixed-cities.md, requirements 13 to 15): which catalogue city each city
+// The visit planner (docs/long-day-cities.md, "The visit planner"): which catalogue city each city
 // of a journey is, and the country road the truck arrives by. A journey drives the world graph
 // (world-roads.ts): from each city it takes one of that city's roads on to a neighbour. A pure
 // function of the journey seed and the city's number, worked out city by city from the first.
@@ -25,7 +25,7 @@ import { WORLD_ROADS } from "./world-roads.ts";
 import type { Season, WeatherKind } from "./climate.ts";
 import type { TruckModel } from "./truck.ts";
 
-export const RECENT = 8;   // visits before a city may come back (requirement 14)
+export const RECENT = 8;   // visits before a city may come back (docs/long-day-cities.md, "The visit planner")
 const LOOKAHEAD = 4;       // visits the planner looks ahead for fresh cities
 
 let byStyle: Map<StyleId, CityFile[]> | null = null;
@@ -65,7 +65,7 @@ export function waysFrom(F: CityFile): readonly RoadWay[] {
   return waysOut.get(F.id) ?? [];
 }
 
-// Visit N of a journey (requirement 27): its city, the way it arrives by (from visit N - 1's city;
+// Visit N of a journey (docs/long-day-cities.md, "Visits"): its city, the way it arrives by (from visit N - 1's city;
 // for the first, a way into it from a neighbour, as if driven), and its seeds. `jobs` chooses the
 // stops, cargo and loads (journey.ts rand); `dressing` the traffic, pedestrians, parked cars and
 // moored boats (life.ts, city.ts); `gags` the vignettes (crowd.ts); `drive` the events on the drive
@@ -73,7 +73,7 @@ export function waysFrom(F: CityFile): readonly RoadWay[] {
 // visit up, its truck, season and weather, is the journey's (journey.ts), unless a spec gives it.
 export interface Visit { city: CityFile; arrive: RoadWay; jobs: number; dressing: number; gags: number; drive: number; spec: VisitSpec | null }
 // What a test (or a debug define) gives for visit N, everything else coming from the journey seed
-// (requirement 29): the city by id, the road it arrives by (by id: one into that city), the truck
+// (docs/long-day-cities.md, "Visits"): the city by id, the road it arrives by (by id: one into that city), the truck
 // it starts in, its season and weather, and any of its seeds.
 export interface VisitSpec {
   city?: string; arriveBy?: string; truck?: TruckModel; season?: Season; weather?: WeatherKind;

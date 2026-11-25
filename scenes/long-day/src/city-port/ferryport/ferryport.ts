@@ -1,4 +1,4 @@
-// Ferryport, a port city (docs/fixed-cities.md). Drafted from seed 1229008210 by tools/draftcities.ts;
+// Ferryport, a port city (docs/long-day-cities.md). Drafted from seed 1229008210 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

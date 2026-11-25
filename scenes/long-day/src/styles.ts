@@ -49,7 +49,7 @@ export interface CityStyle {
   layouts: { grid: number; warp: number; organic: number };
 }
 
-// Each style is defined in its folder, beside its cities (docs/fixed-cities.md).
+// Each style is defined in its folder, beside its cities (docs/long-day-cities.md).
 export const STYLES: Record<StyleId, CityStyle> = {
   coastal: STYLE_COASTAL,
   metro: STYLE_METRO,

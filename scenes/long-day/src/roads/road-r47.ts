@@ -1,5 +1,5 @@
 // World road r47: storybook-fizzlebury (gate g0) to port-gray-haven (gate g4). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R47: RoadMap = {

@@ -1,4 +1,4 @@
-// A city's contents (docs/fixed-cities.md, "City contents"): everything that stands on its layout,
+// A city's contents (docs/long-day-cities.md, "City contents"): everything that stands on its layout,
 // each item a recipe the city file lists and the scene draws as listed. A recipe is its kind (`k`,
 // which drawer draws it), its frame (`at`: the world x and z of its origin, and its heading), the
 // fields its kind names, and a seed of its own (`s`) for the detail no field names.

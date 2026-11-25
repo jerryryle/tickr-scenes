@@ -1,4 +1,4 @@
-// Higgle-on-the-Wobble, a storybook city (docs/fixed-cities.md). Drafted from seed 213975972 by tools/draftcities.ts;
+// Higgle-on-the-Wobble, a storybook city (docs/long-day-cities.md). Drafted from seed 213975972 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

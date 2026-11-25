@@ -1,5 +1,5 @@
 // World road r72: desert-sun-mesa (gate g4) to port-ferryport (gate g3). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R72: RoadMap = {

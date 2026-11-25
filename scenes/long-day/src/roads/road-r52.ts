@@ -1,5 +1,5 @@
 // World road r52: storybook-wumbleton (gate g1) to coastal-bayview (gate g0). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R52: RoadMap = {

@@ -1,5 +1,5 @@
 // World road r71: coastal-bayview (gate g6) to port-rainier-bay (gate g2). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R71: RoadMap = {

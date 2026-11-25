@@ -1,5 +1,5 @@
 // World road r8: port-rainier-bay (gate g1) to brick-foundry-falls (gate g0), one way. Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R8: RoadMap = {

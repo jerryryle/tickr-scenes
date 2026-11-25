@@ -1,5 +1,5 @@
 // World road r61: storybook-fizzlebury (gate g11) to mainstreet-willow-creek (gate g0). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R61: RoadMap = {

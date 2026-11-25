@@ -1,4 +1,4 @@
-// The world graph's drafting tool (docs/fixed-cities.md, requirements 9 to 12): joins the catalogue's
+// The world graph's drafting tool (docs/long-day-cities.md, "The world graph"): joins the catalogue's
 // cities with country roads and writes the roads and the cities' places on the world map into
 // src/world-roads.ts, which src/world.ts reads. It overwrites that file, so it is for a first
 // draft; after that the roads are edited by hand.
@@ -98,7 +98,7 @@ const xs = [...dwPos.values()].map((p) => p[0]), zs = [...dwPos.values()].map((p
 const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
   : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
 dwFs.writeFileSync("scenes/long-day/src/world-roads.ts", [
-  `// The world graph's roads and the cities' places on the world map (docs/fixed-cities.md). Drafted`,
+  `// The world graph's roads and the cities' places on the world map (docs/long-day-cities.md). Drafted`,
   `// from seed ${dwSeed - 1} by tools/draftworld.ts; edited by hand from here on.`,
   `import type { WorldRoad } from "./world.ts";`,
   ``,

@@ -1,4 +1,4 @@
-// The country road's generator (docs/fixed-cities.md, "Road maps"): today's rules for a road's set
+// The country road's generator (docs/long-day-cities.md, "Road maps"): today's rules for a road's set
 // pieces, curves, hills and land, run once from gate a to gate b to draft its map. The drafting tool
 // (tools/draftroads.ts) records the roadside items as the segment builder places them, and writes
 // the map out.

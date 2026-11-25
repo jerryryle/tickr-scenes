@@ -1,4 +1,4 @@
-// Red Rock, a desert city (docs/fixed-cities.md). Drafted from seed 208954641 by tools/draftcities.ts;
+// Red Rock, a desert city (docs/long-day-cities.md). Drafted from seed 208954641 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

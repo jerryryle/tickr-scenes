@@ -1,5 +1,5 @@
 // World road r45: metro-empire-point (gate g1) to brick-foundry-falls (gate g5). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R45: RoadMap = {

@@ -1,5 +1,5 @@
 // World road r36: storybook-fizzlebury (gate g1) to desert-dry-gulch (gate g0). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R36: RoadMap = {

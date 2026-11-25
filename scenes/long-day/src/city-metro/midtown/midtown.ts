@@ -1,4 +1,4 @@
-// Midtown, a metro city (docs/fixed-cities.md). Drafted from seed 840995782 by tools/draftcities.ts;
+// Midtown, a metro city (docs/long-day-cities.md). Drafted from seed 840995782 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

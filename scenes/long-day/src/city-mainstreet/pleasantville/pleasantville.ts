@@ -1,4 +1,4 @@
-// Pleasantville, a mainstreet city (docs/fixed-cities.md). Drafted from seed 1024427892 by tools/draftcities.ts;
+// Pleasantville, a mainstreet city (docs/long-day-cities.md). Drafted from seed 1024427892 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

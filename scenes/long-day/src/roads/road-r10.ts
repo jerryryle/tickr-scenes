@@ -1,5 +1,5 @@
 // World road r10: storybook-wumbleton (gate g7) to brick-steelton (gate g0), one way. Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R10: RoadMap = {

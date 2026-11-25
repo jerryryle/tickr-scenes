@@ -1,4 +1,4 @@
-// A country road's map (docs/fixed-cities.md, "Road maps"): the road between two gates as one
+// A country road's map (docs/long-day-cities.md, "Road maps"): the road between two gates as one
 // physical road, the same whichever way it is driven. Distances `s` run from the end of gate a's
 // street (0) to the end of gate b's (`length`); offsets `n` are to the right looking from a to b.
 // country.ts RoadGeo reads it; tools/draftroads.ts drafts it from today's rules.

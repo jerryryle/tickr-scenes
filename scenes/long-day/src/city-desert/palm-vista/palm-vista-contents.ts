@@ -1,4 +1,4 @@
-// Palm Vista's contents (docs/fixed-cities.md, "City contents"): everything that stands on its
+// Palm Vista's contents (docs/long-day-cities.md, "City contents"): everything that stands on its
 // layout, each a recipe's row (src/contents.ts FIELDS). Drafted by tools/cityfiles.ts; edited by hand
 // from here on. The scene carries them packed (tools/pack.ts).
 import type { CityFileContents } from "../../cityfile.ts";

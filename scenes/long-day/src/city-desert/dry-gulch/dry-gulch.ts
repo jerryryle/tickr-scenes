@@ -1,4 +1,4 @@
-// Dry Gulch, a desert city (docs/fixed-cities.md). Drafted from seed 505383881 by tools/draftcities.ts;
+// Dry Gulch, a desert city (docs/long-day-cities.md). Drafted from seed 505383881 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

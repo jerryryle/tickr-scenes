@@ -1,4 +1,4 @@
-// A city's contents (docs/fixed-cities.md, "City contents"): a city drawn from its listed recipes
+// A city's contents (docs/long-day-cities.md, "City contents"): a city drawn from its listed recipes
 // is the city its rules draw. Each city named (by default one of each style) is built chunk by
 // chunk by its rules with the recipes recorded (contents.ts CONTENTS), then again from a file that
 // lists those recipes and nothing else, through the same rows a contents file holds; every chunk

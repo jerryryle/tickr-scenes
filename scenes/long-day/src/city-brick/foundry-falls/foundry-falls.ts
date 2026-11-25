@@ -1,4 +1,4 @@
-// Foundry Falls, a brick city (docs/fixed-cities.md). Drafted from seed 762755194 by tools/draftcities.ts;
+// Foundry Falls, a brick city (docs/long-day-cities.md). Drafted from seed 762755194 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

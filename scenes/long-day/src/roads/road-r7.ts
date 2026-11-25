@@ -1,5 +1,5 @@
 // World road r7: coastal-golden-hollow (gate g5) to desert-sun-mesa (gate g0), one way. Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R7: RoadMap = {

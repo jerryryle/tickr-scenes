@@ -1,4 +1,4 @@
-// A catalogue city's map (docs/fixed-cities.md, requirements 19 and 20): a layered SVG drawn top
+// A catalogue city's map (docs/long-day-cities.md, "Maps"): a layered SVG drawn top
 // down from its plan, 1 unit a metre in world coordinates (x east, z south, so north is up). Each
 // layer is a top-level group that Inkscape and Illustrator open as a layer, and every item carries
 // an id naming what it is in the plan. The map is a view: nothing reads it back.
@@ -186,7 +186,7 @@ export function citySvg(F: CityFile): string {
 // Where a city's map is written: build output, in a folder for its style as its file is.
 export const mapPath = (F: CityFile) => `build/long-day-maps/city-${F.style}/${F.id.slice(F.style.length + 1)}.svg`;
 
-// The world map (requirement 21): the world graph alone, one node a city at its place
+// The world map (docs/long-day-cities.md, "Maps"): the world graph alone, one node a city at its place
 // (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and
 // length; a road driven one way only has an arrow at the city it runs into.
 const STYLE_FILL: Record<string, string> = { coastal: "#2f78b8", metro: "#6b6b8a", desert: "#d9a441", brick: "#a0522d", mainstreet: "#4f9a3c", port: "#1f6f78", storybook: "#d83a9a" };
@@ -214,7 +214,7 @@ export function worldSvg(): string {
 }
 export const worldMapPath = "build/long-day-maps/world.svg";
 
-// A road's map (docs/fixed-cities.md, "Road maps"): its map drawn top down in its own coordinates,
+// A road's map (docs/long-day-cities.md, "Road maps"): its map drawn top down in its own coordinates,
 // gate a's street end at the origin heading east (+x), 1 unit a metre: the road, its land (a's
 // and b's, and the coast), its set pieces (each labelled with its kind and the way it faces) and
 // its roadside items, a layer each.

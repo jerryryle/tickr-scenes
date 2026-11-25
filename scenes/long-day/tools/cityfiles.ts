@@ -197,7 +197,7 @@ export function contentsFileText(F: CityFile, C: CityFileContents): string {
     : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
   const group = (name: string, R: Record<number, RecipeRow[]>) => [`  ${name}: {`, ...Object.entries(R).flatMap(([k, l]) => [`    ${k}: [`, ...l.map((r) => `      ${item(r)},`), `    ],`]), `  },`];
   return [
-    `// ${F.name}'s contents (docs/fixed-cities.md, "City contents"): everything that stands on its`,
+    `// ${F.name}'s contents (docs/long-day-cities.md, "City contents"): everything that stands on its`,
     `// layout, each a recipe's row (src/contents.ts FIELDS). Drafted by tools/cityfiles.ts; edited by hand`,
     `// from here on. The scene carries them packed (tools/pack.ts).`,
     `import type { CityFileContents } from "../../cityfile.ts";`, ``,

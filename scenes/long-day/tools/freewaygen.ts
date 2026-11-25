@@ -1,4 +1,4 @@
-// The freeway as the generator lays it out (drafting only: docs/fixed-cities.md). The city file
+// The freeway as the generator lays it out (drafting only: docs/long-day-cities.md). The city file
 // holds what it lays out (cityfile.ts CityFileFreeway), which is all the scene reads.
 import { BLOCK, STREET } from "../src/grid.ts";
 import { hash2 } from "../src/rng.ts";

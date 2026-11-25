@@ -1,4 +1,4 @@
-// Snickerwick, a storybook city (docs/fixed-cities.md). Drafted from seed 430297004 by tools/draftcities.ts;
+// Snickerwick, a storybook city (docs/long-day-cities.md). Drafted from seed 430297004 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

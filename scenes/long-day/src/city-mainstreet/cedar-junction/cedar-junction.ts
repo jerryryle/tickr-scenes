@@ -1,4 +1,4 @@
-// Cedar Junction, a mainstreet city (docs/fixed-cities.md). Drafted from seed 1275948104 by tools/draftcities.ts;
+// Cedar Junction, a mainstreet city (docs/long-day-cities.md). Drafted from seed 1275948104 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

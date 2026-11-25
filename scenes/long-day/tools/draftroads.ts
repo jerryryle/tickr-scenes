@@ -1,4 +1,4 @@
-// The road maps' drafting tool (docs/fixed-cities.md, "Road maps"): drafts each world road's map
+// The road maps' drafting tool (docs/long-day-cities.md, "Road maps"): drafts each world road's map
 // from today's rules (tools/roadgen.ts), records the roadside items as the segment builder places
 // them, and writes src/roads/road-<id>.ts. A map is hand-owned once drafted, so the tool writes
 // only the roads it is given or, with none given, those that have no map yet.
@@ -36,7 +36,7 @@ const drList = (name: string, A: number[], per: number) => {
 function writeMap(M: RoadMap, r: WorldRoad) {
   const I = M.items, lines = [
     `// World road ${r.id}: ${r.a.city} (gate ${r.a.gate}) to ${r.b.city} (gate ${r.b.gate})${r.oneway ? ", one way" : ""}. Drafted by`,
-    `// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").`,
+    `// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").`,
     `import type { RoadMap } from "../roadmap.ts";`,
     ``,
     `export const ${roadConst(r.id)}: RoadMap = {`,
@@ -83,7 +83,7 @@ if (drWorld && !drArgs.includes("--list")) {
   if (missing.length) throw new Error(`no map for ${missing.map((r) => r.id).join(", ")}: draft them first`);
   const strip = ({ metres: _m, map: _p, ...r }: WorldRoad & { metres?: number }) => r;
   drFs.writeFileSync("scenes/long-day/src/world-roads.ts", [
-    `// The world graph's roads and the cities' places on the world map (docs/fixed-cities.md). Drafted`,
+    `// The world graph's roads and the cities' places on the world map (docs/long-day-cities.md). Drafted`,
     `// by tools/draftworld.ts; edited by hand from here on. Each road's map is its own file in roads/.`,
     `import type { WorldRoad } from "./world.ts";`,
     ...WORLD_ROADS.map((r) => `import { ${roadConst(r.id)} } from "./roads/road-${r.id}.ts";`),

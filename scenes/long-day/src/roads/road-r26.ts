@@ -1,5 +1,5 @@
 // World road r26: coastal-twin-peaks-bay (gate g5) to port-north-harbor (gate g1). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R26: RoadMap = {

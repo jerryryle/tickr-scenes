@@ -1,4 +1,4 @@
-// Empire Point, a metro city (docs/fixed-cities.md). Drafted from seed 203995730 by tools/draftcities.ts;
+// Empire Point, a metro city (docs/long-day-cities.md). Drafted from seed 203995730 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

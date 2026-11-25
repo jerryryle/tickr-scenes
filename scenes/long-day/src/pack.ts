@@ -1,4 +1,4 @@
-// Packed text (docs/fixed-cities.md, "City contents"): a city's contents, as the scene carries them,
+// Packed text (docs/long-day-cities.md, "City contents"): a city's contents, as the scene carries them,
 // compressed. packText runs when the scene is built (tools/pack.ts), unpackText when a city is
 // planned. The compression is LZ77 over the text's bytes (the text is ASCII: JSON), each token a
 // run of literals or a copy of earlier text, its lengths and distances as variable-length

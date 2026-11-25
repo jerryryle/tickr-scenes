@@ -1,4 +1,4 @@
-// Twin Peaks Bay, a coastal city (docs/fixed-cities.md). Drafted from seed 633151320 by tools/draftcities.ts;
+// Twin Peaks Bay, a coastal city (docs/long-day-cities.md). Drafted from seed 633151320 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

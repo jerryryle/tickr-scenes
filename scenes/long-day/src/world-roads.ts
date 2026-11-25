@@ -1,4 +1,4 @@
-// The world graph's roads and the cities' places on the world map (docs/fixed-cities.md). Drafted
+// The world graph's roads and the cities' places on the world map (docs/long-day-cities.md). Drafted
 // by tools/draftworld.ts; edited by hand from here on. Each road's map is its own file in roads/.
 import type { WorldRoad } from "./world.ts";
 import { ROAD_R0 } from "./roads/road-r0.ts";

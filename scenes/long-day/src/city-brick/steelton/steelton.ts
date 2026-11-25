@@ -1,4 +1,4 @@
-// Steelton, a brick city (docs/fixed-cities.md). Drafted from seed 1733766519 by tools/draftcities.ts;
+// Steelton, a brick city (docs/long-day-cities.md). Drafted from seed 1733766519 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

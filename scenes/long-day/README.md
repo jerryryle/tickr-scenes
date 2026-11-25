@@ -11,7 +11,7 @@ make check-long-day     # type-check, load-test and run the tests
 ## Source
 
 Every city is a catalogue city: a folder in `src/city-<style>/` listed in `src/world.ts`
-(`docs/fixed-cities.md` has the design). `src/cityfile.ts` reads a city file into its street
+(`docs/long-day-cities.md` describes how cities work). `src/cityfile.ts` reads a city file into its street
 graph. Country roads join the cities' gates in a fixed world graph (`src/world-roads.ts`, drafted
 by `tools/draftworld.ts` with `make draftworld`), and `src/visits.ts` plans each journey along it:
 which city comes next, by which road, and so which gate the truck leaves and enters by.
@@ -19,7 +19,7 @@ which city comes next, by which road, and so which gate the truck leaves and ent
 its own in `src/roads/` (`src/roadmap.ts`): its shape, heights, land, set pieces and every tree,
 rock, pole and fence beside it, the same whichever way it is driven. `CountryRoad` in
 `src/country.ts` drives a road's map from either end, and `src/countryworld.ts` draws it in the
-map's coordinates (docs/fixed-cities.md, "Road maps"). `tools/draftroads.ts` drafts a road's map
+map's coordinates (docs/long-day-cities.md, "Road maps"). `tools/draftroads.ts` drafts a road's map
 from the generator's rules (`tools/roadgen.ts`):
 
 ```bash
@@ -34,8 +34,8 @@ argument, `VisitSpec` in `src/visits.ts`), and a render its first one:
 make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=coastal-seacliff,truck=tractor,season=winter,weather=snow"
 make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=metro-midtown+city=brick-ironworks,arriveBy=r40"   # two visits: midtown, then along r40
 ``` A city file holds
-the city's streets, gates and blocks; the rest of the city comes from rules that hash the file's
-`key`, the seed it was drafted from. `tools/draftcities.ts` drafts new city files with the
+the city's streets, gates and blocks, and its contents file beside it lists everything that
+stands on them. `tools/draftcities.ts` drafts new city files with the
 generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit
 for play:
 
@@ -49,7 +49,7 @@ and gates, and the lots, buildings, trees, street furniture, signal poles, stop 
 the city's builders put them (`PLACED` in `src/geom.ts`, `PAVEMENT` in `src/decor.ts`). The
 street furniture, signal poles, stop signs and facilities' front doors come from the city file,
 and so does everything else that stands on the layout, as recipes in the city's contents file
-beside it (`src/contents.ts`; docs/fixed-cities.md, "City contents"). The scene carries the contents
+beside it (`src/contents.ts`; docs/long-day-cities.md, "City contents"). The scene carries the contents
 packed: `tools/pack.ts` packs them into `src/contents-packed.ts` before every build. The maps are build output, too big to commit, and nothing reads them back:
 
 ```bash

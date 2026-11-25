@@ -1,5 +1,5 @@
 // World road r87: storybook-higgle-on-the-wobble (gate g6) to port-puget-point (gate g3). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R87: RoadMap = {

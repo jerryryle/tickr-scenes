@@ -1,10 +1,10 @@
-// The world (docs/fixed-cities.md): every catalogue city, and the country roads joining them
+// The world (docs/long-day-cities.md): every catalogue city, and the country roads joining them
 // (world-roads.ts). This list is the catalogue: a city is in it once its file is imported and
 // listed here.
 import type { CityFile } from "./cityfile.ts";
 import type { RoadMap } from "./roadmap.ts";
 
-// A country road (requirements 10 and 11): it joins gate `a.gate` of city `a.city` to gate `b.gate`
+// A country road (docs/long-day-cities.md, "The world graph"): it joins gate `a.gate` of city `a.city` to gate `b.gate`
 // of `b.city`, each gate serving this road alone. `map`: the road itself (roadmap.ts), its length
 // among it; how long the drive takes follows from the truck's speed and its stops on the way
 // (country.ts). `key`: what the drafting tool's rules hashed. `oneway`: driven only from a to b

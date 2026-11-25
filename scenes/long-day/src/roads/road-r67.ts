@@ -1,5 +1,5 @@
 // World road r67: coastal-fogcrest (gate g9) to port-ferryport (gate g2). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R67: RoadMap = {

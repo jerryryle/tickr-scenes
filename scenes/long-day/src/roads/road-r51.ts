@@ -1,5 +1,5 @@
 // World road r51: storybook-tumbledown-tuft (gate g12) to metro-midtown (gate g3). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R51: RoadMap = {

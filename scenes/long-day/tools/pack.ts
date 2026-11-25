@@ -1,4 +1,4 @@
-// Packs every city's contents for the scene (docs/fixed-cities.md, "City contents"): each
+// Packs every city's contents for the scene (docs/long-day-cities.md, "City contents"): each
 // src/city-<style>/<city>/<city>-contents.ts, its recipes' rows as JSON packed by
 // src/pack.ts, into src/contents-packed.ts, which the scene imports in place of the contents
 // files themselves (build output: not committed). The Makefile runs it before every build of the

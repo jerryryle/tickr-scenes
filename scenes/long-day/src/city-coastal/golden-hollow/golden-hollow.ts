@@ -1,4 +1,4 @@
-// Golden Hollow, a coastal city (docs/fixed-cities.md). Drafted from seed 687090015 by tools/draftcities.ts;
+// Golden Hollow, a coastal city (docs/long-day-cities.md). Drafted from seed 687090015 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

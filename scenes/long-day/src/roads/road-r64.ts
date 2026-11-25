@@ -1,5 +1,5 @@
 // World road r64: storybook-higgle-on-the-wobble (gate g3) to mainstreet-cedar-junction (gate g6). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R64: RoadMap = {

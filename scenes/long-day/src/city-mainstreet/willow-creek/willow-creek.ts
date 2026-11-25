@@ -1,4 +1,4 @@
-// Willow Creek, a mainstreet city (docs/fixed-cities.md). Drafted from seed 1439186264 by tools/draftcities.ts;
+// Willow Creek, a mainstreet city (docs/long-day-cities.md). Drafted from seed 1439186264 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

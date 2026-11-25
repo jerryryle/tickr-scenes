@@ -1,5 +1,5 @@
 // World road r53: storybook-snickerwick (gate g2) to metro-grand-central (gate g4). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R53: RoadMap = {

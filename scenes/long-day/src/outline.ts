@@ -1,4 +1,4 @@
-// A town's sea (docs/fixed-cities.md): which side of the town's square it is on, and how far in it
+// A town's sea (docs/long-day-cities.md): which side of the town's square it is on, and how far in it
 // reaches along that side, as the city file holds it (SeaData). Out past the town on the way in
 // (gate g0's side), its shore bends in to run COAST_LAT off the road by the edge of its outskirts,
 // where the country road's coast runs (country.ts SEA_N, coastAt): the road in comes along one

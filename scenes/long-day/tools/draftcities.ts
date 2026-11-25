@@ -1,4 +1,4 @@
-// The drafting tool (docs/fixed-cities.md): generates candidate cities of one style with today's
+// The drafting tool (docs/long-day-cities.md): generates candidate cities of one style with today's
 // generator, keeps those cityProblems finds nothing wrong with, chooses five that differ most from
 // each other and writes each as a city file, with its contents beside it, into a folder of its own,
 // src/city-<style>/<slug>/. It never overwrites a file.
@@ -55,7 +55,7 @@ chosen.forEach((d, i) => {
   written++;
   const C = contentsRowsOf(d.plan, cityContentsOf(d.plan))!;
   const text = cityFileText(F, [
-    `// ${name}, a ${draftStyle} city (docs/fixed-cities.md). Drafted from seed ${d.seed} by tools/draftcities.ts;`,
+    `// ${name}, a ${draftStyle} city (docs/long-day-cities.md). Drafted from seed ${d.seed} by tools/draftcities.ts;`,
     `// edited by hand from here on.`,
   ]);
   fs.mkdirSync(path.dirname(file), { recursive: true });

@@ -1,4 +1,4 @@
-// The town's outline as the generator lays it out (drafting only: docs/fixed-cities.md). Every
+// The town's outline as the generator lays it out (drafting only: docs/long-day-cities.md). Every
 // layout (citygen.ts) lays its streets out over the whole square; trimToOutline (citygen.ts) then
 // cuts the graph back to this, each side's land edge standing in from the square by `inset` (smooth
 // noise, up to INSET_MAX), and in a coastal or port city the sea coming in over one side to its

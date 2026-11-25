@@ -1,4 +1,4 @@
-// A city laid out by the generator (drafting only: docs/fixed-cities.md): the scene's CityPlan
+// A city laid out by the generator (drafting only: docs/long-day-cities.md): the scene's CityPlan
 // with no city file, its streets laid out from its seed (citygen.ts) and cut back to its outline
 // (outlinegen.ts), its freeway, sea and layout by the rules here. tools/draftcities.ts writes one
 // out as a city file (cityfiles.ts cityFileOfPlan), which is all the scene reads.

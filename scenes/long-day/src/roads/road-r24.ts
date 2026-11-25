@@ -1,5 +1,5 @@
 // World road r24: metro-grand-central (gate g3) to coastal-fogcrest (gate g1). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R24: RoadMap = {

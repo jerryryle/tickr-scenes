@@ -1,4 +1,4 @@
-// The road maps (docs/fixed-cities.md, "Road maps"): every world road's map is well formed, and the
+// The road maps (docs/long-day-cities.md, "Road maps"): every world road's map is well formed, and the
 // road driven from b to a is the same road as driven from a to b: placed so their gate b ends meet,
 // each point, ground height and land of one is the other's turned half round (to 2 cm: the
 // headings are held to a microradian).

@@ -1,4 +1,4 @@
-// North Harbor, a port city (docs/fixed-cities.md). Drafted from seed 2051798410 by tools/draftcities.ts;
+// North Harbor, a port city (docs/long-day-cities.md). Drafted from seed 2051798410 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

@@ -1,4 +1,4 @@
-// Grand Central, a metro city (docs/fixed-cities.md). Drafted from seed 1071104322 by tools/draftcities.ts;
+// Grand Central, a metro city (docs/long-day-cities.md). Drafted from seed 1071104322 by tools/draftcities.ts;
 // edited by hand from here on.
 import type { CityFile } from "../../cityfile.ts";
 

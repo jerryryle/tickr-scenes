@@ -1,5 +1,5 @@
 // World road r18: coastal-bayview (gate g5) to mainstreet-willow-creek (gate g1). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R18: RoadMap = {

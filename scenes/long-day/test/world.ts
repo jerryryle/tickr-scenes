@@ -1,5 +1,5 @@
 // Test: the world graph (src/world-roads.ts) and the visit planner (src/visits.ts) keep their
-// requirements (docs/fixed-cities.md, 9 to 15). The graph: every road joins two catalogue cities of
+// rules (docs/long-day-cities.md, "The world graph" and "The visit planner"). The graph: every road joins two catalogue cities of
 // different styles at gates that exist and face different ways, no gate serves two roads, a road
 // into a freeway city's way in (g0) is driven only into it, every city has at least four roads to
 // cities of at least three styles, and any city reaches any other in four drives or fewer. The

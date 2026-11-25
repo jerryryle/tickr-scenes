@@ -1,5 +1,5 @@
 // World road r14: metro-metropolis-heights (gate g4) to mainstreet-cedar-junction (gate g0). Drafted by
-// tools/draftroads.ts; edited by hand from here on (docs/fixed-cities.md, "Road maps").
+// tools/draftroads.ts; edited by hand from here on (docs/long-day-cities.md, "Road maps").
 import type { RoadMap } from "../roadmap.ts";
 
 export const ROAD_R14: RoadMap = {

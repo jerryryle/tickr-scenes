@@ -1,7 +1,7 @@
-// City files (docs/fixed-cities.md): each catalogue city's plan, written out as data in
+// City files (docs/long-day-cities.md): each catalogue city's plan, written out as data in
 // src/city-<style>/<slug>/<slug>.ts and read here into its street graph. A file holds the
-// city's structure explicitly: its nodes, streets, gates and each block's properties. Everything
-// else comes from the default rules in city.ts and facilities.ts, which hash the file's `key`.
+// city's structure explicitly: its nodes, streets, gates and each block's properties. What stands
+// on that layout is listed in the city's contents file beside it (contents.ts).
 //
 // Nodes and streets carry ids that are never renumbered; the graph numbers them in file order.
 // Blocks are found from the streets (CityGraph.findBlocks), and each block's properties attach to
@@ -35,7 +35,7 @@ export interface CityFile {
   streets: CityFileStreet[];
   gates: (CityFileGate | null)[]; // (The way in comes first, then the ways out; null stands for a gate the sea closed.)
   blocks: CityFileBlock[];
-  // Its contents in place of those its own contents file lists (docs/fixed-cities.md, "City
+  // Its contents in place of those its own contents file lists (docs/long-day-cities.md, "City
   // contents"), or (null) none: tests and the drafting tools give a city by its rules this way.
   contents?: () => CityFileContents | null;
 }
