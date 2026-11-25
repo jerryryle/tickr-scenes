@@ -49,6 +49,11 @@ The design has seven parts, and the rest of this document uses these names for t
 4. A city's size is whatever its file lays out, and `cityMinutes` does not change it. The setting
    changes only the time spent in a city, through the number of jobs and the length of the route.
 5. Geometry is built at runtime by the existing chunk builder from the plan.
+5a. Street furniture, signal poles and stop signs are pre-generated: each city file lists them,
+    with their places, and the scene draws what the file lists. That covers lamps, hydrants,
+    bins, benches, mailboxes, newspaper boxes, meters, shelters, bike racks, street trees, every
+    signal pole and every stop sign's post. Drafting writes them out from today's rules, and from
+    then on they are edited by hand like the rest of the file.
 
 ### What varies, and what does not
 
@@ -108,15 +113,16 @@ The design has seven parts, and the rest of this document uses these names for t
     2. water and shore
     3. streets and pavements
     4. street names
-    5. junction controls (signals, stops and roundabouts)
+    5. junction controls (signals, stops and roundabouts), with every signal pole and stop sign
     6. lots
     7. buildings
     8. sites (docks, garages, rental lots and stands)
     9. trees and parks
-    10. freeway and elevated lines
-    11. gates, each labelled with its edge and neighbouring city
-    12. pinned dressing
-    13. an empty markup layer for notes
+    10. street furniture, by kind
+    11. freeway and elevated lines
+    12. gates, each labelled with its edge and neighbouring city
+    13. pinned dressing
+    14. an empty markup layer for notes
 20. Each item in a city map carries its plan id as its SVG `id`, so markup can be traced to exact
     streets, lots and buildings. A map is a view of its plan and is never read back into it. Markup
     is a note for whoever edits the city file.
@@ -167,8 +173,8 @@ The design has seven parts, and the rest of this document uses these names for t
 A city file stores its plan at three levels of detail.
 
 1. **Structure is always explicit.** Nodes, streets, gates, block properties, the land outline, the
-   sea and river, the freeway and junction controls are written out in full, so no code change can
-   move them.
+   sea and river, the freeway, junction controls, signal poles, stop signs and street furniture are
+   written out in full, so no code change can move them.
 2. **Lot detail is explicit or comes from a default rule.** A **default rule** is today's code
    working a value out from a stable hash key stored in the file. A block that lists its lots and
    buildings uses that list. Every other block gets today's lot rules, so a block is made explicit
@@ -277,6 +283,10 @@ the shared `CityStyle` type and the list of the seven styles.
    from the planner, or one a test gives it, and the code that hashes the city seed or the journey
    seed for jobs, dressing, gags and drives (in `journey.ts`, `traffic.ts`, `vignettes.ts`,
    `clowns.ts` and `country.ts`, among others) hashes the visit's seeds instead.
+9. Street furniture, signal poles and stop signs (requirement 5a) are placed today as the chunk
+   builder draws (`decor.ts` streetFurniture, `signals.ts` signalPoles and stopSignPosts). Their
+   placing splits from their drawing, as `buildLots` does, so a file's list can take the place of
+   the placing step. Walks, traffic and the tests read the same list.
 
 ## Build order
 
@@ -298,7 +308,10 @@ every stage.
    tests that once searched for seeds build the visits they need.
 5. **Generator out of the scene.** The freeway, outline, sea and elevated lines become explicit
    fields, and `citygen.ts` and the outline trim move to `tools/`.
-6. **Explicit lots.** `buildLots` splits, and blocks may list their own lots and buildings.
+6. **Explicit lots and street furniture.** `buildLots` and the furniture, signal-pole and stop-sign
+   placing split from their drawing. Blocks may list their own lots and buildings, and every city
+   file lists its furniture, signal poles and stop signs (requirement 5a). The maps already show
+   all three, from today's rules, since stage 2.
 
 The flattener (`scripts/flatten.ts`) joins every module into one scope and accepts no default
 imports, so a city file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL`, in

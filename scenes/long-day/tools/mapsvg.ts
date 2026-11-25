@@ -10,8 +10,8 @@ import * as THREE from "three@0.187.0";
 import { CityPlan, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI, siteSquare } from "../src/city.ts";
 import type { CityFile } from "../src/cityfile.ts";
 import { facilityAt, facilityName, siteLayout } from "../src/facilities.ts";
-import { pavementObstacles } from "../src/city.ts";
-import { PK } from "../src/decor.ts";
+import { PAVEMENT, PK } from "../src/decor.ts";
+import { signalPoles, stopSignPosts } from "../src/signals.ts";
 import { PLACED } from "../src/geom.ts";
 import { BLOCK, RING } from "../src/grid.ts";
 import { STYLES } from "../src/styles.ts";
@@ -28,7 +28,7 @@ const DISTRICT_FILL: Record<string, string> = { downtown: "#c9b8d8", commercial:
 const LAYERS = [
   ["ground", "Ground and districts"], ["water", "Water and shore"], ["streets", "Streets and pavements"],
   ["names", "Street names"], ["controls", "Junction controls"], ["lots", "Lots"], ["buildings", "Buildings"],
-  ["sites", "Sites"], ["trees", "Trees and parks"], ["lines", "Freeway and elevated lines"], ["gates", "Gates"],
+  ["sites", "Sites"], ["trees", "Trees and parks"], ["furniture", "Street furniture"], ["lines", "Freeway and elevated lines"], ["gates", "Gates"],
   ["pins", "Pinned dressing"], ["markup", "Markup"],
 ] as const;
 type LayerId = typeof LAYERS[number][0];
@@ -43,18 +43,21 @@ function builtCity(plan: CityPlan) {
     return out;
   };
   const lots = new Map<string, [number, number][]>(), feet = new Map<string, [number, number][]>(), trees = new Map<string, [number, number]>();
+  const furniture = new Map<string, { x: number; z: number; r: number; kind: number }>();
   const keyOf = (q: [number, number][]) => q.map(([x, z]) => `${dmOf(x)},${dmOf(z)}`).join(" ");
   for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
     if (cityDistance(cx, cz) > 0) continue;
-    const gen = build(cx, cz);
-    let r = gen.next();
-    while (!r.done) r = gen.next();
+    // (What stands on the pavement, as street life's probe build records it: city.ts pavementObstacles.)
+    const rec: number[] = [];
+    PAVEMENT.out = rec;
+    try { const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next(); } finally { PAVEMENT.out = null; }
     const ox = cx * BLOCK, oz = cz * BLOCK;
+    for (let i = 0; i + 3 < rec.length; i += 4) { const o = { x: rec[i] + ox, z: rec[i + 1] + oz, r: rec[i + 2], kind: rec[i + 3] }; furniture.set(`${dmOf(o.x)},${dmOf(o.z)},${o.kind}`, o); }
     for (const q of quads(PLACED.lots, ox, oz)) lots.set(keyOf(q), q);
     for (const q of quads(PLACED.foot, ox, oz)) feet.set(keyOf(q), q);
     for (let i = 0; i + 1 < PLACED.trees.length; i += 2) { const p: [number, number] = [PLACED.trees[i] + ox, PLACED.trees[i + 1] + oz]; trees.set(`${dmOf(p[0])},${dmOf(p[1])}`, p); }
   }
-  return { lots: [...lots.values()], feet: [...feet.values()], trees: [...trees.values()] };
+  return { lots: [...lots.values()], feet: [...feet.values()], trees: [...trees.values()], furniture: [...furniture.values()] };
 }
 
 export function citySvg(F: CityFile): string {
@@ -102,8 +105,10 @@ export function citySvg(F: CityFile): string {
   }
   if (plan.interchange) { const ic = plan.interchange; add("lines", `<text id="interchange" x="${cmOf(ic.ix * BLOCK + 9)}" y="${cmOf(ic.iz * BLOCK + 9)}" font-size="8" fill="#d98c1e">interchange (${ic.kind})</text>`); }
 
-  // Junction controls.
+  // Junction controls: each junction's control, its signal poles and its stop signs' posts.
   for (const N of G.nodes) {
+    for (const p of signalPoles(G, N)) add("controls", `<circle id="signal-pole-${N.id}-${p.i}" cx="${cmOf(p.px)}" cy="${cmOf(p.pz)}" r="0.6" fill="#111"><title>signal pole, node ${N.id}</title></circle>`);
+    for (const [arm, [x, z]] of [...stopSignPosts(G, N)].sort((a, b) => a[0] - b[0])) add("controls", `<circle id="stop-sign-${N.id}-${arm}" cx="${cmOf(x)}" cy="${cmOf(z)}" r="0.8" fill="#c0392b" stroke="#fff" stroke-width="0.2"><title>stop sign, node ${N.id}</title></circle>`);
     if (N.arms.length < 3) continue;
     if (N.control === "signal") add("controls", `<circle id="node-${N.id}" cx="${cmOf(N.x)}" cy="${cmOf(N.z)}" r="3" fill="#2e9e3e"><title>node ${N.id}: signals</title></circle>`);
     else if (N.control === "stop") add("controls", `<rect id="node-${N.id}" x="${cmOf(N.x - 2.5)}" y="${cmOf(N.z - 2.5)}" width="5" height="5" fill="#c0392b"><title>node ${N.id}: all-way stop</title></rect>`);
@@ -126,10 +131,16 @@ export function citySvg(F: CityFile): string {
   for (const e of numbered(built.lots, mid)) add("lots", `<polygon id="lot-${e.id}" points="${ptsOf(e.t, dmOf)}" fill="none" stroke="#8a7a5a" stroke-width="0.4"/>`);
   for (const e of numbered(built.feet, mid)) add("buildings", `<polygon id="building-${e.id}" points="${ptsOf(e.t, dmOf)}" fill="#a0522d" fill-opacity="0.85"/>`);
   for (const B of G.blocks) if (B.park) add("trees", `<polygon id="park-${B.kx}_${B.kz}" points="${ptsOf(B.poly)}" fill="none" stroke="#2e7d32" stroke-width="1"/>`);
-  const street = G.blocks.filter((B) => B.inCity).flatMap((B) => pavementObstacles(plan, B.kx, B.kz).filter((o) => o.kind === PK.tree).map((o) => [o.x, o.z] as [number, number]));
   const allTrees = new Map<string, [number, number]>();
-  for (const p of [...built.trees, ...street]) allTrees.set(`${dmOf(p[0])},${dmOf(p[1])}`, p);
+  for (const p of [...built.trees, ...built.furniture.filter((o) => o.kind === PK.tree).map((o) => [o.x, o.z] as [number, number])]) allTrees.set(`${dmOf(p[0])},${dmOf(p[1])}`, p);
   for (const e of numbered([...allTrees.values()], (p) => p)) add("trees", `<circle id="tree-${e.id}" cx="${dmOf(e.t[0])}" cy="${dmOf(e.t[1])}" r="1.5" fill="#2e7d32"/>`);
+  // Street furniture by kind (decor.ts PK; 0, anything else), the trees aside.
+  const KIND = Object.fromEntries(Object.entries(PK).map(([k, v]) => [v, k])) as Record<number, string>;
+  const FURNITURE_FILL: Record<string, string> = { hydrant: "#d62828", trash: "#4a4a4a", bench: "#8b5a2b", mailbox: "#1d4ed8", news: "#e07b00", meter: "#6b7280", shelter: "#0e7490", rack: "#9ca3af", lamp: "#f2c200" };
+  for (const e of numbered(built.furniture.filter((o) => o.kind !== PK.tree), (o) => [o.x, o.z])) {
+    const kind = KIND[e.t.kind] ?? "other";
+    add("furniture", `<circle id="${kind}-${e.id}" cx="${dmOf(e.t.x)}" cy="${dmOf(e.t.z)}" r="${dmOf(Math.max(0.35, Math.min(e.t.r, 2)))}" fill="${FURNITURE_FILL[kind] ?? "#555"}"><title>${kind}</title></circle>`);
+  }
 
   // Gates.
   F.gates.forEach((g, i) => {
