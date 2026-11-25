@@ -17,7 +17,7 @@ import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
-import { SB, SB_STREET, storyGate, storyLamp, bunting } from "./storybook.ts";
+import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides } from "./storybook.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -1020,6 +1020,7 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
     const P = G.facePt(L.f, 0, 0), fr: Frame2 = { ox: P.x - ox, oz: P.z - oz, rot: P.h };
     inFrame(fr, [g, s, DC.lamps], () => {
       const b: Rect = { x0: L.a0 + 0.3, z0: 0.4, x1: L.a1 - 0.3, z1: L.d - 0.3 };
+      if (CS.storybook && !pavilions && district !== "industrial") { storyLot(s, b, L.f, district, hs, rnd, door); return; }
       if (district !== "residential") door(L.f, b.x0, b.x1, b.z0);
       if (district === "downtown") {
         const wall = pick(rnd, CS.walls.downtown), floors = Math.max(3, Math.round((3 + hs * range(rnd, 4, 14)) * CS.towerScale));
@@ -1051,6 +1052,35 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   }
   const extra = close ? drawClose(g, s, G, close, poly, ox, oz, lots.map((l) => l.pts), rnd) : [];
   buildInfill(g, s, plan, blk, poly, ox, oz, district, lots, keep, hs, extra);
+}
+// The storybook city's buildings on a lot b (in its face's frame, the street at -z): downtown a
+// bent tower or two of round pods in hats, shops in crooked rows (now and then a short tower), and
+// houses as squat pods or crooked gables. `door` records the front door for kerbDoors, as for any
+// city's lot (x0..x1 the wall it is in, n its depth).
+function storyLot(s: Batch, b: Rect, f: number, district: District, hs: number, rnd: Rand, door: (f: number, x0: number, x1: number, n: number, painted?: boolean) => void) {
+  const w = b.x1 - b.x0, d = b.z1 - b.z0, roofs = CS.roofs;
+  if (district === "downtown" || (district === "commercial" && rnd() < 0.3)) {
+    const two = w > 1.7 * d, cw = two ? w / 2 : w, R = Math.max(2.4, Math.min(cw / 2, d / 2) - 0.4), n = sbFootSides(R);
+    const look = { walls: district === "downtown" ? CS.walls.downtown : CS.walls.commercial, roofs, ground: FACADE.STORY_SHOP, upper: FACADE.STORYBOOK, storeys: 0 };
+    for (let k = 0; k < (two ? 2 : 1); k++) {
+      const cx = two ? b.x0 + cw * (k + 0.5) : (b.x0 + b.x1) / 2, cz = b.z0 + R * Math.cos(Math.PI / n);
+      const storeys = district === "downtown" ? Math.max(3, Math.min(9, Math.round(3 + hs * range(rnd, 2, 9)))) : irange(rnd, 2, 3);
+      storyTower(s, cx, cz, R, { x: cw / 2 - 0.25, zf: R + 1.2, zb: d - R + 1 }, CURB_H, { ...look, storeys }, rnd);
+      if (k === 0) door(f, cx - 0.5, cx + 0.5, b.z0);
+    }
+    return;
+  }
+  if (district === "commercial") {
+    door(f, b.x0, b.x1, b.z0);
+    storyShopRow(s, b, CURB_H, Math.min(CS.maxShopFloors, irange(rnd, 1, 3)), { walls: CS.walls.commercial, roofs, ground: FACADE.STORY_SHOP, upper: FACADE.STORYBOOK, storeys: 0 }, rnd);
+    return;
+  }
+  // a house, set back behind its front garden, its tree behind it
+  const h: Rect = { x0: b.x0 + 0.8, z0: b.z0 + range(rnd, 2.2, 3.2), x1: b.x1 - 0.8, z1: Math.min(b.z1, b.z0 + 10) };
+  const R = Math.max(2.6, Math.min((h.x1 - h.x0) / 2, (h.z1 - h.z0) / 2) - 0.2), cx = (h.x0 + h.x1) / 2, cz = h.z0 + R;
+  const r = storyHouse(s, cx, cz, R, CURB_H, { walls: CS.walls.residential, roofs: CS.gables, ground: FACADE.STORYBOOK, upper: FACADE.STORYBOOK, door: FACADE.STORY_DOOR, storeys: 0 }, rnd);
+  door(f, r.door[0], r.door[1], r.front, true);
+  if (rnd() < 0.5) cityTree(s, cx + range(rnd, -2, 2), CURB_H, cz + R + 2.8, range(rnd, 5, 7), 1.6, pick(rnd, CS.trees.greens), rnd);
 }
 // A close into block blk off face f (its longest side), or null: where a turning circle (9 m, and
 // a pavement round it) fits 20 to 40 m in from the middle of the side, 12 m clear of the block's
@@ -1187,6 +1217,22 @@ function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [num
       for (const d of [27, 22, 16, 11]) { for (const w of [44, 36, 28, 20, 13]) if (fit(x, z, ex, ez, w, d, 0.6, PARK)) { wd = [w, d]; break; } if (wd) break; }
       if (!wd) continue;
       const [w, d] = wd, b: Rect = { x0: -w / 2, z0: -d / 2, x1: w / 2, z1: d / 2 };
+      if (CS.storybook) {
+        // The storybook city has gardens where others park: a lawn ringed by a path, trees of its
+        // kinds dotted over it, a bowl fountain in the middle of a big one.
+        inFrame({ ox: x, oz: z, rot: Math.atan2(-ez, ex) }, [g, s, DC.lamps], () => {
+          slab(g, [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]], CURB_H, CURB_H + 0.02, C.path);
+          slab(g, [[b.x0 + 1.4, b.z0 + 1.4], [b.x1 - 1.4, b.z0 + 1.4], [b.x1 - 1.4, b.z1 - 1.4], [b.x0 + 1.4, b.z1 - 1.4]], CURB_H + 0.02, CURB_H + 0.04, CS.grass);
+          const big = w >= 20 && d >= 16;
+          if (big) storyFountain(s, 0, CURB_H + 0.04, 0, Math.min(w, d) / 2 - 3);
+          for (let k = 0; k < Math.floor(w * d / 45); k++) {
+            const tx = range(rnd, b.x0 + 3, b.x1 - 3), tz = range(rnd, b.z0 + 3, b.z1 - 3);
+            if (big && Math.hypot(tx, tz) < Math.min(w, d) / 2 - 1) continue;
+            cityTree(s, tx, CURB_H + 0.04, tz, range(rnd, 4.5, 7), range(rnd, 1.3, 2), pick(rnd, CS.trees.greens), rnd);
+          }
+        });
+        continue;
+      }
       inFrame({ ox: x, oz: z, rot: Math.atan2(-ez, ex) }, [g, s, DC.lamps], () => {
         slab(g, [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]], CURB_H, CURB_H + 0.02, C.asphalt);
         // (Rows of bays 5 m deep, 2.6 m wide, with 6 m aisles between; some with a car in.)
@@ -1233,7 +1279,10 @@ function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [num
       if (!fit(x, z, ex, ez, w * k, d * k)) continue;
       const b: Rect = { x0: -w * k / 2, z0: -d * k / 2, x1: w * k / 2, z1: d * k / 2 };
       inFrame(fr, [g, s, DC.lamps], () => {
-        if (district === "downtown") {
+        if (district === "downtown" && CS.storybook) {
+          const R = Math.min(b.x1 - b.x0, b.z1 - b.z0) / 2 - 0.3;
+          storyTower(s, 0, 0, R, { x: R + 0.4, zf: R + 0.4, zb: R + 0.4 }, CURB_H, { walls: CS.walls.downtown, roofs: CS.roofs, ground: FACADE.STORYBOOK, upper: FACADE.STORYBOOK, storeys: Math.max(4, Math.min(11, Math.round(4 + hs * range(rnd, 3, 10)))) }, rnd);
+        } else if (district === "downtown") {
           const wall = pick(rnd, CS.walls.downtown), floors = Math.max(4, Math.round((5 + hs * range(rnd, 6, 18)) * CS.towerScale));
           const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.LOBBY, floors: 1, floorH: 5 }, { tile: pick(rnd, CS.towerTiles), floors, floorH: 3.6 }], wall);
           flatRoof(s, b, top, wall, rnd, 3);
@@ -1485,7 +1534,7 @@ function buildBlockPart(ground: Batch, solid: Batch, plan: CityPlan, blk: CBlock
   // The freeway's off-ramp and its (super)block: drawn on the freeway's line, whatever its shape.
   if (plan.interchangeAt(cx, cz)) { buildInterchange(ground, solid, plan, blk, ox, oz); return { stalls: [] as StallPose[], site: siteLayout(plan, cx, cz) }; }
   const x0 = Math.min(...blk.poly.map((p) => p[0])), z0 = Math.min(...blk.poly.map((p) => p[1]));
-  if (!blk.square) {
+  if (!blk.square || CS.storybook) {   // (the storybook city's blocks all by their lots, whatever their shape)
     const dcx = DC.cx, dcz = DC.cz, site = siteLayout(plan, cx, cz);
     DC.cx = cx; DC.cz = cz; DC.fac = facilityAt(plan, cx, cz);
     let stalls: StallPose[] = [];

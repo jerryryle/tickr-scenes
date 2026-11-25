@@ -143,3 +143,32 @@ export function facadeBox(b: Batch, x0: number, z0: number, x1: number, z1: numb
   });
   return y;
 }
+
+// Wall an n-sided prism (the storybook city's round towers and houses) centred on (cx, cz), its
+// corners R out at angles rot + 2*PI*i/n (x = cos, z = sin), with facade bands stacked from y0, a
+// tile's bays to each side. Side `doorFacet` (between corners i and i + 1, facing angle rot +
+// (i + 0.5) * 2 * PI / n) gets `doorTile` on its first storey, a whole tile, for a painted door.
+// Returns the top height.
+export function facadePrism(b: Batch, cx: number, cz: number, R: number, n: number, rot: number, y0: number,
+                            bands: FacadeBand[], color: number, doorFacet = -1, doorTile = -1): number {
+  for (const [x, z] of [[cx - R, cz + R], [cx + R, cz + R], [cx + R, cz - R], [cx - R, cz - R]]) PLACED.foot.push(...toTile(x, z));
+  const variant = buildingVariant(cx * 2, cz * 2);
+  doorTile = withVariant(doorTile, variant);
+  const step = (2 * Math.PI) / n;
+  let y = y0;
+  bands.forEach((band, bi) => {
+    const h = band.floors * band.floorH, tile = withVariant(typeof band.tile === "number" ? band.tile : band.tile[0], variant);
+    for (let i = 0; i < n; i++) {
+      // (From the corner at the larger angle to the smaller: the wall faces out.)
+      const a0 = rot + (i + 1) * step, a1 = rot + i * step;
+      const ax = cx + R * Math.cos(a0), az = cz + R * Math.sin(a0), bx = cx + R * Math.cos(a1), bz = cz + R * Math.sin(a1);
+      const bays = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / BAY));
+      if (bi === 0 && i === doorFacet && doorTile >= 0) {
+        b.wall(ax, az, bx, bz, y, y + band.floorH, color, doorTile, 0, 1, 0, 1);
+        if (band.floors > 1) b.wall(ax, az, bx, bz, y + band.floorH, y + h, color, tile, 0, 1, 1, band.floors - 1);
+      } else b.wall(ax, az, bx, bz, y, y + h, color, tile, 0, bays, 0, band.floors);
+    }
+    y += h;
+  });
+  return y;
+}
