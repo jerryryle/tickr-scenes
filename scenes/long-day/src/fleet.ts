@@ -11,6 +11,7 @@ import type { StallPose } from "./city.ts";
 interface FleetPart { material: THREE.Material; names: string[]; arrays: Float32Array[]; count: number }
 
 export class FleetBaker {
+  private glass: THREE.Material | null = null;   // (the glass every template's trucks are baked with: flatten)
   constructor(private kit: TruckKit) {}
 
   build(stalls: StallPose[]): THREE.Object3D | null {
@@ -71,6 +72,9 @@ export class FleetBaker {
     const keep = (mat: THREE.Material) => mat instanceof THREE.MeshLambertMaterial || (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map);
     const tint = new THREE.Color();
     const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, toon = 0, inst: THREE.Color | null = null) => {
+      // (Every template's glass is the same see-through tint: one material for all, so a lot whose
+      // trucks come from different templates, as a country stop's cartoons do, draws its glass at once.)
+      if (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map) mat = this.glass ??= mat;
       const g = geo.index ? geo.toNonIndexed() : geo;
       // (A cartoon's shape and colours: its morph target, as far as the truck has it.)
       const morph = (n: string, a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, i: number, k: number) => {
