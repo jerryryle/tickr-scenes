@@ -9,6 +9,8 @@ import { hash2 } from "./rng.ts";
 import { drain } from "./slices.ts";
 import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
+import { DEBUG_VISIT } from "./debug.ts";
+import { parseVisitSpec } from "./visits.ts";
 import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
@@ -942,7 +944,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       base = DEBUG_SKIP_MINUTES * 60;   // (from the start: the skip, test renders only)
       setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
-      journey = new Journey(cfg, base, realSeason());
+      journey = new Journey(cfg, base, realSeason(), DEBUG_VISIT ? { 0: parseVisitSpec(DEBUG_VISIT) } : undefined);
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).

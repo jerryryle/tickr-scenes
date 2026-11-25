@@ -77,7 +77,7 @@ export class Crowd {
 
   clear() { this.peds.length = 0; this.flocks.length = 0; this.vendorCount = 0; this.obstacles.length = 0; this.vig.clear(); this.clowns.clear(); }
   // A new city: nobody about, and the random stream from the city's seed.
-  reset(seed: number) { this.clear(); this.rng.s = seed >>> 0; this.vig.reset((seed ^ 0x5bd1e995) >>> 0); this.clowns.reset(); }
+  reset(seed: number, vigSeed = (seed ^ 0x5bd1e995) >>> 0) { this.clear(); this.rng.s = seed >>> 0; this.vig.reset(vigSeed >>> 0); this.clowns.reset(); }
   save() { return { rng: this.rng.s, peds: this.peds, flocks: this.flocks, vendors: this.vendorCount, vig: this.vig.save(), cl: this.clowns.save() }; }
   load(o: ReturnType<Crowd["save"]>) {
     this.rng.s = o.rng; this.peds = o.peds; this.flocks = o.flocks; this.vendorCount = o.vendors;

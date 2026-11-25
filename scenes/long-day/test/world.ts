@@ -7,7 +7,7 @@
 // in a row share a style, no city comes back within RECENT visits, it never drives back along the
 // road it came in by, the storybook towns keep their rules (never in the first two cities, never
 // within STORYBOOK_GAP of the last, between one city in ten and one in seven), and each real
-// city's visits stay within 25% of its style's mean. It prints the frequencies it saw.
+// city's visits stay within 25% of its style's mean, and two visits to one city differ in dressing. It prints the frequencies it saw.
 // Args (all optional): journeys (default 300), cities each (default 60).
 import { CATALOGUE } from "../src/world.ts";
 import { WORLD_ROADS } from "../src/world-roads.ts";
@@ -63,6 +63,7 @@ for (let seed = 1; seed <= JOURNEYS; seed++) {
       if (v.arrive.road === p.arrive.road) fail(`seed ${seed} city ${N}: back along the road it came in by`);
     }
     if (seen.has(id) && N - seen.get(id)! <= RECENT) { soon++; fail(`seed ${seed}: ${id} again ${N - seen.get(id)!} cities on`); }
+    if (seen.has(id) && visitOf(seed, seen.get(id)!).dressing === v.dressing) fail(`seed ${seed}: ${id}'s visits ${seen.get(id)} and ${N} share their dressing`);
     seen.set(id, N);
     if (sb(id)) {
       story++;

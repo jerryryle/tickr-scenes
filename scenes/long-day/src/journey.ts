@@ -33,8 +33,8 @@
 // in its keyframes, so seeking replays it exactly. The journey never reads it back.
 import * as THREE from "three@0.187.0";
 import { hash2, hash3 } from "./rng.ts";
-import { visitOf } from "./visits.ts";
-import type { RoadWay } from "./visits.ts";
+import { setVisitSpecs, visitOf } from "./visits.ts";
+import type { RoadWay, VisitSpec } from "./visits.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
 import { GATE_LEN, SPECS, truckExtents, truckLayout } from "./truck.ts";
@@ -230,7 +230,10 @@ export class Journey {
   readonly startSeason: Season;   // the first city's season (main: saved, or the real month's; always given, so a test can't pick up the month by leaving it out)
   climate!: Climate;
 
-  constructor(readonly cfg: Config, t: number, startSeason: Season) {
+  // `visits`: what a test gives for some of the journey's visits (visits.ts VisitSpec), the rest
+  // planned from the seed as ever.
+  constructor(readonly cfg: Config, t: number, startSeason: Season, visits?: Record<number, VisitSpec>) {
+    setVisitSpecs(cfg.seed, visits);
     this.startSeason = startSeason;
     this.st = this.entryState(this.cityAt(Math.max(0, t)));
     ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
@@ -281,12 +284,14 @@ export class Journey {
     this.accel = 0; this.lastStep = 0; this.lightAhead = "-";   // (as a journey starting here has them)
     const start = at ?? this.cityStart(N);
     this.starts.set(N, start);
-    const freight = this.freightFor(N);
+    // (A visit's spec may give the truck it starts in: it then comes in empty, unless the freight
+    // it would have brought rides in that truck.)
+    const carried = this.freightFor(N), truck = this.startTruck(N), freight = carried && carried.truck === truck ? carried : null;
     // In through the gate its way in arrives at: the slot starts on the highway, ARRIVE_DUR seconds out.
     this.entry = this.arriveOf(N).in;
     const st: JourneyState = {
       city: N, citySeed, cityTime: 0, simTime: start, cityStart: start, step: 0, retryAt: 0, departAt: -1, departV: 0, departS0: 0, departTruck: "box26", exit: null,
-      truck: freight?.truck ?? "box26", mode: "inbound", modeTime: 0,
+      truck, mode: "inbound", modeTime: 0,
       dwellTotal: 0, dwellDone: false, route: null, s: 0, v: V_JOIN, at: this.gateIn(),
       stopS: 0, backS: 0, dockExit: null, spare: null, parked: null,
       stops: [], aboard: [], loaded: 0, unloaded: 0, jobCounter: 0,
@@ -479,11 +484,17 @@ export class Journey {
   }
 
   // ---- job planning ---------------------------------------------------------------------------
-  private rand(salt: number) { return hash3(this.st.jobCounter, this.st.city, salt, this.cfg.seed, 0x10b); }
+  private rand(salt: number) { return hash3(this.st.jobCounter, this.st.city, salt, this.visit.jobs, 0x10b); }
+  // The visit being played (visits.ts): its city, way in and seeds.
+  get visit() { return visitOf(this.cfg.seed, this.st.city); }
 
   private season() { return cargoSeason(this.climate); }
   climateOf(N: number): Climate {
-    const c = cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), this.startSeason);
+    // (A visit's spec may give its season, as if the journey had started so, and its weather.)
+    const spec = visitOf(this.cfg.seed, N).spec, SEASONS: Season[] = ["winter", "spring", "summer", "autumn"];
+    const start = spec?.season ? SEASONS[(((SEASONS.indexOf(spec.season) - N) % 4) + 4) % 4] : this.startSeason;
+    let c = cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), start);
+    if (spec?.weather) c = { ...c, weather: spec.weather, snowCover: c.season === "winter" && (spec.weather === "snow" || c.snowCover) };
     return this.cfg.weather ? c : { ...c, weather: "clear" };   // (weather off: clear skies; the season stays)
   }
 
@@ -805,7 +816,11 @@ export class Journey {
   // tractor-trailer, whose trailer would cut across the off-ramp's loop. (From the seed alone: the
   // truck it comes in is the one its freight needs.)
   private takesFreeway(N: number) {
-    return this.arriveOf(N).in === 0 && freewayMerge(citySeedOf(this.cfg.seed, N)) && (this.freightFor(N)?.truck ?? "box26") !== "tractor";
+    return this.arriveOf(N).in === 0 && freewayMerge(citySeedOf(this.cfg.seed, N)) && this.startTruck(N) !== "tractor";
+  }
+  // The truck city N starts in: its visit spec's, else the one its freight needs.
+  private startTruck(N: number): TruckModel {
+    return visitOf(this.cfg.seed, N).spec?.truck ?? this.freightFor(N)?.truck ?? "box26";
   }
   // Whether a stop is up on a garage's roof (a garage site, and a truck that goes up its ramps).
   garageStop(stop: Stop | undefined | null, model: TruckModel = this.st.truck) {
@@ -1684,8 +1699,8 @@ export class Journey {
     // organic layout fell back, straight, has none.)
     const P = freewayGate(citySeedOf(this.cfg.seed, N), fromStyle) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
     return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1), fromCurve,
-      seed: this.cfg.seed, city: N, kind: "exit", roadKey: roadKeyOf(way), frame: e, dEst, endH: inward * Math.PI / 2,
-      fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
+      seed: this.cfg.seed, city: N, kind: "exit", roadKey: roadKeyOf(way), driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, endH: inward * Math.PI / 2,
+      fromTruck, toTruck: this.startTruck(N1),
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
     }, ahead);
   }
@@ -1712,9 +1727,9 @@ export class Journey {
   private plans = new Map<number, CityPlan>();
   private styleOf(N: number) { return seasonalStyle(journeyStyle(this.cfg.seed, N), this.climateOf(N)); }
   private planOf(N: number): CityPlan {
-    const seed = citySeedOf(this.cfg.seed, N), have = this.plans.get(N);
-    if (have && have.seed === seed) { this.plans.delete(N); this.plans.set(N, have); return have; }
-    const plan = new CityPlan(seed, this.styleOf(N));
+    const seed = citySeedOf(this.cfg.seed, N), dressing = visitOf(this.cfg.seed, N).dressing, have = this.plans.get(N);
+    if (have && have.seed === seed && have.dressing === dressing) { this.plans.delete(N); this.plans.set(N, have); return have; }
+    const plan = new CityPlan(seed, this.styleOf(N), dressing);
     this.plans.set(N, plan);
     if (this.plans.size > 3) this.plans.delete(this.plans.keys().next().value!);
     return plan;
@@ -1741,7 +1756,7 @@ export class Journey {
       const e = gateEnd(this.plan.graph.gates[this.entry]!), h = e.h + Math.PI, fw = this.entry === 0 && !!this.plan.freeway;
       const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival", roadKey: roadKeyOf(this.arriveOf(st.city)), toSea: this.plan.outline.sea !== null, toFreeway: fw, toFreewayMerge: fw && this.takesFreeway(st.city),
+        seed: this.cfg.seed, city: st.city, kind: "arrival", roadKey: roadKeyOf(this.arriveOf(st.city)), driveSeed: this.visit.drive, toSea: this.plan.outline.sea !== null, toFreeway: fw, toFreewayMerge: fw && this.takesFreeway(st.city),
         frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
         fromTruck: st.truck, toTruck: st.truck,
         fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,

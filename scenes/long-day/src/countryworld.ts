@@ -865,8 +865,8 @@ export class CountryWorld {
           // to 17 rpm with the wind (each a little different); in a calm, or one in a dozen
           // stopped for service, it stands still.
           const [x, z] = this.L(sa, n), c = road.climateAt(sa, n), wind = this.windIn(road, c), yaw = this.windYaw(road);
-          const tk = Math.floor(a / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.seed, 0x3ab3) < 0.08;
-          const rpm = wind < 0.3 || stopped ? 0 : (9 + 8 * Math.min(1, (wind - 0.3) / 0.6)) * (0.94 + 0.12 * hash3(tk, road.inp.city, 8, road.inp.seed, 0x3ab4));
+          const tk = Math.floor(a / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.driveSeed, 0x3ab3) < 0.08;
+          const rpm = wind < 0.3 || stopped ? 0 : (9 + 8 * Math.min(1, (wind - 0.3) / 0.6)) * (0.94 + 0.12 * hash3(tk, road.inp.city, 8, road.inp.driveSeed, 0x3ab4));
           // (The transformer stands on the ground at its own spot, beside the tower's foot.)
           const [bx, bz] = TURBINE_BOX, cy = Math.cos(yaw), sy = Math.sin(yaw), dx = cy * bx + sy * bz, dz = -sy * bx + cy * bz;
           const h = this.L(sa, n)[2], bs = sa + dx * Math.cos(h) - dz * Math.sin(h), bn = n + dx * Math.sin(h) + dz * Math.cos(h);
@@ -1089,7 +1089,7 @@ export class CountryWorld {
       road.point(road.landFrom, 0, this.q); const x0 = this.q.x, z0 = this.q.z;
       road.point(road.landTo, 0, this.q);
       const H = Math.atan2(-(this.q.z - z0), this.q.x - x0);
-      this.windFor = road; this.windYawV = H + Math.PI / 2 + (hash2(road.inp.city, 5, road.inp.seed, 0x3ab2) - 0.5) * 1.05;
+      this.windFor = road; this.windYawV = H + Math.PI / 2 + (hash2(road.inp.city, 5, road.inp.driveSeed, 0x3ab2) - 0.5) * 1.05;
     }
     return this.windYawV;
   }
@@ -1097,7 +1097,7 @@ export class CountryWorld {
   // its own for each place (a clear day may be breezy or still; fog comes with still air).
   private windIn(road: CountryRoad, c: Climate) {
     const base = { clear: 0.45, cloudy: 0.6, overcast: 0.6, rain: 0.7, storm: 1.0, snow: 0.55, fog: 0.08 }[c.weather];
-    const r = hash3(road.inp.city, c === road.inp.fromClimate ? 0 : 1, 3, road.inp.seed, 0x3ab1);
+    const r = hash3(road.inp.city, c === road.inp.fromClimate ? 0 : 1, 3, road.inp.driveSeed, 0x3ab1);
     return THREE.MathUtils.clamp(base * (0.25 + r * 1.1), 0, 1);
   }
   private pylon(s: Batch, x: number, z: number, h: number) {

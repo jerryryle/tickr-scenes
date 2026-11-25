@@ -106,7 +106,9 @@ export class CityPlan {
   // A catalogue city's file (cityfile.ts), when the seed is one's key: the city is read from it.
   // Without one (the drafting tool, and tests of the generator), the city is generated from the seed.
   readonly file: CityFile | null;
-  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal) { this.file = cityByKey(seed) ?? null; this.name = cityName(seed, style); }
+  // `dressing`: its visit's dressing seed (visits.ts), which the parked cars along its kerbs and the
+  // boats moored on its river hash; the city itself is the same whatever it is.
+  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal, readonly dressing: number = seed) { this.file = cityByKey(seed) ?? null; this.name = cityName(seed, style); }
   // The street graph (citygraph.ts): built on first use, from the city's limits and gates.
   private g: CityGraph | null = null;
   private organicFailed = false;   // (an organic town was tried and lost a gate: see graph)
@@ -749,7 +751,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   for (const sid of T.streets) buildStreetPart(ground, solid, plan, G.streets[sid], ox, oz, city.length ? district : "residential", rnd);
   let stalls: StallPose[] = [], site: SiteLayout = { kind: "kerb" } as SiteLayout;
   for (const b of city) ({ stalls, site } = buildBlockPart(ground, solid, plan, b, ox, oz, rnd, takeSlot));
-  for (const id of G.blocksOver(cx, cz)) { const b = G.blocks[id]; if (b.water) { buildRiver(ground, b, ox, oz); buildBoats(solid, b, ox, oz, plan.seed, G); } }
+  for (const id of G.blocksOver(cx, cz)) { const b = G.blocks[id]; if (b.water) { buildRiver(ground, b, ox, oz); buildBoats(solid, b, ox, oz, plan.dressing, G); } }
   // (Not inside the city's limits, nor where the tile lies inside a block anchored in another
   // tile: a big block, or a river's stretch, drawn whole from there.)
   if (plan.shore.length) buildShore(ground, solid, plan, ox, oz);
@@ -1761,8 +1763,8 @@ export interface ParkedObstacle { x: number; z: number; hx: number; hz: number }
 const PAVEMENT_CACHE = new Map<string, PavementObstacle[]>();
 let pavementSeed = NaN;
 export function pavementObstacles(plan: CityPlan, bx: number, bz: number): PavementObstacle[] {
-  if (plan.seed !== pavementSeed) { PAVEMENT_CACHE.clear(); PARKED_CACHE.clear(); pavementSeed = plan.seed; }
-  const key = `${plan.seed}|${plan.style.id}|${bx},${bz}`;
+  if (plan.dressing !== pavementSeed) { PAVEMENT_CACHE.clear(); PARKED_CACHE.clear(); pavementSeed = plan.dressing; }
+  const key = `${plan.seed}|${plan.dressing}|${plan.style.id}|${bx},${bz}`;
   const hit = PAVEMENT_CACHE.get(key);
   if (hit) return hit;
   const out: PavementObstacle[] = [], parked: ParkedObstacle[] = [];
@@ -1787,7 +1789,7 @@ export function pavementObstacles(plan: CityPlan, bx: number, bz: number): Pavem
 const PARKED_CACHE = new Map<string, ParkedObstacle[]>();
 export function parkedObstacles(plan: CityPlan, bx: number, bz: number): ParkedObstacle[] {
   pavementObstacles(plan, bx, bz);
-  return PARKED_CACHE.get(`${plan.seed}|${plan.style.id}|${bx},${bz}`) ?? [];
+  return PARKED_CACHE.get(`${plan.seed}|${plan.dressing}|${plan.style.id}|${bx},${bz}`) ?? [];
 }
 
 export function kerbDoors(plan: CityPlan, bx: number, bz: number): (KerbDoor | null)[] {
@@ -2160,7 +2162,7 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
   const lane = cl - sg * 4.6, kerb = cl - sg * 5.9, b0 = a0 + 12, n = Math.floor((a1 - 12 - b0) / 6.5);
   for (let i = 0; i <= n; i++) box(g, b0 + i * 6.5, M, lane, 0.12, MH, 2.2, C.white);
   for (let i = 0; i < n; i++) {
-    const p = b0 + (i + 0.5) * 6.5, r = hash2(Math.round(p * 10), salt, 0x10ad, Math.round(a0));
+    const p = b0 + (i + 0.5) * 6.5, r = hash2(Math.round(p * 10), salt, (0x10ad + DC.plan.dressing) | 0, Math.round(a0));
     if (i % 3 === 1) box(g, p, CURB_H + 0.01, kerb + sg * 0.05, 6.3, 0.02, 0.1, C.yellow);
     if (r < 0.55 && !CS.storybook) {   // (the storybook city has none: it has only its own vehicles, storyvehicles.ts)
       // (Parked facing the traffic's way: +along.)

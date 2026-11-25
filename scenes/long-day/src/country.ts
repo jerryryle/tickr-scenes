@@ -277,6 +277,7 @@ export function citySeedOf(seed: number, N: number) { return cityFileOf(seed, N)
 interface CountryInput {
   seed: number; city: number; kind: "exit" | "arrival";
   roadKey: number;   // what the road's land, set pieces and roadside hash: its world road's key, one way or the other (journey.ts)
+  driveSeed: number; // what this drive's events hash (oncoming cars, cattle, the weather on the way): its visit's (visits.ts)
   frame: { x: number; z: number; h: number };
   dEst: number; endH: number;
   fromTruck: TruckModel; toTruck: TruckModel;
@@ -681,7 +682,7 @@ export class CountryRoad {
     this.trainT = rail ? rail.arrive + 2 : -1;
     // Oncoming cars: a meeting every 7 to 25 s, none while the crossing is closed, and none
     // within sight of either city (they would drive into its gate street).
-    const seed = this.inp.seed, city = this.inp.city, h = (k: number) => hash3(city, k, 0, seed, 0xc0a7);
+    const seed = this.inp.driveSeed, city = this.inp.city, h = (k: number) => hash3(city, k, 0, seed, 0xc0a7);
     this.meetings = [];
     for (let t = 8 + 10 * h(90), i = 0; t < this.D - 6; t += 7 + 18 * hash2(i++, 3, seed + city, 0xcab)) {
       const s = this.sAt(t);
@@ -996,7 +997,7 @@ export class CountryRoad {
   private herdM: HerdMember[] | null = null;
   herd(): HerdMember[] {
     if (this.herdM) return this.herdM;
-    const c = this.cattle!, A = c.sideA, B = -A, hh = (i: number, k: number) => hash3(i, k, Math.floor(c.cross), this.inp.seed, 0xc0e5);
+    const c = this.cattle!, A = c.sideA, B = -A, hh = (i: number, k: number) => hash3(i, k, Math.floor(c.cross), this.inp.driveSeed, 0xc0e5);
     const breed = Math.floor(hh(99, 0) * 3), out: HerdMember[] = [];
     let gate = 0;
     for (let i = 0; i <= c.n; i++) {

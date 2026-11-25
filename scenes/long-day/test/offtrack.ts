@@ -1,7 +1,7 @@
 // Test: a tractor-trailer never cuts through a corner's building as it turns. Fails if any part of
 // it (its cab, or its trailer at its own angle) comes CUT_MAX past the back of the sidewalk into a
-// block while it drives a city's streets. Seeds 4 and 16 drive one through a catalogue city about
-// 10 minutes in. Generated cities once showed the fault (3.5 m and 3.3 m in): right turns kerb lane
+// block while it drives a city's streets. It drives built visits: Midtown and Dry Gulch, each
+// started in a tractor (visits.ts). Generated cities once showed the fault (3.5 m and 3.3 m in): right turns kerb lane
 // to kerb lane, on the 6.5 m radius a box truck takes, the trailer's axles 13 m back off-tracking
 // across the corner's sidewalk and into the building on it. Its right turns are now wide ones
 // (route.ts), from the inner lane round onto the inner lane's far side. A spare tractor parked for
@@ -11,14 +11,17 @@
 // Args (all optional): minutes seed...
 import { readConfig } from "../src/env.ts";
 import { Journey, SIM_DT } from "../src/journey.ts";
+import { parseVisitSpec } from "../src/visits.ts";
 import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
 import { TILE } from "../src/citygraph.ts";
 {
   const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2), CUT_MAX = 0.3, errs: string[] = [];
-  const minutes = Number(argv[0] ?? 25), seeds = argv.length > 1 ? argv.slice(1).map(Number) : [4, 16];
+  // (Each run a seed, or "seed:spec" with its first visit built (visits.ts parseVisitSpec).)
+  const minutes = Number(argv[0] ?? 15), seeds: string[] = argv.length > 1 ? argv.slice(1) : ["1:city=metro-midtown,truck=tractor", "1:city=desert-dry-gulch,truck=tractor"];
   const TILE_R = 5;
-  for (const seed of seeds) {
-    const j = new Journey(readConfig({ seed } as any), 0, "autumn");
+  for (const run of seeds) {
+    const [seedS, spec] = [run.split(":")[0], run.split(":").slice(1).join(":")], seed = Number(seedS);
+    const j = new Journey(readConfig({ seed } as any), 0, "autumn", spec ? { 0: parseVisitSpec(spec) } : undefined);
     let driven = 0, worst = 0, where = "", lastMode = "", prevMode = "", scrubbed = false;
     for (let i = 0; i < minutes * 60 / SIM_DT; i++) {
       j.step();

@@ -15,7 +15,14 @@ Every city is a catalogue city: a file in `src/city-<style>/` listed in `src/wor
 graph. Country roads join the cities' gates in a fixed world graph (`src/world-roads.ts`, drafted
 by `tools/draftworld.ts` with `make draftworld`), and `src/visits.ts` plans each journey along it:
 which city comes next, by which road, and so which gate the truck leaves and enters by.
-`test/world.ts` checks the graph and runs the planner over many journeys. A city file holds
+`test/world.ts` checks the graph and runs the planner over many journeys. Each city of a journey is a visit:
+its city, its way in, and seeds for its jobs, its dressing (traffic, pedestrians, parked cars and
+boats), its vignettes and its drive out. A test may build any visit (`Journey`'s `visits`
+argument, `VisitSpec` in `src/visits.ts`), and a render its first one:
+
+```bash
+make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=coastal-seacliff,truck=tractor,season=winter,weather=snow"
+``` A city file holds
 the city's streets, gates and blocks; the rest of the city comes from rules that hash the file's
 `key`, the seed it was drafted from. `tools/draftcities.ts` drafts new city files with the
 generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit

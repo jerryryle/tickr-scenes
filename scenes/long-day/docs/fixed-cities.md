@@ -153,12 +153,13 @@ The design has seven parts, and the rest of this document uses these names for t
     2. It names the road the truck arrives by, which fixes the gate it enters at.
     3. It names the truck the visit starts with, and when the next truck swap comes and to which
        truck.
-    4. It sets the season, the weather and the time of day the visit starts.
+    4. It sets the season and the weather. The time of day follows the journey's clock, and a
+       render pins it with `DEBUG_HOUR`.
     5. Its jobs seed chooses the stops, cargo and loads.
     6. Its dressing seed chooses the traffic, parked cars, other vehicles, vignettes, crowd and
        boats.
-    7. Its gag seed chooses when the clowns and the other gags come, at the rate `humorFrequency`
-       sets.
+    7. Its gag seed chooses the street vignettes. The clowns come when a jam holds the truck, and
+       humorous cargo comes with the jobs at the rate `humorFrequency` sets.
     8. Its drive seed chooses the events on the country drive out, such as a train at a crossing
        and the weather along the road.
 28. The scene picks the journey seed at random when it starts, unless the `seed` setting fixes it.
@@ -310,7 +311,10 @@ every stage.
    `countrySeconds` is removed. The roads live in `src/world-roads.ts`, drafted by
    `tools/draftworld.ts`, beside the catalogue list in `src/world.ts`.
 4. **Visits.** The `Visit` record and its seeds, so dressing varies between visits to one city, and
-   tests that once searched for seeds build the visits they need.
+   tests that once searched for seeds build the visits they need (`Journey`'s `visits` argument,
+   and `DEBUG_VISIT` for a render). The seeds' defaults are the values the journey used before,
+   so a seed's jobs and drives play out as they did. `swap` still runs on seeds: no spec yet says
+   which truck a visit's jobs swap into.
 5. **Generator out of the scene.** The freeway, outline, sea and elevated lines become explicit
    fields, and `citygen.ts` and the outline trim move to `tools/`.
 6. **Explicit lots and street furniture.** `buildLots` and the furniture, signal-pole and stop-sign
