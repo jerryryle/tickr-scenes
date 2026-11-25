@@ -316,7 +316,7 @@ export class CountryWorld {
     const key = `${id}/${c.season}/${c.snowCover}/sb${q}`;
     let l = this.looks.get(key);
     if (!l) {
-      const r = this.lookOf(id, c), sb = BIOMES.storybook, w = q / STORY_STEPS;
+      const r = this.lookOf(id, c), sb = this.lookOf("storybook", c), w = q / STORY_STEPS;   // (the storybook's in the same climate: snowy where the real land is)
       const mix = (a: number, b: number, k: number) => this.tmpC.setHex(a).lerp(this.tmpC2.setHex(b), k).getHex();
       const candy = Math.round(w * 2 * r.greens.length);
       const greens = r.greens.map((g) => mix(g, 0x7ad04a, w * 0.5)), cgreens = r.cgreens.map((g) => mix(g, 0x7ad04a, w * 0.5));

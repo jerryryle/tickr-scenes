@@ -693,6 +693,7 @@ export class Truck {
     // update() sets them back after.)
     this.driverDoor.rotation.y = 0;
     if (this.trailer) this.trailer.rotation.y = 0;
+    for (const l of this.trailerLeaves) l.rotation.y = 0;
     this.root.updateMatrixWorld(true);
     const s = this.spec, bodyRegions = toonRegions(s);
     const invB = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), invT = this.trailer ? new THREE.Matrix4().copy(this.trailer.matrixWorld).invert() : null;
@@ -700,8 +701,10 @@ export class Truck {
     const trim = TOON_TRIM.map(([a, b]) => [new THREE.Color(a), new THREE.Color(b)] as const);
     const fridge = [TC.reefer, TC.grille, TC.black].map((h) => new THREE.Color(h)), cg = s.cargo;
     // (The cab and hood taller, the hood shorter.)
+    // (Blended in behind the cab's back, so what spans it, a day cab's side extenders, stays straight.)
+    const cabFrom = s.cargo ? s.cargo.x1 + 0.03 : s.cabBack - 0.3;
     const cabShape = (p: THREE.Vector3) => {
-      if (p.x > s.cabBack - 0.03 && p.y > s.cabFloor) p.y = s.cabFloor + (p.y - s.cabFloor) * TOON_CAB;
+      if (p.y > s.cabFloor) p.y = s.cabFloor + (p.y - s.cabFloor) * (1 + (TOON_CAB - 1) * THREE.MathUtils.smoothstep(p.x, cabFrom, s.cabBack));
       if (s.cab !== "cabover" && p.x > s.cabFront) p.x = s.cabFront + (p.x - s.cabFront) * TOON_HOOD;
     };
     const lift = (TOON_CAB - 1) * (s.cabTop - s.cabFloor);   // (the reefer's fridge unit rises with the cab's roof)
