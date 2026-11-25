@@ -29,6 +29,7 @@ import type { CattlePlan, HerdMember } from "./country.ts";
 import { Cow, Horse, Tractor } from "./farm.ts";
 import type { Coat } from "./farm.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
+import { storyTree } from "./storybook.ts";
 import { CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -58,6 +59,10 @@ export const BIOMES: Record<BiomeId, BiomeLook> = {
     fields: [0x8fb34a, 0x5d8a36, 0xd6bf66, 0x7a5a3a, 0x9ac05a], fence: true, barns: true },
   prairie: { ground: 0xb0b25c, ground2: 0x9aa64e, trees: ["broad", "shrub"], greens: [0x4f7a34, 0x5a8a3a], density: 0.12, rocks: 0.1, fence: true, turbines: true, cows: true },
   wetlands: { ground: 0x5a8a50, ground2: 0x6a9a58, trees: ["broad", "shrub", "shrub", "conifer"], greens: [0x3c6a3c, 0x4a7a40], density: 0.4, rocks: 0.05, ponds: true, pylons: true },
+  // The storybook city's country: rolling hills in bands of lime, mint, butter and pink, dotted
+  // with tuft trees, pancake trees and topiary (storybook.ts).
+  storybook: { ground: 0x98dc62, ground2: 0x6fd38a, trees: ["tuft", "tuft", "pancake", "spiral"], greens: [0xff7fb5, 0xff9a2e, 0xf2c230, 0x9a6cf0, 0x6fe0e8], density: 0.6, rocks: 0,
+    fields: [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0] },
 };
 const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf2c200, pole: 0x6b5a44, metal: 0x8d9296, dark: 0x1e2124,
   water: 0x2f78b8, sand: 0xd9c89a, rock: 0x8a8070, concrete: 0xa8a49a, green: 0x1e6b3a, red: 0xc0392b, ryder: 0xce1126, orange: 0xe8701a, wood: 0x8a5a34, trunk: 0x5a4030 };
@@ -301,7 +306,9 @@ export class CountryWorld {
     let l = this.looks.get(key);
     if (!l) {
       const b = BIOMES[id];
-      l = { ...b, ground: seasonGround(b.ground, c), ground2: seasonGround(b.ground2, c), greens: seasonGreens(b.greens, c), cgreens: seasonGreens(b.greens, c, true),
+      // (The storybook country's trees keep their colours in every season, as its town's do.)
+      const keep = id === "storybook";
+      l = { ...b, ground: seasonGround(b.ground, c), ground2: seasonGround(b.ground2, c), greens: keep ? b.greens : seasonGreens(b.greens, c), cgreens: keep ? b.greens : seasonGreens(b.greens, c, true),
         fields: b.fields?.map((f) => seasonGround(f, c)) };
       this.looks.set(key, l);
     }
@@ -1130,6 +1137,15 @@ export class CountryWorld {
   }
   // A big overhead-height highway sign on two posts (big enough to read across the room).
   private greenSign(s: Batch, p: RoadPiece, text: string) {
+    // (The storybook city's own, welcoming and leaving: magenta, edged in butter, on striped posts.)
+    if ((p.kind === "welcome" || p.kind === "leave") && p.variant === 1) {
+      const n = p.n ?? 11, uv = this.slot(text, { bg: "#d83a9a", fg: "#fff3dc", logo: false });
+      for (const k of [-5.4, 5.4]) for (let i = 0; i < 10; i++) this.rbox(s, p.s + 0.27, n + k, 0.64 * (i + 0.5), 0.26 - (i % 2) * 0.02, 0.64, 0.26 - (i % 2) * 0.02, i % 2 ? 0xffffff : 0xe8333a);
+      this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, 0xd83a9a);
+      this.rbox(s, p.s + 0.08, n, 5.2, 0.08, 2.75, 13.6, 0xfbe58a);
+      if (uv) this.signAt(pieceSigns(p)[0], uv);
+      return;
+    }
     const n = p.n ?? 11, uv = this.slot(text, { bg: "#1e6b3a", fg: "#ffffff", logo: false });
     for (const k of [-5.4, 5.4]) this.rbox(s, p.s + 0.27, n + k, 3.2, 0.25, 6.4, 0.25, 0x8d9296);   // behind the board
     this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, CW.green);
@@ -1536,6 +1552,7 @@ export function landTree(s: Batch, x: number, z: number, kind: string, green: nu
     if (kind === "shrub") s.ico(x, 0.35 * k, z, 0.7 * k, 0x6e5a48, 0.6, rnd() * 6); else bareTree(s, x, 0, z, 4.6 * k, rnd() * 6);
     return base + under(k);
   }
+  if (kind === "tuft" || kind === "pancake" || kind === "spiral" || kind === "droop") { storyTree(s, kind, x, 0, z, 6 * k, 1.7 * k, green); return base + 0.4 * k; }
   switch (kind) {
     case "conifer": s.cyl(x, 0.6 * k, z, 0.2 * k, 1.2 * k, CW.trunk, 5); s.cone(x, 3.6 * k, z, 1.7 * k, 5.5 * k, green, 7, 0, x * 1.7 + z); break;   // (turned its own way: two alike side by side could share a plane, which flickers)
     case "cypress": s.cyl(x, 1 * k, z, 0.25 * k, 2 * k, CW.trunk, 5); s.ico(x, 3.4 * k, z, 2.2 * k, green, 0.55, rnd() * 6); s.ico(x + 0.8, 3.0 * k, z, 1.6 * k, shade(green, 1.1), 0.5, rnd() * 6); break;

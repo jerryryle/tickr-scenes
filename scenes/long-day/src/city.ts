@@ -2419,7 +2419,7 @@ function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number,
   const G = plan.graph, O = plan.outline, c = plan.climate, id = BIOME_OF[plan.style.id], b = BIOMES[id];
   const g0 = c ? seasonGround(b.ground, c) : b.ground, g1 = c ? seasonGround(b.ground2, c) : b.ground2;
   const fields = b.fields?.map((f) => c ? seasonGround(f, c) : f);
-  const greens = c ? seasonGreens(b.greens, c) : b.greens, cgreens = c ? seasonGreens(b.greens, c, true) : b.greens;
+  const keep = id === "storybook", greens = c && !keep ? seasonGreens(b.greens, c) : b.greens, cgreens = c && !keep ? seasonGreens(b.greens, c, true) : b.greens;
   const ox = cx * BLOCK, oz = cz * BLOCK, line = plan.elevatedSides(cz).includes(cx < (CITY_LO + CITY_HI) / 2 ? -1 : 1);
   // The storybook city's gate: its arch over the street in, just inside where the road arrives.
   const eg = plan.style.storybook ? G.gates[0] : null;
