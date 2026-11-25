@@ -230,8 +230,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // they are built while it is still out on the road, not as it arrives: on a board too slow to
     // build them then, the fog that hides what isn't built would roll in over the town.)
     if (st.mode === "inbound") {
-      const g = journey.plan.entryGate, ix = -[1, 0, -1, 0][g.dir], iz = -[0, -1, 0, 1][g.dir];
-      for (let k = 0; k <= ENTRY_PREFETCH && cells.length < PREFETCH_MAX; k++) ring(g.ix + ix * k, g.iz + iz * k, STREAM_RADIUS);
+      const g = journey.plan.graph.gates[journey.entryGate]!, n = journey.plan.graph.nodes[g.node], ix = -[1, 0, -1, 0][g.dir], iz = -[0, -1, 0, 1][g.dir];
+      for (let k = 0; k <= ENTRY_PREFETCH && cells.length < PREFETCH_MAX; k++) ring(Math.floor(n.x / BLOCK) + ix * k, Math.floor(n.z / BLOCK) + iz * k, STREAM_RADIUS);
     }
     for (const p of st.stops.slice(0, PREFETCH_STOPS)) if (p.site && cells.length < PREFETCH_MAX) ring(p.site.bx, p.site.bz, STREAM_RADIUS);
     if (cells.length > PREFETCH_MAX) cells.length = PREFETCH_MAX;

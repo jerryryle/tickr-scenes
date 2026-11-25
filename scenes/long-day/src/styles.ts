@@ -2,9 +2,8 @@
 // cities feel like different places rather than reskins. A profile sets palettes, trees, how big
 // downtown is and how tall it grows, the district mix, which facade tiles and residential forms
 // it favours, how dense its signage is, a few signature features, and the skyline backdrop.
-import { hash2, mulberry32 } from "./rng.ts";
-import { DEBUG_STYLE } from "./debug.ts";
-import { cityByKey } from "./visits.ts";
+import { hash2 } from "./rng.ts";
+import { cityByKey, visitOf } from "./visits.ts";
 import { STYLE_COASTAL } from "./city-coastal/coastal-style.ts";
 import { STYLE_METRO } from "./city-metro/metro-style.ts";
 import { STYLE_DESERT } from "./city-desert/desert-style.ts";
@@ -60,29 +59,14 @@ export const STYLES: Record<StyleId, CityStyle> = {
   port: STYLE_PORT,
   storybook: STYLE_STORYBOOK,
 };
-const STYLE_IDS = (Object.keys(STYLES) as StyleId[]).filter((id) => !STYLES[id].storybook);   // these are the real cities' styles
 
-// The storybook city comes now and then: a city of the journey is the fantasy town in place of the real
-// style its turn would have had. It is never one of the first two cities (the journey starts somewhere real),
-// never within STORYBOOK_GAP cities of the last one, and otherwise comes with STORYBOOK_ODDS: about one
-// city in eight over a long journey. isStorybookCity is a pure function of the seed.
+// The storybook city comes now and then (visits.ts plans it): never one of the first two cities, never
+// within STORYBOOK_GAP cities of the last one, and past that it comes due with STORYBOOK_ODDS at each
+// city, about one city in eight over a long journey.
 export const STORYBOOK_ODDS = 1 / 2, STORYBOOK_GAP = 6;
-export function isStorybookCity(seed: number, city: number): boolean {
-  let last = -Infinity;
-  for (let k = 2; k <= city; k++) if (k - last > STORYBOOK_GAP && hash2(seed, k, 0x5b, 0x5e055) < STORYBOOK_ODDS) last = k;
-  return last === city;
-}
+export function isStorybookCity(seed: number, city: number): boolean { return !!STYLES[visitOf(seed, city).city.style].storybook; }
 
-// This picks the style for city number `city` of a journey: the journey cycles through the six real styles in
-// an order shuffled from its seed, so no two cities in a row share a style and each style comes
-// round every six cities; now and then (isStorybookCity) the storybook city takes a city's turn.
-export function journeyStyle(seed: number, city: number): CityStyle {
-  if (DEBUG_STYLE && DEBUG_STYLE in STYLES) return STYLES[DEBUG_STYLE as StyleId];
-  if (isStorybookCity(seed, city)) return STYLES.storybook;
-  const order = [...STYLE_IDS];   // every style once per six cities, in a shuffled order
-  const r = mulberry32(seed ^ 0x57f1e5);
-  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-  return STYLES[order[((city % 6) + 6) % 6]];
-}
+// The style of city number `city` of a journey: its catalogue city's (visits.ts).
+export function journeyStyle(seed: number, city: number): CityStyle { return STYLES[visitOf(seed, city).city.style]; }
 // A city's name: a catalogue city's own (visits.ts), else one of its style's by hash.
 export function cityName(seed: number, style: CityStyle) { return cityByKey(seed)?.name ?? style.names[Math.floor(hash2(seed, 9, 0, 0x4a3e) * style.names.length)]; }

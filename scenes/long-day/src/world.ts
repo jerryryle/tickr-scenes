@@ -1,6 +1,13 @@
-// The world (docs/fixed-cities.md): every catalogue city. This list is the catalogue: a city is
-// in it once its file is imported and listed here.
+// The world (docs/fixed-cities.md): every catalogue city, and the country roads joining them
+// (world-roads.ts). This list is the catalogue: a city is in it once its file is imported and
+// listed here.
 import type { CityFile } from "./cityfile.ts";
+
+// A country road (requirements 10 and 11): it joins gate `a.gate` of city `a.city` to gate `b.gate`
+// of `b.city`, each gate serving this road alone. `seconds`: the drive's own time, gate to gate.
+// `key`: what its land and set pieces hash. `oneway`: driven only from a to b (into a freeway
+// city's way in, where the freeway runs out of town).
+export interface WorldRoad { id: string; a: { city: string; gate: string }; b: { city: string; gate: string }; seconds: number; key: number; oneway?: true }
 import { CITY_COASTAL_BAYVIEW } from "./city-coastal/coastal-city-bayview.ts";
 import { CITY_COASTAL_FOGCREST } from "./city-coastal/coastal-city-fogcrest.ts";
 import { CITY_COASTAL_GOLDEN_HOLLOW } from "./city-coastal/coastal-city-golden-hollow.ts";

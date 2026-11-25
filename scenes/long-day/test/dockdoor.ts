@@ -14,7 +14,7 @@ import { Journey, SIM_DT } from "../src/journey.ts";
 import { DockFx } from "../src/dockfx.ts";
 {
   const proc = (globalThis as any).process;
-  const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:12", "0:16"];   // (seed 0's first tractor dock is at ~15 min)
+  const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:12", "4:13"];   // (seed 4's first tractor dock is at ~12 min)
   const errs: string[] = [];
   let problems = 0;
   const fail = (m: string) => { problems++; if (errs.length < 10) errs.push(m); };

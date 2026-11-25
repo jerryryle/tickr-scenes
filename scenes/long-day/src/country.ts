@@ -276,6 +276,7 @@ export function citySeedOf(seed: number, N: number) { return cityFileOf(seed, N)
 // the start of a city's slot needs; the drive before it is the last city's).
 interface CountryInput {
   seed: number; city: number; kind: "exit" | "arrival";
+  roadKey: number;   // what the road's land, set pieces and roadside hash: its world road's key, one way or the other (journey.ts)
   frame: { x: number; z: number; h: number };
   dEst: number; endH: number;
   fromTruck: TruckModel; toTruck: TruckModel;
@@ -317,7 +318,7 @@ export class CountryRoad {
 
   constructor(readonly inp: CountryInput, ahead = false) {
     const { seed, city } = inp;
-    this.key = `${inp.kind}/${seed}/${city}/${inp.frame.x.toFixed(2)},${inp.frame.z.toFixed(2)},${inp.frame.h.toFixed(4)}/${inp.dEst.toFixed(1)}`;
+    this.key = `${inp.kind}/${seed}/${city}/${inp.roadKey}/${inp.frame.x.toFixed(2)},${inp.frame.z.toFixed(2)},${inp.frame.h.toFixed(4)}/${inp.dEst.toFixed(1)}`;
     this.fc = Math.cos(inp.frame.h); this.fs = Math.sin(inp.frame.h);
     const arrival = inp.kind === "arrival";
     this.toBiome = BIOME_OF[inp.toStyle.id]; this.fromBiome = arrival ? this.toBiome : BIOME_OF[inp.fromStyle.id];
@@ -336,7 +337,7 @@ export class CountryRoad {
   finish() { if (this.job) { drain(this.job); this.job = null; } }
   private *build(): Steps<void> {
     const inp = this.inp, { seed, city } = inp, arrival = inp.kind === "arrival", self = this as Writable<CountryRoad>;
-    const h = (k: number) => hash3(city, k, 0, seed, 0xc0a7);
+    const h = (k: number) => hash3(0, k, 0, inp.roadKey, 0xc0a7);
     let SB = 0;
     if (!arrival) {
       const dur = Math.max(20, inp.dEst);
@@ -886,7 +887,7 @@ export class CountryRoad {
     const y = this.baseAt(s), sm = this.smAt(s), an = Math.abs(n);
     let g = y;
     if (sm > 0 && an > 11) {
-      const seed = this.inp.seed + this.inp.city * 977;
+      const seed = this.inp.roadKey;
       const noise = valueNoise(s / 95, n / 70, seed, 0x41) + 0.4 * valueNoise(s / 38, n / 30, seed, 0x42);
       g += sm * smooth(Math.min(1, (an - 11) / 40)) * SIDE_HILL * (noise * 0.75 + 0.2);
     }
@@ -1077,7 +1078,7 @@ export class CountryRoad {
     const k = THREE.MathUtils.clamp((to ? s - b0 : b1 - s) / (b1 - b0), 0, 1);
     return k * k * (1.6 - 0.6 * k);   // (it is eased in: k², softened so the last stretch isn't sudden)
   }
-  isFrom(s: number, n = 0) { return hash2(Math.floor(s / 12), Math.floor(n / 12), this.inp.seed, 0xb10) >= this.blendAt(s); }
+  isFrom(s: number, n = 0) { return hash2(Math.floor(s / 12), Math.floor(n / 12), this.inp.roadKey, 0xb10) >= this.blendAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.isFrom(s, n) ? this.fromBiome : this.toBiome; }
   // The weather at drive time t: the last city's until a third of the way, then the next city's.
   weatherAt(t: number): WeatherMix {
@@ -1099,7 +1100,7 @@ export class CountryRoad {
       const p = this.pieces[i];
       const stop = this.stops.find((x) => x.kind === p.kind);
       const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome";
-      if (!stop && !isSign && hash2(i, Math.floor(p.s), this.inp.seed, 0x5a0) > 0.7) continue;
+      if (!stop && !isSign && hash2(i, Math.floor(p.s), this.inp.roadKey, 0x5a0) > 0.7) continue;
       const F: Record<PieceKind, [number, number, number]> = {
         leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],

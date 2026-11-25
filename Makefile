@@ -29,6 +29,9 @@
 #   make draft SCENE=long-day ARGS="<style> [candidates]"
 #                              draft five new city files of a style into
 #                              scenes/long-day/src/city-<style>/ (tools/draftcities.ts)
+#   make draftworld SCENE=long-day [ARGS="<seed>"]
+#                              draft the world graph's roads into
+#                              scenes/long-day/src/world-roads.ts (tools/draftworld.ts)
 #   make maps SCENE=long-day [ARGS="<city id> ..."]
 #                              write each catalogue city's layered SVG map into
 #                              build/<scene>-maps/city-<style>/ (tools/maps.ts), TEST_JOBS at a time
@@ -62,7 +65,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft maps FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft draftworld maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -197,6 +200,13 @@ draft: | $(DEPS)
 	@$(FLATTEN) scenes/$(SCENE)/tools/draftcities.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts
 	@$(call node-bundle,build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts,build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs)
 	@node build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs $(ARGS)
+
+# The world graph's drafting tool (scenes/<scene>/tools/draftworld.ts), run from the repo root.
+draftworld: | $(DEPS)
+	@mkdir -p build/$(SCENE)-draftworld
+	@$(FLATTEN) scenes/$(SCENE)/tools/draftworld.ts --root scenes/$(SCENE)/src > build/$(SCENE)-draftworld/scene.ts
+	@$(call node-bundle,build/$(SCENE)-draftworld/scene.ts,build/$(SCENE)-draftworld/draftworld.mjs)
+	@node build/$(SCENE)-draftworld/draftworld.mjs $(ARGS)
 
 # The city maps (scenes/<scene>/tools/maps.ts), each city in a process of its own, TEST_JOBS at a
 # time; ARGS names the cities to draw, all of them by default.

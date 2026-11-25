@@ -15,6 +15,9 @@ import { signalPoles, stopSignPosts } from "../src/signals.ts";
 import { PLACED } from "../src/geom.ts";
 import { BLOCK, RING } from "../src/grid.ts";
 import { STYLES } from "../src/styles.ts";
+import { CATALOGUE } from "../src/world.ts";
+import { WORLD_PLACES, WORLD_ROADS } from "../src/world-roads.ts";
+import { cityById } from "../src/visits.ts";
 
 // Coordinates to the centimetre for what the plan holds, to the decimetre for what is built on it.
 const cmOf = (v: number) => String(Math.round(v * 100) / 100);
@@ -142,11 +145,14 @@ export function citySvg(F: CityFile): string {
     add("furniture", `<circle id="${kind}-${e.id}" cx="${dmOf(e.t.x)}" cy="${dmOf(e.t.z)}" r="${dmOf(Math.max(0.35, Math.min(e.t.r, 2)))}" fill="${FURNITURE_FILL[kind] ?? "#555"}"><title>${kind}</title></circle>`);
   }
 
-  // Gates.
-  F.gates.forEach((g, i) => {
+  // Gates, each with the world road it serves (world-roads.ts) and the city at the road's far end.
+  F.gates.forEach((g) => {
     if (!g) return;
-    add("gates", `<circle id="gate-${g.id}" cx="${cmOf(g.x)}" cy="${cmOf(g.z)}" r="6" fill="#f2c200" stroke="#000" stroke-width="0.8"><title>gate ${g.id}${i === 0 ? " (the way in)" : ""}</title></circle>`);
-    add("gates", `<text id="gate-label-${g.id}" x="${cmOf(g.x)}" y="${cmOf(g.z - 9)}" font-size="8" text-anchor="middle" fill="#000">${g.id}</text>`);
+    const r = WORLD_ROADS.find((x) => (x.a.city === F.id && x.a.gate === g.id) || (x.b.city === F.id && x.b.gate === g.id));
+    const far = r ? cityById(r.a.city === F.id ? r.b.city : r.a.city)! : null, into = r?.oneway && r.b.city === F.id;
+    const label = r ? `${g.id}: ${r.id} to ${far!.name}${r.oneway ? into ? " (in only)" : " (out only)" : ""}` : `${g.id}: no road`;
+    add("gates", `<circle id="gate-${g.id}" cx="${cmOf(g.x)}" cy="${cmOf(g.z)}" r="6" fill="${r ? "#f2c200" : "#bbb"}" stroke="#000" stroke-width="0.8"><title>gate ${esc(label)}</title></circle>`);
+    add("gates", `<text id="gate-label-${g.id}" x="${cmOf(g.x)}" y="${cmOf(g.z - 9)}" font-size="8" text-anchor="middle" fill="#000">${esc(label)}</text>`);
   });
 
   const m = 40, { x0, z0, x1, z1 } = G.bounds, w = x1 - x0 + 2 * m, h = z1 - z0 + 2 * m;
@@ -168,3 +174,31 @@ export function citySvg(F: CityFile): string {
 
 // Where a city's map is written: build output, in a folder for its style as its file is.
 export const mapPath = (F: CityFile) => `build/long-day-maps/city-${F.style}/${F.style}-city-${F.id.slice(F.style.length + 1)}.svg`;
+
+// The world map (requirement 21): the world graph alone, one node a city at its place
+// (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and
+// seconds; a road driven one way only has an arrow at the city it runs into.
+const STYLE_FILL: Record<string, string> = { coastal: "#2f78b8", metro: "#6b6b8a", desert: "#d9a441", brick: "#a0522d", mainstreet: "#4f9a3c", port: "#1f6f78", storybook: "#d83a9a" };
+export function worldSvg(): string {
+  // (Scaled to fit 1400 units across, the places' own units being arbitrary.)
+  const span = Math.max(1, ...Object.values(WORLD_PLACES).flat()), S = 1400 / span, at = (id: string) => WORLD_PLACES[id].map((v) => v * S + 80) as [number, number];
+  const xs = CATALOGUE.map((F) => at(F.id)[0]), zs = CATALOGUE.map((F) => at(F.id)[1]), w = Math.max(...xs) + 80, h = Math.max(...zs) + 80;
+  const out = [`<?xml version="1.0" encoding="UTF-8"?>`, `<!-- The world graph, drawn from src/world-roads.ts by tools/maps.ts (make maps). Build output. -->`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`,
+    `<defs><marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker></defs>`,
+    `<rect id="backdrop" width="${w}" height="${h}" fill="#f4f1e8"/>`, `<g id="roads" inkscape:groupmode="layer" inkscape:label="Roads">`];
+  for (const r of WORLD_ROADS) {
+    const [ax, az] = at(r.a.city), [bx, bz] = at(r.b.city);
+    out.push(`<line id="${r.id}" x1="${ax}" y1="${az}" x2="${bx}" y2="${bz}" stroke="#555" stroke-width="2"${r.oneway ? ` marker-end="url(#arrow)"` : ""}><title>${r.id}: ${r.a.city} ${r.a.gate} to ${r.b.city} ${r.b.gate}, ${r.seconds} s</title></line>`);
+    out.push(`<text id="${r.id}-label" x="${(ax + bx) / 2}" y="${(az + bz) / 2 - 3}" font-size="9" text-anchor="middle" fill="#333">${r.id} ${r.seconds}s</text>`);
+  }
+  out.push(`</g>`, `<g id="cities" inkscape:groupmode="layer" inkscape:label="Cities">`);
+  for (const F of CATALOGUE) {
+    const [x, z] = at(F.id);
+    out.push(`<circle id="${F.id}" cx="${x}" cy="${z}" r="14" fill="${STYLE_FILL[F.style] ?? "#777"}" stroke="#000" stroke-width="1"><title>${esc(F.name)} (${F.style})</title></circle>`);
+    out.push(`<text id="${F.id}-label" x="${x}" y="${z + 27}" font-size="11" text-anchor="middle" fill="#000">${esc(F.name)}</text>`);
+  }
+  out.push(`</g>`, `<g id="markup" inkscape:groupmode="layer" inkscape:label="Markup"></g>`, `</svg>`, ``);
+  return out.join("\n");
+}
+export const worldMapPath = "build/long-day-maps/world.svg";

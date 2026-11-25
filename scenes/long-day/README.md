@@ -12,8 +12,10 @@ make check-long-day     # type-check, load-test and run the tests
 
 Every city is a catalogue city: a file in `src/city-<style>/` listed in `src/world.ts`
 (`docs/fixed-cities.md` has the design). `src/cityfile.ts` reads a city file into its street
-graph, and `src/visits.ts` says which catalogue city each city of a journey is: the journey's
-style order gives its style, and that style's five cities take their turns. A city file holds
+graph. Country roads join the cities' gates in a fixed world graph (`src/world-roads.ts`, drafted
+by `tools/draftworld.ts` with `make draftworld`), and `src/visits.ts` plans each journey along it:
+which city comes next, by which road, and so which gate the truck leaves and enters by.
+`test/world.ts` checks the graph and runs the planner over many journeys. A city file holds
 the city's streets, gates and blocks; the rest of the city comes from rules that hash the file's
 `key`, the seed it was drafted from. `tools/draftcities.ts` drafts new city files with the
 generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit

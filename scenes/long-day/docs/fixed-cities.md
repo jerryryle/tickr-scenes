@@ -70,14 +70,17 @@ The design has seven parts, and the rest of this document uses these names for t
 
 9. The world graph is connected. It is stored in the world file and changes only when cities are
    added or removed.
-10. Each edge has one fixed country road, driven either way. The road's length, curves, biomes, set
-    pieces and railroad crossing belong to the edge, and its length need not match any geographic
-    distance. Weather, season, traffic and the truck-stop swap still vary per drive. The
-    `countrySeconds` setting is removed.
-11. Each end of an edge uses its own gate of that city, and a gate serves exactly one edge. A city
-    has as many gates as its edges need. When an added city needs more edges, existing cities gain
-    gates by hand edit.
-12. Every city has at least four edges, and its neighbours span at least three styles. Any city can
+10. Each edge has one fixed country road, with its own drive time in seconds (60 to 300 as drafted)
+    that need not match any geographic distance. Each direction along it is a fixed road of its
+    own: its curves, biomes, set pieces and railroad crossing hash the edge's key and the
+    direction, so a drive along one edge one way is the same every time. Weather, season, traffic
+    and the truck-stop swap still vary per drive. The `countrySeconds` setting is removed, and the
+    next city starts when the truck arrives.
+11. Each end of an edge uses its own gate of that city, and a gate serves exactly one edge. The two
+    gates face different ways. A city has as many gates as its edges need. When an added city needs
+    more edges, existing cities gain gates by hand edit. A freeway city's way in (gate `g0`, where
+    the freeway runs out of town) takes one edge, driven only into that city.
+12. Every city has at least four edges (five as drafted), and its neighbours span at least three styles. Any city can
     reach any other in four drives or fewer.
 
 ### The visit planner
@@ -302,8 +305,10 @@ every stage.
    3 with the world graph they show. Until stage 6 gives blocks explicit lots, the lots,
    buildings and trees on a map are where the city's builders put them, and their ids number
    them within their block.
-3. **World graph and visit planner.** Roads with fixed lengths, per-edge gates, the planner and its
-   simulation test. `countrySeconds` is removed.
+3. **World graph and visit planner.** Roads with fixed drive times, per-edge gates, the planner and
+   its simulation test (`test/world.ts`), the world map, and gate labels on the city maps.
+   `countrySeconds` is removed. The roads live in `src/world-roads.ts`, drafted by
+   `tools/draftworld.ts`, beside the catalogue list in `src/world.ts`.
 4. **Visits.** The `Visit` record and its seeds, so dressing varies between visits to one city, and
    tests that once searched for seeds build the visits they need.
 5. **Generator out of the scene.** The freeway, outline, sea and elevated lines become explicit

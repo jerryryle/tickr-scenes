@@ -735,7 +735,7 @@ export class CountryWorld {
     this.ox = this.p.x; this.oz = this.p.z;
     this.quads = []; this.slots = []; this.ads = false; this.plates = new PlateSet();
     const g = new Batch(), s = new Batch(), glow = this.glow, spins: TurbineSpin[] = [];
-    const rnd = mulberry32(Math.floor(hash3(i, road.inp.city, 7, road.inp.seed, 0x5e9) * 4294967296));
+    const rnd = mulberry32(Math.floor(hash3(i, 0, 7, road.inp.roadKey, 0x5e9) * 4294967296));
     // Land: a mesh over the ground's heights, in rows across the road, coloured by cell: by
     // biome, in bands (fields in farm country), sand and sea on a coast.
     const land = (a: number) => a >= road.landFrom && a <= road.landTo;
@@ -763,7 +763,7 @@ export class CountryWorld {
             const A = c * 3, B = (c + 1) * 3;
             // Steep ground (a cutting, a hillside over a portal) is bare rock.
             const ys = [prev[A + 1], prev[B + 1], row[A + 1], row[B + 1]], rise = Math.max(...ys) - Math.min(...ys);
-            if (rise > 0.75 * Math.min(cols[c + 1] - cols[c], a - pa) && rise > 1.5) color = shade(CW.rock, 0.92 + 0.16 * hash2(Math.floor(pa), c, road.inp.seed, 0x70c));
+            if (rise > 0.75 * Math.min(cols[c + 1] - cols[c], a - pa) && rise > 1.5) color = shade(CW.rock, 0.92 + 0.16 * hash2(Math.floor(pa), c, road.inp.roadKey, 0x70c));
             g.tri(prev[A], prev[A + 1], prev[A + 2], prev[B], prev[B + 1], prev[B + 2], row[B], row[B + 1], row[B + 2], color);
             g.tri(prev[A], prev[A + 1], prev[A + 2], row[B], row[B + 1], row[B + 2], row[A], row[A + 1], row[A + 2], color);
           }
@@ -819,12 +819,12 @@ export class CountryWorld {
             const [ax, az] = arm(a, k), [bx, bz] = arm(b, k);
             this.beam(s, ax, gy + 8.2, az, bx, gb + 8.2, bz, 0.05, 0.05, WIRE);
           }
-        } else if (!hasPole(b) && hash3(a, dir, road.inp.city, road.inp.seed, 0xd1e) < 0.35) {
+        } else if (!hasPole(b) && hash3(a, dir, 0, road.inp.roadKey, 0xd1e) < 0.35) {
           // Broken: each wire drops straight down from its end of the crossarm, and a few metres
           // of it trail off along the line on the ground.
           const fx = Math.cos(h) * dir, fz = -Math.sin(h) * dir;
           for (const k of [-0.9, 0.9]) {
-            const [ax, az] = arm(a, k), tail = 2 + hash3(a, dir, k > 0 ? 1 : 2, road.inp.seed, 0x7a1) * 4;
+            const [ax, az] = arm(a, k), tail = 2 + hash3(a, dir, k > 0 ? 1 : 2, road.inp.roadKey, 0x7a1) * 4;
             s.box(ax + fx * 0.05, 4.1, az + fz * 0.05, 0.05, 8.2, 0.05, WIRE, h);
             s.box(ax + fx * (0.05 + tail / 2), 0.03, az + fz * (0.05 + tail / 2), tail, 0.05, 0.05, WIRE, Math.atan2(-fz, fx) + (k > 0 ? 0.15 : -0.1));
           }
@@ -891,7 +891,7 @@ export class CountryWorld {
         this.rbox(g, (w0 + w1) / 2, 0, wy - 0.05, w1 - w0, 0.1, 2000, CW.water);
         // Wave streaks, lighter and darker, scattered over it (each at a height of its own a
         // few cm up, so no two share a plane where they cross).
-        const wr = mulberry32(Math.floor(hash3(i, road.inp.city, 11, road.inp.seed, 0x3a7e) * 4294967296));
+        const wr = mulberry32(Math.floor(hash3(i, 0, 11, road.inp.roadKey, 0x3a7e) * 4294967296));
         const n = Math.round((w1 - w0) * 1.4);
         for (let k = 0; k < n; k++) {
           const a = w0 + 3 + wr() * Math.max(0.1, w1 - w0 - 6), nn = (wr() - 0.5) * 520, ln = 2 + wr() * 6;
@@ -972,7 +972,7 @@ export class CountryWorld {
   // the biome's ground in hashed bands, or a patchwork of fields (whole columns, 96 m long); sand
   // and sea on a coast.
   private landColor(road: CountryRoad, sm: number, a: number, n0: number, n1: number) {
-    const nm = (n0 + n1) / 2, side = nm < 0 ? -1 : 1, an = Math.abs(nm), seed = road.inp.seed;
+    const nm = (n0 + n1) / 2, side = nm < 0 ? -1 : 1, an = Math.abs(nm), seed = road.inp.roadKey;
     const bio = this.look(road, sm, side * 50);
     if (side < 0 && road.coastAt(sm) > 0.5) { if (nm < SEA_N) return CW.water; if (nm < COAST_N) return CW.sand; }
     if (an > SIDE_W) return bio.ground;
@@ -1006,7 +1006,7 @@ export class CountryWorld {
   // ground at one end and its lower rail lies in the grass, and at the end of a run the post that
   // held them lies beside its stump.
   private fence(s: Batch, road: CountryRoad, a: number, side: -1 | 1, land: (a: number) => boolean) {
-    const N = side * 14.5, seed = road.inp.seed, city = road.inp.city;
+    const N = side * 14.5, seed = road.inp.roadKey, city = 0;
     const bay = (i: number) => {
       const b0 = i * 6, b1 = b0 + 6;
       return land(b0) && land(b1) && !!this.look(road, b0, side * 40).fence && road.clearAt(b0, side * 14) && road.clearAt(b1, side * 14)
@@ -1190,7 +1190,7 @@ export class CountryWorld {
         for (let k = 0; k < 3; k++) {
           const a = S + 30 + k * 110, n = (k % 2 ? -1 : 1) * 22, sd = Math.sign(n);
           const pool = [...AD_BILLBOARD, ...AD_BATON, ...AD_BATON, ...AD_RYDER];
-          const ad = pool[Math.floor(hash2(k, Math.floor(S), this.road!.inp.seed, 0xad) * pool.length)];
+          const ad = pool[Math.floor(hash2(k, Math.floor(S), this.road!.inp.roadKey, 0xad) * pool.length)];
           for (const d of [-3, 3]) this.rbox(s, a + 0.51, n + d * sd, 3.2, 0.3, 6.4, 0.3, 0x5a5f66);   // behind the board
           this.rbox(s, a + 0.2, n, 9.0, 0.3, 5.4, 15.4, 0x2a2b2e);
           this.rbox(s, a + 0.5, n, 6.3, 0.15, 0.15, 15, 0x5a5f66);   // catwalk

@@ -813,7 +813,7 @@ export class Director {
       if (p.kind === "truckstop") continue;   // (its sign is up a pylon, out of any frame with the truck)
       const signs = pieceSigns(p);
       if (!signs.length) continue;
-      const idx = p.kind === "billboards" ? Math.floor(hash2(i, Math.floor(p.s), r.inp.seed, 0xb1b) * signs.length) : 0;
+      const idx = p.kind === "billboards" ? Math.floor(hash2(i, Math.floor(p.s), r.inp.roadKey, 0xb1b) * signs.length) : 0;
       const g = signs[idx], lead = (g.s - s0 - ex.front) / v;
       if (inWindow(g) && lead <= SIGN_LEAD && lead > 1) out.push({ piece: i, idx, sign: g });
     }
