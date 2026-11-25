@@ -13,7 +13,7 @@ import { ease, GATE_LEN, SPECS, Truck, truckLayout } from "./truck.ts";
 import type { DoorGeom, TruckLayout, TruckModel } from "./truck.ts";
 import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
-import { DOCK_PLATFORM } from "./facilities.ts";
+import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
 import { choreObstacles, fetchSpots, pavementFetch, ROAD_PARK, FL_MID, LONG_TINES, fvec, stackGeom, stackTripLegs, TEAM_CLEAR, ON_EDGE, HIGH_CARRY, teamSpan, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, HT_LEAD, JACK_LEAD, JACK_PIVOT_AT, JACK_TURN, JACK_TURN_LOADED, pushGap, flipYawIn, flipYawOut, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
 import { buildCrewPath, EMPTY_HOLD, samplePath } from "./crewpath.ts";
@@ -146,9 +146,10 @@ export class Crew {
   forkDoor = 0;   // how far the facility's front door is open for the forklift at a flatbed (FrontDoorFx)
   private fp = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];   // its path out of the door
   inSeat = true;   // the driver is sitting in the cab (seat() this frame); main turns the driver spotlight on otherwise
+  indoors = false;   // the driver is in a facility's doorway or past it (work() this frame): no spotlight then (main.ts)
   // The springs and per-stop state that carry over between frames (main.ts: preview snapshots and
   // part-ticks); everything else follows from the journey each frame.
-  private static SAVED = ["yaw", "yawV", "walkPhase", "time", "feetY", "drv", "mate", "doorNow", "toolHeld", "inSeat", "pose", "tmpPose", "yard", "pave"] as const;
+  private static SAVED = ["yaw", "yawV", "walkPhase", "time", "feetY", "drv", "mate", "doorNow", "toolHeld", "inSeat", "indoors", "pose", "tmpPose", "yard", "pave"] as const;
   // (`into`: an earlier save, filled again in place.)
   saveState(into?: CrewSave): CrewSave {
     const s = into ?? { f: {}, gag: new THREE.Vector3(), gagOn: false };
@@ -158,7 +159,7 @@ export class Crew {
   }
   loadState(s: CrewSave) { loadFields(this, s.f); this.gagPoint = s.gagOn ? this.gagV.copy(s.gag) : null; }
   update(dt: number, j: Journey, truck: Truck, other: Truck | null, cam: THREE.Camera) {
-    this.inSeat = false;
+    this.inSeat = false; this.indoors = false;
     this.time = j.st.simTime + j.frac;   // journey time: idle motion is the same after a scrub
     const st = j.st, d = this.driver;
     const controls = { cab: 0, otherCab: 0, rear: 0, ramp: 0, gate: 0, drop: 0, doors: 0 };
@@ -744,6 +745,14 @@ export class Crew {
     this.place(truck, x, y, z, yaw);
     this.yaw = yaw; this.yawV = 0;
     this.drv[0] = x; this.drv[1] = y; this.drv[2] = z; this.drv[3] = yaw;
+    // In through a facility's doorway (a flip fetch: not just a lean into it), from when the front
+    // of the body, 0.3 m ahead, is at its wall (the dock's behind its platform, or a kerb door's,
+    // KERB in from the kerb's edge): the buildings stay solid.
+    if (c.kind === "fetch" && c.flip) {
+      const k = this.kerb;
+      const out = this.docked ? x - (L.rear - DOCK_DEPTH) : k ? (x - k.x) * k.nx + (z - k.z) * k.nz + KERB : Infinity;
+      this.indoors = out < 0.3;
+    }
     this.feetY = y;
     this.mate.attached = false; this.wL = this.wR = 0; this.gripMate = null; this.pushLean = 0; this.hunch = 0;
     if (CARGO_BY_ID.get(stop.cargo)?.handling === "teamLift") this.teamMate(c, t, truck, stop);

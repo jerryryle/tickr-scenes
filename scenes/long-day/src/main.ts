@@ -596,9 +596,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     cutUniforms.uNearClip.value = held && !director.interior ? 7 : 3;
     updateCutaway(cam, truck.cutBoxes, director.cutaway);   // (only what stands between the camera and the truck)
     // The driver spotlight: only while the truck's door is open at a stop (journey.driverSpotOn), and
-    // the driver is out of the seat and the camera outside.
+    // the driver is out of the seat and the camera outside; never following them into a facility.
     const d = crew.driver.root.position;
-    const out = !director.interior && !crew.inSeat && journey.driverSpotOn;
+    const out = !director.interior && !crew.inSeat && !crew.indoors && journey.driverSpotOn;
     updateDriverSpot(cam, out ? spotChest.copy(d).setY(d.y + 1.1) : null);
     // The view: as far as the city is built round the camera (never further, so nothing is seen
     // popping in), and out on the open land the country's longer view; eased across the edge of town.
