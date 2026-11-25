@@ -109,7 +109,7 @@ export class Batch {
     this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, rotY, rotX, 0, r, h, r);
   }
   // An open cylinder (it has no end caps) is for a piece of a chain whose ends are inside its neighbours or
-  // under something (storybook.ts sbTube), and has half the triangles of a capped one.
+  // under something (storybook-buildings-town.ts sbTube), and has half the triangles of a capped one.
   tubeSeg(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0, rotY = 0) {
     this.emit(batchTemplate("tube" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg, 1, true)), x, y, z, color, rotY, rotX, rotZ, r, h, r);
   }

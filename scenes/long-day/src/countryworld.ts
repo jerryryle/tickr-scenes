@@ -29,7 +29,7 @@ import type { CattlePlan, HerdMember } from "./country.ts";
 import { Cow, Horse, Tractor } from "./farm.ts";
 import type { Coat } from "./farm.ts";
 import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
-import { storyTree } from "./storybook.ts";
+import { storyTree } from "./city-storybook/storybook-buildings-town.ts";
 import { CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -61,7 +61,7 @@ export const BIOMES: Record<BiomeId, BiomeLook> = {
   prairie: { ground: 0xb0b25c, ground2: 0x9aa64e, trees: ["broad", "shrub"], greens: [0x4f7a34, 0x5a8a3a], density: 0.12, rocks: 0.1, fence: true, turbines: true, cows: true },
   wetlands: { ground: 0x5a8a50, ground2: 0x6a9a58, trees: ["broad", "shrub", "shrub", "conifer"], greens: [0x3c6a3c, 0x4a7a40], density: 0.4, rocks: 0.05, ponds: true, pylons: true },
   // The storybook city's country is rolling hills in bands of lime, mint, butter and pink, dotted
-  // with tuft trees, pancake trees and topiary (storybook.ts).
+  // with tuft trees, pancake trees and topiary (storybook-buildings-town.ts).
   storybook: { ground: 0x98dc62, ground2: 0x6fd38a, trees: ["tuft", "tuft", "pancake", "spiral"], greens: [0xff7fb5, 0xff9a2e, 0xf2c230, 0x9a6cf0, 0x6fe0e8], density: 0.6, rocks: 0,
     fields: [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0] },
 };

@@ -53,7 +53,7 @@ import { CLOCK, VIG_LOG } from "./vignettes.ts";
 import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
 import { SEA_ALONG, SeaLife } from "./sealife.ts";
-import { KnittingWorksFx } from "./works.ts";
+import { KnittingWorksFx } from "./city-storybook/storybook-landmark-knitting-works.ts";
 import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 

@@ -8,7 +8,7 @@
 // load as it comes to the doors and goes; and the journey pulls up at the kerb with the trailer
 // straight behind the tractor (journey.ts hitchStep), so the chores, worked out round a straight
 // one, keep out of it.
-// Args (all optional): seed minutes, for the journey part (seed 7 has tractor kerb stops early on).
+// Args (all optional): seed minutes, for the journey part (seed 5 has tractor kerb stops early on).
 import { readConfig } from "../src/env.ts";
 import { Journey, setDoorProbe, setPavementProbe, setParkedProbe } from "../src/journey.ts";
 import { kerbDoors, parkedObstacles, pavementObstacles } from "../src/city.ts";
@@ -160,7 +160,7 @@ for (const kind of ["pickup", "drop"]) {
 
 // The journey: at each tractor kerb stop the trailer stands straight behind the tractor.
 setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
-const seed = Number(proc.argv[2] ?? 7), minutes = Number(proc.argv[3] ?? 75);
+const seed = Number(proc.argv[2] ?? 5), minutes = Number(proc.argv[3] ?? 17);
 const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
 let prev = j.st.mode, kerb = 0;
 while (j.st.simTime < minutes * 60) {

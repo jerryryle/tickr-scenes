@@ -26,6 +26,9 @@
 #   make citymap SCENE=long-day [SEED=1 CITIES=4 DEFINE=...]
 #                              draw the street graphs of a journey's first cities, top down, to
 #                              build/<scene>-citymap/city<N>.png (needs ffmpeg)
+#   make draft SCENE=long-day ARGS="<style> [candidates]"
+#                              draft five new city files of a style into
+#                              scenes/long-day/src/city-<style>/ (tools/draftcities.ts)
 #   make clean / distclean
 #
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
@@ -56,7 +59,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -79,7 +82,7 @@ $(SCENES): %: build/%/scene.ts
 # otherwise leave that published source in place and get it published again.
 replace-if-changed = if cmp -s $(1).tmp $(1); then rm -f $(1).tmp; else mv -f $(1).tmp $(1); fi
 
-build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts) scripts/flatten.ts FORCE | $(DEPS)
+build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts scenes/$$*/src/*/*.ts) scripts/flatten.ts FORCE | $(DEPS)
 	@mkdir -p $(@D)
 	@$(FLATTEN) $< --root scenes/$*/src > $@.tmp
 	@$(call replace-if-changed,$@)
@@ -182,6 +185,15 @@ run: | $(DEPS)
 	@$(FLATTEN) scenes/$(SCENE)/test/$(TEST).ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-$(TEST)/scene.ts
 	@$(call node-bundle,build/$(SCENE)-$(TEST)/scene.ts,build/$(SCENE)-$(TEST)/$(TEST).mjs)
 	@node build/$(SCENE)-$(TEST)/$(TEST).mjs $(ARGS)
+
+# The drafting tool (scenes/<scene>/tools/draftcities.ts), run from the repo root with its
+# arguments, its output shown.
+draft: | $(DEPS)
+	@test -f "scenes/$(SCENE)/tools/draftcities.ts" || { echo "usage: make draft SCENE=<scene> ARGS='<style> [candidates]'" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-draft-$(firstword $(ARGS))
+	@$(FLATTEN) scenes/$(SCENE)/tools/draftcities.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts
+	@$(call node-bundle,build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts,build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs)
+	@node build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs $(ARGS)
 
 # One test scene from a scene's tools/, rendered a frame a second for SECS seconds, its frames
 # tiled 2 across at 2x into one PNG (needs ffmpeg).

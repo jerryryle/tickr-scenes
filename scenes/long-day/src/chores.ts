@@ -1154,7 +1154,10 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   const route = (a: [number, number, number], b: [number, number, number], extra: Partial<Chore>, obstacles: WalkObstacle[]) => {
     const ground = !extra.linear && a[1] === 0 && b[1] === 0;
     const drawn = !!extra.tool || (!!extra.item && (cargo.handling === "push" || cargo.handling === "roll"));
-    let bx = rampBox && drawn ? [...boxes, rampBox] : boxes;
+    // (A hand truck turns about its wheels, HT_LEAD ahead of the driver: at a corner beside the
+    // ramp the driver swings round them in towards it, so its sides are kept that much further off.)
+    const rb = rampBox && extra.tool === "handTruck" ? { ...rampBox, hz: rampBox.hz + HT_LEAD } : rampBox;
+    let bx = rb && drawn ? [...boxes, rb] : boxes;
     // (Round the truck itself too: the way round anything else is never through its side.)
     if (ground) {
       // (A tractor-trailer as its trailer and its narrower cab: one box as wide as the trailer all
@@ -1168,7 +1171,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     // (Round the boxes, the pavement's things as squares among them; where that finds no way (a
     // square crowding the truck's corner), round the pavement's things as they are, circles, and
     // the ramp as a row of them.)
-    const obs = rampBox && drawn ? [...obstacles, ...rampDiscs(rampBox)] : obstacles;
+    const obs = rb && drawn ? [...obstacles, ...rampDiscs(rb)] : obstacles;
     return !ground ? [b] : (bx.length ? boxRoute(a, b, [...bx, ...obstacles.map((o) => ({ x: o.x, z: o.z, hx: o.r, hz: o.r, ax: 1, az: 0 }))]) : null)
       ?? (obs.length ? walkRoute(a, b, obs) : [b]);
   };

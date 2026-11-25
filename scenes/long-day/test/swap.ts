@@ -3,8 +3,8 @@
 // it out of the old truck: journey.ts doStop), with its trailer, if any, straight; and the driver's
 // facing never snaps round from the climb down, through the walk, into the climb up (crew.ts
 // walkBetween ends facing where the climb in starts), nor stops short of the new door on the
-// walk, its start and end ramps apart (director.ts swapWalkU). Seed 1 swaps about 935 s in, for a
-// flatbed; seed 22 about 380 s in, for a tractor (whose trailer is the one to stand straight).
+// walk, its start and end ramps apart (director.ts swapWalkU). Seed 10 swaps about 767 s in, for a
+// flatbed; seed 0 about 767 s in, for a tractor (whose trailer is the one to stand straight).
 // Args (all optional): seed:minutes ...
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
@@ -15,7 +15,7 @@ import type { TruckModel } from "../src/truck.ts";
 import { Crew } from "../src/crew.ts";
 
 const proc = (globalThis as any).process;
-const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:17", "22:7"];
+const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["10:14", "0:14"];
 const errs: string[] = [];
 const fail = (m: string) => { if (errs.length < 20) errs.push(m); };
 const TURN = 0.3;   // rad in a step (0.1 s): a snap round, not a turn on foot

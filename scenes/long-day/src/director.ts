@@ -109,7 +109,7 @@ const LOAD_CLEARANCE = 3.5;
 const ARRIVE_VARIANTS = ["dive", "passenger"] as const;
 const ARRIVE_SHARE = 1 / 2;
 // The knitting works' arrival shot is taken from this far out (m along the way), and its spots lie across the
-// street in the works' frame ([a, n, y], works.ts: a along its frontage, n in from the pavement); it uses
+// street in the works' frame ([a, n, y], storybook-landmark-knitting-works.ts: a along its frontage, n in from the pavement); it uses
 // the first clear of buildings with a clear look at the works.
 const WORKS_DIST = 75, WORKS_FOV = 48;
 const WORKS_SPOTS: [number, number, number][] = [[34, -20, 9], [30, -26, 14], [24, -16, 6], [40, -30, 20]];     // these are the dock stops that get the cab arrival; the rest stay on the road coverage
@@ -229,7 +229,7 @@ export class Director {
   private holdPos = new THREE.Vector3(); private pushPos = new THREE.Vector3(); private holdFov = FOV;
   private backSpot = new THREE.Vector3();
   private jamPos = new THREE.Vector3(); private jamLook = new THREE.Vector3();   // (the jam's shot)
-  private worksPos = new THREE.Vector3(); private worksLook = new THREE.Vector3();   // (these hold the knitting works' shot: works.ts)
+  private worksPos = new THREE.Vector3(); private worksLook = new THREE.Vector3();   // (these hold the knitting works' shot: storybook-landmark-knitting-works.ts)
   private clownPos = new THREE.Vector3(); private clownLook = new THREE.Vector3(); private clownId = -1; private clownH = 0; private clownDone = -1;   // (the clowns' shot, and the lot it was set up on)
   // The world moved by (dx, dz) under the camera (main.ts: the next city takes over out on the
   // road): move with it, so nothing on screen changes.
@@ -357,7 +357,7 @@ export class Director {
     if (stop && stop.kind !== "depart" && j.path) {
       const d = st.stopS - st.s;
       // At the storybook city's knitting works, the truck pulling up to it is its arrival there,
-      // filmed wide across the street and held till it backs in (works.ts).
+      // filmed wide across the street and held till it backs in (storybook-landmark-knitting-works.ts).
       if (d < WORKS_DIST && j.isDockStop(stop) && stop.site && j.plan.blockOf(stop.site.bx, stop.site.bz)?.id === j.plan.worksBlock && j.plan.worksBlock >= 0) return "works";
       // (With a name sign to open on: only once the truck is about to drive into its frame.)
       if (!j.isDockStop(stop) && (d < CURB_SIGN_DIST && this.curbPlan(j) ? this.curbLead(j) <= CURB_SIGN_LEAD : d < CURB_DIST)) return "curb";

@@ -10,9 +10,23 @@ make check-long-day     # type-check, load-test and run the tests
 
 ## Source
 
+Every city is a catalogue city: a file in `src/city-<style>/` listed in `src/world.ts`
+(`docs/fixed-cities.md` has the design). `src/cityfile.ts` reads a city file into its street
+graph, and `src/visits.ts` says which catalogue city each city of a journey is: the journey's
+style order gives its style, and that style's five cities take their turns. A city file holds
+the city's streets, gates and blocks; the rest of the city comes from rules that hash the file's
+`key`, the seed it was drafted from. `tools/draftcities.ts` drafts new city files with the
+generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit
+for play:
+
+```bash
+make draft SCENE=long-day ARGS="metro 40"   # five new metro cities into src/city-metro/ (never overwrites)
+```
+
 `src/citygraph.ts` is the city as a street graph: intersections, straight streets, the blocks
 they enclose and each block's faces along its streets (a face's frontage frame, `facePt`, is
-where everything along a street is placed). `src/citygen.ts` makes it from the city's seed: the
+where everything along a street is placed). `src/citygen.ts` makes it from a seed for the
+drafting tool: the
 square grid; one bent out of square, with dropped streets, rivers, superblock parks, diagonal
 avenues, old towns, sweeping avenues, radial circuses and one-way roundabouts (where traffic
 yields on entry); or, in towns without a freeway, an organic town with no grid at all (a relaxed
@@ -104,7 +118,7 @@ same code. The showroom's last frames line the boats up afloat and ashore, then 
 The storybook city is a fantasy town that now and then takes a real city's turn. It is never one
 of the first two cities, and it never comes within `STORYBOOK_GAP` cities of the last one; past
 that, each city is one with `STORYBOOK_ODDS` (`isStorybookCity` in `src/styles.ts`). Its town is
-built in `src/storybook.ts` and its knitting works in `src/works.ts`.
+built in `src/city-storybook/storybook-buildings-town.ts` and its knitting works in `src/city-storybook/storybook-landmark-knitting-works.ts`.
 
 Its streets are purple-grey with polka-dot centre lines, checkered pavements, shepherd's-crook
 lamps and bunting, and the road in passes under a corkscrew arch. Its buildings are bent towers of

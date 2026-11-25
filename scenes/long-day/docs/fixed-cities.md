@@ -1,0 +1,310 @@
+# Fixed cities
+
+Long Day's cities become a fixed catalogue of curated city files, joined by a fixed world graph of
+country roads. The runtime stops generating layouts. A journey's seed chooses only the order in
+which the truck visits cities and the dressing it sees in each one. This document records the
+requirements and the storage format agreed for that change; none of it is built yet.
+
+## Why fixed cities
+
+Variety in street layout is barely noticeable on the board, while variety in building style,
+vignettes, vehicles and colours is. A generator that must be correct for every seed spends most of
+its complexity on layouts nobody tells apart, and fixing one city's defect means changing code that
+every other city shares. A fixed catalogue makes the set of cities finite, so each can be tested and
+hand-fixed on its own, and it frees the effort for the variety that shows.
+
+Two alternatives lost. Curating known-good seeds keeps the generator in the scene, and any change to
+the generator moves every curated city. Baking each city's meshes would cost several GB across the
+catalogue by the estimate in "Rejected: baked geometry", and it would freeze the dressing that is
+meant to change from visit to visit.
+
+## Components
+
+The design has seven parts, and the rest of this document uses these names for them.
+
+1. A **city file** holds one city's plan: its streets, blocks, buildings, gates and pinned dressing.
+2. The **catalogue** is the set of city files listed by the world file.
+3. The **world graph** joins the cities with country roads. It lives in the **world file**,
+   `src/world.ts`.
+4. The **visit planner** chooses each next city from the seed.
+5. The **drafting tools** run today's generators offline to write a first draft of a city file or
+   of the world graph.
+6. The **maps** are SVG views of each city and of the world graph.
+7. A **visit** is everything that sets up one city of a journey, beyond the city file: which city,
+   how the truck arrives, its weather and the seeds for what happens there. The "Visits"
+   requirements define it.
+
+## Requirements
+
+### The catalogue
+
+1. The catalogue holds 35 cities: five for each real style (coastal, metro, desert, brick,
+   mainstreet and port) and five storybook towns. Each city has a stable id, `<style>-<slug>`, and
+   its own name. The first catalogue uses the five names each real style already lists in
+   `src/styles.ts`, and five of the storybook's six.
+2. Each city's plan is stored in its city file. The runtime reads the plan and never generates a
+   layout.
+3. A city file decides whether its city has a freeway. Within each style, the catalogue keeps a mix
+   of cities with and without one.
+4. A city's size is whatever its file lays out, and `cityMinutes` does not change it. The setting
+   changes only the time spent in a city, through the number of jobs and the length of the route.
+5. Geometry is built at runtime by the existing chunk builder from the plan.
+
+### What varies, and what does not
+
+6. Seasons never change a city's street or building layout. A season may change which other
+   vehicles appear and which vignettes are used, and it may close streets if street closures are
+   ever added.
+7. The visit's dressing seed (requirement 27) chooses the dressing that the plan leaves open:
+   traffic, parked cars, vehicles, vignettes, the crowd, boats and colours. Season, weather and time
+   of day vary as they do today, set by the visit.
+8. A city file may pin dressing. A pin fixes a vignette, vehicle or colour at a place, optionally in
+   chosen seasons only.
+
+### The world graph
+
+9. The world graph is connected. It is stored in the world file and changes only when cities are
+   added or removed.
+10. Each edge has one fixed country road, driven either way. The road's length, curves, biomes, set
+    pieces and railroad crossing belong to the edge, and its length need not match any geographic
+    distance. Weather, season, traffic and the truck-stop swap still vary per drive. The
+    `countrySeconds` setting is removed.
+11. Each end of an edge uses its own gate of that city, and a gate serves exactly one edge. A city
+    has as many gates as its edges need. When an added city needs more edges, existing cities gain
+    gates by hand edit.
+12. Every city has at least four edges, and its neighbours span at least three styles. Any city can
+    reach any other in four drives or fewer.
+
+### The visit planner
+
+13. The journey seed drives the visit planner, which picks each next city from the current city's
+    neighbours and fills in the rest of that visit (requirement 27).
+14. The planner keeps these guarantees. The numbers are starting values, to be tuned from the
+    simulation in requirement 15.
+    1. No two cities in a row share a style.
+    2. No city comes back within 8 visits.
+    3. A storybook town is never one of the first two cities and never comes within
+       `STORYBOOK_GAP` (6) cities of the last one, and about one city in eight is a storybook town.
+    4. Over a long day, each real city's visit count stays within 25% of the mean for its style.
+    5. The planner never drives back along the edge it arrived by.
+15. A test runs the planner over many seeds for long days, fails if any guarantee in requirement 14
+    breaks, and reports the visit frequencies it saw.
+
+### Authoring
+
+16. A drafting tool wraps today's city generator and writes the first draft of a city file. A second
+    drafting tool writes the first draft of the world graph and assigns gates to its edges. The
+    generators leave the scene bundle and live on only in `tools/`.
+17. City files and the world file are TypeScript data modules, checked against their types with
+    `satisfies`. Once a city file exists, only hand edits change it, and no tool rewrites it.
+    Replacing a city means drafting a new file.
+18. `make check` validates every city file and the world file. It rejects a city whose streets are
+    not strongly connected, whose gates or sites cannot be reached, or whose block labels do not
+    match its blocks one to one. It rejects a world graph that breaks requirement 11 or 12.
+19. Each city has a layered SVG map, drawn from its plan at 1 SVG unit per metre in world
+    coordinates. Each layer is a top-level group, which Inkscape and Illustrator both open as a
+    layer. The layers are:
+    1. ground and districts
+    2. water and shore
+    3. streets and pavements
+    4. street names
+    5. junction controls (signals, stops and roundabouts)
+    6. lots
+    7. buildings
+    8. sites (docks, garages, rental lots and stands)
+    9. trees and parks
+    10. freeway and elevated lines
+    11. gates, each labelled with its edge and neighbouring city
+    12. pinned dressing
+    13. an empty markup layer for notes
+20. Each item in a city map carries its plan id as its SVG `id`, so markup can be traced to exact
+    streets, lots and buildings. A map is a view of its plan and is never read back into it. Markup
+    is a note for whoever edits the city file.
+21. The world map shows only the graph. It has one node per city, labelled and coloured by style, and
+    one line per country road, labelled with the road's id and length. Node positions are stored in
+    the world file, so the map keeps its shape between regenerations.
+22. The maps are committed. `make maps` regenerates every map, and `make check` fails if a committed
+    map differs from what its plan produces.
+
+### Correctness and cost
+
+23. Normal play is every catalogue city, every edge of the world graph, and every seed's visit order
+    and dressing. The "Correct means correct in normal play" rule in `CLAUDE.md` changes to say so.
+24. The scene stays within the 100 MB scene limit.
+25. Frame rate, chunk cost (`test/chunkcost.ts`) and the time to prepare the next city are no worse
+    than today.
+26. Every value of `seed`, `timeOfDay`, `weather`, `humorFrequency` and `cityMinutes` still produces
+    a correct day.
+
+### Visits
+
+27. A visit holds every parameter that sets up one city of a journey. Its parameters are these:
+    1. It names the catalogue city.
+    2. It names the road the truck arrives by, which fixes the gate it enters at.
+    3. It names the truck the visit starts with, and when the next truck swap comes and to which
+       truck.
+    4. It sets the season, the weather and the time of day the visit starts.
+    5. Its jobs seed chooses the stops, cargo and loads.
+    6. Its dressing seed chooses the traffic, parked cars, other vehicles, vignettes, crowd and
+       boats.
+    7. Its gag seed chooses when the clowns and the other gags come, at the rate `humorFrequency`
+       sets.
+    8. Its drive seed chooses the events on the country drive out, such as a train at a crossing
+       and the weather along the road.
+28. The scene picks the journey seed at random when it starts, unless the `seed` setting fixes it.
+    The journey seed chooses the first city's place on the world graph and the first truck, and the
+    visit planner derives every visit from the journey seed and the visit's number alone, so
+    scrubbing replays the same visits.
+29. Every parameter of a visit can be given directly. A test builds the visit its scenario needs,
+    such as Grand Central in winter, arriving by gate `g2` in a tractor, and plays it without
+    searching seeds for one that happens to produce it. A debug define does the same for a render.
+30. A test that checks one scenario builds its visit. A test that checks variety still runs the
+    planner over many journey seeds.
+
+## Storage format
+
+A city file stores its plan at three levels of detail.
+
+1. **Structure is always explicit.** Nodes, streets, gates, block properties, the land outline, the
+   sea and river, the freeway and junction controls are written out in full, so no code change can
+   move them.
+2. **Lot detail is explicit or comes from a default rule.** A **default rule** is today's code
+   working a value out from a stable hash key stored in the file. A block that lists its lots and
+   buildings uses that list. Every other block gets today's lot rules, so a block is made explicit
+   only when it is hand-shaped.
+3. **Dressing comes from the visit's dressing seed unless pinned.** Level 2 follows the city's own
+   keys and is the same on every visit; level 3 follows the visit and changes.
+
+### Conventions
+
+1. Nodes and streets carry integer ids that are never renumbered. A new street takes the next
+   unused id, and the loader packs the ids into arrays.
+2. Blocks are derived from the streets at load time, as `CityGraph.findBlocks` does today. A block's
+   stored properties attach to a label point, `at: [x, z]`, inside it, so moving streets to split
+   or merge blocks does not misattach them. Validation fails when a derived block holds no label
+   point or more than one.
+3. Coordinates are world metres, rounded to 1 cm.
+4. A curved street stores `bend`, the distance in metres its middle sits off the straight line
+   between its ends. The loader converts it to the heading and curvature `CStreet` uses.
+5. Each node and block may carry a `key` for the default rules to hash. It defaults to the item's id.
+6. A city names its style and may override any field of the style with a partial object.
+7. A `seasons` section holds per-season street closures, pins and vignette sets. It never holds
+   layout.
+8. Each file carries `format: 1`, and the loader rejects a format it does not know.
+
+### Example city file
+
+```ts
+import type { CityFile } from "../plan.ts";
+export default {
+  format: 1, id: "metro-grand-central", name: "Grand Central", style: "metro",
+  styleOverrides: { trees: { greens: [0x3f7a3a, 0x4c8a40] } },
+  nodes: [
+    { id: 1, x: 9, z: 9, control: "signal" },
+    { id: 2, x: 69, z: 9 },                       // the control comes from the default rule
+  ],
+  streets: [
+    { id: 1, a: 1, b: 2, name: "5th Avenue", oneway: true, tags: ["elevated"] },
+    { id: 2, a: 2, b: 7, name: "Canal St", bend: 4.5 },
+  ],
+  gates: [{ id: "n1", street: 40, out: "b" }],     // the world file joins roads to gate ids
+  land: [[-720, -720], [700, -720] /* ... */],
+  sea: { side: "west", shore: [[-640, -720] /* ... */] },
+  freeway: { gate: "e2", curve: { /* as FwCurve */ } },
+  blocks: [
+    { at: [39, 39], district: "downtown", facility: "parcelHub",
+      site: { street: 1, side: "right", at: 12 } },
+    { at: [99, 39], district: "residential", close: true,
+      lots: [{ street: 2, side: "left", a0: 9, a1: 21, depth: 14,
+               building: { kind: "house", floors: 2, facade: "clapboard" } }] },
+  ],
+  pins: [{ kind: "vignette", id: "busker", at: [41, 12], seasons: ["summer"] }],
+  seasons: { winter: { closed: [12, 13] } },
+} satisfies CityFile;
+```
+
+### The world file
+
+The world file imports every city file, and that import list is the catalogue. It lists each
+city's position on the world map. It lists each road with its id, the `{ city, gate }` at either
+end, its length in metres, its own hash key, and any set pieces placed explicitly at a distance
+along it. It also holds the visit planner's settings from requirement 14.
+
+## Folder layout
+
+Everything below is under `scenes/long-day/src/`.
+
+```
+world.ts                                 the world graph, roads and planner settings
+world.svg                                the world map
+city-metro/
+  metro-style.ts                         the metro style, moved out of styles.ts
+  metro-city-grand-central.ts            a city file
+  metro-city-grand-central.svg           its map
+  metro-grand-central-vignette-busker.ts an asset for this city alone
+  metro-vehicle-tram.ts                  an asset shared by every metro city
+city-coastal/  city-desert/  city-brick/  city-mainstreet/  city-port/
+city-storybook/
+  storybook-style.ts                     the storybook style
+  storybook-buildings-town.ts            the town's buildings, trees and lamps, once storybook.ts
+  storybook-landmark-knitting-works.ts   the knitting works, once works.ts
+  storybook-city-wumbleton.ts
+```
+
+A city file is named `<style>-city-<slug>`, where the slug is the city's name in lower-case kebab
+form: "Higgle-on-the-Wobble" becomes `higgle-on-the-wobble`. An asset shared by a style is named
+`<style>-<asset type>-<asset name>`, and an asset for one city alone is named
+`<style>-<city slug>-<asset type>-<asset name>`. The asset type is a word such as `vehicle`,
+`vignette`, `landmark` or `buildings`. A style's own definition is `<style>-style.ts`. Assets every
+style uses, such as `cars.ts` and `boats.ts`, stay where they are. What remains of `styles.ts` is
+the shared `CityStyle` type and the list of the seven styles.
+
+## Code changes
+
+1. `citygen.ts`, the outline trim in `outline.ts`, the layout odds and the fallback chain in
+   `CityPlan.buildGraph` move from the scene into the drafting tools.
+2. `CityPlan` is built from a city file. Its seed-driven getters, such as `district`, `freeway`,
+   `plaza` and `facilityAt` in `facilities.ts`, return the file's values or apply the default rule.
+3. `buildLots` in `city.ts` decides a block's lots and draws them in one pass. It splits into a step
+   that decides lots and a step that draws them, so a block's explicit lot list can replace the
+   first step. This is the largest refactor in the change.
+4. `CountryRoad` in `country.ts` takes its length and hash key from its world-graph edge in place of
+   the journey seed, the city number and `countrySeconds`.
+5. The visit planner replaces `journeyStyle` and `isStorybookCity` in `styles.ts`.
+6. Per-city gates replace `GATE_SLOTS` and `entryGateOf` in `city.ts`, and `setCityLimits` no longer
+   sizes the city.
+7. The long-day README's description of the generator moves to the drafting tools' documentation.
+8. A `Visit` type in `visits.ts` holds requirement 27's parameters. The journey takes its visits
+   from the planner, or one a test gives it, and the code that hashes the city seed or the journey
+   seed for jobs, dressing, gags and drives (in `journey.ts`, `traffic.ts`, `vignettes.ts`,
+   `clowns.ts` and `country.ts`, among others) hashes the visit's seeds instead.
+
+## Build order
+
+The change lands in six stages, one pull request each, and the scene plays a correct day after
+every stage.
+
+1. **City files.** The `CityFile` type, its loader, the drafting tool and the 35 drafted cities, with
+   each style moved into its folder. The journey takes each city's turn from the catalogue, and the
+   city's hash key stands in for the old city seed wherever the seed was used, so every default rule
+   gives the drafted city what the generator saw. `cityMinutes` stops sizing cities.
+2. **Maps.** The layered city maps and `make maps`, with the staleness check.
+3. **World graph and visit planner.** Roads with fixed lengths, per-edge gates, the planner and its
+   simulation test. `countrySeconds` is removed.
+4. **Visits.** The `Visit` record and its seeds, so dressing varies between visits to one city, and
+   tests that once searched for seeds build the visits they need.
+5. **Generator out of the scene.** The freeway, outline, sea and elevated lines become explicit
+   fields, and `citygen.ts` and the outline trim move to `tools/`.
+6. **Explicit lots.** `buildLots` splits, and blocks may list their own lots and buildings.
+
+The flattener (`scripts/flatten.ts`) joins every module into one scope and accepts no default
+imports, so a city file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL`, in
+place of the `export default` the example under "Example city file" shows.
+
+## Rejected: baked geometry
+
+Shipping each city's finished meshes would remove the chunk builder's work, but the data is far too
+large. `test/chunkcost.ts` measures a city chunk at 4,900 to 7,900 triangles on average, depending
+on style. A city of 576 chunks therefore holds roughly 3 to 4.5 million triangles, which at an
+estimated 50 to 100 bytes per triangle is 150 to 450 MB per city before compression. Baked meshes
+would also fix the season, weather and dressing that are meant to vary per visit.

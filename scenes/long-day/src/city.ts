@@ -17,8 +17,8 @@ import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
-import { buildWorksStatic, worksFrameOf, WORKS } from "./works.ts";
-import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./storybook.ts";
+import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
+import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -40,7 +40,10 @@ import { buildFreewayStreet, Frame, freewayCurveOf, freewayGate, freewayMerge, F
 import type { FwCurve } from "./freeway.ts";
 import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, roofBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
-import type { DockLayout, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
+import type { DockLayout, FacilityId, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
+import { graphOfFile } from "./cityfile.ts";
+import type { CityFile } from "./cityfile.ts";
+import { cityByKey } from "./visits.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BIOME_OF } from "./country.ts";
@@ -73,8 +76,9 @@ export let CITY_LO = -12, CITY_HI = 11;
 export interface Gate { ix: number; iz: number; dir: number }   // a gate slot: the perimeter node, and the way out of town
 export const GATE_SLOTS: Gate[] = [];
 const ROUND_NAMES = ["Market Roundabout", "Town Roundabout", "Elm Roundabout", "Mill Roundabout"];   // (a roundabout's, warped or organic)
-// The city's size follows how long the truck spends in it (a short stay can't cross a big town):
-// 24 blocks square for 20 minutes or more, 18 from 10, 12 below that.
+// The generator's city size by how long a stay it is laid out for: 24 blocks square for 20
+// minutes or more, 18 from 10, 12 below that. Catalogue cities (cityfile.ts) were all drafted at
+// 24, and the scene keeps that size whatever its cityMinutes; tests of the generator set others.
 export function setCityLimits(cityMinutes: number) {
   const half = cityMinutes >= 20 ? 12 : cityMinutes >= 10 ? 9 : 6, at = Math.round(half * 0.58);
   CITY_LO = -half; CITY_HI = half - 1;
@@ -99,7 +103,10 @@ export function gateEndSlot(g: Gate): { x: number; z: number; h: number } {
 export class CityPlan {
   readonly name: string;
   climate: Climate | null = null;   // the city's season and weather (journey.ts), for the countryside round it
-  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal) { this.name = cityName(seed, style); }
+  // A catalogue city's file (cityfile.ts), when the seed is one's key: the city is read from it.
+  // Without one (the drafting tool, and tests of the generator), the city is generated from the seed.
+  readonly file: CityFile | null;
+  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal) { this.file = cityByKey(seed) ?? null; this.name = cityName(seed, style); }
   // The street graph (citygraph.ts): built on first use, from the city's limits and gates.
   private g: CityGraph | null = null;
   private organicFailed = false;   // (an organic town was tried and lost a gate: see graph)
@@ -119,8 +126,10 @@ export class CityPlan {
       const self = this;
       this.job = (function* () {
         try {
-          const G = yield* self.buildGraph();
-          self.stopSigns(G);
+          const F = self.file;
+          const G = F ? yield* graphOfFile(F) : yield* self.buildGraph();
+          if (F) { self.g = G; self.ol = self.outlineAt(F.outline.scale, !!F.outline.seaOff); if (F.outline.seaOff) self.shoreOl = self.ol; self.fileBlocks(G, F); }
+          else self.stopSigns(G);
           linkSignals(G);
           return G;
         } finally { self.job = null; }   // (done, or thrown: a throw is thrown again at the next use, as it was)
@@ -322,6 +331,8 @@ export class CityPlan {
     this.worksId = -1;
     if (!this.style.storybook) return -1;
     const G = this.graph;
+    // (A catalogue city's is where its file has the works.)
+    if (this.file) return this.worksId = G.blocks.find((B) => this.facilities?.get((B.kx + 4096) * 1e7 + (B.kz + 5e6)) === "knittingWorks")?.id ?? -1;
     let best = Infinity;
     for (const B of G.blocks) {
       if (!B.inCity || B.water || B.park || B.square || !B.anchor || !G.drivable(B.anchor.face) || this.interchangeAt(B.kx, B.kz)) continue;
@@ -446,6 +457,7 @@ export class CityPlan {
   // it (freeway.ts freewayCurveOf: the grid kept round its interchange). (An elevated line or a
   // cable car runs along a smooth avenue laid for it: avenues.)
   get layout(): "grid" | "warp" | "organic" {
+    if (this.file) return this.file.layout;
     const organicOk = (!this.freeway || !!this.fwCurveOf()) && !this.organicFailed;
     if (DEBUG_LAYOUT === "grid" || DEBUG_LAYOUT === "warp") return DEBUG_LAYOUT;
     if (DEBUG_LAYOUT.startsWith("organic")) return organicOk ? "organic" : "warp";
@@ -655,9 +667,22 @@ export class CityPlan {
   // A block's district, judged where the block actually is (blockPos): how far its middle is from
   // the core, whether it's by the sea, the industrial noise there. (The dice for parks and mixes
   // are the block's own, by its key.) Cached once the graph is in: every lot, car and vignette asks.
+  // (A catalogue city's are its file's, by block key, with its facilities: fileBlocks.)
   private districts = new Map<number, District>();
+  private facilities: Map<number, FacilityId> | null = null;
+  private fileBlocks(G: CityGraph, F: CityFile) {
+    this.facilities = new Map();
+    for (const L of F.blocks) {
+      const B = G.blockAt(L.at[0], L.at[1])!, key = (B.kx + 4096) * 1e7 + (B.kz + 5e6);
+      this.districts.set(key, L.district);
+      if (L.facility) this.facilities.set(key, L.facility);
+    }
+  }
+  // A catalogue city's facility on block (bx, bz), as its file has it (facilities.ts facilityAt).
+  fileFacility(bx: number, bz: number): FacilityId | undefined { void this.graph; return this.facilities?.get((bx + 4096) * 1e7 + (bz + 5e6)); }
   district(bx: number, bz: number): District {
     const key = (bx + 4096) * 1e7 + (bz + 5e6);   // (bz: a block key bumped by 1000s, citygraph.ts findBlocks)
+    if (this.file) void this.graph;
     if (this.g) { const d = this.districts.get(key); if (d) return d; }
     const [ux, uz] = this.blockPos(bx, bz), d = this.districtAt(ux, uz, bx, bz);
     if (this.g) this.districts.set(key, d);
@@ -690,7 +715,7 @@ export const C = {
 // The city being built (set by the chunk builder; building is synchronous, so the district
 // builders read their palettes, trees and sign batches from here rather than threading them).
 export let CS: CityStyle = STYLES.coastal;
-// The storybook city lays its own street colours over C while it is built (storybook.ts
+// The storybook city lays its own street colours over C while it is built (storybook-buildings-town.ts
 // SB_STREET); every other city has C as above.
 const C_BASE = { ...C };
 function setCityStyle(style: CityStyle) { CS = style; Object.assign(C, C_BASE, style.storybook ? SB_STREET : {}); }
@@ -3249,7 +3274,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // then a building of its own (warehouseLook): wall colour and cladding, height, roof, an accent
   // colour and what the business adds (tanks, a stack, a rooftop office, a canopy...).
   const r = frontRect(side, L.a0, L.a1, L.wall, 39.5);
-  // (works.ts builds the storybook city's knitting works: its hall and its process beside it.)
+  // (storybook-landmark-knitting-works.ts builds the storybook city's knitting works: its hall and its process beside it.)
   const top = DC.fac === "knittingWorks" ? buildWorksStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L) : buildWarehouse(s, side, face, L, r, district, rnd);
   if (DC.fac === "ryderWarehouse" && uv) ryderRoofSign(s, r, top, face, uv);
 
@@ -3389,7 +3414,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   if (L.deep && pHi + 18 < 50.5) posts(pHi + 18, 50.8);
 
   // A shallow dock sits beside the store or tower that fronts the rest of the street (the knitting
-  // works' yard is its process instead: works.ts).
+  // works' yard is its process instead: storybook-landmark-knitting-works.ts).
   if (!L.deep && DC.fac !== "knittingWorks") {
     const sr = frontRect(side, L.a1, 48.5, 2, 39.5);
     if (district === "downtown") {

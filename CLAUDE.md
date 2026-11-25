@@ -16,9 +16,11 @@ Designs, code and reviews all aim at the same three things: a scene that behaves
 conditions it actually meets, code no more complex than that behaviour needs, and no wildly
 wasteful work. The behaviour asked for is itself open to question when a simpler one would serve.
 
-- **Correct means correct in normal play.** Normal play is every seed, every city style and
-  layout the generator can produce, a whole day from first frame to last, and every value a
-  `DEFINE` or a scene setting admits. A defect there is always in scope.
+- **Correct means correct in normal play.** Normal play is every seed, every city in Long Day's
+  catalogue (`scenes/long-day/src/world.ts`), a whole day from first frame to last, and every
+  value a `DEFINE` or a scene setting admits. A defect there is always in scope. The city
+  generator now only drafts cities (`scenes/long-day/tools/draftcities.ts`), so a layout it could
+  produce but no catalogue city has is outside normal play.
 - **Rare failures outside the scene are not a goal.** A scene does not need to ride out the board
   or the tickr service misbehaving. A reviewer does not ask for handling of it, and machinery
   added only for it is complexity to remove.

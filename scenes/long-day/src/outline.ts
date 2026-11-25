@@ -59,6 +59,9 @@ export class CityOutline {
   // The way in: its side of the square (the entry gate's dir), and how far its line lies from the
   // sea's edge.
   private eDir = 0; private eLat = 0;
+  // (How far in its land's edges were drawn, and whether its sea was left off: for a city file, cityfile.ts.)
+  get insetScale() { return this.o.insetScale ?? 1; }
+  get seaOff() { return !!this.o.seaOff; }
   constructor(readonly seed: number, readonly style: CityStyle, private readonly o: OutlineOpts) {
     this.sea = o.seaOff ? null : seaSide(seed, style);
     const at = (i: number) => i * BLOCK + STREET / 2;

@@ -9,7 +9,7 @@ import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
 import { storyRigs } from "./storyvehicles.ts";
 import type { StoryRig } from "./storyvehicles.ts";
-import { SB } from "./storybook.ts";
+import { SB } from "./city-storybook/storybook-buildings-town.ts";
 import { Batch, keepWarm } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
@@ -1273,12 +1273,14 @@ export class Traffic {
         if (g < gap) { gap = g; gapOwner = o.owner ?? -1; gapPed = ped; gapV = ped || o.still ? 0 : isTruck ? Math.abs(this.truckPath?.v ?? 0) : (this.byId.get(o.owner ?? -1)?.v ?? 0); }
         if (isTruck) truckAhead = Math.min(truckAhead, g);
       }
-      // (Or coming up behind in it, faster: in the mirror, 3 s off at most. Or coming the other way
-      // in it, as in the oncoming lane: 3 s off at their speed and this one's.)
+      // (Or coming up behind in it, faster: in the mirror, 3 s off at most. Or ahead in it, slower,
+      // that this one would close on within 3 s: moved over into it, it would come up onto its
+      // back. Or coming the other way in it, as in the oncoming lane: 3 s off at their speed and
+      // this one's.)
       const oc = ped || o.still ? undefined : isTruck ? null : this.byId.get(o.owner ?? -1);
       const ov = oc === undefined ? 0 : oc === null ? Math.abs(this.truckPath?.v ?? 0) : oc.v;
       const oncoming = oc === null ? Math.cos(truckHeading - c.h) < -0.5 : !!oc && Math.cos(oc.h - c.h) < -0.5;
-      if (along < half + 8 + (oncoming ? (ov + c.v) * 3 : 0) && along > -(half + 8 + (oncoming ? 0 : Math.max(0, ov - c.v) * 3)) && Math.abs(side - otherLane) < 1.5 + o.r * 0.5) otherLaneBlocked = true;
+      if (along < half + 8 + (oncoming ? (ov + c.v) * 3 : Math.max(0, c.v - ov) * 3) && along > -(half + 8 + (oncoming ? 0 : Math.max(0, ov - c.v) * 3)) && Math.abs(side - otherLane) < 1.5 + o.r * 0.5) otherLaneBlocked = true;
       // (The truck behind: the gap from its front to this car's back.)
       if (isTruck && along < -half && along > -45 && Math.abs(side) < 2) truckBehind = Math.min(truckBehind, -along - half - o.r);
       // A truck parked in this lane (double-parked at a stop): seen well before reaching it.

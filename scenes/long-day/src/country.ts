@@ -23,6 +23,7 @@ import { CityPlan } from "./city.ts";
 import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 import type { FwCurve } from "./freeway.ts";
 import { drain } from "./slices.ts";
+import { cityFileOf } from "./visits.ts";
 import type { Steps } from "./slices.ts";
 type Writable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -266,7 +267,8 @@ export const tunnelTop = (p: RoadPiece) => 11 + 3 * p.variant;   // the hill ove
 
 export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook" };
 
-export function citySeedOf(seed: number, N: number) { return N === 0 ? seed : Math.floor(hash2(N, 0, seed, 0xc17) * 2 ** 31); }
+// City N's hash key: its catalogue city's (visits.ts), what every default rule about the city hashes.
+export function citySeedOf(seed: number, N: number) { return cityFileOf(seed, N).key; }
 
 // `exit`: the drive out of `city` from its gate (frame: the gate street's end, world) to the next
 // city, planned for `dEst` seconds to the hand-over and ending on heading `endH` (the next city's

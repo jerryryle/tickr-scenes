@@ -226,6 +226,11 @@ export class CityGraph {
       }
     }
   }
+  // The blocks' hash keys from a city file (cityfile.ts), in place of those findBlocks gave them.
+  setBlockKeys(keys: readonly [number, number][]) {
+    this.blockKey.clear();
+    this.blocks.forEach((B, i) => { [B.kx, B.kz] = keys[i]; this.blockKey.set(`${B.kx},${B.kz}`, i); });
+  }
   // A block's side number for face f (its index in sides), or -1.
   sideOf(f: number): number { const b = this.faceBlock[f]; return b < 0 ? -1 : this.blocks[b].sides.indexOf(f); }
   // The dedge after d round the block on its right: the sharpest right turn at its end (a dead

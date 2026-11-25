@@ -2,7 +2,7 @@
 // across many journeys it is never one of the first two cities, never within STORYBOOK_GAP cities
 // of the last, takes between one city in ten and one in seven over a long journey, shows up in
 // most journeys of twenty cities, and leaves the real styles' cycle as it was (no two cities in a
-// row of the same style). It also checks that every storybook city of the first few journeys has its knitting
+// row of the same style). It also checks that every catalogue storybook town has its knitting
 // works (CityPlan.worksBlock), on a shallow dock its trucks can reach, and that the city after a
 // storybook one arrives with the works' wonders, and no other city with any (journey.ts freightFor).
 // The optional args are journeys (default 400), cities each (default 40) and works checked (default 12).
@@ -10,7 +10,7 @@ import { journeyStyle, isStorybookCity, STORYBOOK_GAP, STYLES } from "../src/sty
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
 import { CityPlan } from "../src/city.ts";
-import { citySeedOf } from "../src/country.ts";
+import { citiesOfStyle } from "../src/visits.ts";
 import { facilityAt, siteLayout } from "../src/facilities.ts";
 import { STORY_CARGO, STORY_FREIGHT } from "../src/cargo.ts";
 
@@ -43,7 +43,8 @@ const WORKS_N = argv[2] ? Number(argv[2]) : 12;
 let works = 0;
 for (let seed = 0; seed < WORKS_N; seed++) {
   const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (this sets up the city's limits and gates)
-  const plan = new CityPlan(citySeedOf(seed, 3 + seed), STYLES.storybook), id = plan.worksBlock;
+  const town = citiesOfStyle("storybook")[seed % citiesOfStyle("storybook").length];   // (each catalogue storybook town in turn)
+  const plan = new CityPlan(town.key, STYLES.storybook), id = plan.worksBlock;
   if (id < 0) { fails.push(`seed ${seed}: no knitting works`); continue; }
   const B = plan.graph.blocks[id], L = siteLayout(plan, B.kx, B.kz);
   if (facilityAt(plan, B.kx, B.kz) !== "knittingWorks") fails.push(`seed ${seed}: the works block's facility is ${facilityAt(plan, B.kx, B.kz)}`);

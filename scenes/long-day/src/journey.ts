@@ -46,14 +46,14 @@ import { cityName, journeyStyle } from "./styles.ts";
 import { seaSide } from "./outline.ts";
 import { cargoSeason, cityClimate, seasonalStyle } from "./climate.ts";
 import type { Climate, Season } from "./climate.ts";
-import { CITY_HI, CITY_LO, CityPlan, entryGateOf, gateEnd, gateEndSlot, setCityLimits } from "./city.ts";
+import { CITY_HI, CITY_LO, CityPlan, entryGateOf, gateEnd, gateEndSlot } from "./city.ts";
 import { BLOCK, CURB_H, STREET } from "./grid.ts";
 import type { Gate, KerbDoor } from "./city.ts";
 import type { CityGraph, CNode } from "./citygraph.ts";
 import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, SEA_CARGO, STORY_CARGO, STORY_FREIGHT, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
-import { blockGoals, LANE_KERB, Path, planRoute } from "./route.ts";
+import { blockGoals, LANE_KERB, Path, planRoute, WIDE_MUST_CHANGE } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
 import { interchangeTrack } from "./interchange.ts";
@@ -228,7 +228,6 @@ export class Journey {
 
   constructor(readonly cfg: Config, t: number, startSeason: Season) {
     this.startSeason = startSeason;
-    setCityLimits(cfg.cityMinutes);
     this.st = this.entryState(this.cityAt(Math.max(0, t)));
     ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
     this.placePose();
@@ -701,12 +700,17 @@ export class Journey {
       let goals: Goal[];
       if (dock) goals = [{ d: dock.face, after: dock.pa + dock.R + dock.pull + dock.trail }];
       else if (stop.kind === "swap") {
-        // (Nose just short of the stop line ahead.)
-        const front = truckExtents(stop.truck!).front, L = siteLayout(this.plan, bx, bz);
-        const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - 4 - front, straight: true }));
+        // (Nose just short of the stop line ahead. A tractor-trailer parks back from it by the
+        // leg its wide right out needs, route.ts WIDE_MUST_CHANGE, as far as the side has room: up
+        // at the line, its trailer would cut across the corner turning right.)
+        const E = truckExtents(stop.truck!), front = E.front, L = siteLayout(this.plan, bx, bz);
+        const room = SPECS[stop.truck!].fifthWheel !== undefined ? WIDE_MUST_CHANGE + 4 : 0;
+        const atLine = (f: number, end: number) => { const a = end - 4 - front; return a - Math.max(0, Math.min(room, a + E.rear - G.faceA0(f))); };
+        const all = blk.sides.map((f) => ({ d: f, after: atLine(f, G.faceA1(f)), straight: true }));
         // (A rental lot's frontage ends at a 51 past its square's start: on a block where the
         // square sits on an anchor, the face can run on past it, the truck must not.)
-        goals = L.kind === "lot" ? [{ ...all[L.side], after: Math.min(G.faceA1(blk.sides[L.side]), 51 + this.plan.siteDelta(bx, bz)) - 4 - front }] : fronted(G, all);
+        const lf = blk.sides[L.kind === "lot" ? L.side : 0];
+        goals = L.kind === "lot" ? [{ ...all[L.side], after: atLine(lf, Math.min(G.faceA1(lf), 51 + this.plan.siteDelta(bx, bz))) }] : fronted(G, all);
       } else {
         // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
         // on, to where the way in turns off (straight through the node before, to be in the kerb
@@ -898,24 +902,40 @@ export class Journey {
       if (dd < 45 && this.doorTakes(stop.site, d, stop.cargo)) cands.push([dd, d]);
     }
     cands.sort((p, q) => p[0] - q[0]);
-    // A load left on the pallet jack (jackStays): only through a door its moves can be planned to
-    // from where the truck stands, the nearest such; else none, and it waits on the pavement.
+    // A load moved with a pallet jack: through the nearest door its moves can be planned to from
+    // where the truck stands (one level with the cab is too far along the truck's side to reach
+    // clear of it); else to a spot on the pavement behind the truck it can be planned to. Only a
+    // load that may leave the jack (not jackStays) falls back to the nearest door, walked
+    // unplanned. Any other load goes through the nearest door.
     // (Worked out once for the stop and where it stands: asked as the truck nears it, too.)
-    if (!jackStays(L, stop.cargo)) return cands[0]?.[1] ?? null;
     const key = this.pickKey(stop, pose);
     const got = this.doorPick.get(key);
     if (got) return got.door;
+    const stays = jackStays(L, stop.cargo);
     let pick: { door: KerbDoor | null; chores: Chore[] | null; pave: number } = { door: null, chores: null, pave: 0 };
-    const planned = (ch: Chore[]) => { const walks = ch.filter((c) => c.kind === "walk" && c.tool === "palletJack"); return walks.length > 0 && walks.every((c) => c.jack); };
+    const jackWalks = (ch: Chore[]) => ch.filter((c) => c.kind === "walk" && c.tool === "palletJack");
+    const planned = (ch: Chore[]) => { const walks = jackWalks(ch); return walks.length > 0 && walks.every((c) => c.jack); };
     for (const [, d] of cands.slice(0, 2)) {
       const ch = this.kerbChores(stop, d, pose, true);
-      if (planned(ch)) { pick = { door: d, chores: ch, pave: 0 }; break; }
+      if (planned(ch) || (!stays && !jackWalks(ch).length)) { pick = { door: d, chores: ch, pave: 0 }; break; }
     }
     // (No door: a spot on the pavement behind the truck it can be planned to, further back if need be.)
     for (let k = 0; !pick.chores && k < PAVE_SPOTS; k++) {
       const ch = this.kerbChores(stop, null, pose, true, k);
       if (planned(ch)) pick = { door: null, chores: ch, pave: k };
     }
+    // (Nothing planned on a quick look: those doors again, then the pavement spots, planned in full
+    // with the brushes past the bed's loads the last tries allow, before the nearest door walked
+    // unplanned.)
+    if (!pick.chores && !stays) for (const [, d] of cands.slice(0, 2)) {
+      const ch = this.kerbChores(stop, d, pose, true, 0, true);
+      if (planned(ch)) { pick = { door: d, chores: ch, pave: 0 }; break; }
+    }
+    for (let k = 0; !pick.chores && !stays && k < PAVE_SPOTS; k++) {
+      const ch = this.kerbChores(stop, null, pose, true, k, true);
+      if (planned(ch)) pick = { door: null, chores: ch, pave: k };
+    }
+    if (!pick.chores && !stays) pick.door = cands[0]?.[1] ?? null;
     this.doorPick.set(key, pick);
     return pick.door;
   }
@@ -962,7 +982,7 @@ export class Journey {
   }
   // A stop's chores, the truck standing at `pose`, through door `kd` (or none). `trial`: only to
   // see whether they can be planned (nothing aboard changes: its slots worked out on a copy).
-  private kerbChores(stop: Stop, kd: KerbDoor | null, pose: Pose, trial: boolean, pave = 0): Chore[] {
+  private kerbChores(stop: Stop, kd: KerbDoor | null, pose: Pose, trial: boolean, pave = 0, full = false): Chore[] {
     const st = this.st, others = trial ? this.othersAt(stop).map((a) => ({ ...a })) : this.othersAt(stop);
     const slot = stop.slot ?? this.slotFor(stop, others);
     // The back of the loads before and after (where the hand truck or pallet jack rests), from
@@ -1012,7 +1032,7 @@ export class Journey {
     // (No door: the building's front from the nearest one there at all, whatever its use, all wall.)
     const fr = !kd && !dp ? this.frontDoor(stop, pose) : null;
     const plan = () => planChores(st.truck, stop, dp ? dp.stair : null, slot, before, after, door, obstacles, boxes, kd && !dp ? this.stackKind(stop) : null, others, true, pave, fr ? frame(fr) : null, dp?.geom.door ? dp.geom.door.w / 2 : null);
-    return trial ? jackTrial(plan) : plan();
+    return trial && !full ? jackTrial(plan) : plan();
   }
   // Whether a door can take a cargo at all: not one with something big stood just before it, a
   // freeway's column, a conifer (nothing carried, wheeled or two-handed gets in or out past it;

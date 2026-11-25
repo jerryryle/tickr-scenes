@@ -5,7 +5,7 @@
 // streamed city. Colours are hazed towards the sky; it is unlit (MeshBasic).
 import * as THREE from "three@0.187.0";
 import { mulberry32 } from "./rng.ts";
-import { sbCurve, sbTube } from "./storybook.ts";
+import { sbCurve, sbTube } from "./city-storybook/storybook-buildings-town.ts";
 import { Batch } from "./geom.ts";
 import type { CityStyle } from "./styles.ts";
 import { shade } from "./city.ts";

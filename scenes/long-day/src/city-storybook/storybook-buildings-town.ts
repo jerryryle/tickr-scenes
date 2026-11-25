@@ -4,8 +4,8 @@
 // two pieces in line never share a plane (where they overlap, flat faces in one plane flicker).
 // The file imports only geometry, so city.ts and the others can import it at load.
 import * as THREE from "three@0.187.0";
-import { Batch } from "./geom.ts";
-import { facadeBox, facadePrism } from "./facade.ts";
+import { Batch } from "../geom.ts";
+import { facadeBox, facadePrism } from "../facade.ts";
 
 export type SbP3 = [number, number, number];
 
