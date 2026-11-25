@@ -712,6 +712,7 @@ export class Journey {
     let s0 = 0;
     if (st.dockExit) { st.route.dock = st.dockExit.geom; s0 = st.dockExit.s; st.dockExit = null; }
     if (st.garageExit) { st.route.garageOut = st.garageExit; st.garageExit = null; }
+    st.route.wide = st.truck === "tractor" || undefined;
     this.path = new Path(this.plan.graph, st.route);
     st.s = s0; st.committed = ""; st.stopGo = ""; st.redWait = 0; st.holdT = 0; st.jamT = 0; st.jamGo = 0; st.jamMoved = 0;
     st.stopS = this.path.length;
@@ -1529,6 +1530,7 @@ export class Journey {
       const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable);
       if (!route) continue;
       if (at.lane !== undefined) route.lane = at.lane;
+      route.wide = st.truck === "tractor" || undefined;
       const len = new Path(G, route).length;
       const dEst = Math.round((this.period - st.cityTime - len / GATE_SPEED) * 10) / 10;
       const cost = len + (turn !== 0 && dEst < 50 ? 1500 : 0);

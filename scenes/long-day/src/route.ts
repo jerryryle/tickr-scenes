@@ -7,14 +7,18 @@
 // A route starts on a directed street (dedge) `d`, `before` metres short of the node it runs to,
 // takes one dedge on at each node it reaches (`edges`) and ends `after` metres along the last one.
 // The path is a chain of line pieces (with smooth lane changes) and turns, parameterised by
-// distance s. The truck's rear axle rides on it. A turn is easement spiral, circular arc,
-// easement spiral, through whatever angle the streets meet at. Right turns swing kerb lane to kerb
-// lane on a corner radius of 6.5 m (the rear axle passing 4.3 m from a right-angled kerb corner),
-// left turns inner lane to inner lane on 9 m; a bend where a street carries straight on at an
-// angle keeps its lane, on a wide radius. Between turns a line keeps to the kerb lane, unless both
-// of its ends are in the inner lane (out of a left and into another): then it stays there rather
-// than weave out and back. The journey ignores traffic, so a right turn never waits for a clear
-// kerb lane: traffic gets out of the truck's way instead (traffic.ts).
+// distance s. The truck's rear axle rides on it. A turn is easement spiral, circular arc, easement
+// spiral, through whatever angle the streets meet at. Right turns swing kerb lane to kerb lane on a
+// corner radius of 6.5 m (the rear axle passing 4.3 m from a right-angled kerb corner), left turns
+// inner lane to inner lane on 9 m. A tractor-trailer (a route's `wide`) swings its right turns out
+// of the inner lane instead, round onto the inner lane's far side nearer the centre line, and eases
+// back over after: its trailer axles, 13 m back, cut far inside the tractor's path, and from the
+// kerb lane they would drag the trailer across the corner's sidewalk and into the building on it. A
+// bend where a street carries straight on at an angle keeps its lane, on a wide radius. Between
+// turns a line keeps to the kerb lane, unless both of its ends are in the inner lane (out of a left
+// and into another): then it stays there rather than weave out and back. The journey ignores
+// traffic, so a right turn never waits for a clear kerb lane: traffic gets out of the truck's way
+// instead (traffic.ts).
 import type { CityGraph } from "./citygraph.ts";
 import { angleDiff } from "./citygraph.ts";
 
@@ -23,6 +27,23 @@ export const DIR_X = [1, 0, -1, 0], DIR_Z = [0, -1, 0, 1];
 
 export const LANE_KERB = 4.5, LANE_INNER = 1.5;
 const R_RIGHT = 6.5, R_LEFT = 9;
+// A wide right (a tractor-trailer's): out of the inner lane, and round into the far side of the
+// inner lane, WIDE_SWING nearer the centre line, before easing back over into it (its trailer,
+// still swung in from a turn just before, would otherwise scrape the corner).
+const WIDE_SWING = 1;
+// The shortest leg it eases back over from that swing on (WIDE_MIN_CHANGE), the shortest it moves
+// over from the kerb lane to the inner on before a wide right (WIDE_MUST_CHANGE: shorter, the lane
+// change would jink across), and the shortest it moves from that swing all the way over to the kerb
+// lane on (WIDE_KERB_CHANGE). A turn tightens to leave it room for those, but never tighter than
+// WIDE_T_FLOOR.
+const WIDE_MIN_CHANGE = 6, WIDE_MUST_CHANGE = 10, WIDE_KERB_CHANGE = 16, WIDE_T_FLOOR = 4;
+// (Those for the 1 m shift back from WIDE_SWING, and the 4 m on over to the kerb lane: a swing out of
+// the kerb lane, twice as far, needs proportionally longer. easeLen: back into the inner lane from
+// swung offset o; kerbLen: on over to the kerb lane from it.)
+const easeLen = (o: number) => WIDE_MIN_CHANGE * (LANE_INNER - o) / WIDE_SWING;
+const kerbLen = (o: number) => WIDE_MUST_CHANGE * (LANE_KERB - o) / (LANE_KERB - LANE_INNER + WIDE_SWING);
+// (A lane, or that swung offset: the lane it is in.)
+const laneOf = (o: number) => o === LANE_KERB ? LANE_KERB : LANE_INNER;
 // A bend (straight on, where the street bends at a node): as wide as the room allows, so a street
 // that bends a little at every node (a bowed avenue, an organic town's) drives as one smooth curve
 // rather than a straight run and a quick flick at each node. (At most this radius.)
@@ -48,7 +69,9 @@ export interface DockGeom { x: number; z: number; H: number; Lb: number; R: numb
 // the leveller lip's hinge at the platform edge: what DockFx opens and lowers.
 export interface DockDoor { x: number; z: number; w: number; h: number; lx: number; lz: number }
 // `lane`: the lane it starts in (the kerb lane unless the last route ended in the inner one).
-export interface Route { d: number; before: number; edges: number[]; after: number; lane?: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom }
+// `wide`: a tractor-trailer's (its right turns wide ones), kept with the route so that rebuilding
+// its path (journey.ts restore) gives the same path whatever truck the journey has by then.
+export interface Route { d: number; before: number; edges: number[]; after: number; lane?: number; dock?: DockGeom; garageIn?: boolean; garageOut?: GarageGeom; wide?: boolean }
 
 // A parking garage's rooftop stop (facilities.ts "garage", garage.ts builds it): from the kerb
 // lane a right turn into the block, a ramp up along its side, a left turn onto the level lane
@@ -239,7 +262,7 @@ export class Path {
       else this.tail(GARAGE_OUT, g.x, g.z, g.h, GARAGE_OUT_RAMP, GARAGE_H, 0);
     }
     if (trackOnly || !this.graph) return;
-    const G = this.graph;
+    const G = this.graph, wide = !!route.wide;
     // The current leg: a straight line through (lx, lz) (on the centre line) on heading lh, from
     // `legS`, in lane `lo`; d is the dedge it is on.
     let d = route.d, legS = this.length, lo = route.lane ?? LANE_KERB;
@@ -249,15 +272,23 @@ export class Path {
     const pushLine = (len: number, o1: number, must = false) => {
       len = Math.max(0, len);
       // (A lane change needs room: on a leg too short for one, it stays in its lane. Unless it must
-      // change: then in what room there is.)
-      if (len < MIN_CHANGE && !must) o1 = lo;
+      // change, or is swung out of its lane (a wide right): then in what room there is.)
+      const swung = lo !== laneOf(lo);
+      if (len < MIN_CHANGE && !must && !swung) o1 = lo;
+      // (Swung, with too little room to go on over to the kerb even sharply: back into the inner
+      // lane only. Planned turns leave it WIDE_KERB_CHANGE where they can.)
+      if (swung && o1 === LANE_KERB && len < kerbLen(lo) && !must) o1 = LANE_INNER;
       // Only two lanes, so a line changes lane at most once: none when both ends share one.
       let c0 = 0, tc = 0;
       if (lo !== o1) {
         tc = Math.min(LANE_CHANGE, len * LANE_CHANGE_SHARE);
         // Out of a turn to the kerb: a run out of the turn first. Into the inner lane for a left
         // (no turn behind needs a run-out): as early as the settled run before the left allows.
-        if (o1 === LANE_KERB) c0 = len - tc > LANE_HOLD + LANE_LEAD ? LANE_HOLD : (len - tc) * LANE_HOLD / (LANE_HOLD + LANE_LEAD);
+        // (Swung out to the inner lane's far side: back over a lane change's length, LANE_HOLD on,
+        // once its trailer has swung in behind it: any sooner and the trailer, still dragging in
+        // across the corner, would scrape it.)
+        if (swung && o1 === LANE_INNER) c0 = Math.min(LANE_HOLD, len - tc);
+        else if (o1 === LANE_KERB) c0 = len - tc > LANE_HOLD + LANE_LEAD ? LANE_HOLD : (len - tc) * LANE_HOLD / (LANE_HOLD + LANE_LEAD);
         else c0 = Math.max(0, len - LANE_LEAD - tc);
       }
       this.pieces.push({ kind: "line", s0: this.length, len, x0: lx, z0: lz, h: lh, o0: lo, o1, c0, tc });
@@ -280,26 +311,57 @@ export class Path {
       this.nodes.push({ node: N, sLine: legS + toNode - node.arms[ai].mouth - STOP_BACK, sOut: legS + toNode + G.armOut(e).mouth, from: d, to: e, move: m });
       // Straight on along the same line (or near enough): the leg carries on.
       if (ang < 1e-4) { d = e; continue; }
-      // The turn's lane: the kerb lane for a right, the inner for a left, the lane it is in for a
-      // bend; but where the leg is too short to change lanes on (between close turns), the lane
-      // it is in. The corner for lane o: where the incoming lane's line meets the outgoing one's
-      // (u along the incoming lane from abreast of the node to it). The turn starts T before it
-      // and ends T after.
+      // The turn's lane: the kerb lane for a right (the inner for a wide one), the inner for a
+      // left, the lane it is in for a bend; but where the leg is too short to change lanes on
+      // (between close turns), the lane it is in. The corner for lane o: where the incoming lane's
+      // line meets the outgoing one's (u along the incoming lane from abreast of the node to it).
+      // The turn starts T before it and ends T after.
       const fi = [Math.cos(hin), -Math.sin(hin)], fo = [Math.cos(hout), -Math.sin(hout)];
       const den = fi[0] * fo[1] - fi[1] * fo[0];
       // (v: along the outgoing lane from abreast of the node to it.)
-      const corner = (o: number) => {
-        const ix = node.x + Math.sin(hin) * o, iz = node.z + Math.cos(hin) * o, ox = node.x + Math.sin(hout) * o, oz = node.z + Math.cos(hout) * o;
+      const corner = (o: number, oo = o) => {
+        const ix = node.x + Math.sin(hin) * o, iz = node.z + Math.cos(hin) * o, ox = node.x + Math.sin(hout) * oo, oz = node.z + Math.cos(hout) * oo;
         const uu = ((ox - ix) * fo[1] - (oz - iz) * fo[0]) / den, cx = ix + fi[0] * uu, cz = iz + fi[1] * uu;
         return { u: uu, v: (cx - ox) * fo[0] + (cz - oz) * fo[1], cx, cz };
       };
       const R = m === "R" ? R_RIGHT : m === "L" ? R_LEFT : R_BEND;
-      let oIn = m === "R" ? LANE_KERB : m === "L" ? LANE_INNER : lo;
-      if (oIn !== lo && toNode + corner(oIn).u - R * Math.tan(ang / 2) < MIN_CHANGE) oIn = lo;
+      const RIGHT_LANE = wide ? LANE_INNER : LANE_KERB;
+      let oIn = m === "R" ? RIGHT_LANE : m === "L" ? LANE_INNER : laneOf(lo);
+      // (A wide right goes over to the inner lane in what room there is, down to WIDE_MUST_CHANGE:
+      // from the kerb lane its trailer would cut across the corner.)
+      const legRoom = toNode + corner(oIn).u - R * Math.tan(ang / 2), mustIn = wide && m === "R" && legRoom >= WIDE_MUST_CHANGE;
+      if (oIn !== laneOf(lo) && legRoom < MIN_CHANGE && !mustIn) oIn = laneOf(lo);
       // (The last turn, a left from the kerb lane with too little room after it to move back to
       // the kerb before the stop: taken wide, into the kerb lane, so the stop is at the kerb.)
-      if (ei === route.edges.length - 1 && oIn === LANE_INNER && lo === LANE_KERB && route.after - corner(oIn).v - R * Math.tan(ang / 2) < MIN_CHANGE) oIn = LANE_KERB;
-      const oOut = oIn, { u, v, cx, cz } = corner(oIn);
+      if (m === "L" && ei === route.edges.length - 1 && oIn === LANE_INNER && lo === LANE_KERB && route.after - corner(oIn).v - R * Math.tan(ang / 2) < MIN_CHANGE) oIn = LANE_KERB;
+      // (Still swung out of a wide right just behind: this turn tightens to leave it easeLen
+      // to ease back over in first; with too little room even for that, on from where it is.)
+      if (lo !== laneOf(lo) && toNode + corner(oIn).u - easeLen(lo) < WIDE_T_FLOOR) oIn = lo;
+      const recover = lo !== laneOf(lo) && oIn !== lo ? easeLen(lo) : 0;
+      // (Whether this is the route's last turn, past any nodes it goes straight on through after it,
+      // and how far it runs on through them: a wide one's.)
+      let lastTurn = true, runOn = 0;
+      if (wide) for (let k = ei + 1, ek = e; k < route.edges.length; k++) {
+        if (Math.abs(angleDiff(G.dedgeStartH(route.edges[k]) - G.dedgeEndH(ek))) >= 1e-4) { lastTurn = false; break; }
+        runOn += G.faceLen(ek); ek = route.edges[k];
+      }
+      // (A wide right comes out swung: its corner where the incoming lane's line meets the swung
+      // outgoing one's. Left no room to leave the kerb lane, as pulling out from a stop just short of
+      // the corner: swung out further, its cab out over the centre line, always: from the kerb lane
+      // unswung, its trailer would cut the corner. Otherwise not into a stop just round the corner,
+      // with no room to go on over to the kerb before it.)
+      // (Room after it measured from the swung corner, WIDE_SWING further on than its lane's.)
+      const swing = wide && m === "R" && (oIn === LANE_KERB || !lastTurn || runOn + route.after - corner(oIn, oIn - WIDE_SWING).v - R * Math.tan(ang / 2) >= WIDE_KERB_CHANGE);
+      // (Out of the kerb lane into a stop close round the corner: swung only as far as it can come
+      // back from before the stop, by the room after the turn (easeLen and WIDE_T_FLOOR): out over
+      // the centre line, or to the inner lane's far side, or else only into the inner lane, which
+      // needs nothing made up after. The trade, the less it swings: its trailer clips the corner,
+      // about 0.4 m into the block from the far side and a metre from the inner lane, against
+      // nearly three from the kerb lane; and from the inner lane the leg to the stop is too short
+      // to reach the kerb, so it stops in the inner lane rather than jumping sideways to it.)
+      const fits = (o: number) => runOn + route.after - corner(oIn, o).v >= easeLen(o) + WIDE_T_FLOOR;
+      const kerbOut = !swing || oIn !== LANE_KERB || !lastTurn || fits(LANE_INNER - 2 * WIDE_SWING) ? LANE_INNER - 2 * WIDE_SWING : fits(LANE_INNER - WIDE_SWING) ? LANE_INNER - WIDE_SWING : LANE_INNER;
+      const oOut = !swing ? oIn : oIn === LANE_INNER ? LANE_INNER - WIDE_SWING : kerbOut, { u, v, cx, cz } = corner(oIn, oOut);
       // (Where streets are short and turns close together, a turn tightens to fit the room it has:
       // the leg behind it, half the way to the next turn's corner (past any nodes it goes straight
       // on through), the way to the stop after the last. Its neighbours then never overlap it.)
@@ -309,7 +371,7 @@ export class Path {
         run += G.faceLen(ej); ej = e2;
         if (Math.abs(t2) < 1e-4) continue;
         // (That turn's corner, in the lane it will take.)
-        const o2 = Math.abs(t2) < Math.PI / 4 ? oOut : t2 > 0 ? LANE_INNER : LANE_KERB;
+        const o2 = Math.abs(t2) < Math.PI / 4 ? laneOf(oOut) : t2 > 0 ? LANE_INNER : RIGHT_LANE;
         const f1 = [Math.cos(h1), -Math.sin(h1)], f2 = [Math.cos(h2), -Math.sin(h2)], dn = f1[0] * f2[1] - f1[1] * f2[0];
         const ix2 = N2.x + Math.sin(h1) * o2, iz2 = N2.z + Math.cos(h1) * o2, ox2 = N2.x + Math.sin(h2) * o2, oz2 = N2.z + Math.cos(h2) * o2;
         const u2 = ((ox2 - ix2) * f2[1] - (oz2 - iz2) * f2[0]) / dn;
@@ -325,8 +387,13 @@ export class Path {
         // over to the kerb before the stop, as the last leg does: never tighter than BEND_MIN.)
         if (m === "S" && oOut !== LANE_KERB) room = Math.min(room, Math.max(run + route.after - v - MIN_CHANGE - LANE_LEAD, BEND_MIN * Math.tan(ang / 2)));
       }
-      const T = Math.min(R * Math.tan(ang / 2), Math.max(0.3, toNode + u), Math.max(0.3, room));
-      pushLine(toNode + u - T, oIn);
+      let T = Math.min(R * Math.tan(ang / 2), Math.max(0.3, toNode + u - recover), Math.max(0.3, room));
+      // (The last turn, still swung (carried on through it): it leaves the leg to the stop room to go
+      // on over to the kerb, WIDE_KERB_CHANGE (scaled to the shift), or at least back into the inner
+      // lane, easeLen.)
+      // (Never squeezed tighter for it than WIDE_T_FLOOR: with less room, a shorter leg.)
+      if (wide && lastTurn && oOut !== laneOf(oOut)) T = Math.min(T, Math.max(Math.min(T, WIDE_T_FLOOR), run + route.after - v - WIDE_KERB_CHANGE * kerbLen(oOut) / WIDE_MUST_CHANGE, Math.min(T, run + route.after - v - easeLen(oOut))));
+      pushLine(toNode + u - T, oIn, mustIn);
       this.turns.push({ s: this.length, dir: m === "L" ? -1 : m === "R" ? 1 : (turn > 0 ? -1 : 1) });
       const sx = cx - fi[0] * T, sz = cz - fi[1] * T;
       const tp = turnPiece(this.length, sx, sz, hin, T, turn > 0 ? 1 : -1, m === "L" ? SPEED_LEFT : m === "R" ? SPEED_RIGHT : SPEED_BEND, ang, m === "S" ? oIn : undefined, m === "S" ? BEND_MIN : R);
