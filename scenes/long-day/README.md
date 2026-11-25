@@ -101,6 +101,27 @@ boats moored along a river town's quays, the upturned rowboat by a bait shack, a
 carried as cargo; the car ferry (`ferryModel` in `src/countryworld.ts`) lofts its hull with the
 same code. The showroom's last frames line the boats up afloat and ashore, then show the ferry.
 
+The storybook city (`src/storybook.ts`, `src/works.ts`) is a fantasy town that now and then takes a
+real city's turn: never the first two cities, never within six of the last, about one city in eight
+(`isStorybookCity`, `src/styles.ts`). Its streets are purple-grey with polka-dot centre lines,
+checkered pavements, shepherd's-crook lamps and bunting, entered under a corkscrew arch; its
+buildings are bent towers of round pods in hats, crooked shop rows and pod houses (walls of facade
+tiles, `facadePrism` in `src/facade.ts`, so they cost what other cities' do: `test/chunkcost.ts`
+keeps a chunk within 1.2 times the dearest real style); its trees are tufts, pancakes, droops and
+topiary, and its country rolls away in striped hills. Its people wear hats and scarves of their own
+(`FIG_STYLE`, `src/figure.ts`), its traffic is bubble cars and the puff bus, and one vignette is
+there only (a knitter). One block is the knitting works (`CityPlan.worksBlock`): a shallow van dock
+under a barrel-roofed spinning hall, its process laid out in the yard beside it from an orchard of
+white tufts to spools on the hall's front and a knitting head on its roof, its moving parts turned by
+`KnittingWorksFx` by scene time; it ships bolts of knitting, and the city after a storybook one
+arrives with a load of it. The director holds a wide shot of the works as the truck pulls up.
+`test/storybook.ts` checks the frequency and the works; to look at it:
+
+```bash
+make debug SCENE=long-day DEFINE="DEBUG_STYLE=storybook DEBUG_VIEW=worksHigh DEBUG_SKIP_MINUTES=2"
+make tool SCENE=long-day TOOL=whimsy SECS=14     # the art-direction sketch it started from
+```
+
 `src/vignettes.ts` holds the street vignettes (a dog at a "no dogs" sign, a dog walker towed by a
 pack, a wet-paint bench, window washers, a crossing guard, a food truck's queue, snow and night
 scenes and the rest), each chosen for its district, hour, weather and season and placed on real

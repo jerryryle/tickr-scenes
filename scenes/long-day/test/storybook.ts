@@ -2,9 +2,16 @@
 // across many journeys it is never one of the first two cities, never within STORYBOOK_GAP cities
 // of the last, takes between one city in ten and one in seven over a long journey, shows up in
 // most journeys of twenty cities, and leaves the real styles' cycle as it was (no two cities in a
-// row of the same style).
-// Args (optional): journeys (default 400), cities each (default 40).
-import { journeyStyle, isStorybookCity, STORYBOOK_GAP } from "../src/styles.ts";
+// row of the same style). And that every storybook city of the first few journeys has its knitting
+// works (CityPlan.worksBlock), on a shallow dock its trucks can reach, and that the city after a
+// storybook one arrives with its knitting (journey.ts freightFor).
+// Args (optional): journeys (default 400), cities each (default 40), works checked (default 12).
+import { journeyStyle, isStorybookCity, STORYBOOK_GAP, STYLES } from "../src/styles.ts";
+import { readConfig } from "../src/env.ts";
+import { Journey } from "../src/journey.ts";
+import { CityPlan } from "../src/city.ts";
+import { citySeedOf } from "../src/country.ts";
+import { facilityAt, siteLayout } from "../src/facilities.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const JOURNEYS = argv[0] ? Number(argv[0]) : 400, CITIES = argv[1] ? Number(argv[1]) : 40;
@@ -30,5 +37,19 @@ const rate = story / total;
 console.log(`storybook cities: ${story} of ${total} (1 in ${(1 / rate).toFixed(1)}); in the first 20 cities of ${(within20 / JOURNEYS * 100).toFixed(0)}% of journeys`);
 if (rate < 1 / 10 || rate > 1 / 7) fails.push(`storybook rate 1 in ${(1 / rate).toFixed(1)}: want between 1 in 10 and 1 in 7`);
 if (within20 / JOURNEYS < 0.75) fails.push(`only ${(within20 / JOURNEYS * 100).toFixed(0)}% of journeys see the storybook city in 20 cities`);
+// The works: in the storybook city of a dozen journeys.
+const WORKS_N = argv[2] ? Number(argv[2]) : 12;
+let works = 0;
+for (let seed = 0; seed < WORKS_N; seed++) {
+  const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
+  const plan = new CityPlan(citySeedOf(seed, 3 + seed), STYLES.storybook), id = plan.worksBlock;
+  if (id < 0) { fails.push(`seed ${seed}: no knitting works`); continue; }
+  const B = plan.graph.blocks[id], L = siteLayout(plan, B.kx, B.kz);
+  if (facilityAt(plan, B.kx, B.kz) !== "knittingWorks") fails.push(`seed ${seed}: the works block's facility is ${facilityAt(plan, B.kx, B.kz)}`);
+  if (L.kind !== "dock" || L.deep) fails.push(`seed ${seed}: the works' site is ${L.kind}${L.kind === "dock" ? " (deep)" : ""}, not a shallow dock`);
+  for (let N = 2; N < 30; N++) if (journeyStyle(seed, N).storybook && j.freightFor(N + 1)?.cargo !== "knitwear") fails.push(`seed ${seed}: city ${N + 1} after a storybook city arrives without its knitting`);
+  works++;
+}
+console.log(`knitting works: ${works} of ${WORKS_N} storybook cities`);
 for (const f of fails.slice(0, 20)) console.log("FAIL " + f);
 if (fails.length) proc.exit(1);
