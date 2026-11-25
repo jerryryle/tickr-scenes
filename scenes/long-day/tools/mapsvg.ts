@@ -8,7 +8,7 @@
 // recorded in geom.ts PLACED is read back.
 import * as THREE from "three@0.187.0";
 import { CityPlan, kerbDoors, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI, siteSquare } from "../src/city.ts";
-import type { CityFile } from "../src/cityfile.ts";
+import type { CityFile, CityHead } from "../src/cityfile.ts";
 import { facilityAt, facilityName, siteLayout } from "../src/facilities.ts";
 import { PAVEMENT, PK } from "../src/decor.ts";
 import { signalPoles, stopSignPosts } from "../src/signals.ts";
@@ -66,7 +66,7 @@ function builtCity(plan: CityPlan) {
   return { lots: [...lots.values()], feet: [...feet.values()], trees: [...trees.values()], furniture: [...furniture.values()] };
 }
 
-export function citySvg(F: CityFile): string {
+export function citySvg(F: CityHead): string {
   const plan = new CityPlan(F.key, STYLES[F.style]), G = plan.graph;
   plan.climate = { season: "summer", weather: "clear", snowCover: false };
   const L = new Map<LayerId, string[]>(LAYERS.map(([id]) => [id, []]));
@@ -184,7 +184,7 @@ export function citySvg(F: CityFile): string {
 }
 
 // Where a city's map is written: build output, in a folder for its style as its file is.
-export const mapPath = (F: CityFile) => `build/long-day-maps/city-${F.style}/${F.id.slice(F.style.length + 1)}.svg`;
+export const mapPath = (F: CityHead) => `build/long-day-maps/city-${F.style}/${F.id.slice(F.style.length + 1)}.svg`;
 
 // The world map (docs/long-day-cities.md, "Maps"): the world graph alone, one node a city at its place
 // (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and

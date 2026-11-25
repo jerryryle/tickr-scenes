@@ -39,6 +39,12 @@ export interface CityFile {
   // contents"), or (null) none: tests and the drafting tools give a city by its rules this way.
   contents?: () => CityFileContents | null;
 }
+// A city's layout: the part of its file that only a plan of it reads (city.ts CityPlan). The scene
+// carries it packed and unpacks it when the city is planned (city.ts fileOf).
+export interface CityLayout { nodes: CityFileNode[]; streets: CityFileStreet[]; blocks: CityFileBlock[] }
+// A city's head: its file without its layout, as the catalogue the scene carries has it (world.ts),
+// or the whole file, as a test or a drafting tool may give it.
+export type CityHead = Omit<CityFile, keyof CityLayout> & Partial<CityLayout>;
 // A city's contents: each block's items (by its place in the file's `blocks`), each street's (by
 // its id) and the countryside ring's, each a recipe's row (contents.ts rowOf).
 export interface CityFileContents { blocks: Record<number, RecipeRow[]>; streets: Record<number, RecipeRow[]>; outskirts: RecipeRow[] }

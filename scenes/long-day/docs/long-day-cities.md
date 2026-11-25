@@ -20,7 +20,7 @@ These are the parts, and the rest of this document uses these names for them.
    street furniture, signal poles, stop signs and front doors placed on them.
 2. A **contents file** lists everything else that stands on a city's layout as **recipes**: its
    lots, buildings, sites, trees, streetlights and the countryside ring around the town.
-3. The **catalogue** is the list of city files in the **world file**, `src/world.ts`.
+3. The **catalogue** is the list of cities, by id, in the **world file**, `src/world.ts`.
 4. The **world graph** joins the cities with country roads. Its roads are listed in
    `src/world-roads.ts`.
 5. A **road map** holds one country road: its shape, its land, its set pieces and everything
@@ -49,15 +49,16 @@ Three alternatives lost.
    at an estimated 50 to 100 bytes a triangle is 150 to 450 MB per city before compression. Baked
    meshes would also freeze the season, weather and dressing that change from visit to visit.
 3. Listing a city's contents as objects in its city file held every city's recipes in memory at
-   once (706 MB of heap after the start). The contents are packed instead, as "City contents"
-   describes.
+   once (706 MB of heap after the start). The cities are packed instead, as "How the scene
+   carries the cities" describes.
 
 ## The catalogue
 
 The catalogue holds 35 cities: five for each real style (coastal, metro, desert, brick,
 mainstreet and port) and five storybook towns. A city's id is `<style>-<slug>`, where the slug is
 its name in lower-case kebab form, so "Higgle-on-the-Wobble" is `storybook-higgle-on-the-wobble`.
-A city is in the catalogue once `src/world.ts` imports its file and lists it.
+A city is in the catalogue once its folder is in `src/city-<style>/` and `src/world.ts` lists its id.
+The visit planner picks from the list by position, so a new city goes at the end of it.
 
 A city's file decides whether it has a freeway, and each style keeps a mix of cities with and
 without one. A city's size is whatever its file lays out. The `cityMinutes` setting changes only
@@ -204,19 +205,34 @@ export const CONTENTS_METRO_GRAND_CENTRAL: CityFileContents = {
 };
 ```
 
-The scene never imports the contents files. Before every build of the scene, a test or a tool,
-`tools/pack.ts` packs them all into `src/contents-packed.ts`, which is build output and not
-committed, and `src/pack.ts` compresses them from 28.6 MB to 9.5 MB. A city's contents are
-unpacked when the city is planned. Measured when packing landed, the
-scene is 36 MB, holds 333 MB of heap after the start and starts in 2.5 s. The contents files are
-left out of the type checker, which they took to 4.5 GB; the packer and `test/catalogue.ts` read
-every one.
+The scene carries the contents packed, as "How the scene carries the cities" describes. The
+contents files are left out of the type checker, which they took to 4.5 GB; the packer and
+`test/catalogue.ts` read every one.
 
 A building edited by hand may need its block's doors edited to match, and `test/doors.ts` reports
 a door left on no wall. The rules that once placed the contents (lot cutting, the grid builders'
 splits, infill fitting) still sit in `src/city.ts`, behind the same builders that make the
 recipes. A city whose file lists its contents never runs them; the drafting tools do, through
 `place()` in `src/contents.ts`, which records each recipe as it draws it.
+
+## How the scene carries the cities
+
+The scene holds a city's layout and contents only while it has the city planned. Every other city
+is a small **head**: its city file without its nodes, streets and blocks (`CityHead` in
+`src/cityfile.ts`), which is all the visit planner and the country roads read.
+
+The scene never imports the city files or the contents files. Before every build of the scene, a
+test or a tool, `tools/pack.ts` reads every city's folder and writes `src/cities-packed.ts`, which
+is build output and not committed. It holds each city's head as it is, and its layout and its
+contents as JSON compressed by `src/pack.ts`, 44.9 MB in all packed to 14.8 MB. `fileOf` in
+`src/city.ts` unpacks a city's layout when its plan builds the city's graph, and the plan unpacks
+its contents at the same time. The journey keeps the plans of the last three cities, so the
+current city, the next and one before it are unpacked at most. Nothing keeps an unpacked layout
+on the head, since a long day would then come to hold every city's.
+
+Measured by a 60 s render of the default build when layouts were packed (2026-11-25), the scene is
+24.8 MB, holds 191.6 MB of heap after the start and starts in 2.2 s. With every city's layout
+loaded and only the contents packed, it was 38.1 MB, 334.8 MB and 2.6 s.
 
 ## What varies between visits
 

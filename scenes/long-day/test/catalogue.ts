@@ -1,13 +1,14 @@
 // Test: every catalogue city (src/world.ts) loads from its file and is fit for normal play
 // (tools/cityfiles.ts cityProblems), its file reads back as written (the loader drops nothing, its
 // contents included), its id is its style and name, and every style has five cities.
-import { CityPlan } from "../src/city.ts";
+import { CityPlan, fileOf } from "../src/city.ts";
+import type { CityFile } from "../src/cityfile.ts";
 import { STYLES } from "../src/styles.ts";
 import type { StyleId } from "../src/styles.ts";
 import { CATALOGUE } from "../src/world.ts";
 import { citiesOfStyle } from "../src/visits.ts";
 import { cityFileOfPlan, cityProblems, contentsRowsOf, slugOf } from "../tools/cityfiles.ts";
-import { PACKED_CONTENTS } from "../src/contents-packed.ts";
+import { PACKED_CONTENTS } from "../src/cities-packed.ts";
 import { unpackText } from "../src/pack.ts";
 
 const fails: string[] = [], ids = new Set<string>();
@@ -21,8 +22,9 @@ for (const F of CATALOGUE) {
   if (plan.file !== F) { fails.push(`${F.id}: its key ${F.key} is not read as this city`); continue; }
   for (const p of cityProblems(plan)) fails.push(`${F.id}: ${p}`);
   // (Its labels' points are where they were drafted; the loader checks each lies in its block.)
-  const strip = (f: typeof F) => JSON.stringify({ ...f, blocks: f.blocks.map(({ at: _, ...b }) => b) });
-  if (strip(cityFileOfPlan(plan, F.id, F.name)) !== strip(F)) fails.push(`${F.id}: its file does not read back as written`);
+  // (Its whole file: its head, and its layout unpacked after it, so its fields compared in any order.)
+  const strip = (f: CityFile) => JSON.stringify(Object.entries({ ...f, blocks: f.blocks.map(({ at: _, ...b }) => b) }).sort(([p], [q]) => (p < q ? -1 : 1)));
+  if (strip(cityFileOfPlan(plan, F.id, F.name)) !== strip(fileOf(F))) fails.push(`${F.id}: its file does not read back as written`);
   // (Its contents, packed and unpacked: as its contents file lists them.)
   const C = PACKED_CONTENTS[F.id];
   if (!C) fails.push(`${F.id}: no contents`);

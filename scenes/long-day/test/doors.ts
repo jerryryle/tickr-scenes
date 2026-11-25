@@ -7,14 +7,14 @@
 // Args (all optional): seed
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
-import { CityPlan, DOOR_CLASHES, kerbDoors } from "../src/city.ts";
+import { CityPlan, DOOR_CLASHES, fileOf, kerbDoors } from "../src/city.ts";
 import { cityByKey } from "../src/visits.ts";
 import { facilityAt, siteLayout } from "../src/facilities.ts";
 {
   const proc = (globalThis as any).process;
   const seed = Number(proc.argv[2] ?? 1);
   DOOR_CLASHES.out = [];   // (before the journey, which might work out some doors itself: they're cached)
-  const j0 = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn"), F = cityByKey(j0.plan.seed)!;
+  const j0 = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn"), F = fileOf(cityByKey(j0.plan.seed)!);
   const bare = new CityPlan(F.key, j0.plan.style, j0.plan.dressing, { ...F, blocks: F.blocks.map(({ doors: _d, ...b }) => b) }), filed = j0.plan;
   const j = { plan: bare };
   let sides = 0;

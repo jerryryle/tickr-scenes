@@ -11,7 +11,7 @@ import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
 import { Batch, BATCH, frameApply, PLACED, quadGeometry, toTile } from "./geom.ts";
 import { CONTENTS, DRAW, drawRecipe, place, recipeOf } from "./contents.ts";
-import { PACKED_CONTENTS } from "./contents-packed.ts";
+import { PACKED_CONTENTS, PACKED_LAYOUTS } from "./cities-packed.ts";
 import { unpackText } from "./pack.ts";
 import type { Recipe } from "./contents.ts";
 import type { Frame2, Quad } from "./geom.ts";
@@ -47,7 +47,7 @@ import type { FurnitureItem } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, FacilityId, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
 import { graphOfFile } from "./cityfile.ts";
-import type { CityFile, CityFileContents, CityFileDoor, CityFileLot } from "./cityfile.ts";
+import type { CityFile, CityFileContents, CityFileDoor, CityFileLot, CityHead, CityLayout } from "./cityfile.ts";
 import { cityByKey } from "./visits.ts";
 import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
@@ -102,16 +102,27 @@ export function gateEndSlot(g: Gate): { x: number; z: number; h: number } {
   return { x: g.ix * BLOCK + STREET / 2 + [1, 0, -1, 0][g.dir] * d, z: g.iz * BLOCK + STREET / 2 + [0, -1, 0, 1][g.dir] * d, h: g.dir * Math.PI / 2 };
 }
 
+// A city's whole file: its head with its layout, as given or else unpacked from those the scene
+// carries packed (tools/pack.ts). (Not kept on the head: a long day would come to hold every city's.)
+export function fileOf(F: CityHead): CityFile {
+  if (F.nodes && F.streets && F.blocks) return F as CityFile;
+  const packed = PACKED_LAYOUTS[F.id];
+  if (!packed) throw new Error(`city ${F.id}: no layout`);
+  return { ...F, ...(JSON.parse(unpackText(packed)) as CityLayout) };
+}
 export class CityPlan {
   readonly name: string;
   climate: Climate | null = null;   // the city's season and weather (journey.ts), for the countryside round it
   // A catalogue city's file (cityfile.ts), when the seed is one's key: the city is read from it.
   // Without one (the drafting tool, and tests of the generator), the city is generated from the seed.
-  readonly file: CityFile | null;
+  // The catalogue's is its head (cityfile.ts CityHead); its layout is unpacked as its graph is
+  // built and held only by `full`, for as long as the plan lives.
+  readonly file: CityHead | null;
+  full: CityFile | null = null;
   // `dressing`: its visit's dressing seed (visits.ts), which the parked cars along its kerbs and the
   // boats moored on its river hash; the city itself is the same whatever it is.
   // (`file`: the catalogue's by default; a test may give one of its own.)
-  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal, readonly dressing: number = seed, file: CityFile | null = cityByKey(seed) ?? null) { this.file = file; this.name = file?.name ?? cityName(seed, style); }
+  constructor(readonly seed: number, readonly style: CityStyle = STYLES.coastal, readonly dressing: number = seed, file: CityHead | null = cityByKey(seed) ?? null) { this.file = file; this.name = file?.name ?? cityName(seed, style); }
   // The street graph (citygraph.ts): built on first use, from the city's limits and gates.
   protected g: CityGraph | null = null;
   get graph(): CityGraph { return this.g ?? drain(this.graphJob()); }
@@ -130,7 +141,7 @@ export class CityPlan {
       const self = this;
       this.job = (function* () {
         try {
-          const F = self.file;
+          const F = self.file ? self.full = fileOf(self.file) : null;
           const G = F ? yield* graphOfFile(F) : yield* self.generate();
           if (F) { self.g = G; self.ol = self.outlineAt(F.outline.scale, !!F.outline.seaOff); if (F.outline.seaOff) self.shoreOl = self.ol; self.fileBlocks(G, F); }
           linkSignals(G);
@@ -659,7 +670,7 @@ function junctionPosts(G: CityGraph, st: CStreet): { right: boolean; s: number; 
 // a generated city, whose furniture is placed as it is drawn (decor.ts streetFurniture).
 const FURNITURE_KIND: Record<string, number> = { hydrant: PK.hydrant, trash: PK.trash, bench: PK.bench, mailbox: PK.mailbox, news: PK.news, meter: PK.meter, shelter: PK.shelter, rack: PK.rack };
 function fileFurniture(plan: CityPlan, st: CStreet, axis: 0 | 1): [FurnitureItem[], FurnitureItem[]] | null {
-  const F = plan.file?.streets[st.id];
+  const F = plan.full?.streets[st.id];
   if (!F) return null;
   const lo: FurnitureItem[] = [], hi: FurnitureItem[] = [], loSide = axis === 1 ? "r" : "l";
   for (const [kind, side, at] of F.furniture ?? []) (side === loSide ? lo : hi).push([FURNITURE_KIND[kind], 9 + at]);

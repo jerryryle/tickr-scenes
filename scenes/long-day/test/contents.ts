@@ -6,7 +6,7 @@
 // of its triangles; one that differs is built again both ways and compared, within 2 cm.)
 //   Args (optional): city ids
 import * as THREE from "three@0.187.0";
-import { CityPlan, CITY_HI, CITY_LO, cityDistance, makeCityChunkBuilder } from "../src/city.ts";
+import { CityPlan, CITY_HI, CITY_LO, cityDistance, fileOf, makeCityChunkBuilder } from "../src/city.ts";
 import type { CityFile } from "../src/cityfile.ts";
 import { CONTENTS, recipeOf, rowOf } from "../src/contents.ts";
 import type { Recipe } from "../src/contents.ts";
@@ -49,7 +49,7 @@ import { CATALOGUE } from "../src/world.ts";
   let chunks = 0, recipes = 0;
   for (const id of ids) {
     // (The city by its rules: its file's own contents and doors left out.)
-    const F0 = CATALOGUE.find((c) => c.id === id)!, style = STYLES[F0.style as StyleId];
+    const F0 = fileOf(CATALOGUE.find((c) => c.id === id)!), style = STYLES[F0.style as StyleId];
     const F: CityFile = { ...F0, contents: () => null, blocks: F0.blocks.map(({ doors: _d, ...b }) => b) };
     const ruledPlan = new CityPlan(F.key, style, F.key, F), ruled = new Map<string, number>(), recorded = new Map<string, Recipe[]>();
     CONTENTS.out = recorded;

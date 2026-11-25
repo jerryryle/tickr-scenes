@@ -17,7 +17,7 @@ import { hash2 } from "./rng.ts";
 import { DEBUG_STYLE } from "./debug.ts";
 import { STORYBOOK_GAP, STORYBOOK_ODDS, STYLES } from "./styles.ts";
 import type { StyleId } from "./styles.ts";
-import type { CityFile } from "./cityfile.ts";
+import type { CityHead } from "./cityfile.ts";
 import { CATALOGUE } from "./world.ts";
 import type { WorldRoad } from "./world.ts";
 import type { RoadMap } from "./roadmap.ts";
@@ -28,9 +28,9 @@ import type { TruckModel } from "./truck.ts";
 export const RECENT = 8;   // visits before a city may come back (docs/long-day-cities.md, "The visit planner")
 const LOOKAHEAD = 4;       // visits the planner looks ahead for fresh cities
 
-let byStyle: Map<StyleId, CityFile[]> | null = null;
-let byKey: Map<number, CityFile> | null = null;
-let byId: Map<string, CityFile> | null = null;
+let byStyle: Map<StyleId, CityHead[]> | null = null;
+let byKey: Map<number, CityHead> | null = null;
+let byId: Map<string, CityHead> | null = null;
 function index() {
   if (!byStyle) {
     byStyle = new Map(); byKey = new Map(); byId = new Map();
@@ -42,17 +42,17 @@ function index() {
   return { byStyle: byStyle!, byKey: byKey!, byId: byId! };
 }
 // The catalogue's cities of a style, the city a hash key belongs to, and the city with an id.
-export const citiesOfStyle = (id: StyleId): readonly CityFile[] => index().byStyle.get(id) ?? [];
-export const cityByKey = (key: number): CityFile | undefined => index().byKey.get(key);
-export const cityById = (id: string): CityFile | undefined => index().byId.get(id);
+export const citiesOfStyle = (id: StyleId): readonly CityHead[] => index().byStyle.get(id) ?? [];
+export const cityByKey = (key: number): CityHead | undefined => index().byKey.get(key);
+export const cityById = (id: string): CityHead | undefined => index().byId.get(id);
 // A gate's index in its city's gates (the graph's), by its id.
-export const gateIndex = (F: CityFile, id: string) => F.gates.findIndex((g) => g?.id === id);
+export const gateIndex = (F: CityHead, id: string) => F.gates.findIndex((g) => g?.id === id);
 
 // A way along a road: the road, the city and gate it leaves from and the city and gate it arrives
 // at (gate indexes), and whether it runs from the road's b end to its a end.
-export interface RoadWay { road: WorldRoad; from: CityFile; out: number; to: CityFile; in: number; back: boolean }
+export interface RoadWay { road: WorldRoad; from: CityHead; out: number; to: CityHead; in: number; back: boolean }
 let waysOut: Map<string, RoadWay[]> | null = null;
-export function waysFrom(F: CityFile): readonly RoadWay[] {
+export function waysFrom(F: CityHead): readonly RoadWay[] {
   if (!waysOut) {
     waysOut = new Map();
     for (const r of WORLD_ROADS) {
@@ -71,7 +71,7 @@ export function waysFrom(F: CityFile): readonly RoadWay[] {
 // moored boats (life.ts, city.ts); `gags` the vignettes (crowd.ts); `drive` the events on the drive
 // out (country.ts: oncoming cars, cattle, the weather along the road). The rest of what sets a
 // visit up, its truck, season and weather, is the journey's (journey.ts), unless a spec gives it.
-export interface Visit { city: CityFile; arrive: RoadWay; jobs: number; dressing: number; gags: number; drive: number; spec: VisitSpec | null }
+export interface Visit { city: CityHead; arrive: RoadWay; jobs: number; dressing: number; gags: number; drive: number; spec: VisitSpec | null }
 // What a test (or a debug define) gives for visit N, everything else coming from the journey seed
 // (docs/long-day-cities.md, "Visits"): the city by id, the road it arrives by (by id: one into that city), the truck
 // it starts in, its season and weather, and any of its seeds.
@@ -93,14 +93,14 @@ const visitPlans = new Map<number, Plan>();
 const pickOf = (seed: number, n: number, salt: number, len: number) => Math.floor(hash2(seed, n, 0x715a, salt) * len);
 
 // A visit's seeds: as a spec gives them, else from the journey seed, the city's key and its number.
-function seeded(seed: number, n: number, city: CityFile, arrive: RoadWay, spec: VisitSpec | null): Visit {
+function seeded(seed: number, n: number, city: CityHead, arrive: RoadWay, spec: VisitSpec | null): Visit {
   const dressing = spec?.dressing ?? Math.floor(hash2(city.key, n, seed, 0x11fe) * 2 ** 32);
   const gags = spec?.gags ?? ((Math.floor(hash2(dressing, 2, 0, 0xc40d) * 2 ** 32) ^ 0x5bd1e995) >>> 0);
   return { city, arrive, jobs: spec?.jobs ?? seed, dressing, gags, drive: spec?.drive ?? seed, spec };
 }
 // (A spec's city and road: the road it names, else the one from the city before if they are
 // neighbours, else any road into it, as for a first visit.)
-function specVisit(seed: number, n: number, spec: VisitSpec, prev: CityFile | null): { city: CityFile; arrive: RoadWay } {
+function specVisit(seed: number, n: number, spec: VisitSpec, prev: CityHead | null): { city: CityHead; arrive: RoadWay } {
   const city = (spec.city && cityById(spec.city)) || null;
   if (!city) throw new Error(`visit ${n}: no catalogue city ${spec.city}`);
   const into = CATALOGUE.flatMap((F) => waysFrom(F).filter((w) => w.to === city));
@@ -118,7 +118,7 @@ function firstVisit(seed: number): Visit {
 }
 // (Under DEBUG_STYLE every city is of one style, so no road joins two in a row: a road made up
 // between them, from a gate of one to a gate of the other facing another way.)
-function debugWay(from: CityFile, to: CityFile, seed: number, n: number): RoadWay {
+function debugWay(from: CityHead, to: CityHead, seed: number, n: number): RoadWay {
   const ins = to.gates.map((g, i) => [g, i] as const).filter(([g, i]) => g && i > 0), [gi, ii] = ins[pickOf(seed, n, 3, ins.length)] ?? [to.gates[0]!, 0];
   const outs = from.gates.map((g, i) => [g, i] as const).filter(([g, i]) => g && i > 0 && g.dir !== gi!.dir), [go, oi] = outs[pickOf(seed, n, 4, outs.length)] ?? [from.gates[0]!, 0];
   // (Along a catalogue road's map that turns the same way, driven whichever way does: its signs
@@ -130,7 +130,7 @@ function debugWay(from: CityFile, to: CityFile, seed: number, n: number): RoadWa
 }
 
 function nextVisit(seed: number, P: Plan, n: number): Visit {
-  const cur = P.visits[n - 1], story = (F: CityFile) => !!STYLES[F.style].storybook;
+  const cur = P.visits[n - 1], story = (F: CityHead) => !!STYLES[F.style].storybook;
   if (DEBUG_STYLE) {
     const same = citiesOfStyle(DEBUG_STYLE as StyleId).filter((F) => F !== cur.city);
     const to = same.length ? same[pickOf(seed, n, 5, same.length)] : cur.city;
@@ -186,7 +186,7 @@ export function visitOf(seed: number, N: number): Visit {
   return P.visits[N];
 }
 // City N's catalogue city.
-export const cityFileOf = (seed: number, N: number): CityFile => visitOf(seed, N).city;
+export const cityHeadOf = (seed: number, N: number): CityHead => visitOf(seed, N).city;
 // A visit spec written "key=value,..." (debug.ts DEBUG_VISIT): numbers for the seeds, text for the rest.
 export function parseVisitSpec(text: string): VisitSpec {
   const out: Record<string, string | number> = {};

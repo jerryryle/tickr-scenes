@@ -23,7 +23,7 @@ import { CityPlan } from "./city.ts";
 import { Frame, freewayGate, FW_ENTRANCE_SIGN, FW_OFF_D, FW_OFF_V, FW_SHIFT, FW_TOP, onRampN, onRampY } from "./freeway.ts";
 import type { FwCurve } from "./freeway.ts";
 import { drain } from "./slices.ts";
-import { cityFileOf } from "./visits.ts";
+import { cityHeadOf } from "./visits.ts";
 import type { RoadMap, RoadMapPiece } from "./roadmap.ts";
 import type { WorldRoad } from "./world.ts";
 import type { Steps } from "./slices.ts";
@@ -273,7 +273,7 @@ export const tunnelTop = (p: RoadPiece) => 11 + 3 * p.variant;   // the hill ove
 export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook" };
 
 // City N's hash key: its catalogue city's (visits.ts), what every default rule about the city hashes.
-export function citySeedOf(seed: number, N: number) { return cityFileOf(seed, N).key; }
+export function citySeedOf(seed: number, N: number) { return cityHeadOf(seed, N).key; }
 
 // Padding: a map's samples run from ROAD_PAD before gate a to ROAD_PAD past its far end.
 export const ROAD_PAD = 40;

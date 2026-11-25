@@ -49,8 +49,10 @@ and gates, and the lots, buildings, trees, street furniture, signal poles, stop 
 the city's builders put them (`PLACED` in `src/geom.ts`, `PAVEMENT` in `src/decor.ts`). The
 street furniture, signal poles, stop signs and facilities' front doors come from the city file,
 and so does everything else that stands on the layout, as recipes in the city's contents file
-beside it (`src/contents.ts`; docs/long-day-cities.md, "City contents"). The scene carries the contents
-packed: `tools/pack.ts` packs them into `src/contents-packed.ts` before every build. The maps are build output, too big to commit, and nothing reads them back:
+beside it (`src/contents.ts`; docs/long-day-cities.md, "City contents"). The scene carries every city
+packed and unpacks one only while it has it planned: `tools/pack.ts` packs them into
+`src/cities-packed.ts` before every build (docs/long-day-cities.md, "How the scene carries the
+cities"). The maps are build output, too big to commit, and nothing reads them back:
 
 ```bash
 make maps SCENE=long-day                      # every city's and road's map; ARGS="metro-midtown r40" for some
