@@ -4,10 +4,11 @@
 import type { CityFile } from "./cityfile.ts";
 
 // A country road (requirements 10 and 11): it joins gate `a.gate` of city `a.city` to gate `b.gate`
-// of `b.city`, each gate serving this road alone. `seconds`: the drive's own time, gate to gate.
+// of `b.city`, each gate serving this road alone. `metres`: its length, gate to gate; how long the
+// drive takes follows from the truck's speed and its stops on the way (country.ts).
 // `key`: what its land and set pieces hash. `oneway`: driven only from a to b (into a freeway
 // city's way in, where the freeway runs out of town).
-export interface WorldRoad { id: string; a: { city: string; gate: string }; b: { city: string; gate: string }; seconds: number; key: number; oneway?: true }
+export interface WorldRoad { id: string; a: { city: string; gate: string }; b: { city: string; gate: string }; metres: number; key: number; oneway?: true }
 import { CITY_COASTAL_BAYVIEW } from "./city-coastal/coastal-city-bayview.ts";
 import { CITY_COASTAL_FOGCREST } from "./city-coastal/coastal-city-fogcrest.ts";
 import { CITY_COASTAL_GOLDEN_HOLLOW } from "./city-coastal/coastal-city-golden-hollow.ts";

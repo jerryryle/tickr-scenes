@@ -177,7 +177,7 @@ export const mapPath = (F: CityFile) => `build/long-day-maps/city-${F.style}/${F
 
 // The world map (requirement 21): the world graph alone, one node a city at its place
 // (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and
-// seconds; a road driven one way only has an arrow at the city it runs into.
+// length; a road driven one way only has an arrow at the city it runs into.
 const STYLE_FILL: Record<string, string> = { coastal: "#2f78b8", metro: "#6b6b8a", desert: "#d9a441", brick: "#a0522d", mainstreet: "#4f9a3c", port: "#1f6f78", storybook: "#d83a9a" };
 export function worldSvg(): string {
   // (Scaled to fit 1400 units across, the places' own units being arbitrary.)
@@ -189,8 +189,8 @@ export function worldSvg(): string {
     `<rect id="backdrop" width="${w}" height="${h}" fill="#f4f1e8"/>`, `<g id="roads" inkscape:groupmode="layer" inkscape:label="Roads">`];
   for (const r of WORLD_ROADS) {
     const [ax, az] = at(r.a.city), [bx, bz] = at(r.b.city);
-    out.push(`<line id="${r.id}" x1="${ax}" y1="${az}" x2="${bx}" y2="${bz}" stroke="#555" stroke-width="2"${r.oneway ? ` marker-end="url(#arrow)"` : ""}><title>${r.id}: ${r.a.city} ${r.a.gate} to ${r.b.city} ${r.b.gate}, ${r.seconds} s</title></line>`);
-    out.push(`<text id="${r.id}-label" x="${(ax + bx) / 2}" y="${(az + bz) / 2 - 3}" font-size="9" text-anchor="middle" fill="#333">${r.id} ${r.seconds}s</text>`);
+    out.push(`<line id="${r.id}" x1="${ax}" y1="${az}" x2="${bx}" y2="${bz}" stroke="#555" stroke-width="2"${r.oneway ? ` marker-end="url(#arrow)"` : ""}><title>${r.id}: ${r.a.city} ${r.a.gate} to ${r.b.city} ${r.b.gate}, ${(r.metres / 1000).toFixed(1)} km</title></line>`);
+    out.push(`<text id="${r.id}-label" x="${(ax + bx) / 2}" y="${(az + bz) / 2 - 3}" font-size="9" text-anchor="middle" fill="#333">${r.id} ${(r.metres / 1000).toFixed(1)} km</text>`);
   }
   out.push(`</g>`, `<g id="cities" inkscape:groupmode="layer" inkscape:label="Cities">`);
   for (const F of CATALOGUE) {

@@ -70,12 +70,15 @@ The design has seven parts, and the rest of this document uses these names for t
 
 9. The world graph is connected. It is stored in the world file and changes only when cities are
    added or removed.
-10. Each edge has one fixed country road, with its own drive time in seconds (60 to 300 as drafted)
-    that need not match any geographic distance. Each direction along it is a fixed road of its
-    own: its curves, biomes, set pieces and railroad crossing hash the edge's key and the
-    direction, so a drive along one edge one way is the same every time. Weather, season, traffic
-    and the truck-stop swap still vary per drive. The `countrySeconds` setting is removed, and the
-    next city starts when the truck arrives.
+10. Each edge has one fixed country road with its own length in metres, which need not match any
+    geographic distance. How long a drive takes follows from the length, the truck's speed and its
+    stops on the way; a city's time is planned at an average 18 m/s (`DRIVE_PACE`), and the next
+    city starts when the truck arrives. The drafted lengths (about 1,100 to 5,400 m) keep the
+    average drive as long as the drive times they replaced. Each direction along a road is a fixed
+    road of its own: its curves, biomes, set pieces and railroad crossing hash the edge's key and
+    the direction, so a drive along one edge one way is the same every time, until stage 7 maps
+    the roads out. Weather, season, traffic and the truck-stop swap still vary per drive. The
+    `countrySeconds` setting is removed.
 11. Each end of an edge uses its own gate of that city, and a gate serves exactly one edge. The two
     gates face different ways. A city has as many gates as its edges need. When an added city needs
     more edges, existing cities gain gates by hand edit. A freeway city's way in (gate `g0`, where
@@ -294,7 +297,7 @@ the shared `CityStyle` type and the list of the seven styles.
 
 ## Build order
 
-The change lands in six stages, one pull request each, and the scene plays a correct day after
+The change lands in seven stages, and the scene plays a correct day after
 every stage.
 
 1. **City files.** The `CityFile` type, its loader, the drafting tool and the 35 drafted cities, with
@@ -306,7 +309,7 @@ every stage.
    3 with the world graph they show. Until stage 6 gives blocks explicit lots, the lots,
    buildings and trees on a map are where the city's builders put them, and their ids number
    them within their block.
-3. **World graph and visit planner.** Roads with fixed drive times, per-edge gates, the planner and
+3. **World graph and visit planner.** Roads with fixed lengths, per-edge gates, the planner and
    its simulation test (`test/world.ts`), the world map, and gate labels on the city maps.
    `countrySeconds` is removed. The roads live in `src/world-roads.ts`, drafted by
    `tools/draftworld.ts`, beside the catalogue list in `src/world.ts`.
@@ -326,6 +329,14 @@ every stage.
    placing split from their drawing. Blocks may list their own lots and buildings, and every city
    file lists its furniture, signal poles and stop signs (requirement 5a). The maps already show
    all three, from today's rules, since stage 2.
+7. **Mapped country roads.** Each world road gets a map of its own, as a city has: its curves,
+   biomes, trees, set pieces (truck stops, rail crossings, ferries, attractions, billboards) and
+   roadside are pre-generated and stored for the road, and the scene draws what the map holds in
+   place of hashing the road's key. A road's length is its map's, so `metres` goes from the world
+   file. Its features are the same whichever way it is driven, and the drafting tool writes each
+   road's map from today's rules as its first draft. What varies per drive (weather, season,
+   traffic, the truck-stop swap, oncoming cars, cattle, the train) stays with the visit's drive
+   seed. The build order's count of six stages becomes seven.
 
 The flattener (`scripts/flatten.ts`) joins every module into one scope and accepts no default
 imports, so a city file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL`, in

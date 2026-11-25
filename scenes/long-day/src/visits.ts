@@ -120,7 +120,7 @@ function firstVisit(seed: number): Visit {
 function debugWay(from: CityFile, to: CityFile, seed: number, n: number): RoadWay {
   const ins = to.gates.map((g, i) => [g, i] as const).filter(([g, i]) => g && i > 0), [gi, ii] = ins[pickOf(seed, n, 3, ins.length)] ?? [to.gates[0]!, 0];
   const outs = from.gates.map((g, i) => [g, i] as const).filter(([g, i]) => g && i > 0 && g.dir !== gi!.dir), [go, oi] = outs[pickOf(seed, n, 4, outs.length)] ?? [from.gates[0]!, 0];
-  return { road: { id: `debug-${n}`, a: { city: from.id, gate: go!.id }, b: { city: to.id, gate: gi!.id }, seconds: 120, key: Math.floor(hash2(seed, n, 0xdeb, 0x70ad) * 2 ** 31) || 1 }, from, out: oi, to, in: ii, back: false };
+  return { road: { id: `debug-${n}`, a: { city: from.id, gate: go!.id }, b: { city: to.id, gate: gi!.id }, metres: 2300, key: Math.floor(hash2(seed, n, 0xdeb, 0x70ad) * 2 ** 31) || 1 }, from, out: oi, to, in: ii, back: false };
 }
 
 function nextVisit(seed: number, P: Plan, n: number): Visit {

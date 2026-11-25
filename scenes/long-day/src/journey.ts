@@ -150,6 +150,7 @@ const truckNose = (m: TruckModel) => SPECS[m].noseFront + 0.05;
 const truckTail = (m: TruckModel) => SPECS[m].fifthWheel === undefined ? -truckExtents(m).rear : 1.5;
 export const SIM_DT = 0.1;              // the fixed simulation step
 const KEYFRAME_STEPS = 100;       // a keyframe every 10 s of journey within the current city
+const DRIVE_PACE = 18;          // m/s a drive averages, stops and all (for planning a city's time)
 const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is never planned shorter than this
 // A world road's key, driven one way or the other: each way is a road of its own, the same each time.
 const roadKeyOf = (w: RoadWay) => (w.back ? w.road.key ^ 0x2b7e1516 : w.road.key) || 1;
@@ -242,10 +243,12 @@ export class Journey {
   }
 
   // City N's visit (visits.ts): the way it arrives by and the way it leaves by (the next city's
-  // way in), and the drive out's own seconds. Its period: cityMinutes in town and that drive.
+  // way in), and the drive out's seconds as planned. Its period: cityMinutes in town and that drive.
   private arriveOf(N: number) { return visitOf(this.cfg.seed, N).arrive; }
   private leaveOf(N: number) { return visitOf(this.cfg.seed, N + 1).arrive; }
-  private driveOf(N: number) { return this.leaveOf(N).road.seconds; }
+  // (Planned at an average drive's pace, DRIVE_PACE: the drive itself takes as long as its road's
+  // length, the truck's speed and its stops make it, country.ts.)
+  private driveOf(N: number) { return Math.round(this.leaveOf(N).road.metres / DRIVE_PACE); }
   periodOf(N: number) { return this.cfg.cityMinutes * 60 + this.driveOf(N); }
   get period() { return this.periodOf(this.st.city); }
   // City N's nominal start: the periods of the cities before it, end to end.
@@ -1634,7 +1637,7 @@ export class Journey {
     // (As long as the road was laid for, or as long as it takes: country.ts fitDuration.)
     const road = this.exitEntry(false)?.road;
     if (road) road.finish();
-    st.countryD = road ? road.fitDuration(Math.max(COUNTRY_MIN, st.exit?.dEst ?? COUNTRY_MIN), st.v, s0) : undefined;
+    st.countryD = road ? road.fitDuration(Math.max(COUNTRY_MIN, road.plannedSeconds), st.v, s0) : undefined;
     st.spare = null; st.parked = null; st.dockExit = null; st.lastDock = null; st.garageExit = null; st.intercity = true;
     st.stops = st.stops.filter((s) => s.kind !== "depart");
     this.path = null; st.route = null;
@@ -1699,7 +1702,7 @@ export class Journey {
     // organic layout fell back, straight, has none.)
     const P = freewayGate(citySeedOf(this.cfg.seed, N)) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
     return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1), fromCurve,
-      seed: this.cfg.seed, city: N, kind: "exit", roadKey: roadKeyOf(way), driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, endH: inward * Math.PI / 2,
+      seed: this.cfg.seed, city: N, kind: "exit", roadKey: roadKeyOf(way), metres: way.road.metres, driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, endH: inward * Math.PI / 2,
       fromTruck, toTruck: this.startTruck(N1),
       fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
     }, ahead);

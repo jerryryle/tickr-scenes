@@ -277,6 +277,7 @@ export function citySeedOf(seed: number, N: number) { return cityFileOf(seed, N)
 interface CountryInput {
   seed: number; city: number; kind: "exit" | "arrival";
   roadKey: number;   // what the road's land, set pieces and roadside hash: its world road's key, one way or the other (journey.ts)
+  metres?: number;   // the road's length to the hand-over, its world road's (journey.ts); without it, as far as `dEst` seconds take the truck
   driveSeed: number; // what this drive's events hash (oncoming cars, cattle, the weather on the way): its visit's (visits.ts)
   frame: { x: number; z: number; h: number };
   dEst: number; endH: number;
@@ -313,6 +314,7 @@ export class CountryRoad {
   trainT = -1;                     // drive time the train front reaches the far side of the road, start
   meetings: number[] = [];         // drive times oncoming cars pass the truck
   private D = 0;                   // seconds to the hand-over
+  get plannedSeconds() { return this.D; }   // (as laid: at cruising pace, before its stops, which fitDuration adds)
   private geo = false;             // the geometry is built (the motion then eases off for curves)
   private kAt(s: number) { const f = Math.min(Math.max(s / ROAD_DS, 0), this.H.length - 2), i = Math.floor(f); return Math.abs(this.H[i + 1] - this.H[i]) / ROAD_DS; }
   private fc: number; private fs: number;   // the frame's rotation
@@ -341,7 +343,11 @@ export class CountryRoad {
     const h = (k: number) => hash3(0, k, 0, inp.roadKey, 0xc0a7);
     let SB = 0;
     if (!arrival) {
-      const dur = Math.max(20, inp.dEst);
+      let dur = Math.max(20, inp.dEst);
+      // (A road of a given length: the seconds it takes at cruising pace with no stops, the set
+      // pieces chosen by that; with its stops it takes longer, as long as it takes: fitDuration.)
+      if (inp.metres) for (let k = 0; k < 4; k++) dur = Math.max(20, dur * inp.metres / this.simulate([], COUNTRY_VMAX, dur, 9, 0).S.at(-1)!);
+      dur = Math.round(dur * 10) / 10;   // (whole steps, SIM_DT: the hand-over falls on one)
       // Construction zone (motion slows through it) on drives long enough to spare it.
       const estL = COUNTRY_VMAX * dur * 0.85;
       if (dur > 200 && h(1) < 0.45) { const z0 = Math.max(900, estL * (0.15 + 0.1 * h(2))); if (z0 + 220 < estL - 700) this.zone = [z0, z0 + 220]; }
@@ -378,7 +384,7 @@ export class CountryRoad {
         this.planStops = this.planStops.filter((x) => x.kind !== "ferry"); this.ferry = null;
         m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
       }
-      SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
+      SB = Math.max(STRAIGHT_OUT + 400, inp.metres ?? m.S[m.S.length - 1]);
       // Into a freeway city, nothing that stops the truck or sprawls by the road out where the
       // freeway and the flyover are (the drive is replanned without it: it only gets longer).
       yield;
@@ -391,7 +397,7 @@ export class CountryRoad {
           if (p.kind === "ferry") { this.planStops = this.planStops.filter((x) => x.kind !== "ferry"); this.ferry = null; }
         }
         m = this.simulate(this.planStops, COUNTRY_VMAX, dur, 9, 0);
-        SB = Math.max(STRAIGHT_OUT + 400, m.S[m.S.length - 1]);
+        SB = Math.max(STRAIGHT_OUT + 400, inp.metres ?? m.S[m.S.length - 1]);
       }
       this.S = m.S; this.V = m.V; this.D = dur; this.stops = m.stops;
     }
