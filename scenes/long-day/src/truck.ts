@@ -228,19 +228,19 @@ const TOON_TRIM: [number, number][] = [
   [TC.step, 0x5a2a7a], [TC.black, 0x3a1a5a], [TC.skirt, 0xff7fb5], [TC.alu, 0xf3e07a],
 ];
 const TOON_RIM = 0xff7fb5, TOON_PUFF = 0xd9b8ff;
-const TOON_HOOD = 0.78, TOON_CAB = 1.13;   // (the hood's length and the cab's height, as a cartoon's)
+const TOON_HOOD = 0.7, TOON_CAB = 1.2;   // (the hood's length and the cab's height, as a cartoon's)
 // The shells a model's cartoon rounds off, in the truck's frame (x forward from the rear axle).
 function toonRegions(s: TruckSpec): ToonRegion[] {
   const R: ToonRegion[] = [];
   const conv = s.cab !== "cabover";
-  R.push({ x0: s.cabBack, x1: s.cabFront, y0: s.cabFloor - 0.1, y1: s.cabTop + 0.06, hw: s.cabHW, top: 0.8, bottom: 0, front: 0.55, back: 0.45, side: 0.6,
-    frontFrom: conv ? s.hoodTop : undefined, pillow: 0.07 });
-  if (conv) R.push({ x0: s.cabFront, x1: s.noseFront + 0.12, y0: 0.3, y1: s.hoodTop, hw: s.cabHW + 0.08, top: 0.6, bottom: 0.15, front: 0.6, back: 0, side: 0.45, pillow: 0.07 });
+  R.push({ x0: s.cabBack, x1: s.cabFront, y0: s.cabFloor - 0.1, y1: s.cabTop + 0.06, hw: s.cabHW, top: 1.0, bottom: 0, front: 0.7, back: 0.55, side: 0.75,
+    frontFrom: conv ? s.hoodTop : undefined, pillow: 0.09 });
+  if (conv) R.push({ x0: s.cabFront, x1: s.noseFront + 0.12, y0: 0.3, y1: s.hoodTop, hw: s.cabHW + 0.08, top: 0.72, bottom: 0.18, front: 0.72, back: 0, side: 0.55, pillow: 0.09 });
   const c = s.cargo;
-  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.7, bottom: 0, front: 0.8, back: 0, side: 0.65, pillow: 0.06 });
+  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0, side: 0.8, pillow: 0.08 });
   return R;
 }
-const TRAILER_REGION: ToonRegion[] = [{ x0: -15.25, x1: 0.9, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.75, bottom: 0, front: 1.0, back: 0, side: 0.7, pillow: 0.06 }];
+const TRAILER_REGION: ToonRegion[] = [{ x0: -15.25, x1: 0.9, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08 }];
 
 export class Truck {
   readonly spec: TruckSpec;
@@ -588,7 +588,7 @@ export class Truck {
     if (this.trailer) { this.trailer.rotation.y = this.trailerYaw; this.trailer.updateMatrix(); }
     const tmat = this.trailer ? this.trailer.matrix : null;
     // (Cartoon tyres a little bigger and much fatter, a dual pair spread to fit.)
-    const K = this.toon, R = 1 + 0.08 * K, fat = 1 + 0.5 * K, spread = 0.07 * K;
+    const K = this.toon, R = 1 + 0.08 * K, fat = 1 + 0.6 * K, spread = 0.08 * K;
     for (const w of this.wheelSlots) {
       const r = w.r * R, dual = w.steer ? 0 : Math.sign(Math.abs(w.z) - (w.trailer ? TRAILER.rearZ : s.rearZ)) * Math.sign(w.z) * spread;
       this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
@@ -787,7 +787,7 @@ export class Truck {
     const s = this.spec, P = new Batch(), grow: { start: number; count: number; c: THREE.Vector3 }[] = [];
     const conv = s.cab !== "cabover";
     // (On a hood, standing proud on its front corners; on a cab-over's face, low in its corners.)
-    const x = conv ? s.noseFront - 0.3 : s.cabFront + 0.05, y = conv ? s.hoodTop - 0.02 : s.cabFloor + 0.34, r = conv ? 0.34 : 0.3;
+    const x = conv ? s.noseFront - 0.3 : s.cabFront + 0.05, y = conv ? s.hoodTop - 0.02 : s.cabFloor + 0.34, r = conv ? 0.4 : 0.34;
     for (const z of [-1, 1]) {
       const zc = z * (s.cabHW - (conv ? 0.42 : 0.38));
       const p0 = P.view().count; P.cyl(x, y, zc, r, 0.12, TC.chrome, 14, 0, Math.PI / 2);
