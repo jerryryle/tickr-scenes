@@ -5,6 +5,7 @@
 // streamed city. Colours are hazed towards the sky; it is unlit (MeshBasic).
 import * as THREE from "three@0.187.0";
 import { mulberry32 } from "./rng.ts";
+import { sbCurve, sbTube } from "./storybook.ts";
 import { Batch } from "./geom.ts";
 import type { CityStyle } from "./styles.ts";
 import { shade } from "./city.ts";
@@ -114,6 +115,12 @@ export class Backdrop {
             b.cyl(x + tx * off, H * u, z + tz * off, rad, H / seg + 0.5, cols[k % 2], 8, 0, 0, a + k);
           }
           b.ico(x + tx * bend, H + 2, z + tz * bend, 3.5, haze(0xf2c230, 0.3));
+        }
+        // Curly clouds: heaps of puffs, each with a curl of cloud at its end.
+        for (let i = 0; i < 12; i++) {
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R - 100 + r() * 150), y = 150 + r() * 110, ex = -Math.sin(a), ez = Math.cos(a), w = haze(0xfffaf0, 0.12);
+          for (let k = 0; k < 4; k++) b.ico(x + ex * (k - 1.5) * 16, y + Math.sin(k * 1.7 + i) * 6, z + ez * (k - 1.5) * 16, 13 + Math.sin(k * 2.1 + i) * 4, w, 0.65, a + k);
+          sbTube(b, sbCurve(7, (t) => [x + ex * (34 + Math.cos(t * 7) * 9 * (1 - t)), y + Math.sin(t * 7) * 9 * (1 - t), z + ez * (34 + Math.cos(t * 7) * 9 * (1 - t))]), () => 3.2, () => w, 6, a);
         }
         break;
       }

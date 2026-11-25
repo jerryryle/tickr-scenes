@@ -17,7 +17,7 @@ import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
-import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides } from "./storybook.ts";
+import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree } from "./storybook.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -2480,6 +2480,7 @@ function treeRoom(x: number, z: number): boolean {
 export function cityTree(s: Batch, x: number, y: number, z: number, h: number, r: number, color: number, rnd: Rand) {
   const kind = pick(rnd, CS.trees.kinds);
   if (!treeRoom(x, z)) return;
+  if (CS.storybook) { if (kind !== "spiral") pavementObstacle(x, z, 0.45, PK.tree); else pavementObstacle(x, z, 0.8, PK.tree); storyTree(s, kind, x, y, z, h, r, color, !!CS.snowTufts); return; }
   if (kind !== "conifer") pavementObstacle(x, z, 0.45, PK.tree);   // the trunk (and a street tree's pit), for the driver's walks (a conifer's own, its boughs low)
   if (kind === "palm") palm(s, x, y, z, h * 1.25, rnd);
   else if (kind === "conifer") conifer(s, x, y, z, h, BARE.includes(color) ? 0x2c4a34 : shade(color, 0.8), BARE.includes(color), true);

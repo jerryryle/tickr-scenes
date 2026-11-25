@@ -35,6 +35,7 @@ export interface CityStyle {
   rail?: boolean;                     // rail spurs through industrial yards
   townSquare?: boolean;               // courthouse clock tower and a water tower with the town name
   storybook?: boolean;                // the fantasy city: bent towers, tuft trees, striped hills, the knitting works
+  snowTufts?: boolean;                // (a storybook city under snow: its trees keep their colours, capped with snow)
   // How likely each street layout is (city.ts CityPlan.layout): the square grid, a grid bent out
   // of square, an organic town with no grid. Relative weights; organic only where nothing needs a
   // straight line through town (no freeway, elevated line or cable car), else its share goes to
