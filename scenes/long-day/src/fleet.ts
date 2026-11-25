@@ -74,7 +74,7 @@ export class FleetBaker {
       // (A cartoon's shape and colours: its morph target, as far as the truck has it.)
       const morph = (n: string, a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, i: number, k: number) => {
         const m = toon > 0 ? (g.morphAttributes as Record<string, THREE.BufferAttribute[] | undefined>)[n]?.[0] : undefined, b = a.getComponent(i, k);
-        return m ? b + (m.getComponent(i, k) - b) * toon : b;
+        return m ? b + m.getComponent(i, k) * toon : b;   // (relative targets)
       };
       const names = ["position", "normal", "color", "uv"].filter((n) => g.getAttribute(n));
       if (!names.includes("position") || !names.includes("normal")) return;
@@ -87,7 +87,7 @@ export class FleetBaker {
         const a = g.getAttribute(n), size = n === "uv" ? 2 : 3, arr = new Float32Array(count * size);
         for (let i = 0; i < count; i++) {
           if (n === "position") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix4(world); arr.set([v.x, v.y, v.z], i * 3); }
-          else if (n === "normal") { v.fromBufferAttribute(a as THREE.BufferAttribute, i).applyMatrix3(nm).normalize(); arr.set([v.x, v.y, v.z], i * 3); }
+          else if (n === "normal") { v.set(morph(n, a, i, 0), morph(n, a, i, 1), morph(n, a, i, 2)).applyMatrix3(nm).normalize(); arr.set([v.x, v.y, v.z], i * 3); }
           else for (let k = 0; k < size; k++) arr[i * size + k] = morph(n, a, i, k);
         }
         entry!.chunks[ai].push(arr);

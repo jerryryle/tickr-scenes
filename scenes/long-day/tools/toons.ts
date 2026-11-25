@@ -9,6 +9,7 @@ import type { LiveryName, TruckModel } from "../src/truck.ts";
 
 const MODELS: TruckModel[] = ["box16", "box26", "reefer", "flatbed", "tractor"];
 const LEVELS = [0, 0.5, 1], GAP = 16;
+const gapOf = (i: number) => MODELS[i] === "tractor" ? 26 : GAP;   // (a tractor's trailer is long)
 
 export default function createScene({ sys }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera;
@@ -37,15 +38,15 @@ export default function createScene({ sys }: SceneInputs): Scene {
         for (const n of LIVERY_ASSETS) kit.livery[n].map = white;
         kit.liveryRearDS.map = white;
         MODELS.forEach((m, i) => rows.push(LEVELS.map((k, j) => {
-          const t = new Truck(kit, m); t.toon = k; t.setPose(j * GAP, i * 60, 0); t.update(0); scene.add(t.root); return t;
+          const t = new Truck(kit, m); t.toon = k; t.setPose(j * gapOf(i), i * 60, 0); t.update(0); scene.add(t.root); return t;
         })));
       }
       const k = Math.floor(time) % (MODELS.length * 2), i = Math.floor(k / 2), rear = k % 2 === 1, z = i * 60;
-      // (Broadside, all, half and none of it left to right; then the whole cartoon close, from its
+      // (Side on, all and half of it left to right; then the whole cartoon close, from its
       // front three-quarter.)
-      const tr = i === MODELS.length - 1 ? -6 : 0;   // (a tractor's trailer runs far back)
-      if (!rear) { cam.fov = 40; cam.position.set(GAP + 2 + tr, 5, z - 30); cam.lookAt(GAP + 2 + tr, 1.6, z); }
-      else { cam.fov = 34; cam.position.set(2 * GAP + 14, 4.5, z - 12); cam.lookAt(2 * GAP + 1, 1.8, z); }
+      const G = gapOf(i), tr = MODELS[i] === "tractor" ? -6 : 0;   // (a tractor's trailer runs far back)
+      if (!rear) { cam.fov = 42; cam.position.set(1.5 * G + 2 + tr, 2.4, z - 26 - (G - GAP)); cam.lookAt(1.5 * G + 2 + tr, 2, z); }
+      else { cam.fov = 34; cam.position.set(2 * G + 14, 4.5, z - 12); cam.lookAt(2 * G + 1, 1.8, z); }
       cam.updateProjectionMatrix();
       r.render(scene, cam);
     }

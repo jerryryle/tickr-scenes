@@ -15,6 +15,8 @@ import type { CutBox } from "./cutaway.ts";
 import { applyLampLight } from "./atmosphere.ts";
 import { PuffSystem } from "./puffs.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
+import { faceNormals, regionAt, toonCuts, toonRound, toonSlice } from "./toontruck.ts";
+import type { ToonRegion } from "./toontruck.ts";
 
 
 export type TruckModel = "box16" | "box26" | "reefer" | "tractor" | "flatbed";
@@ -215,31 +217,30 @@ export function keepStrapsWarm(scene: THREE.Object3D) { const b = new Batch(), m
 
 // ---- The storybook's cartoon look ------------------------------------------------------------
 // In and near the storybook city (CountryRoad.storyAt) every truck goes cartoonish, by `toon`
-// (0..1): its cab taller, bulging at the middle and leaning forward, its hood shorter with a
-// rounded nose, its tyres fat and its rims pink, its trim in the storybook's colours (frame and
-// grille plum, chrome gold, tank mint), its bounce bouncier and its puffs big and lilac. Only the
-// look: the wheels, the box, its doors and the crew's places stay where they are (the cab is
-// changed ahead of the box's front, the rest only in colour), so it docks, loads and swaps the
-// same. Built as one morph target per mesh (makeToon), so it fades in and out continuously.
+// (0..1): soft and chunky, its cab, hood, box or trailer rounded off at their edges and puffed
+// out (toontruck.ts), its hood shorter, big round headlamps on its nose, its tyres fat on pink
+// rims, its trim in the storybook's colours (frame and grille plum, chrome gold, tank mint), its
+// ride bouncier and its puffs big and lilac. The box's back and doors, its floor, the wheels and
+// the crew's places stay where they are, so it docks, loads and swaps the same. Built as morph
+// targets (makeToon), so it fades in and out continuously.
 const TOON_TRIM: [number, number][] = [
   [TC.frame, 0x5a2a7a], [TC.mud, 0x3a1a5a], [TC.chrome, 0xffc94a], [TC.tank, 0x6fe0e8], [TC.grille, 0x6a3a8a],
   [TC.step, 0x5a2a7a], [TC.black, 0x3a1a5a], [TC.skirt, 0xff7fb5], [TC.alu, 0xf3e07a],
 ];
 const TOON_RIM = 0xff7fb5, TOON_PUFF = 0xd9b8ff;
-// A point of the truck's body (its frame: x forward from the rear axle, y up, z across) as the
-// cartoon has it, k of the way there.
-export function toonWarp(s: TruckSpec, p: THREE.Vector3, k: number) {
-  const ft = s.frameTop, a = s.cargo ? s.cargo.x1 + 0.03 : s.cabBack - 0.3, b = s.cabBack + 0.02;
-  const w = k * THREE.MathUtils.smoothstep(p.x, a, b);
-  if (w <= 0) return p;
-  const t = THREE.MathUtils.clamp((p.y - ft) / (s.cabTop - ft), 0, 1.2), tc = Math.min(t, 1), up = Math.max(0, p.y - ft);
-  const hood = s.noseFront - s.cabFront, u = hood > 0.01 ? THREE.MathUtils.clamp((p.x - s.cabFront) / hood, 0, 1) : 0;
-  const bump = 4 * tc * (1 - tc);
-  p.x += w * (0.32 * t * t - 0.2 * hood * u);
-  p.y += w * (0.2 * up * (1 - 0.5 * u) - 0.3 * u * u * tc);
-  p.z *= 1 + w * (0.05 + 0.09 * bump);
-  return p;
+const TOON_HOOD = 0.78, TOON_CAB = 1.13;   // (the hood's length and the cab's height, as a cartoon's)
+// The shells a model's cartoon rounds off, in the truck's frame (x forward from the rear axle).
+function toonRegions(s: TruckSpec): ToonRegion[] {
+  const R: ToonRegion[] = [];
+  const conv = s.cab !== "cabover";
+  R.push({ x0: s.cabBack, x1: s.cabFront, y0: s.cabFloor - 0.1, y1: s.cabTop + 0.06, hw: s.cabHW, top: 0.8, bottom: 0, front: 0.55, back: 0.45, side: 0.6,
+    frontFrom: conv ? s.hoodTop : undefined, pillow: 0.07 });
+  if (conv) R.push({ x0: s.cabFront, x1: s.noseFront + 0.12, y0: 0.3, y1: s.hoodTop, hw: s.cabHW + 0.08, top: 0.6, bottom: 0.15, front: 0.6, back: 0, side: 0.45, pillow: 0.07 });
+  const c = s.cargo;
+  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.7, bottom: 0, front: 0.8, back: 0, side: 0.65, pillow: 0.06 });
+  return R;
 }
+const TRAILER_REGION: ToonRegion[] = [{ x0: -15.25, x1: 0.9, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.75, bottom: 0, front: 1.0, back: 0, side: 0.7, pillow: 0.06 }];
 
 export class Truck {
   readonly spec: TruckSpec;
@@ -274,6 +275,7 @@ export class Truck {
   toon = 0;
   private toonShown = 0;
   private toonMeshes: THREE.Mesh[] = [];
+  private toonAnchors: [THREE.Object3D, THREE.Vector3, THREE.Vector3][] = [];
   private toonCol = new THREE.Color();
   private wheelSlots: WheelSlot[] = [];
   private driverDoor = new THREE.Group();
@@ -586,7 +588,7 @@ export class Truck {
     if (this.trailer) { this.trailer.rotation.y = this.trailerYaw; this.trailer.updateMatrix(); }
     const tmat = this.trailer ? this.trailer.matrix : null;
     // (Cartoon tyres a little bigger and much fatter, a dual pair spread to fit.)
-    const K = this.toon, R = 1 + 0.1 * K, fat = 1 + 0.5 * K, spread = 0.07 * K;
+    const K = this.toon, R = 1 + 0.08 * K, fat = 1 + 0.5 * K, spread = 0.07 * K;
     for (const w of this.wheelSlots) {
       const r = w.r * R, dual = w.steer ? 0 : Math.sign(Math.abs(w.z) - (w.trailer ? TRAILER.rearZ : s.rearZ)) * Math.sign(w.z) * spread;
       this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
@@ -602,6 +604,7 @@ export class Truck {
       for (let j = 0; j < this.wheelSlots.length; j++) this.wheels.setColorAt(j, this.toonCol);
       this.wheels.instanceColor!.needsUpdate = true;
       for (const m of this.toonMeshes) m.morphTargetInfluences![0] = K;
+      for (const [a, p0, p1] of this.toonAnchors) a.position.lerpVectors(p0, p1, K);
     }
 
     // Suspension: a little bounce with speed, pitch with acceleration (nose dips when braking).
@@ -676,44 +679,125 @@ export class Truck {
   // each vertex where toonWarp puts it in the body's frame (a door or ramp in its own group as
   // it stands built: shut, stowed), and the trim's colours (TOON_TRIM) the storybook's. (Not the
   // roll-up door's slats, rebuilt as they move, nor kit geometry shared between trucks.)
+  // The cartoon as a morph target on every mesh of the truck (relative: the change), worked out
+  // in the frame of the truck (or its trailer): each part near a shell cut into strips across the
+  // bands that curve (toonSlice), every vertex where the rounded shell puts it (toonRound; the
+  // hood shortened after), the normals afresh, and the trim's colours the storybook's. The
+  // reefer's fridge unit, over the cab, keeps its place; the headlamps (toonEyes) grow from
+  // nothing. (Not the roll-up door's slats, rebuilt as they move, nor shared kit geometry.)
   private makeToon() {
+    this.toonEyes();
     this.root.updateMatrixWorld(true);
-    const inv = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), v = new THREE.Vector3();
+    const s = this.spec, bodyRegions = toonRegions(s);
+    const invB = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), invT = this.trailer ? new THREE.Matrix4().copy(this.trailer.matrixWorld).invert() : null;
+    const M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), v = new THREE.Vector3(), w = new THREE.Vector3();
     const trim = TOON_TRIM.map(([a, b]) => [new THREE.Color(a), new THREE.Color(b)] as const);
-    const visit = (o: any, warp: boolean) => {
+    const fridge = [TC.reefer, TC.grille, TC.black].map((h) => new THREE.Color(h)), cg = s.cargo;
+    // (The cab and hood taller, the hood shorter.)
+    const cabShape = (p: THREE.Vector3) => {
+      if (p.x > s.cabBack - 0.03 && p.y > s.cabFloor) p.y = s.cabFloor + (p.y - s.cabFloor) * TOON_CAB;
+      if (s.cab !== "cabover" && p.x > s.cabFront) p.x = s.cabFront + (p.x - s.cabFront) * TOON_HOOD;
+    };
+    const lift = (TOON_CAB - 1) * (s.cabTop - s.cabFloor);   // (the reefer's fridge unit rises with the cab's roof)
+    const isColour = (C: THREE.BufferAttribute | undefined, i: number, cs: THREE.Color[]) => !!C && cs.some((u) => Math.abs(u.r - C.getX(i)) + Math.abs(u.g - C.getY(i)) + Math.abs(u.b - C.getZ(i)) < 2e-3);
+    // A point of the truck's frame (or the trailer's) as the cartoon has it.
+    const toon = (p: THREE.Vector3, regions: ToonRegion[], trailer: boolean) => {
+      const R = regionAt(regions, p);
+      if (R) toonRound(R, p);
+      if (!trailer) cabShape(p);
+      return p;
+    };
+    const visit = (o: any, trailer: boolean) => {
       if (!o.isMesh || o.isInstancedMesh || o.geometry.userData?.shared || o.geometry === this.slats?.geo || o === this.slats?.strap) return;
-      const g = o.geometry as THREE.BufferGeometry, P = g.getAttribute("position"), C = g.getAttribute("color");
-      M.multiplyMatrices(inv, o.matrixWorld); Mi.copy(M).invert();
-      let moved = false, recol = false;
-      const pos = new Float32Array(P.count * 3);
-      for (let i = 0; i < P.count; i++) {
-        v.fromBufferAttribute(P as THREE.BufferAttribute, i);
-        const x = v.x, y = v.y, z = v.z;
-        if (warp) { v.applyMatrix4(M); toonWarp(this.spec, v, 1); v.applyMatrix4(Mi); }
-        if (Math.abs(v.x - x) + Math.abs(v.y - y) + Math.abs(v.z - z) > 1e-5) moved = true;
-        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+      const regions = trailer ? TRAILER_REGION : bodyRegions;
+      M.multiplyMatrices(trailer ? invT! : invB, o.matrixWorld); Mi.copy(M).invert();
+      const grow: { start: number; count: number; c: THREE.Vector3 }[] | undefined = o.userData.toonGrow;
+      // (Cut across each region's curving bands, axis by axis.)
+      if (!grow) for (const R of regions) {
+        const cuts = toonCuts(R);
+        for (const axis of [0, 1, 2] as const) {
+          const P0 = o.geometry.getAttribute("position") as THREE.BufferAttribute;
+          const sliced = toonSlice(o.geometry, (i, out) => out.fromBufferAttribute(P0, i).applyMatrix4(M), axis, cuts[axis],
+            (c) => c.x > R.x0 - 0.1 && c.x < R.x1 + 0.1 && c.y > R.y0 - 0.1 && c.y < R.y1 + 0.3 && Math.abs(c.z) < R.hw + 0.3);
+          if (sliced.getAttribute("position").count !== P0.count) { o.geometry.dispose(); o.geometry = sliced; } else sliced.dispose();
+        }
       }
-      let col: Float32Array | null = null;
+      const g = o.geometry as THREE.BufferGeometry, P = g.getAttribute("position") as THREE.BufferAttribute, C = g.getAttribute("color") as THREE.BufferAttribute | undefined;
+      const N = g.getAttribute("normal") as THREE.BufferAttribute | undefined;
+      const full = new Float32Array(P.count * 3);
+      let moved = false;
+      for (let i = 0; i < P.count; i++) {
+        v.fromBufferAttribute(P, i);
+        const x = v.x, y = v.y, z = v.z;
+        v.applyMatrix4(M);
+        const keep = !trailer && !!cg && s.reefer === true && v.x > cg.x1 - 0.01 && v.x < cg.x1 + 0.5 && v.y > cg.top - 1.0 && isColour(C, i, fridge);
+        if (!keep) toon(v, regions, trailer); else v.y += lift;
+        v.applyMatrix4(Mi);
+        full[i * 3] = v.x; full[i * 3 + 1] = v.y; full[i * 3 + 2] = v.z;
+        if (Math.abs(v.x - x) + Math.abs(v.y - y) + Math.abs(v.z - z) > 1e-5) moved = true;
+      }
+      // (The headlamps: whole, moved as their middles are, from nothing at their middles.)
+      if (grow) for (const e of grow) {
+        w.copy(e.c).applyMatrix4(M); toon(w, regions, trailer); w.applyMatrix4(Mi).sub(e.c);
+        for (let i = e.start; i < e.start + e.count; i++) {
+          full[i * 3] = P.getX(i) + w.x; full[i * 3 + 1] = P.getY(i) + w.y; full[i * 3 + 2] = P.getZ(i) + w.z;
+          P.setXYZ(i, e.c.x, e.c.y, e.c.z);
+        }
+        P.needsUpdate = true; moved = true;
+      }
+      const pos = new Float32Array(P.count * 3);
+      for (let i = 0; i < P.count; i++) { pos[i * 3] = full[i * 3] - P.getX(i); pos[i * 3 + 1] = full[i * 3 + 1] - P.getY(i); pos[i * 3 + 2] = full[i * 3 + 2] - P.getZ(i); }
+      let nrm: Float32Array | null = null;
+      if (N && moved && !g.index) {
+        const fn = faceNormals(full, N.array, new Float32Array(N.count * 3));
+        nrm = new Float32Array(N.count * 3);
+        for (let i = 0; i < nrm.length; i++) nrm[i] = fn[i] - N.array[i];
+      }
+      let col: Float32Array | null = null, recol = false;
       if (C) {
         col = new Float32Array(C.count * 3);
         for (let i = 0; i < C.count; i++) {
           const r = C.getX(i), gg = C.getY(i), b = C.getZ(i);
           const hit = trim.find(([a]) => Math.abs(a.r - r) + Math.abs(a.g - gg) + Math.abs(a.b - b) < 2e-3);
-          if (hit) recol = true;
-          col[i * 3] = hit ? hit[1].r : r; col[i * 3 + 1] = hit ? hit[1].g : gg; col[i * 3 + 2] = hit ? hit[1].b : b;
+          if (hit) { recol = true; col[i * 3] = hit[1].r - r; col[i * 3 + 1] = hit[1].g - gg; col[i * 3 + 2] = hit[1].b - b; }
         }
       }
       if (!moved && !recol) return;
       g.morphAttributes.position = [new THREE.BufferAttribute(pos, 3)];
+      if (nrm) g.morphAttributes.normal = [new THREE.BufferAttribute(nrm, 3)];
       if (col) g.morphAttributes.color = [new THREE.BufferAttribute(col, 3)];
+      g.morphTargetsRelative = true;
+      g.computeBoundingSphere(); if (g.boundingSphere) g.boundingSphere.radius += 1;   // (room for the cartoon)
       o.updateMorphTargets(); o.morphTargetInfluences[0] = 0;
       this.toonMeshes.push(o);
     };
-    // (The trailer keeps its shape: only its trim changes colour.)
-    this.body.traverse((o) => { if (this.trailer && isUnder(o, this.trailer)) visit(o, false); else visit(o, true); });
-    if (this.trailer && !isUnder(this.trailer, this.body)) this.trailer.traverse((o) => visit(o, false));
+    this.body.traverse((o) => visit(o, !!this.trailer && isUnder(o, this.trailer)));
+    if (this.trailer && !isUnder(this.trailer, this.body)) this.trailer.traverse((o) => visit(o, true));
+    // (The crew's places in the cab move with it: its eyes, the tablet.)
+    for (const a of [this.anchors.driverEye, this.anchors.passengerEye, this.anchors.tablet]) {
+      const p0 = a.position.clone(), p1 = toon(a.position.clone(), bodyRegions, false);
+      this.toonAnchors.push([a, p0, p1]);
+    }
     this.wheels.setColorAt(0, this.toonCol.setHex(0xffffff));   // (the instance colours, white until a cartoon)
     for (let j = 1; j < this.wheelSlots.length; j++) this.wheels.setColorAt(j, this.toonCol);
+  }
+  // The cartoon's big round headlamps, a gold rim round a cream lens either side of its nose
+  // (its own lamps still light the way after dark), built whole and then shrunk to their middles: the cartoon grows them.
+  private toonEyes() {
+    const s = this.spec, P = new Batch(), grow: { start: number; count: number; c: THREE.Vector3 }[] = [];
+    const conv = s.cab !== "cabover";
+    // (On a hood, standing proud on its front corners; on a cab-over's face, low in its corners.)
+    const x = conv ? s.noseFront - 0.3 : s.cabFront + 0.05, y = conv ? s.hoodTop - 0.02 : s.cabFloor + 0.34, r = conv ? 0.34 : 0.3;
+    for (const z of [-1, 1]) {
+      const zc = z * (s.cabHW - (conv ? 0.42 : 0.38));
+      const p0 = P.view().count; P.cyl(x, y, zc, r, 0.12, TC.chrome, 14, 0, Math.PI / 2);
+      grow.push({ start: p0, count: P.view().count - p0, c: new THREE.Vector3(x, y, zc) });
+      const l0 = P.view().count; P.cyl(x + 0.03, y, zc, r * 0.78, 0.12, 0xfff3c8, 14, 0, Math.PI / 2);   // (a cream lens)
+      grow.push({ start: l0, count: P.view().count - l0, c: new THREE.Vector3(x + 0.03, y, zc) });
+    }
+    const pm = P.build(this.kit.paint)!;
+    pm.userData.toonGrow = grow;
+    this.body.add(pm);
   }
 
   // ---- construction --------------------------------------------------------------------------

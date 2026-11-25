@@ -113,10 +113,12 @@ drives do (`CountryRoad.storyAt`, `src/country.ts`): from soon after the last ci
 brightens, candy-coloured crowns and the odd storybook tree turn up among its own, patches of
 storybook land grow more common and the hills and sky come round, until the arrival straight is all
 storybook; leaving, the same in reverse (`storyLook`, `src/countryworld.ts`). The trucks go cartoonish with
-it (`toonWarp`, `src/truck.ts`, a morph target per mesh): a taller cab leaning forward, a snub
-nose, fat tyres on pink rims, plum and gold trim, a bouncier ride and lilac puffs, the box, doors
-and wheel places unchanged so docking and loading are the same; parked fleets too (`src/fleet.ts`).
-`make tool SCENE=long-day TOOL=toons SECS=10` shows each model at none, half and all of it. Its people wear hats and scarves of their own
+it (`makeToon`, `src/truck.ts`; `src/toontruck.ts`): their cab, hood, box or trailer rounded off at
+the edges and puffed out, a taller cab and a shorter hood, big round headlamps standing on the nose,
+fat tyres on pink rims and plum and gold trim, built as morph targets so the change is gradual. The
+box's back, doors and floor and the wheels' places stay where they are, so docking and loading are
+the same; parked fleets too (`src/fleet.ts`). `make tool SCENE=long-day TOOL=toons SECS=10`
+shows each model at none, half and all of it. Its people wear hats and scarves of their own
 (`FIG_STYLE`, `src/figure.ts`), its traffic is bubble cars and the puff bus, and one vignette is
 there only (a knitter). One block is the knitting works (`CityPlan.worksBlock`): a shallow van dock
 under a barrel-roofed spinning hall, its process laid out in the yard beside it from an orchard of
