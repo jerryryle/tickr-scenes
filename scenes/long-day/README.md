@@ -101,34 +101,54 @@ boats moored along a river town's quays, the upturned rowboat by a bait shack, a
 carried as cargo; the car ferry (`ferryModel` in `src/countryworld.ts`) lofts its hull with the
 same code. The showroom's last frames line the boats up afloat and ashore, then show the ferry.
 
-The storybook city (`src/storybook.ts`, `src/works.ts`) is a fantasy town that now and then takes a
-real city's turn: never the first two cities, never within six of the last, about one city in eight
-(`isStorybookCity`, `src/styles.ts`). Its streets are purple-grey with polka-dot centre lines,
-checkered pavements, shepherd's-crook lamps and bunting, entered under a corkscrew arch; its
-buildings are bent towers of round pods in hats, crooked shop rows and pod houses (walls of facade
-tiles, `facadePrism` in `src/facade.ts`, so they cost what other cities' do: `test/chunkcost.ts`
-keeps a chunk within 1.2 times the dearest real style); its trees are tufts, pancakes, droops and
-topiary, and its country rolls away in striped hills. The drive there changes slowly, not halfway as other
-drives do (`CountryRoad.storyAt`, `src/country.ts`): from soon after the last city the real land
-brightens, candy-coloured crowns and the odd storybook tree turn up among its own, patches of
-storybook land grow more common and the hills and sky come round, until the arrival straight is all
-storybook; leaving, the same in reverse (`storyLook`, `src/countryworld.ts`). The trucks go cartoonish with
-it (`makeToon`, `src/truck.ts`; `src/toontruck.ts`): their cab, hood, box or trailer rounded off at
-the edges and puffed out, a taller cab and a shorter hood, big round headlamps standing on the nose,
-fat tyres on pink rims and plum and gold trim, built as morph targets so the change is gradual. The
-box's back, doors and floor and the wheels' places stay where they are, so docking and loading are
-the same; parked fleets too (`src/fleet.ts`). `make tool SCENE=long-day TOOL=toons SECS=10`
-shows each model at none, half and all of it. Its people wear hats and scarves of their own
-(`FIG_STYLE`, `src/figure.ts`), its traffic is its own contraptions (`src/storyvehicles.ts`: a hamster wheel, a walking strider, a caterpillar bus, a pogo hopper, a unicycle tower, a balloon, a spinning teacup and a snail, each posed from how far it has come, so scrubbing replays them; `make tool SCENE=long-day TOOL=storyrides SECS=16` shows them, `DEBUG_VIEW=traffic` follows them in the scene) and cartoon Ryder trucks, and one vignette is
-there only (a knitter). One block is the knitting works (`CityPlan.worksBlock`): a shallow van dock
-under a barrel-roofed spinning hall, its process laid out in the yard beside it from an orchard of
-white tufts to spools on the hall's front and a knitting head on its roof, its moving parts turned by
-`KnittingWorksFx` by scene time; it ships bolts of knitting and cloud cushions, and the city after a storybook one
-arrives with a load of one or the other. The town's other trades make wonders of their own:
-bottled rainbows, giant lollipops, wind-up toys, balloon bunches and music boxes (cargo.ts
-STORY_CARGO, cargomodels.ts; `make tool SCENE=long-day TOOL=wonders SECS=8`), drawn only for
-jobs in a storybook city (`pickCargo`'s `story`), never elsewhere: `test/storycargo.ts` plays
-journeys through one and checks every pickup. The director holds a wide shot of the works as the truck pulls up.
+The storybook city is a fantasy town that now and then takes a real city's turn. It is never one
+of the first two cities, and it never comes within `STORYBOOK_GAP` cities of the last one; past
+that, each city is one with `STORYBOOK_ODDS` (`isStorybookCity` in `src/styles.ts`). Its town is
+built in `src/storybook.ts` and its knitting works in `src/works.ts`.
+
+Its streets are purple-grey with polka-dot centre lines, checkered pavements, shepherd's-crook
+lamps and bunting, and the road in passes under a corkscrew arch. Its buildings are bent towers of
+round pods in hats, crooked shop rows and pod houses. Their walls are facade tiles (`facadePrism` in
+`src/facade.ts`), so a chunk costs about what other cities' chunks cost, and `test/chunkcost.ts`
+holds it to `BUDGET` times the dearest real style. Its trees are tufts, pancakes, droops and
+topiary, and its country rolls away in striped hills.
+
+The drive to a storybook city changes the land slowly over its whole length, where other drives
+change it around their middle. `CountryRoad.storyAt` in `src/country.ts` says how much of the
+storybook there is at each point. From soon after the last city the real land brightens, and
+candy-coloured crowns and the odd storybook tree turn up among its own trees (`storyLook` in
+`src/countryworld.ts`). Patches of storybook land grow more common and the hills and sky come round,
+until the arrival straight is all storybook. Leaving one, the drive runs the same way in reverse.
+
+The trucks go cartoonish along with the land. `makeToon` in `src/truck.ts` builds the cartoon as
+morph targets the first time a truck needs it, using the rounding in `src/toontruck.ts`. The cab,
+hood, box or trailer is rounded off at the edges and puffed out, the cab is taller and the hood
+shorter, and big round headlamps stand on the nose. The tyres are fat on pink rims and the trim is
+plum and gold. The box's back, doors and floor and the wheels' places stay where they are, so
+docking and loading work the same. Parked fleets are baked the same way (`src/fleet.ts`), and
+`make tool SCENE=long-day TOOL=toons SECS=10` shows each model at none, half and all of it.
+
+Its people wear hats and scarves of their own (`FIG_STYLE` in `src/figure.ts`), and one vignette,
+a knitter, is found only there. Its traffic is its own contraptions and cartoon Ryder trucks. The
+contraptions are a hamster wheel, a walking strider, a caterpillar bus, a pogo hopper, a unicycle
+tower, a balloon, a spinning teacup and a snail (`src/storyvehicles.ts`). Each is posed from how
+far it has come, so scrubbing replays them. `make tool SCENE=long-day TOOL=storyrides SECS=16`
+shows them, and `DEBUG_VIEW=traffic` follows them in the scene.
+
+One block is the knitting works (`CityPlan.worksBlock`). It is a shallow van dock under a
+barrel-roofed spinning hall, with its process laid out in the yard beside it. The process runs from
+an orchard of white tufts to spools on the hall's front and a knitting head on its roof, and
+`KnittingWorksFx` turns its moving parts by scene time. The director holds a wide shot of the works
+as the truck pulls up.
+
+The works ships bolts of knitting and cloud cushions, and the city after a storybook one arrives
+with a load of one or the other (`freightFor` in `src/journey.ts`). The town's other trades make
+wonders of their own: bottled rainbows, giant lollipops, wind-up toys, balloon bunches and music
+boxes. They are listed in `STORY_CARGO` in `src/cargo.ts`, and their models are in
+`src/cargomodels.ts`. `pickCargo` draws them only when its caller asks for the storybook's, and only
+a storybook city's job picks ask. `test/storycargo.ts` plays journeys through one and checks every
+pickup, and `make tool SCENE=long-day TOOL=wonders SECS=8` shows the models.
+
 `test/storybook.ts` checks the frequency and the works; to look at it:
 
 ```bash
