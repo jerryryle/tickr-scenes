@@ -26,7 +26,7 @@ import { paintFacadeAtlas } from "./facadeart.ts";
 import { makeLampMaterial, setSignalPreempt, setSignalTime } from "./signals.ts";
 import { interchangeTrack } from "./interchange.ts";
 import { realSeason, weatherMix } from "./climate.ts";
-import { CITY_HI, CITY_LO, cityDistance, insideCity, kerbDoors, makeCityChunkBuilder, parkedObstacles, pavementObstacles } from "./city.ts";
+import { CITY_HI, CITY_LO, cityDistance, gateEnd, insideCity, kerbDoors, makeCityChunkBuilder, parkedObstacles, pavementObstacles } from "./city.ts";
 import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
 import type { CityMaterials, CityPlan } from "./city.ts";
@@ -449,6 +449,12 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       if (B) { cx = B.cx; cz = B.cz; }
       const a = tourT * 0.12;
       cam.position.set(cx + Math.cos(a) * 55, 38, cz + Math.sin(a) * 55); cam.lookAt(cx, 0, cz);
+    } else if (DEBUG_VIEW === "gate" && plan.graph.gates[0]) {
+      // From the road in, outside the entry gate, looking into town past it (a storybook city's
+      // arch stands just inside), drifting in slowly.
+      const e = gateEnd(plan.graph.gates[0]), fx = Math.cos(e.h), fz = -Math.sin(e.h), d = 45 - tourT * 2;
+      cx = e.x; cz = e.z;
+      cam.position.set(e.x + fx * d - fz * 3, 5, e.z + fz * d + fx * 3); cam.lookAt(e.x - fx * 20, 7, e.z - fz * 20);
     } else if (DEBUG_AT) {
       // Circling low over a point ("at:x,z"), a junction's poles and its traffic.
       cx = DEBUG_AT[0]; cz = DEBUG_AT[1];

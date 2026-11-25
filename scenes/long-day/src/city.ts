@@ -17,6 +17,7 @@ import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
+import { SB, SB_STREET, storyGate, storyLamp, bunting } from "./storybook.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -670,6 +671,10 @@ export const C = {
 // The city being built (set by the chunk builder; building is synchronous, so the district
 // builders read their palettes, trees and sign batches from here rather than threading them).
 export let CS: CityStyle = STYLES.coastal;
+// The storybook city lays its own street colours over C while it is built (storybook.ts
+// SB_STREET); every other city has C as above.
+const C_BASE = { ...C };
+function setCityStyle(style: CityStyle) { CS = style; Object.assign(C, C_BASE, style.storybook ? SB_STREET : {}); }
 
 export type Rand = () => number;
 export const pick = <T,>(r: Rand, a: readonly T[]) => a[Math.floor(r() * a.length)];
@@ -687,7 +692,7 @@ export type FleetBuilder = (stalls: StallPose[]) => THREE.Object3D | null;
 // each drawn in its own frame, and the countryside's land where the tile has no city block.
 function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: string, style: SignStyle) => ReturnType<SignAtlas["uv"]> | null) | null) {
   const seed = plan.seed, G = plan.graph, T = G.tile(cx, cz), ox = cx * BLOCK, oz = cz * BLOCK;
-  CS = plan.style;
+  setCityStyle(plan.style);
   const ground = new Batch(), solid = new Batch(), lamps = new Batch();
   const rnd = mulberry32(Math.floor(hash2(cx, cz, seed, 99) * 4294967296));
   setFacadeChunk(cx, cz, seed);
@@ -2101,6 +2106,20 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       if (p1 - p0 < 0.05) continue;
       box(g, (p0 + p1) / 2, CURB_H / 2, (lo + hi) / 2, p1 - p0, CURB_H, hi - lo, C.sidewalk);
       box(g, (p0 + p1) / 2, CURB_H + 0.004, edge + 0.125, p1 - p0, 0.008, 0.25, C.curb);
+      if (CS.storybook) {
+        // Checkered: cream squares laid on the pink, two across, clear of the kerb's edge strip.
+        const c0 = lo === 0 ? 0 : edge + 0.25, c1 = lo === 0 ? edge : STREET, cw = (c1 - c0) / 2, y = CURB_H + 0.002;
+        const quad = (u0: number, u1: number, v0: number, v1: number) => {
+          const P = (u: number, v: number): [number, number] => axis === 0 ? [u, v] : [v, u];
+          const [ax, az] = P(u0, v0), [bx, bz] = P(u1, v0), [cx, cz] = P(u1, v1), [dx, dz] = P(u0, v1);
+          g.tri(ax, y, az, bx, y, bz, cx, y, cz, SB.cream); g.tri(ax, y, az, cx, y, cz, dx, y, dz, SB.cream);
+        };
+        for (let k = Math.floor(p0 / 1.5); k * 1.5 < p1; k++) for (let j = 0; j < 2; j++) {
+          if ((k + j) % 2) continue;
+          const u0 = Math.max(p0, k * 1.5) + 0.01, u1 = Math.min(p1, (k + 1) * 1.5) - 0.01;
+          if (u1 - u0 > 0.05) quad(u0, u1, c0 + j * cw + 0.01, c0 + (j + 1) * cw - 0.01);
+        }
+      }
     }
     if (d) box(g, (d[0] + d[1]) / 2, 0.015, (lo + hi) / 2, d[1] - d[0] - 0.02, 0.03, hi - lo - 0.02, 0x8f8b80);   // (a cm short all round: shared planes flicker)
   }
@@ -2132,6 +2151,15 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
         DC.lampSites.push(hx, CURB_H + 7.2, hz);
       }
     }
+  } else if (!feat.oneway && CS.storybook) {
+    // The storybook city's centre line: a row of polka dots, pink and gold by turns.
+    for (let p = a0 + 4.5, k = 0; p < a1 - 4; p += 2.2, k++) {
+      const [x, z] = axis === 0 ? [p, cl] : [cl, p], y = M + 0.004, c = k % 2 ? SB.mustard : C.yellow;
+      for (let i = 0; i < 6; i++) {   // (flat: a hexagon of six triangles, all a dot needs from above)
+        const a0 = p * 0.37 + i * Math.PI / 3, a1 = a0 + Math.PI / 3;
+        g.tri(x, y, z, x + Math.cos(a1) * 0.3, y, z + Math.sin(a1) * 0.3, x + Math.cos(a0) * 0.3, y, z + Math.sin(a0) * 0.3, c);
+      }
+    }
   } else if (!feat.oneway) {
     // (Yellow 4 mm under the white, which can cross it where streets meet: shared planes flicker.)
     box(g, mid, M - 0.002, cl - 0.15, len - 8, MH - 0.004, 0.12, C.yellow);
@@ -2156,7 +2184,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     box(g, a1 - (STOP_BACK - 0.2), M, (fwdLo + fwdHi) / 2, 0.4, MH, fwdHi - fwdLo - 0.5, C.white);
     if (!feat.oneway) box(g, a0 + (STOP_BACK - 0.2), M, (backLo + backHi) / 2, 0.4, MH, backHi - backLo - 0.5, C.white);
     for (const c0 of [a0 + 0.3, a1 - 3.3])
-      for (let ac = KERB + 0.6; ac < STREET - KERB - 0.4; ac += 1.0) box(g, c0 + 1.4, M, ac, 2.8, MH, 0.5, C.white);
+      for (let ac = KERB + 0.6, k = 0; ac < STREET - KERB - 0.4; ac += 1.0, k++) box(g, c0 + 1.4, M, ac, 2.8, MH, 0.5, CS.storybook && k % 2 ? SB.pink : C.white);
   }
   // Streetlights on both sidewalks, staggered; street trees where the district has them.
   for (const [side, at, d, c] of [[KERB - 0.6, a0 + 10, loD, loC], [STREET - KERB + 0.6, a0 + 31, hiD, hiC]] as const) {
@@ -2165,6 +2193,12 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (inDrive(d, at, 2) || inDrive(c, at, 0) || at > a1 - 7) continue;
     const dir = side < cl ? 1 : -1; // arm reaches over the road
     const [px, pz] = axis === 0 ? [at, side] : [side, at];
+    if (CS.storybook) {   // a shepherd's crook, its lamp hanging over the kerb lane
+      const [hx, hz] = axis === 0 ? [px, side + dir * 1.5] : [side + dir * 1.5, pz];
+      pavementObstacle(px, pz, 0.15, PK.lamp);
+      const l = storyLamp(s, px, pz, hx, hz, 0); DC.lampSites.push(l[0], l[1], l[2]);
+      continue;
+    }
     s.cyl(px, 3.75, pz, 0.1, 7.5, C.pole, 6); pavementObstacle(px, pz, 0.15, PK.lamp);
     const [hx, hz] = axis === 0 ? [px, side + dir * 1.6] : [side + dir * 1.6, pz];
     s.span(Math.min(px, hx) - 0.06, 7.35, Math.min(pz, hz) - 0.06, Math.max(px, hx) + 0.06, 7.47, Math.max(pz, hz) + 0.06, C.pole);
@@ -2174,6 +2208,18 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // What the furniture must keep clear of, per sidewalk.
   const busy: [number[][], number[][]] = [[], []];
   for (const [i, at, d] of [[0, a0 + 10, loD], [1, a0 + 31, hiD]] as const) if (!inDrive(d, at, 2)) busy[i].push([at - 0.6, at + 0.6]);
+  // The storybook city: bunting across some of its streets, between striped poles at the backs of
+  // the sidewalks (clear of driveways, signs and the streetlights).
+  if (CS.storybook && len > 30 && district !== "industrial" && rnd() < (district === "residential" ? 0.25 : 0.6)) {
+    const p = a0 + 20.5 + (rnd() - 0.5) * 6;
+    const ok = [loD, hiD, loC, hiC].every((d) => !inDrive(d, p, 1.5)) && [loS, hiS].every((sg) => sg === null || Math.abs(sg - p) > 2);
+    if (ok) {
+      const [ax, az] = axis === 0 ? [p, 0.4] : [0.4, p], [bx, bz] = axis === 0 ? [p, STREET - 0.4] : [STREET - 0.4, p];
+      bunting(s, ax, az, bx, bz, 0, Math.floor(p * 7));
+      busy[0].push([p - 0.5, p + 0.5]); busy[1].push([p - 0.5, p + 0.5]);
+      pavementObstacle(ax, az, 0.15, PK.lamp); pavementObstacle(bx, bz, 0.15, PK.lamp);
+    }
+  }
   for (const [i, d, sg, F, cz] of [[0, loD, loS, loF, loC], [1, hiD, hiS, hiF, hiC]] as const) {
     if (d) busy[i].push([d[0] - 1, d[1] + 1]);
     if (sg !== null) busy[i].push([sg - 1.4, sg + 1.4]);
@@ -2307,6 +2353,12 @@ function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number,
   const fields = b.fields?.map((f) => c ? seasonGround(f, c) : f);
   const greens = c ? seasonGreens(b.greens, c) : b.greens, cgreens = c ? seasonGreens(b.greens, c, true) : b.greens;
   const ox = cx * BLOCK, oz = cz * BLOCK, line = plan.elevatedSides(cz).includes(cx < (CITY_LO + CITY_HI) / 2 ? -1 : 1);
+  // The storybook city's gate: its arch over the street in, just inside where the road arrives.
+  const eg = plan.style.storybook ? G.gates[0] : null;
+  if (eg) {
+    const e = gateEnd(eg), fx = Math.cos(e.h), fz = -Math.sin(e.h), x = e.x - fx * 6, z = e.z - fz * 6;
+    if (Math.floor(x / BLOCK) === cx && Math.floor(z / BLOCK) === cz) storyGate(solid, x - ox, z - oz, fx, fz, STREET / 2 + 1.6, 0);
+  }
   // (Covered: a city block's, or a river's, over it. Streets lie over the land, which runs under them.)
   const covered = (wx: number, wz: number) => { const B = G.blockAt(wx, wz); return !!B && (B.inCity || B.water); };
   // Ground in 12 m cells: fields in farm country, patchy grass elsewhere, none where a block covers
