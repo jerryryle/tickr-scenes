@@ -13,7 +13,9 @@
 // down off a garage. Seed 5's: a car coming up alongside as it reversed into a dock bay at 6:38.
 // Seed 11's: a car turning in beside it as it came off a freeway ramp at 6:40. And the other seeds
 // to 10 minutes, where the truck once turned into cars beside it or waiting at their line (seed 2),
-// stood off with someone in its way (10, 14) or with cars at a junction (3, 7, 13). A pedestrian
+// stood off with someone in its way (10, 14) or with cars at a junction (3, 7, 13). Seed 7's at
+// 8.9 min: stopped at the kerb with its nose past the stop line, it once pulled away through a red
+// light without booking the junction and turned into a car crossing it. A pedestrian
 // counts as hit inside the truck's boxes widened by PED_R. First, for every truck: the circles
 // traffic and the reversing truck see it as (truckObstacles) reach its nose's and its back's
 // corners, which swing out over the pavement as it reverses into a bay (seed 11 at 9.97 min, once);

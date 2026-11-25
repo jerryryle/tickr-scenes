@@ -54,7 +54,7 @@ import type { CityGraph, CNode } from "./citygraph.ts";
 import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, SEA_CARGO, STORY_CARGO, STORY_FREIGHT, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
-import { blockGoals, LANE_KERB, Path, planRoute } from "./route.ts";
+import { blockGoals, LANE_KERB, Path, planRoute, STOP_BACK } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
 import { interchangeTrack } from "./interchange.ts";
@@ -155,6 +155,9 @@ const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is
 // A world road's key, driven one way or the other: each way is a road of its own, the same each time.
 // A rig pulling up at a kerb is lined up straight over this run in (m: hitchStep).
 const STRAIGHTEN = 18;
+// m: how far short of a face's end a truck stopping at the kerb has its nose: short of the stop
+// line ahead (STOP_BACK short of the street's mouth), where a car stopped there would be.
+const NOSE_BACK = STOP_BACK + 0.5;
 const THROUGH = 1e9;              // stopS of a path driven straight through its end (JSON has no Infinity)
 const GATE_SPEED = 6.5;           // rough average speed across town, for timing the way out
 // (Metres) what a drive takes beyond the graph's corner to corner: round to the kerb, the lights
@@ -735,10 +738,10 @@ export class Journey {
       else if (stop.kind === "swap") {
         // (Nose just short of the stop line ahead.)
         const front = truckExtents(stop.truck!).front, L = siteLayout(this.plan, bx, bz);
-        const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - 4 - front, straight: true }));
+        const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - NOSE_BACK - front, straight: true }));
         // (A rental lot's frontage ends at a 51 past its square's start: on a block where the
         // square sits on an anchor, the face can run on past it, the truck must not.)
-        goals = L.kind === "lot" ? [{ ...all[L.side], after: Math.min(G.faceA1(blk.sides[L.side]), 51 + this.plan.siteDelta(bx, bz)) - 4 - front }] : fronted(G, all);
+        goals = L.kind === "lot" ? [{ ...all[L.side], after: Math.min(G.faceA1(blk.sides[L.side]) - NOSE_BACK, 51 + this.plan.siteDelta(bx, bz) - 4) - front }] : fronted(G, all);
       } else {
         // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
         // on, to where the way in turns off (straight through the node before, to be in the kerb
@@ -746,7 +749,10 @@ export class Journey {
         // (At a yard stand, a little further on, so the bed clears the container: crew.ts stackPlan.)
         // (Centred on the side.)
         const pull = -this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0), L = siteLayout(this.plan, bx, bz);
-        const all = blk.sides.map((f) => ({ d: f, after: (G.faceA0(f) + G.faceA1(f)) / 2 + pull }));
+        // (On a short face, back from the centre as far as it takes to keep its nose short of the
+        // stop line ahead (NOSE_BACK): pulling away from past the line, it would go on through the
+        // junction without its turn, red light and all.)
+        const all = blk.sides.map((f) => ({ d: f, after: Math.min((G.faceA0(f) + G.faceA1(f)) / 2 + pull, G.faceA1(f) - NOSE_BACK - this.frontX) }));
         goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, all);
       }
       // A tractor-trailer pulling away within PULL_RIGHT_MIN of the junction ahead goes on any way
