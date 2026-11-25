@@ -81,6 +81,14 @@ export const CARGO: CargoType[] = [
   cargoType("toilet", "Portable toilet", "humorous", "teamLift", ["sanitationDepot"], ["construction"], "flatbed", [1, 2], 2),
   // The storybook city's: the knitting works' striped bolts of knitting, rolled out (journey.ts makeJob).
   cargoType("knitwear", "Bolts of knitting", "uncommon", "roll", ["knittingWorks"], ["retail", "outfitter", "toyStore", "cornerStore", "bigBox", "laundromat", "partySupply"], "box26", [4, 10], 0.5),
+  // And its other wonders, made only there (STORY_CARGO: never drawn outside a storybook city),
+  // carried about it, or out to the next city as freight (journey.ts freightFor).
+  cargoType("rainbowJars", "Bottled rainbows", "uncommon", "handTruck", ["pharmacy", "florist"], ["cafe", "restaurant", "retail", "bakery", "hotel"], "box26", [4, 10], 0.5),
+  cargoType("lollipops", "Giant lollipops", "uncommon", "carry", ["bakery", "iceCream"], ["iceCream", "toyStore", "cornerStore", "partySupply", "school"], "box16", [2, 6], 0.25),
+  cargoType("cloudCushions", "Cloud cushions", "uncommon", "carry", ["knittingWorks"], ["hotel", "residence", "retail", "apartment", "outfitter"], "box26", [3, 8], 0.5),
+  cargoType("windupToys", "Wind-up toys", "uncommon", "handTruck", ["hardware", "toyStore"], ["toyStore", "retail", "school", "partySupply"], "box26", [4, 10], 0.5),
+  cargoType("balloons", "Balloon bunches", "uncommon", "carry", ["partySupply", "toyStore"], ["school", "theater", "cafe", "residence", "hotel"], "box16", [2, 6], 0.5),
+  cargoType("musicBoxes", "Music boxes", "uncommon", "carry", ["musicStore", "toyStore"], ["theater", "hotel", "residence", "museum", "retail"], "box16", [2, 6], 0.25),
   // Baton in-jokes.
   cargoType("teeth", "Jar of additional teeth", "humorous", "carry", ["pawnShop"], ["dentist"], "box16", [1, 1], 0.25),
   cargoType("redPanda", "Giant stuffed red panda", "humorous", "teamLift", ["toyStore", "partySupply"], ["office", "officeTower"], "box26", [1, 1], 3),
@@ -139,10 +147,14 @@ const TIER_WEIGHT: Record<Tier, number> = { common: 0.70, uncommon: 0.20, rare: 
 // nothing is left.
 // The waterfront's cargo (facilities.ts waterfrontAt), which a town on the sea favours (journey.ts makeJob).
 export const SEA_CARGO = new Set(["seafood", "shipStores", "surfboards", "nets"]);
-// The storybook city's cargo, which only its knitting works makes: drawn only where allowed for it.
-export const STORY_CARGO = new Set(["knitwear"]);
-export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean): CargoType | null {
-  const ok = (c: CargoType) => (!c.season || c.season === season) && (allow ? allow(c) : !STORY_CARGO.has(c.id));
+// The storybook city's cargo, made only there: never drawn but where allowed for it (pickCargo),
+// which is only ever in a storybook city or as its freight out (journey.ts makeJob, freightFor).
+export const STORY_CARGO = new Set(["knitwear", "rainbowJars", "lollipops", "cloudCushions", "windupToys", "balloons", "musicBoxes"]);
+// Those the knitting works makes, which every storybook city has: what one sends on as freight.
+export const STORY_FREIGHT = ["knitwear", "cloudCushions"];
+// (The storybook city's never, whatever `allow` says, unless `story`: only its own job picks.)
+export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean, story = false): CargoType | null {
+  const ok = (c: CargoType) => (!c.season || c.season === season) && (story || !STORY_CARGO.has(c.id)) && (!allow || allow(c));
   const tiers = (["common", "uncommon", "rare", "humorous"] as Tier[]).filter((t) => CARGO.some((c) => c.tier === t && ok(c)));
   const w = { ...TIER_WEIGHT, humorous: humor };
   const total = tiers.reduce((a, t) => a + w[t], 0);

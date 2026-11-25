@@ -123,8 +123,12 @@ shows each model at none, half and all of it. Its people wear hats and scarves o
 there only (a knitter). One block is the knitting works (`CityPlan.worksBlock`): a shallow van dock
 under a barrel-roofed spinning hall, its process laid out in the yard beside it from an orchard of
 white tufts to spools on the hall's front and a knitting head on its roof, its moving parts turned by
-`KnittingWorksFx` by scene time; it ships bolts of knitting, and the city after a storybook one
-arrives with a load of it. The director holds a wide shot of the works as the truck pulls up.
+`KnittingWorksFx` by scene time; it ships bolts of knitting and cloud cushions, and the city after a storybook one
+arrives with a load of one or the other. The town's other trades make wonders of their own:
+bottled rainbows, giant lollipops, wind-up toys, balloon bunches and music boxes (cargo.ts
+STORY_CARGO, cargomodels.ts; `make tool SCENE=long-day TOOL=wonders SECS=8`), drawn only for
+jobs in a storybook city (`pickCargo`'s `story`), never elsewhere: `test/storycargo.ts` plays
+journeys through one and checks every pickup. The director holds a wide shot of the works as the truck pulls up.
 `test/storybook.ts` checks the frequency and the works; to look at it:
 
 ```bash
