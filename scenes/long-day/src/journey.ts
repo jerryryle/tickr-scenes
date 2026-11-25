@@ -113,6 +113,7 @@ export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Ch
 const STOP_SIGN_PAUSE = 1.5;     // s the truck stands at a stop sign's line before going on
 const SWAP_GAP = 2.5;          // metres between the old truck's nose and the new truck's tail
 const WALK_SPEED = 1.35;
+export const SWAP_RAMP = 0.6;   // a swap's walk: seconds getting up to WALK_SPEED, and slowing to a stop at the new door (director.ts swapWalkU)
 const GATE_TRIM = STREET / 2;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
 // The road out, built ahead over the steps after the way out is planned: EXIT_PIECES pieces a step
 // for EXIT_AHEAD steps (exitRoadAhead), whatever is left at its first use.
@@ -1043,10 +1044,11 @@ export class Journey {
     const st = this.st, stop = st.stops[0];
     this.kerbDoor = null; this.stackMode = null;
     if (stop.kind === "swap") {
-      // The walk: from the old cab door forward to the new one, plus a moment to look it over.
+      // The walk: from the old cab door forward to the new one at a steady pace, with a moment to
+      // get going and to slow to a stop at its door (director.ts swapWalkU).
       const spare = truckExtents(stop.truck!), cur = truckExtents(st.truck);
       const walk = (this.path!.length + spare.doorX) - (st.s + cur.doorX);
-      this.chores = swapChores(Math.abs(walk) / WALK_SPEED + 1.5);
+      this.chores = swapChores(Math.abs(walk) / WALK_SPEED + SWAP_RAMP);
     } else {
       // What else is aboard (this stop's own units excluded, before and after its ledger change).
       if (stop.slot === undefined) stop.slot = this.slotFor(stop, this.othersAt(stop));
@@ -1468,6 +1470,9 @@ export class Journey {
       st.truck = stop.truck!; st.spare = null; slotCompact(st.aboard); st.swapAt = st.simTime + 60 * (15 + 15 * this.rand(3)); st.jobsSinceSwap = 0;
       ({ front: this.frontX, center: this.centerX } = truckExtents(st.truck));
       st.s = this.path!.length; this.path!.eval(st.s, this.pose);
+      // (Drawn there from now: not blended over a step from where the old truck stands, which
+      // would slide the new one out of it.)
+      this.settlePrev();
       return;
     }
     const c = CARGO_BY_ID.get(stop.cargo)!;

@@ -21,7 +21,7 @@ import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
 import type { Chore, ItemKind, StackGeom, ToolRest, YLeg } from "./chores.ts";
 import { DWELL, Journey, siteKey } from "./journey.ts";
 import type { Aboard, DwellNow, Stop } from "./journey.ts";
-import { swapClear, swapWalkPoint } from "./director.ts";
+import { swapClear, swapWalkPace, swapWalkPoint, swapWalkU } from "./director.ts";
 import { BedLoad, buildCarried, Herd } from "./loads.ts";
 import type { CarriedLoad } from "./loads.ts";
 import { ARM_F, ARM_U, blendPose, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, stoopFor, walkPose, WORKER_LOOK } from "./character.ts";
@@ -219,7 +219,7 @@ export class Crew {
       const swap = stop.kind === "swap";
       if (c.kind === "climbDown") this.climb(truck, ph.ct, c.len, false);
       else if (c.kind === "climbUp") this.climb(swap && other ? other : truck, ph.ct, c.len, true);
-      else if (swap && c.kind === "walk" && other) this.swapWalk(j, truck, other, ph.ct, c.len, dt);
+      else if (swap && c.kind === "walk" && other) this.swapWalk(j, truck, other, ph.ct, c.len);
       else if (c.kind === "bedUp" || c.kind === "bedDown") this.bedClimb(truck, c, u);
       else this.work(c, ph.ct, u, truck, dt, stop);
     }
@@ -708,14 +708,10 @@ export class Crew {
     if (t < CL) { k.cab = this.climb(truck, t, CL, false); return; }
     if (t < half) {
       if (!other) { this.climb(truck, CL, CL, false); return; }
-      const a = truck.anchors.cabDoorGround.getWorldPosition(this.v), b = other.anchors.cabDoorGround.getWorldPosition(this.v2);
-      const walkLen = Math.max(0.5, half - CL - 0.6), u = THREE.MathUtils.clamp((t - CL) / walkLen, 0, 1);
-      const p = a.lerp(b, u * u * (3 - 2 * u)), walking = u < 1;
-      swapClear(p, truck, other, u);
-      this.driver.apply(walking ? walkPose((t - CL) * 1.4 / STRIDE, idlePose(this.time, this.pose)) : idlePose(this.time, this.pose));
-      this.yaw = truck.heading; this.yawV = 0;
-      this.driver.root.position.copy(p);
-      this.driver.root.rotation.set(0, this.yaw, 0);
+      const p = truck.anchors.cabDoorGround.getWorldPosition(this.v), b = other.anchors.cabDoorGround.getWorldPosition(this.v2);
+      const len = Math.max(0.5, half - CL), u = swapWalkU(t - CL, len);
+      swapClear(p.lerp(b, u), truck, other, u);
+      this.walkBetween(truck, other, p, t - CL, len);
       return;
     }
     if (t < half + CU) { k.cab = this.climb(truck, t - half, CU, true); return; }
@@ -724,16 +720,24 @@ export class Crew {
 
   // Walking from the old truck's door to the new one's (world space; the camera follows the
   // same point, see swapWalkPoint).
-  private swapWalk(j: Journey, oldT: Truck, newT: Truck, t: number, len: number, dt: number) {
-    const p = swapWalkPoint(j, oldT, newT, this.v);
-    const walking = t < len - 1.5;
-    const dist = t * WALK_SPEED_SWAP;
-    this.driver.apply(walking ? walkPose(dist / STRIDE, idlePose(this.time, this.pose)) : gesturePose("clipboard", t, this.pose));
-    // Face along the street towards the new truck, then turn to look it over.
-    const target = walking ? oldT.heading : oldT.heading - Math.PI / 2 * 0.6;
-    this.turnTo(target, dt);
+  private swapWalk(j: Journey, oldT: Truck, newT: Truck, t: number, len: number) {
+    this.walkBetween(oldT, newT, swapWalkPoint(j, oldT, newT, this.v), t, len);
+  }
+  // The driver at `p` on a truck change's walk, `t` seconds into it (swapWalkU): turning from
+  // where the climb down left them to face along the street, striding (the legs keeping time
+  // with the ground covered, easing in and out with the pace), and turning as they slow at the
+  // new door to face its handle, as the climb in starts.
+  private walkBetween(oldT: Truck, newT: Truck, p: THREE.Vector3, t: number, len: number) {
+    const a = oldT.anchors.cabDoorGround.getWorldPosition(this.v3), D = Math.hypot(newT.anchors.cabDoorGround.getWorldPosition(this.v4).x - a.x, this.v4.z - a.z);
+    const u = swapWalkU(t, len), pace = swapWalkPace(t, len), ss = THREE.MathUtils.smoothstep;
+    this.driver.apply(walkPose(D * u / STRIDE, idlePose(this.time, this.pose), true, pace));
+    const out = climbKeys(oldT.model, false), y0 = oldT.heading + out[out.length - 1].root[3];
+    const y2 = newT.heading + climbKeys(newT.model, true)[0].root[3];
+    let yaw = y0 + wrapYaw(oldT.heading - y0) * ss(u, 0, 0.12);
+    yaw += wrapYaw(y2 - yaw) * ss(u, 0.8, 1);
+    this.yaw = yaw; this.yawV = 0;
     this.driver.root.position.copy(p);
-    this.driver.root.rotation.set(0, this.yaw, 0);
+    this.driver.root.rotation.set(0, yaw, 0);
   }
 
   // Chores on foot around the parked truck. The driver's place and facing come from the stop's
@@ -2012,7 +2016,6 @@ export function cabGround(model: TruckModel, up: boolean): [number, number, numb
   return k.root;
 }
 
-const WALK_SPEED_SWAP = 1.35;
 const wrapYaw = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 function springStepCrew(x: number, v: number, target: number, omega: number, dt: number): [number, number] {
   const c1 = x - target, c2 = v + omega * c1, e = Math.exp(-omega * dt);

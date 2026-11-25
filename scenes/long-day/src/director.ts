@@ -56,7 +56,7 @@ import { FW_OFF_D } from "./freeway.ts";
 import type { RoadSign } from "./country.ts";
 import { bladeSignA } from "./city.ts";
 import { hasSign, siteLayout } from "./facilities.ts";
-import { DWELL, JAM_SHOT, Journey } from "./journey.ts";
+import { DWELL, JAM_SHOT, Journey, SWAP_RAMP } from "./journey.ts";
 import type { DockPlan } from "./journey.ts";
 
 type Beat = "drive" | "arrive" | "curb" | "backup" | "load" | "swap" | "depart" | "country" | "roadside" | "jam" | "clowns";
@@ -142,16 +142,31 @@ function springStep(x: number, v: number, target: number, omega: number, dt: num
 const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 // Where the driver is during a swap's exit, walk and enter phases: stepping down at the old
-// cab door, walking forward along the street side to the new truck's door, pausing to look it
-// over, climbing in. Shared with the driver animation (phase 6).
+// cab door, walking forward along the street side to the new truck's door, climbing in. Shared
+// with the driver animation (phase 6).
 export function swapWalkPoint(journey: Journey, oldTruck: Truck, newTruck: Truck, out: THREE.Vector3): THREE.Vector3 {
   const a = oldTruck.anchors.cabDoorGround.getWorldPosition(new THREE.Vector3());
   const b = newTruck.anchors.cabDoorGround.getWorldPosition(new THREE.Vector3());
   const ph = journey.dwellPhase();
   if (ph.phase === "park" || ph.phase === "exit") return out.copy(a);
   if (ph.phase !== "walk") return out.copy(b);
-  const u = THREE.MathUtils.clamp(ph.t / Math.max(0.1, ph.len - 1.5), 0, 1);
-  return swapClear(out.copy(a).lerp(b, u * u * (3 - 2 * u)), oldTruck, newTruck, u);
+  const u = swapWalkU(ph.t, ph.len);
+  return swapClear(out.copy(a).lerp(b, u), oldTruck, newTruck, u);
+}
+// How far along a truck change's walk the driver is (0..1), `t` seconds into a walk of `len`:
+// speeding up to a steady walk over SWAP_RAMP seconds and slowing to a stop over the last
+// SWAP_RAMP, arriving at the new door as the walk ends (the climb in starts from there).
+export function swapWalkU(t: number, len: number): number {
+  const R = Math.min(SWAP_RAMP, len / 2), v = 1 / Math.max(1e-3, len - R);
+  t = THREE.MathUtils.clamp(t, 0, len);
+  if (t < R) return v * t * t / (2 * R);
+  if (t > len - R) { const r = len - t; return 1 - v * r * r / (2 * R); }
+  return v * (t - R / 2);
+}
+// The walk's speed then, as a fraction of its steady pace (for the stride).
+export function swapWalkPace(t: number, len: number): number {
+  const R = Math.min(SWAP_RAMP, len / 2);
+  return THREE.MathUtils.clamp(Math.min(t, len - t) / Math.max(1e-3, R), 0, 1);
 }
 // A walk `u` of the way from one truck's cab door to the other's (world space, `out`), pushed out
 // along the street side clear of the wider truck's body (a tractor's trailer the widest),
