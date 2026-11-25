@@ -2,25 +2,28 @@
 // it stands from the first frame (not blended over a step from where the old one stood, which slid
 // it out of the old truck: journey.ts doStop), with its trailer, if any, straight; and the driver's
 // facing never snaps round from the climb down, through the walk, into the climb up (crew.ts
-// walkBetween ends facing where the climb in starts). Seed 1 swaps about 935 s in.
+// walkBetween ends facing where the climb in starts), nor stops short of the new door on the
+// walk, its start and end ramps apart (director.ts swapWalkU). Seed 1 swaps about 935 s in, for a
+// flatbed; seed 22 about 380 s in, for a tractor (whose trailer is the one to stand straight).
 // Args (all optional): seed:minutes ...
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
-import { Journey, SIM_DT } from "../src/journey.ts";
+import { Journey, SIM_DT, SWAP_RAMP } from "../src/journey.ts";
 import type { Pose } from "../src/route.ts";
 import { Truck, TruckKit } from "../src/truck.ts";
 import type { TruckModel } from "../src/truck.ts";
 import { Crew } from "../src/crew.ts";
 
 const proc = (globalThis as any).process;
-const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:17"];
+const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:17", "22:7"];
 const errs: string[] = [];
 const fail = (m: string) => { if (errs.length < 20) errs.push(m); };
 const TURN = 0.3;   // rad in a step (0.1 s): a snap round, not a turn on foot
+const STROLL = 0.5;   // m/s: slower than this on the walk, away from its ends, is standing about
 const kit = new TruckKit(new Proxy({}, { get: () => ({ width: 1, height: 1 }) }) as any);
 const scene = new THREE.Scene(), cam = new THREE.PerspectiveCamera();
 const turnBy = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
-let handovers = 0, watched = 0;
+let handovers = 0, walked = 0;
 
 for (const run of runs) {
   const [seed, minutes] = run.split(":").map(Number);
@@ -29,7 +32,7 @@ for (const run of runs) {
   const trucks = new Map<TruckModel, Truck>(), trucks2 = new Map<TruckModel, Truck>();
   const truckFor = (m: TruckModel, map = trucks) => { let t = map.get(m); if (!t) { t = new Truck(kit, m, null); scene.add(t.root); map.set(m, t); } return t; };
   const pose = {} as Pose, rp = {} as Pose;
-  let lastYaw: number | null = null, lastKind = "";
+  let lastYaw: number | null = null, lastKind = "", lastAt: THREE.Vector3 | null = null;
   for (let i = 0, n = Math.round(minutes * 60 / SIM_DT); i < n; i++) {
     const before = j.st.truck;
     j.step();
@@ -46,7 +49,7 @@ for (const run of runs) {
       if (Math.abs(hitch) > 1e-6) fail(`seed ${seed} t${st.simTime.toFixed(1)} ${before}->${st.truck}: trailer drawn at ${hitch.toFixed(3)} rad off straight after the hand-over`);
     }
     const stop = st.stops[0];
-    if (st.mode !== "dwell" || stop?.kind !== "swap") { lastYaw = null; lastKind = ""; continue; }
+    if (st.mode !== "dwell" || stop?.kind !== "swap") { lastYaw = null; lastKind = ""; lastAt = null; continue; }
     // The driver through the stop, as main.ts animates it (the spare ahead, then the old truck parked).
     const truck = truckFor(st.truck), p = j.renderPose(pose);
     truck.follow(p.x, p.z, p.h, p.k, 0);
@@ -55,8 +58,16 @@ for (const run of runs) {
     if (om) { other = om === st.truck ? truckFor(om, trucks2) : truckFor(om); if (st.spare) j.sparePose(pose); else if (st.parked) { pose.x = st.parked.x; pose.z = st.parked.z; pose.h = st.parked.h; } other.follow(pose.x, pose.z, pose.h, 0, 0); }
     crew.update(SIM_DT, j, truck, other, cam);
     const ph = j.dwellPhase();
-    if (!ph.chore) { lastYaw = null; lastKind = ""; continue; }   // (in the seat)
-    watched++;
+    if (!ph.chore) { lastYaw = null; lastKind = ""; lastAt = null; continue; }   // (in the seat)
+    // On the walk, going at a walk but for getting going and slowing to a stop at the new door.
+    const at = crew.driver.root.getWorldPosition(new THREE.Vector3());
+    if (ph.chore.kind === "walk") {
+      walked++;
+      const v = lastAt && lastKind === "walk" ? Math.hypot(at.x - lastAt.x, at.z - lastAt.z) / SIM_DT : Infinity;
+      if (ph.ct > SWAP_RAMP + SIM_DT && ph.ct < ph.chore.len - SWAP_RAMP && v < STROLL)
+        fail(`seed ${seed} t${st.simTime.toFixed(1)} walk (${ph.ct.toFixed(2)}/${ph.chore.len.toFixed(2)} s): the driver stands about (${v.toFixed(2)} m/s) short of the new truck`);
+    }
+    lastAt = at;
     // (The walk, and its joins with the climbs: the climbs' own turns are their keys'.)
     const yaw = new THREE.Euler().setFromQuaternion(crew.driver.root.getWorldQuaternion(new THREE.Quaternion()), "YXZ").y;
     if (lastYaw !== null && (ph.chore.kind === "walk" || lastKind === "walk") && Math.abs(turnBy(yaw - lastYaw)) > TURN)
@@ -64,6 +75,6 @@ for (const run of runs) {
     lastYaw = yaw; lastKind = ph.chore.kind;
   }
 }
-console.log(`swap: ${handovers} hand-overs, the driver watched ${(watched * SIM_DT).toFixed(0)} s on foot`);
+console.log(`swap: ${handovers} hand-overs, ${(walked * SIM_DT).toFixed(0)} s of walks between trucks watched`);
 if (!handovers) fail("no swap hand-over in the runs: find one again (test/journey.ts with JTLOG lists them) and move the run");
 if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
