@@ -1,5 +1,6 @@
 // Test scene: Long Day's car models (cars.ts) lined up on a lot, for judging them up close at the
-// board's resolution. Each second the camera moves to the next car, round the line from the front
+// board's resolution. The front row is instanced and tinted the way traffic draws its cars
+// (CarFleet, applyPaintTint); the row behind is parked cars baked into a batch. Each second the camera moves to the next car, round the line from the front
 // three-quarter, then from the rear, then a wide shot, then round a parking garage (garage.ts)
 // with its parked cars, then along the boat models (boats.ts) afloat, one a second, the cargo
 // boats and an upturned rowboat ashore, and last the car ferry (countryworld.ts ferryModel) from
@@ -7,7 +8,7 @@
 //   make tool SCENE=long-day TOOL=showroom SECS=28   -> build/long-day-showroom/showroom.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
-import { CAR_KINDS, carModel, parkedCar } from "../src/cars.ts";
+import { applyPaintTint, CAR_KINDS, CarFleet, parkedCar } from "../src/cars.ts";
 import { buildGarage } from "../src/garage.ts";
 import { boatAt, boatExtent, boatSize } from "../src/boats.ts";
 import type { BoatKind } from "../src/boats.ts";
@@ -36,13 +37,15 @@ export default function createScene({ sys }: SceneInputs): Scene {
       const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(40, 60, 50);
       scene.add(sun, new THREE.HemisphereLight(0xcfe6ff, 0x4a4030, 2.0));
       const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-      const b = new Batch(), lot = new Batch();
+      const tinted = mat.clone(); applyPaintTint(tinted);
+      const fleet = new CarFleet(scene, tinted, 1), lot = new Batch();
+      fleet.begin();
       CAR_KINDS.forEach((k, i) => {
         const x = x0 + i * GAP;
-        carModel(b, k, PAINTS[i % PAINTS.length]);   // (built at the origin: moved below)
-        const m = b.build(mat)!; m.position.x = x; scene.add(m);
+        fleet.add(k, new THREE.Matrix4().makeTranslation(x, 0, 0), PAINTS[i % PAINTS.length]);
         parkedCar(lot, k, x, 0, -6, Math.PI, PAINTS[(i + 3) % PAINTS.length]);   // a parked copy behind, facing the other way
       });
+      fleet.end();
       lot.box(0, -0.05, 0, 80, 0.1, 40, 0x55585c);
       scene.add(lot.build(mat)!);
       const ground = new Batch(), solid = new Batch();
