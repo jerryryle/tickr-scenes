@@ -121,10 +121,10 @@ const SLAT_COLS = 12;
 export class TruckKit {
   paint = new THREE.MeshLambertMaterial({ vertexColors: true });
   livery = {} as Record<LiveryName, THREE.MeshLambertMaterial>;
-  // The rear doors carry the livery outside and are plain inside (doorInside, the face turned
-  // into the box: the swing doors', seen lying open against the trailer's side too). A roll-up
-  // door's inside (slatInside), rolled up under the roof, takes neither the dome light nor the
-  // lamp pools, which lit it as bright as a lamp.
+  // The rear doors carry the livery outside and are plain inside. doorInside is the face turned
+  // into the box, which a trailer's swing doors also show lying open against its side. A roll-up
+  // door's inside, slatInside, takes neither the dome light nor the lamp pools, which lit it as
+  // bright as a lamp once it was rolled up under the roof.
   doorInside: THREE.MeshLambertMaterial;
   slatInside: THREE.MeshLambertMaterial;
   wheelGeo: THREE.BufferGeometry;
@@ -164,7 +164,7 @@ class LightSet {
     clrR: new THREE.MeshBasicMaterial({ color: 0x3a0505 }),
     gauge: new THREE.MeshBasicMaterial({ color: 0x9fb4c8 }),
   };
-  // (`toon`: how cartoonish the truck is. Its big round headlamps are cream when off.)
+  // `toon` says how cartoonish the truck is. Its big round headlamps are cream when off.
   set(head: boolean, brake: boolean, reverse: boolean, sigL: boolean, sigR: boolean, toon: number) {
     const m = this.mats;
     if (head) m.head.color.setHex(0xfffff0); else m.head.color.setHex(0x77776a).lerp(HEAD_TOON_OFF.setHex(0xfff3c8), toon);

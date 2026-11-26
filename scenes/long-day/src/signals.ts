@@ -225,12 +225,14 @@ export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number,
     const px = at[0] - ox, pz = at[1] - oz;
     if (story) { candyPole(solid, px, pz, 0, y0 + 0.45, post + 0.02, 0.6, SB.red, SB.cream); solid.ico(px, y0 + 0.5, pz, 0.08, SB.mustard); }
     else solid.cyl(px, (y0 + 0.2) / 2, pz, post, y0 + 0.2, POLE, 6);
-    // A polygon of `sides` and circumradius R, d in front of the post's axis, facing (fx, fz); with
-    // `crinkle`, every other corner that much further in.
+    // A polygon of `sides` and circumradius R, d in front of the post's axis, facing (fx, fz). With
+    // `crinkle`, every other corner is that much further in, and the polygon is fanned from its
+    // middle because a fan from a corner would fill the notches beside that corner.
     const polygon = (sides: number, R: number, d: number, color: number, fx: number, fz: number, crinkle = 0) => {
       const qx = px + ux * d, qz = pz + uz * d, pts: [number, number, number][] = [];
       for (let k = 0; k < sides; k++) { const a = Math.PI / sides + k * 2 * Math.PI / sides, r = R - (k % 2) * crinkle; pts.push([qx + rx * r * Math.cos(a), y0 + r * Math.sin(a), qz + rz * r * Math.cos(a)]); }
-      for (let k = 1; k + 1 < sides; k++) solid.tri(...pts[0], ...pts[k], ...pts[k + 1], color, [fx, 0, fz]);
+      if (crinkle > 0) for (let k = 0; k < sides; k++) solid.tri(qx, y0, qz, ...pts[k], ...pts[(k + 1) % sides], color, [fx, 0, fz]);
+      else for (let k = 1; k + 1 < sides; k++) solid.tri(...pts[0], ...pts[k], ...pts[k + 1], color, [fx, 0, fz]);
     };
     if (story) {
       // (A round biscuit with a crinkled white rim of icing, all within STOP_PLATE of the post.)
@@ -476,8 +478,9 @@ export function signalPoleOk(G: CityGraph, near: Iterable<number>, x: number, z:
 
 // Mast-arm signals for node n, drawn relative to (ox, oz) (its tile's origin). Each approach gets
 // a pole on the far right corner of the intersection and an arm reaching over its two lanes, with
-// a head per lane. Poles and heads go in `solid`; lamps (boxes that protrude, so their tops read
-// from the overhead camera) go in `lamps`. `plates`: for the name plates on the mast arms, each
+// a head per lane. Poles and heads go in `solid`, and lamps go in `lamps`. Each lamp stands out of
+// its head's face, a box or in the storybook (`story`) a ball, so its top reads from the overhead
+// camera. `plates`: for the name plates on the mast arms, each
 // naming the cross street to the traffic coming up to it.
 export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false) {
   if (n.control !== "signal") return;
@@ -519,7 +522,7 @@ export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode,
       } else solid.box(hx, armY - 0.75, hz, 0.36, 1.25, 0.44, HOUSING, h);
       for (const k of [0, 1, 2] as const) {
         lamps.aux.set(lampTag(k, offset), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2));
-        if (story) lamps.ico(hx - fx * 0.3, armY - 0.36 - k * 0.38, hz - fz * 0.26, 0.15, LAMP_COLORS[k]);
+        if (story) lamps.ico(hx - fx * 0.3, armY - 0.36 - k * 0.38, hz - fz * 0.3, 0.15, LAMP_COLORS[k]);
         else lamps.box(hx - fx * 0.22, armY - 0.36 - k * 0.38, hz - fz * 0.22, 0.16, 0.3, 0.3, LAMP_COLORS[k], h);
       }
     }
