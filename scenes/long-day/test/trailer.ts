@@ -20,6 +20,7 @@ import * as THREE from "three@0.187.0";
 import { Truck, TruckKit, UNDERRIDE_Y } from "../src/truck.ts";
 import { Crew } from "../src/crew.ts";
 import { DWELL } from "../src/journey.ts";
+import { CARGO_BY_ID } from "../src/cargo.ts";
 
 const proc = (globalThis as any).process;
 const errs: string[] = [];
@@ -55,9 +56,11 @@ for (const side of [-1, 1]) for (const open of [true, false]) {
   }
 }
 
-// The jack: planned for every load a tractor carries at a kerb stop, as staged, and the chores
+// The jack: planned for every load a tractor carries at a kerb stop (the least, the most and one
+// between, as cargo.ts gives pallets), as staged, and the chores
 // walk in the trailer (on its floor) only, not through what lies in it.
-for (const kind of ["pickup", "drop"] as const) for (const units of [8, 12, 16, 20]) {
+const [palletsLo, palletsHi] = CARGO_BY_ID.get("pallets")!.units;
+for (const kind of ["pickup", "drop"] as const) for (const units of [palletsLo, Math.round((palletsLo + palletsHi) / 2), palletsHi]) {
   const stop: any = { kind, cargo: "pallets", units, slot: 0 };
   const own = [{ slot: 0, slotsPerUnit: 1, units }];
   const plan = trailerJackPlan(L, "tractor", stop, 0, [], toolStore(L, "palletJack", bedRearX(L, "tractor", kind === "pickup" ? [] : own)));

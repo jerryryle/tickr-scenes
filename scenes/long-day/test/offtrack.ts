@@ -2,7 +2,7 @@
 // it (its cab, or its trailer at its own angle) comes CUT_MAX past the back of the sidewalk into a
 // block while it drives a city's streets. It drives built visits: Midtown and Dry Gulch, each
 // started in a tractor (visits.ts). Generated cities once showed the fault (3.5 m and 3.3 m in): right turns kerb lane
-// to kerb lane, on the 6.5 m radius a box truck takes, the trailer's axles 13 m back off-tracking
+// to kerb lane, on the 6.5 m radius a box truck takes, the trailer's axles (13 m back then) off-tracking
 // across the corner's sidewalk and into the building on it. Its right turns are now wide ones
 // (route.ts), from the inner lane round onto the inner lane's far side. A spare tractor parked for
 // a swap stands back from the corner by the leg its wide right out needs (journey.ts). (Not covered

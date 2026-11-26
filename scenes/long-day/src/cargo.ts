@@ -24,7 +24,7 @@ export const CARGO: CargoType[] = [
   // Common (about 70% of loads).
   cargoType("boxes", "Boxes", "common", "handTruck", ["dc"], ["retail", "office", "residence"], "box26", [6, 16], 0.5),
   cargoType("parcels", "Parcels", "common", "carry", ["parcelHub"], ["residence", "office", "apartment"], "box16", [4, 12], 0.25),
-  cargoType("pallets", "Pallets", "common", "palletJack", ["dc", "ryderWarehouse"], ["bigBox", "grocery"], "tractor", [8, 20], 1),
+  cargoType("pallets", "Pallets", "common", "palletJack", ["dc", "ryderWarehouse"], ["bigBox", "grocery"], "tractor", [8, 14], 1),
   cargoType("carTires", "Car tires", "common", "roll", ["tireDist"], ["autoShop", "dealership"], "box26", [8, 24], 0.25),
   cargoType("truckTires", "Truck tires", "common", "roll", ["tireDist"], ["ryderService"], "box26", [4, 10], 0.5),
   cargoType("drums", "Steel drums", "common", "roll", ["chemPlant"], ["factory", "autoShop"], "box26", [4, 10], 0.5),
@@ -98,8 +98,9 @@ export const CARGO: CargoType[] = [
 
 export const CARGO_BY_ID = new Map(CARGO.map((c) => [c.id, c]));
 
-// Pallet slots per truck (concept doc: box truck 12, tractor-trailer 26).
-export const TRUCK_SLOTS: Record<TruckModel, number> = { box16: 8, box26: 12, reefer: 10, flatbed: 8, tractor: 26 };
+// Pallet slots per truck (concept doc: box truck 12, tractor-trailer 26). The tractor's trailer has
+// a 12.9 m box (truck.ts TRAILER), shorter than the concept's, so it has 20 slots in rows as long.
+export const TRUCK_SLOTS: Record<TruckModel, number> = { box16: 8, box26: 12, reefer: 10, flatbed: 8, tractor: 20 };
 
 // Where loads sit in the bed. Every aboard entry keeps the pallet slot it was stowed at (`slot`),
 // so a load stays put while others come and go. Units of a slot or more take whole slots (two or

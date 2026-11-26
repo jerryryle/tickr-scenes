@@ -2,13 +2,14 @@
 // writes a generated city's plan out with cityFileOfPlan, and it and test/catalogue.ts check a
 // city with cityProblems.
 import * as THREE from "three@0.187.0";
-import { CityPlan, CITY_HI, CITY_LO, cityDistance, kerbDoors, makeCityChunkBuilder } from "../src/city.ts";
+import { CityPlan, CITY_HI, CITY_LO, cityDistance, kerbDoors, makeCityChunkBuilder, streetFrontage } from "../src/city.ts";
 import { CONTENTS, rowOf } from "../src/contents.ts";
 import type { Recipe, RecipeRow } from "../src/contents.ts";
 import type { KerbDoor } from "../src/city.ts";
-import { FURNITURE, PK } from "../src/decor.ts";
+import { FURNITURE, PAVEMENT, PK } from "../src/decor.ts";
 import { angleDiff } from "../src/citygraph.ts";
 import { BLOCK, RING } from "../src/grid.ts";
+import { TILE } from "../src/citygraph.ts";
 import { signalPoles, stopSignPosts } from "../src/signals.ts";
 import { insidePoint, STREET_HALF, STREET_KERB } from "../src/cityfile.ts";
 import type { CityFile, CityFileBlock, CityFileContents, CityFileFreeway, CityFileGate, CityFileNode, CityFileStreet, StreetTag } from "../src/cityfile.ts";
@@ -21,14 +22,28 @@ const cm = (v: number) => Math.round(v * 100) / 100;
 // Every street's furniture as the city's chunks are built (decor.ts streetFurniture records each
 // piece it places, or draws from a file): each street's pieces as [kind, side looking from its
 // first node to its second, metres along from it].
-export function streetFurnitureOf(plan: CityPlan): Map<number, [string, "l" | "r", number][]> {
+// `pavement`, given: filled with everything else standing on the pavements (lights, trees, posts),
+// in world coordinates.
+export function streetFurnitureOf(plan: CityPlan, pavement: { x: number; z: number; r: number; kind: number }[] | null = null): Map<number, [string, "l" | "r", number][]> {
   const G = plan.graph, mats = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
-  const build = makeCityChunkBuilder(mats, plan), rec: number[] = [];
+  const build = makeCityChunkBuilder(mats, plan), rec: number[] = [], pseen = new Set<string>();
+  // Every block's doors are worked out first. A chunk asks for its blocks' doors, and for a city
+  // without them on file that runs probe builds of other tiles, which would record what stands on
+  // their pavements in their own coordinates.
+  if (pavement) for (const B of G.blocks) if (B.inCity) kerbDoors(plan, B.kx, B.kz);
   FURNITURE.out = rec;
   try {
     for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
       if (cityDistance(cx, cz) > 0) continue;
-      const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next();
+      const prec: number[] = [];
+      if (pavement) PAVEMENT.out = prec;
+      try { const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next(); } finally { PAVEMENT.out = null; }
+      for (let i = 0; i + 3 < prec.length; i += 4) {
+        const kind = prec[i + 3];
+        if (kind >= PK.hydrant && kind <= PK.rack) continue;   // (the furniture itself)
+        const o = { x: prec[i] + cx * BLOCK, z: prec[i + 1] + cz * BLOCK, r: prec[i + 2], kind }, k = `${o.x.toFixed(2)},${o.z.toFixed(2)},${kind}`;
+        if (!pseen.has(k)) { pseen.add(k); pavement!.push(o); }
+      }
     }
   } finally { FURNITURE.out = null; }
   const name = Object.fromEntries(Object.entries(PK).map(([k, v]) => [v, k])) as Record<number, string>;
@@ -71,6 +86,69 @@ export function cityContentsOf(plan: CityPlan): CityContents {
   return out;
 }
 
+// Node N's moves a tractor never takes (citygraph.ts noTractor), as its city file lists them: each
+// [street in, street out], in order.
+function tractorBansAt(G: CityPlan["graph"], N: CityPlan["graph"]["nodes"][number]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const a of N.arms) for (const b of N.arms) {
+    if (a === b) continue;
+    const din = a.street * 2 + (a.end ^ 1), dout = b.street * 2 + b.end;
+    if (!G.tractorMove(din, dout)) out.push([a.street, b.street]);
+  }
+  return out.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+}
+
+// A street's furniture slid out from in front of the city's front doors (city.ts kerbDoors): each
+// piece within a door's width (and DOOR_GAP either side) moves along its sidewalk to the nearest
+// spot clear of the door, the other pieces, what else stands there (`pavement`: lights, trees,
+// posts) and a stand's own stretch, and no nearer its corners than the placing allows
+// (decor.ts streetFurniture); one with no such spot within DOOR_SLIDE is dropped. A piece clear of
+// every door stays where it is, so a city's file reads back as written. (The placing picks its
+// spots before the buildings, and so their doors, are known: a bench or a hydrant stood squarely
+// in front of 27 to 49% of each city's doors.)
+const DOOR_GAP = 0.5, DOOR_SLIDE = 15;
+const PIECE_HALF: Record<string, number> = { hydrant: 0.3, trash: 0.3, bench: 0.95, mailbox: 0.3, news: 0.75, meter: 0.15, shelter: 1.9, rack: 0.9 };
+function clearDoors(plan: CityPlan, furniture: Map<number, [string, "l" | "r", number][]>, pavement: { x: number; z: number; r: number; kind: number }[]) {
+  const G = plan.graph;
+  // Each street side's doors and its other obstacles, as spans along the street from its first node.
+  const doors = new Map<string, [number, number][]>(), busy = new Map<string, [number, number][]>();
+  const push = (m: Map<string, [number, number][]>, k: string, s: [number, number]) => (m.get(k) ?? m.set(k, []).get(k)!).push(s);
+  for (const B of G.blocks) {
+    if (!B.inCity || B.water) continue;
+    const ds = kerbDoors(plan, B.kx, B.kz);
+    B.sides.forEach((f, side) => {
+      const d = ds[side], st = G.streets[f >> 1], at = (a: number) => (f & 1 ? st.len - a : a), key = `${st.id}${f & 1 ? "l" : "r"}`;
+      if (d && d.y === undefined) push(doors, key, [at(d.a) - d.half - DOOR_GAP, at(d.a) + d.half + DOOR_GAP]);
+      const clear = streetFrontage(plan, B.kx, B.kz, side).clear;
+      if (clear) push(busy, key, [Math.min(at(clear[0]), at(clear[1])), Math.max(at(clear[0]), at(clear[1]))]);
+    });
+  }
+  for (const o of pavement) for (const id of G.tile(Math.floor(o.x / TILE), Math.floor(o.z / TILE)).streets) {
+    const st = G.streets[id], [s, n] = G.toStreet(id, o.x, o.z);
+    if (s < 0 || s > st.len || Math.abs(n) < st.half - st.kerb - 0.3 || Math.abs(n) > st.half) continue;
+    push(busy, `${id}${n > 0 ? "r" : "l"}`, [s - o.r - 0.4, s + o.r + 0.4]);
+  }
+  const hit = (spans: [number, number][] | undefined, lo: number, hi: number) => !!spans?.some(([a, b]) => hi > a && lo < b);
+  for (const [id, list] of furniture) {
+    const st = G.streets[id], a0 = G.armOut(id * 2).mouth, a1 = st.len - G.armIn(id * 2).mouth;
+    for (let i = 0; i < list.length; i++) {
+      const [kind, side, at] = list[i], half = PIECE_HALF[kind] ?? 0.3, key = `${id}${side}`;
+      if (!hit(doors.get(key), at - half, at + half)) continue;
+      // (Clear of the corners as the placing keeps them: a bus shelter further, where children gather.)
+      const end = kind === "shelter" ? 6 : 2.5, others = list.filter((_, j) => j !== i && list[j][1] === side).map(([k, , p]): [number, number] => [p - (PIECE_HALF[k] ?? 0.3) - 0.4, p + (PIECE_HALF[k] ?? 0.3) + 0.4]);
+      const fits = (p: number) => p - half > a0 + end && p + half < a1 - end && !hit(doors.get(key), p - half, p + half) && !hit(busy.get(key), p - half, p + half) && !hit(others, p - half, p + half);
+      let to = NaN;
+      for (let k = 1; k * 0.25 <= DOOR_SLIDE && Number.isNaN(to); k++) {
+        // (Towards the middle of the street first: away from the junctions' corners.)
+        const dir = at < (a0 + a1) / 2 ? 1 : -1;
+        for (const p of [cm(at + dir * k * 0.25), cm(at - dir * k * 0.25)]) if (fits(p)) { to = p; break; }   // (Each spot is rounded as the file holds it, then tested.)
+      }
+      if (Number.isNaN(to)) { list.splice(i, 1); i--; } else list[i] = [kind, side, to];
+    }
+  }
+  return furniture;
+}
+
 export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFile {
   const G = plan.graph, O = plan.outline;
   const nodes: CityFileNode[] = G.nodes.map((N) => {
@@ -78,9 +156,12 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
     const poles = signalPoles(G, N), stops = [...stopSignPosts(G, N)].sort((a, b) => a[0] - b[0]);
     if (poles.length) out.poles = poles.map((p) => [p.i, cm(p.px), cm(p.pz), Math.round(p.h * 1e4) / 1e4, cm(p.toCentre)]);
     if (stops.length) out.stops = stops.map(([arm, [x, z]]) => [arm, cm(x), cm(z)]);
+    const bans = tractorBansAt(G, N);
+    if (bans.length) out.noTractor = bans;
     return out;
   });
-  const furniture = streetFurnitureOf(plan);
+  const pavement: { x: number; z: number; r: number; kind: number }[] = [];
+  const furniture = clearDoors(plan, streetFurnitureOf(plan, pavement), pavement);
   const streets: CityFileStreet[] = G.streets.map((st) => {
     const A = G.nodes[st.n0], B = G.nodes[st.n1], out: CityFileStreet = { id: st.id, a: st.n0, b: st.n1 };
     if (st.name) out.name = st.name;

@@ -457,9 +457,10 @@ export class Journey {
     return { bx, bz, fac, name: facilityName(this.plan, fac, bx, bz) };
   }
   // Blocks with one of `types` within `radius` blocks of (bx, bz), nearest first, skipping `avoid`.
-  private findNear(types: FacilityId[], bx: number, bz: number, radius: number, avoid: Set<string>, minDist = 1): Site[] {
+  // `truck` is the truck that will stop there. A tractor-trailer reaches fewer blocks (deliverable).
+  private findNear(types: FacilityId[], bx: number, bz: number, radius: number, avoid: Set<string>, minDist = 1, truck: TruckModel = this.st.truck): Site[] {
     const out: { s: Site; d: number }[] = [];
-    for (const [x, z] of this.deliverable()) {
+    for (const [x, z] of this.deliverable(truck === "tractor")) {
       const d = Math.abs(x - bx) + Math.abs(z - bz);
       if (d < minDist || d > radius || avoid.has(`${x},${z}`)) continue;
       if (types.includes(this.facility(x, z))) out.push({ s: this.site(x, z), d });
@@ -469,10 +470,12 @@ export class Journey {
   }
   // The city's blocks a stop may be at, by key, north to south and west to east (findNear's order
   // among blocks as near as each other): in town, not the plaza (with no building to deliver to),
-  // nor an interchange's, nor one whose every kerb is the wrong way up a one-way street. (Fixed
-  // for the city, so worked out once: job planning asks it over and over.)
-  private delivCache: { plan: CityPlan; keys: [number, number][] } | null = null;
-  private deliverable(): [number, number][] {
+  // nor an interchange's, nor one whose every kerb is the wrong way up a one-way street. For a
+  // tractor-trailer, only those it can drive to and away from, keeping to its moves (citygraph.ts
+  // tractorReach): at a site, along the site's kerb; elsewhere, along any the truck can stop at.
+  // (Fixed for the city, so worked out once: job planning asks it over and over.)
+  private delivCache: { plan: CityPlan; keys: [number, number][]; tractor: [number, number][] } | null = null;
+  private deliverable(tractor = false): [number, number][] {
     const P = this.plan;
     if (this.delivCache?.plan !== P) {
       const G = P.graph, keys: [number, number][] = [];
@@ -481,9 +484,14 @@ export class Journey {
         keys.push([b.kx, b.kz]);
       }
       keys.sort((p, q) => p[1] - q[1] || p[0] - q[0]);
-      this.delivCache = { plan: P, keys };
+      const reach = G.tractorReach();
+      const served = ([kx, kz]: [number, number]) => {
+        const b = P.blockOf(kx, kz)!, L = siteLayout(P, kx, kz);
+        return L.kind === "kerb" ? b.faces.some((f) => G.hasFrontage(f) && G.drivable(f) && reach.has(f)) : reach.has(P.face(kx, kz, L.side));
+      };
+      this.delivCache = { plan: P, keys, tractor: keys.filter(served) };
     }
-    return this.delivCache.keys;
+    return tractor ? this.delivCache.tractor : this.delivCache.keys;
   }
   private truckBlock(): [number, number] {
     return [Math.floor(this.pose.x / BLOCK), Math.floor(this.pose.z / BLOCK)];
@@ -558,7 +566,7 @@ export class Journey {
       // Without it, the truck still has to be the one the next city starts with.
       const want = this.freightFor(st.city + 1)?.truck;
       if (!job && want && want !== st.truck) {
-        const lot = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1)[0];
+        const lot = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1, this.lotTruck(want))[0];
         if (lot) job = [{ kind: "swap", site: lot, job: ++st.jobCounter, cargo: "", units: 0, truck: want }];
       }
       if (job) st.stops.push(...job);
@@ -633,7 +641,7 @@ export class Journey {
     // which many cities lack, so drawing it blind mostly misses.
     const here = new Set([`${bx},${bz}`]);
     const pool = swapDue && !freight && !DEBUG_CARGO
-      ? new Set(CARGO.filter((c) => c.truck !== st.truck && !STORY_CARGO.has(c.id) && this.findNear(c.from, bx, bz, SWAP_SEARCH, here, 2).length).map((c) => c.id))
+      ? new Set(CARGO.filter((c) => c.truck !== st.truck && !STORY_CARGO.has(c.id) && this.findNear(c.from, bx, bz, SWAP_SEARCH, here, 2, c.truck).length).map((c) => c.id))
       : null;
     // (The waterfront's cargo with a source near, looked for once: makeJob's shore pick.)
     let seaNear: Set<string> | null = null;
@@ -673,7 +681,7 @@ export class Journey {
       // swap's cargo looks as far as its pool did.
       const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous" || SEA_CARGO.has(c.id) || STORY_CARGO.has(c.id);   // (the waterfront's and the works' come from few places)
       // (The storybook city has one works: its freight is fetched from it wherever it is in town.)
-      let sources = this.findNear(c.from, bx, bz, reach || (STORY_CARGO.has(c.id) && freight ? 40 : change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2);
+      let sources = this.findNear(c.from, bx, bz, reach || (STORY_CARGO.has(c.id) && freight ? 40 : change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2, truck);
       if (!sources.length) continue;
       // (A load left on the pallet jack: from a dock, or a shop with a door it can come out of,
       // rather than one where it would have to wait on the pavement, if there are any.)
@@ -689,7 +697,7 @@ export class Journey {
       const pickup: Stop = { kind: "pickup", site: src, job: st.jobCounter, cargo: c.id, units };
       if (intercity) {   // the drop is in the next city
         if (fits) return [pickup];
-        const lots = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1);
+        const lots = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1, this.lotTruck(truck));
         return lots.length ? [{ kind: "swap", site: lots[0], job: st.jobCounter, cargo: "", units: 0, truck }, pickup] : null;
       }
       // (A swap's job makes one drop: the swap itself takes time.)
@@ -697,7 +705,7 @@ export class Journey {
       const drops: Stop[] = [];
       let cur = src, left = units;
       for (let i = 0; i < nDrops; i++) {
-        const cands = this.findNear(c.to, cur.bx, cur.bz, Math.max(reach / 2, change ? 10 : wide ? (near ? 6 : 10) : near ? 4 : 6), avoid, 1);
+        const cands = this.findNear(c.to, cur.bx, cur.bz, Math.max(reach / 2, change ? 10 : wide ? (near ? 6 : 10) : near ? 4 : 6), avoid, 1, truck);
         if (!cands.length) break;
         const dst = cands[Math.floor(this.rand(10 + i) * Math.min(3, cands.length))];
         avoid.add(siteKey(dst));
@@ -709,7 +717,7 @@ export class Journey {
       drops[drops.length - 1].units += left; // any units a missing drop would have taken
       const stops: Stop[] = [pickup, ...drops];
       if (!fits) {
-        const lots = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1);
+        const lots = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1, this.lotTruck(truck));
         if (!lots.length) continue;
         stops.unshift({ kind: "swap", site: lots[0], job: st.jobCounter, cargo: "", units: 0, truck });
       }
@@ -762,10 +770,12 @@ export class Journey {
       // but right there, if it can reach the stop so: its trailer, straight behind it at the kerb,
       // would cut across the corner, signal pole and all.
       const noRight = SPECS[st.truck].fifthWheel !== undefined && st.at.before < PULL_RIGHT_MIN ? G.movesFrom(st.at.d).find((m) => m.move === "R")?.to : undefined;
-      st.route = noRight === undefined ? null : planRoute(G, st.at.d, st.at.before, goals, 6000, (d) => d !== noRight && this.drivable(d));
-      st.route ??= planRoute(G, st.at.d, st.at.before, goals, 6000, this.drivable);
+      // (A tractor-trailer never takes a move that would drag its trailer across a corner: citygraph.ts noTractor.)
+      const moveOk = this.movesFor(st.truck);
+      st.route = noRight === undefined ? null : planRoute(G, st.at.d, st.at.before, goals, 6000, (d) => d !== noRight && this.drivable(d), moveOk);
+      st.route ??= planRoute(G, st.at.d, st.at.before, goals, 6000, this.drivable, moveOk);
       // (Where no way in comes straight on through the corner before it, as at a Y-junction, any way in.)
-      if (!st.route && goals.some((g) => g.straight)) st.route = planRoute(G, st.at.d, st.at.before, goals.map((g) => ({ ...g, straight: false })), 6000, this.drivable);
+      if (!st.route && goals.some((g) => g.straight)) st.route = planRoute(G, st.at.d, st.at.before, goals.map((g) => ({ ...g, straight: false })), 6000, this.drivable, moveOk);
       if (st.route && st.at.lane !== undefined) st.route.lane = st.at.lane;
       if (!st.route) { this.log(`no route to ${stop.site!.name}; skipping`); st.stops.shift(); return; }
       if (this.garageStop(stop)) { st.route.garageIn = true; this.log(`up onto the roof of ${stop.site!.name}`); }
@@ -1127,9 +1137,13 @@ export class Journey {
     this.kerbDoor = null; this.stackMode = null;
     if (stop.kind === "swap") {
       // The walk: from the old cab door forward to the new one at a steady pace, with a moment to
-      // get going and to slow to a stop at its door (director.ts swapWalkU).
-      const spare = truckExtents(stop.truck!), cur = truckExtents(st.truck);
-      const walk = (this.path!.length + spare.doorX) - (st.s + cur.doorX);
+      // get going and to slow to a stop at its door (director.ts swapWalkU). Its length from the two
+      // trucks alone, the old one's nose SWAP_GAP short of the new one's tail (the swap's stopS): once
+      // the driver has changed trucks partway through (doStop), the old one is the one parked, and a
+      // keyframe restored after then plans the same dwell. (Measured from where each truck stood, the
+      // walk came out nil there, and the dwell 15 s short.)
+      const old = st.spare === null && st.parked ? st.parked.model : st.truck, spare = truckExtents(stop.truck!), cur = truckExtents(old);
+      const walk = cur.front + SWAP_GAP - spare.rear + spare.doorX - cur.doorX;
       this.chores = swapChores(Math.abs(walk) / WALK_SPEED + SWAP_RAMP);
     } else {
       // What else is aboard (this stop's own units excluded, before and after its ledger change).
@@ -1605,7 +1619,7 @@ export class Journey {
     // The truck the next city starts with, if there is time to change to it on the way.
     const want = this.freightFor(st.city + 1)?.truck, swap: Stop[] = [];
     if (want && want !== st.truck && !keep.some((k) => k.kind === "swap")) {
-      const lot = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1)[0];
+      const lot = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1, this.lotTruck(want))[0];
       if (lot && st.cityTime + this.estimate([...keep, { kind: "swap", site: lot, job: 0, cargo: "", units: 0 }], this.fromTruck()) + this.gateTime(this.fromBlock(lot.bx, lot.bz)) + this.driveOf(st.city) < this.period)
         swap.push({ kind: "swap", site: lot, job: ++st.jobCounter, cargo: "", units: 0, truck: want });
     }
@@ -1624,7 +1638,7 @@ export class Journey {
     const st = this.st, at = this.pathEnd(), G = this.plan.graph, i = this.leaveOf(st.city).out, gt = G.gates[i];
     if (!gt) return null;
     const gst = G.streets[gt.street];
-    const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable);
+    const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable, this.movesFor(st.truck));
     if (!route) return null;
     if (at.lane !== undefined) route.lane = at.lane;
     route.wide = st.truck === "tractor" || undefined;
@@ -1635,6 +1649,12 @@ export class Journey {
   private pathEnd() { return this.st.at; }
   // The streets the truck may drive through (city streets: gate streets only as a goal).
   private readonly drivable = (d: number) => this.plan.graph.streets[d >> 1].inCity;
+  // A swap's Ryder lot is driven to in one truck and away from in the other. Where either is a
+  // tractor-trailer, the lot has to be one the tractor reaches (deliverable).
+  private lotTruck(want: TruckModel): TruckModel { return want === "tractor" || this.st.truck === "tractor" ? "tractor" : this.st.truck; }
+  // The moves through a junction a truck may make: any, but for a tractor-trailer (citygraph.ts noTractor).
+  private movesFor(m: TruckModel) { return m === "tractor" ? this.tractorMoves : null; }
+  private readonly tractorMoves = (d: number, e: number) => this.plan.graph.tractorMove(d, e);
 
   // Through the end of the gate street (or put there, as a last resort): onto the road, `s0`
   // metres along it already.
