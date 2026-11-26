@@ -16,7 +16,7 @@ import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
 import { choreObstacles, fetchSpots, leafAngle, leafAt, pavementFetch, ROAD_PARK, FL_MID, LONG_TINES, fvec, stackGeom, stackTripLegs, TEAM_CLEAR, ON_EDGE, HIGH_CARRY, teamSpan, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, HT_LEAD, JACK_LEAD, JACK_PIVOT_AT, JACK_TURN, JACK_TURN_LOADED, pushGap, flipYawIn, flipYawOut, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, toolStore, tripCount, tripUnits } from "./chores.ts";
-import { buildCrewPath, EMPTY_HOLD, samplePath } from "./crewpath.ts";
+import { buildCrewPath, EMPTY_HOLD, jackIntoDoor, samplePath } from "./crewpath.ts";
 import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
 import type { Chore, ItemKind, StackGeom, ToolRest, YLeg } from "./chores.ts";
 import { DWELL, Journey, siteKey } from "./journey.ts";
@@ -24,10 +24,9 @@ import type { Aboard, DwellNow, Stop } from "./journey.ts";
 import { swapClear, swapWalkPace, swapWalkPoint, swapWalkU } from "./director.ts";
 import { BedLoad, buildCarried, Herd } from "./loads.ts";
 import type { CarriedLoad } from "./loads.ts";
-import { ARM_F, ARM_U, blendPose, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, stoopFor, walkPose, WORKER_LOOK } from "./character.ts";
+import { ARM_F, ARM_U, blendPose, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
 import type { BodyPose } from "./character.ts";
 
-const STRIDE = 1.6;   // metres per walk cycle (two steps): the walk cycle's (character.ts walkPose) planted foot keeps still
 
 type CrewSave = { f: Record<string, unknown>; gag: THREE.Vector3; gagOn: boolean };   // (the vector kept when there is no gag)
 export class Crew {
@@ -764,12 +763,15 @@ export class Crew {
     const d = this.driver, L = truckLayout(truck.model), P = this.pose;
     const path = this.crewPath(truck, stop), ps = samplePath(path, path.starts[this.plan.indexOf(c)] + t, this.ps);
     let x = ps.x, z = ps.z, y = 0, yaw = ps.yaw, walking = ps.speed > 0.04, stepping = false;   // (any drift takes steps: planted feet would skate)
-    this.walkPhase = ps.steps / STRIDE;
+    this.walkPhase = (ps.gait ?? ps.steps) / STRIDE;
     idlePose(this.time, P);
     const doorChore = c.kind === "doorOpen" || c.kind === "doorClose";
     if (c.kind === "walk" || c.kind === "gateRide") {
       const a = c.a!, b = c.b!;
-      y = c.kind === "gateRide" ? this.gateY(L, c.dir === "up" ? 1 - ease(u) : ease(u)) : c.linear ? a[1] + (b[1] - a[1]) * u : this.ground(L, x, z, DRIVER_INSET);
+      // (A walk in a run with the hand truck (crewpath.ts wheelWalk) is placed by the run, not by
+      // how far through the walk it is: at the ground under the driver, the ramp or the bed's floor.)
+      const run = !Number.isNaN(ps.lead ?? NaN) && !this.docked;
+      y = c.kind === "gateRide" ? this.gateY(L, c.dir === "up" ? 1 - ease(u) : ease(u)) : c.linear && !run ? a[1] + (b[1] - a[1]) * u : this.ground(L, x, z, DRIVER_INSET);
       if (c.kind === "gateRide") walking = false;
       if (c.over) {
         // Over a load on hands and knees: up onto it, across its top, down off its far side.
@@ -810,7 +812,17 @@ export class Crew {
       // (Pumping the jack's handle: down and up, a bob in the knees with each stroke.)
       if (c.kind === "jackUp") P.drop += 0.06 * (0.5 - 0.5 * Math.cos(t * Math.PI * 2 * 1.6)) * (1 - THREE.MathUtils.smoothstep(u, 0.85, 1));
     }
-    if (walking) walkPose(this.walkPhase, P, true, c.kind === "rampOut" || c.kind === "rampIn" ? 1 : 0.35 + 0.65 * ps.along);   // (side-stepping, short steps)
+    // (Going sideways, round the hand truck's wheels say: side-stepping. A cycle covers less
+    // ground the more across the facing the way goes (crewpath.ts gait); each foot swung fore and
+    // aft, and out and back, by its share of that, planted through the same half of the cycle.)
+    if (walking) {
+      const ramp = c.kind === "rampOut" || c.kind === "rampIn", a = ramp ? 1 : ps.along, b = ramp ? 0 : ps.lat ?? 0;
+      const cyc = a * STRIDE + (1 - a) * SIDE_STEP, across = Math.min(1, Math.abs(b));
+      walkPose(this.walkPhase, P, true, cyc * a / STRIDE);
+      const dirSign = ps.gait !== undefined && ps.gait < this.lastGait ? -1 : 1;
+      sideStepPose(this.walkPhase, P, Math.atan2(cyc * across / 4, HIP_Y), Math.sign(b) * dirSign, Math.min(1, across * 1.5));
+    }
+    this.lastGait = ps.gait ?? 0;
     d.apply(P);
     this.place(truck, x, y, z, yaw);
     this.yaw = yaw; this.yawV = 0;
@@ -928,6 +940,7 @@ export class Crew {
     for (const [hx, hy] of HEAD_POINTS) if (box.containsPoint(this.v.set(hx, hy, 0).applyMatrix4(head.matrixWorld).applyMatrix4(inv))) return true;
     return false;
   }
+  private lastGait = 0;   // (the walk cycle's phase last time: which way it runs)
   private pushLean = 0;   // props: lean into a push this frame (added to the stoop)
   private htLead = HT_LEAD;   // props: the hand truck's wheels this far ahead of the driver this frame
   private hunch = 0;      // props: how far hunched down behind a tall load this frame (0..1)
@@ -939,6 +952,10 @@ export class Crew {
     const L = truckLayout(truck.model), cargo = CARGO_BY_ID.get(stop.cargo)!, plan = this.plan;
     const size = CARGO_MODELS[stop.cargo]?.size ?? [0.5, 0.5, 0.5], tool = STYLE[cargo.handling].tool ?? null;
     const exit = cabGround(truck.model, false), enter = cabGround(truck.model, true);
+    // (A pallet jack pushed straight on into a doorway, or out of it: walked in, or on out, without
+    // stopping at the threshold (flipDepth; crewpath.ts plays the jack's moves either side so).)
+    const flowing = new Map<Chore, [boolean, boolean]>();
+    plan.forEach((c, i) => { if (c.kind === "fetch" && c.flip && c.tool === "palletJack") flowing.set(c, [jackIntoDoor(plan[i - 1]), jackIntoDoor(plan[i + 1])]); });
     const nominal = (c: Chore, u: number): Nominal => {
       if (c.kind === "walk" && c.round) { const r = roundAt(L, c, u); return { x: r.x, z: r.z, yaw: r.yaw, exact: false }; }
       if (c.kind === "walk" || c.kind === "gateRide") {
@@ -965,8 +982,9 @@ export class Crew {
       if (c.kind === "fetch" && c.flip) {
         // In through the doorway, out of sight, turned round in there, and back out facing out:
         // what is held ahead of the driver all the way (going in, the tool; coming out, the load).
-        const f = c.face ?? 0, d = c.flip, k = flipDepth(u);
-        return { x: at[0] + Math.cos(f) * d * k, z: at[2] - Math.sin(f) * d * k, yaw: u >= 0.5 ? flipYawOut(c) : flipYawIn(c), exact: true, snap: true };
+        // (Coming out square to the doorway, or at the angle Chore.flipOff through it.)
+        const f = c.face ?? 0, d = c.flip, fl = flowing.get(c), k = flipDepth(u, fl?.[0], fl?.[1]), g = f + (u >= 0.5 ? c.flipOff ?? 0 : 0);
+        return { x: at[0] + Math.cos(g) * d * k, z: at[2] - Math.sin(g) * d * k, yaw: u >= 0.5 ? flipYawOut(c) : flipYawIn(c), exact: true, snap: true };
       }
       if (c.kind === "fetch" && this.kerbFetch(c)) {
         // Into the doorway for the load (or with it), and back out.
@@ -996,8 +1014,11 @@ export class Crew {
     // (Where the driver may stand turning a hand truck: not in the truck, bar its bed's aisle.)
     // (Nor in what stands on the pavement, at the feet.)
     const obs = choreObstacles(plan).filter((o) => o.r > 0);
+    // (Nor astride the walk ramp's side: up and down it along its middle, or clear beside it. Its
+    // last RAMP_LIP, a few centimetres high, is stepped across.)
+    const rampSide = (x: number, z: number) => L.loader === "ramp" && x < L.bedRear && x > L.bedRear - L.rampRun + RAMP_LIP && Math.abs(z) > 0.15 && Math.abs(z) < RAMP_HW + 0.35;
     const clear = (x: number, z: number) => (!(x > L.rear - 0.25 && x < L.front + 0.25 && Math.abs(z) < L.hw + 0.25) || (x > L.bedRear + 0.1 && x < L.bedFront - 0.1 && Math.abs(z) < L.hw - 0.3))
-      && obs.every((o) => Math.hypot(x - o.x, z - o.z) > o.r + 0.25);
+      && !rampSide(x, z) && obs.every((o) => Math.hypot(x - o.x, z - o.z) > o.r + 0.25);
     this.path = buildCrewPath(plan, nominal, hold, exit[3], clear);
     this.pathPlan = plan; this.pathKey = key;
     return this.path;
@@ -2091,7 +2112,7 @@ function crawlPose(P: BodyPose, phase: number, k: number) {
   // knees, shins back along the top, head up to look ahead.)
   const crawl: BodyPose = { bend: -1.35, twist: 0, headP: 0.9, headY: 0,
     shLP: 1.35 + s, shLR: 0.1, elL: 0.05, shRP: 1.35 - s, shRR: 0.1, elR: 0.05,
-    hipL: 0.15 - s, knL: -1.55, hipR: 0.15 + s, knR: -1.55, drop: 0.45 };
+    hipL: 0.15 - s, knL: -1.55, hipR: 0.15 + s, knR: -1.55, sideL: 0, sideR: 0, drop: 0.45 };
   blendPose(P, crawl, k, P);
 }
 function crouchLegs(drop: number): [number, number] {
@@ -2143,6 +2164,8 @@ const HT_WHEEL = 0.13, HT_GRIP: [number, number] = [0.02, 1.19], HT_PLATE = -0.1
 export const handTruckHold = (loaded: boolean): Hold => loaded ? { lead: HT_LEAD, pivot: 0.8, omega: 2.6, rate: 1.7, wheels: true } : { lead: HT_LEAD, pivot: 0.5, omega: 4, rate: 3.2, wheels: true };
 // What a load on it keeps clear of: the driver's face and chest, this far ahead of the feet
 // (leaning into the push, hunched), up to the top of the head this high above them.
+// The walk ramp's low end, this far (m) from its foot, is low enough to step across.
+const RAMP_LIP = 0.6;
 const HT_BODY = 0.5, HT_HEAD_TOP = 1.85, HT_HAND_AHEAD = 0.45;
 // A fetch turned round inside a doorway (Chore.flip): the walk in takes this much of it, and the
 // walk out as much; the driver, and all they hold, are out of sight from FLIP_HIDE to 1 - FLIP_HIDE.
@@ -2152,7 +2175,14 @@ const MATE_TRAIL = 0.8;
 // (And steps down off a walk ramp's side over this far past it (m).)
 const RAMP_STEP = 0.45;
 // (How far in, of the way, at u.)
-const flipDepth = (u: number) => u < FLIP_IN ? THREE.MathUtils.smoothstep(u, 0, FLIP_IN) : u > 1 - FLIP_IN ? 1 - THREE.MathUtils.smoothstep(u, 1 - FLIP_IN, 1) : 1;
+// (`fin`, `fout`: walked in already going, from the move before, or walked on out into the next:
+// not eased from or to a stand there.)
+const flipDepth = (u: number, fin = false, fout = false) => {
+  const on = (x: number) => 1 - (1 - x) * (1 - x) * (1 + x);   // (from going, to a stand)
+  if (u < FLIP_IN) { const x = u / FLIP_IN; return fin ? on(x) : THREE.MathUtils.smoothstep(x, 0, 1); }
+  if (u > 1 - FLIP_IN) { const x = (1 - u) / FLIP_IN; return fout ? on(x) : THREE.MathUtils.smoothstep(x, 0, 1); }
+  return 1;
+};
 // The driver stands on the bed's floor only this far in from its walls (ground).
 const DRIVER_INSET = 0.08;
 // Hunched behind a tall load on it: the hips this much lower, the back bent and the head bowed

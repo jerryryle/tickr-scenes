@@ -13,6 +13,10 @@ import type { TruckLayout } from "./truck.ts";
 // centred JK_LOAD_AT along; the handle, JACK_LEAD (chores.ts) from the wheel to the hands.
 export const JACK_MID = 0.68;
 const JK_BACK = -0.2, JK_END = 1.37, JK_HALF = 0.33, JK_LOAD_AT = 0.77, JK_HANDLE = 1.0;
+// The jack's body keeps this clear of the walk ramp's side, on the ground beside it (m).
+const JK_RAMP_SIDE = 0.35;
+// Round a curve, the driver swings the handle towards it over this much of the way in and out (m).
+const JK_SWING = 0.9;
 // The driver keeps this clear of walls and things (their body's half width, m).
 const JK_BODY = 0.3;
 // Pivoting it, the driver nearer its middle than this stands beside its back, not behind it (m).
@@ -29,7 +33,7 @@ export interface JPose { x: number; z: number; h: number }
 // starts or should be as it ends, when not where the move itself puts them (blended over its
 // first or last part); `lead`: the driver this far behind its middle (jackLead); `turn`: how far
 // a pivot turns, signed, where that isn't the short way round (a half turn the other way).
-export interface JMove { kind: "roll" | "pivot" | "arc"; p0: JPose; p1: JPose; from?: [number, number]; to?: [number, number]; tight?: number; c?: [number, number]; lead?: number; turn?: number }   // turn: a pivot's, signed, when it goes the long way round
+export interface JMove { kind: "roll" | "pivot" | "arc"; p0: JPose; p1: JPose; from?: [number, number]; to?: [number, number]; tight?: number; c?: [number, number]; lead?: number; turn?: number; swung?: [boolean, boolean] }   // swung: an arc's handle already swung to it at its start, or still at its end (on into an arc turning the same way)   // turn: a pivot's, signed, when it goes the long way round
 
 export interface JackWorld {
   L: TruckLayout;
@@ -87,11 +91,19 @@ export function jackDriverAt(m: JMove, u: number): [number, number] {
     // the jack, easing in and out at the curve's ends.)
     const [wx, wz] = jackWheel(p), d = jackWrap(m.p1.h - m.p0.h), vx = Math.sign(d) * (wz - m.c![1]), vz = -Math.sign(d) * (wx - m.c![0]);
     const back = vx * fx + vz * fz < 0 ? 1 : -1, sw = Math.atan2(-(back * vx * fz - back * vz * fx), -(back * vx * fx + back * vz * fz));
-    const k = jackEase(Math.min(1, u / 0.2, (1 - u) / 0.2)), [hx, hz] = jackTurnBy(-fx, -fz, sw * k);
+    // (The swing eased in and out over JK_SWING of the way, or half the curve if it is shorter, so a
+    // tight one doesn't whip the driver round the wheel.)
+    const f = Math.min(0.5, JK_SWING / Math.max(1e-3, jackArcLen(m)));
+    const k = jackEase(Math.min(1, m.swung?.[0] ? 1 : u / f, m.swung?.[1] ? 1 : (1 - u) / f)), [hx, hz] = jackTurnBy(-fx, -fz, sw * k);
     dx = wx + hx * (lead - JACK_MID); dz = wz + hz * (lead - JACK_MID);
   }
-  if (m.from) { const kk = jackEase(Math.min(1, u / 0.35)); dx = m.from[0] + (dx - m.from[0]) * kk; dz = m.from[1] + (dz - m.from[1]) * kk; }
-  if (m.to) { const kk = jackEase(Math.max(0, (u - 0.65) / 0.35)); dx += (m.to[0] - dx) * kk; dz += (m.to[1] - dz) * kk; }
+  // (Blended by the difference between where the move itself puts the driver at its start or end
+  // and `from` or `to`: where they agree, as they mostly do, nothing changes how the driver goes.)
+  if (m.from || m.to) {
+    const at = (v: number) => { const { from, to, ...own } = m; return jackDriverAt(own, v); };
+    if (m.from) { const [sx, sz] = at(0), kk = 1 - jackEase(Math.min(1, u / 0.35)); dx += (m.from[0] - sx) * kk; dz += (m.from[1] - sz) * kk; }
+    if (m.to) { const [ex, ez] = at(1), kk = jackEase(Math.max(0, (u - 0.65) / 0.35)); dx += (m.to[0] - ex) * kk; dz += (m.to[1] - ez) * kk; }
+  }
   return [dx, dz];
 }
 
@@ -131,9 +143,10 @@ function jackSolid(w: JackWorld, x: number, z: number, body: number, load: boole
     if (!tip) for (const b of w.bed) if (x > b.x0 - body - 0.02 && x < b.x1 + body + 0.02 && z > b.z0 - body - 0.02 && z < b.z1 + body + 0.02) return true;
   }
   // The walk ramp: on it only along it (its sides a drop, below the bed); the driver on it, well
-  // in from its edges; on the ground beside it, clear of it.
+  // in from its edges; on the ground beside it, JK_RAMP_SIDE clear of its edge (the driver's
+  // middle that and their half width).
   const foot = L.bedRear - L.rampRun;
-  if (!load && x > foot && x < back - 0.3 && az < L.hw + body + 0.3 && az > (body ? w.rampHW - 0.12 : w.rampHW + 0.05)) return true;
+  if (!load && x > foot && x < back - 0.3 && az < w.rampHW + body + JK_RAMP_SIDE && az > (body ? w.rampHW - 0.12 : w.rampHW + 0.05)) return true;
   if (jackWall(w, x, z, body)) return true;
   // A load set down on the pavement.
   for (const g of w.ground ?? []) {
@@ -374,4 +387,123 @@ export function jackStreet(w: JackWorld, from: JPose, exits: JMove[][], to: JPos
     }
   }
   return null;
+}
+
+// ---- curving between poses --------------------------------------------------------------------
+// The shortest way pushed from pose a to pose b (forks first all the way) as curves and a straight
+// between them, turning no tighter than a radius (a Dubins path), as a person steers a jack across
+// open ground rather than stopping to turn it on the spot: the widest radius whose way is clear.
+// (In (X, Y) = (x, -z), where a heading turns anticlockwise: L, the heading growing.)
+const JK_RADII = [2.2, 1.7, 1.3, 1.0, 0.75, 0.55];
+// How many of the ways found are checked, the shortest first (each check costs from jackBudget).
+const JK_CURVE_TRIES = 14;
+// Turning counts for this much more way than the curve itself goes, per radian (m).
+const JK_TURN_COST = 0.5;
+// A way found is no longer than this many times the straight distance, and this much more (m).
+const JK_CURVE_DETOUR = [1.6, 2.0];
+type DSeg = { k: "L" | "S" | "R"; v: number };   // (an arc's angle, or a straight's length, in radii)
+function dubinsWords(dx: number, dy: number, th0: number, th1: number): DSeg[][] {
+  const d = Math.hypot(dx, dy), phi = Math.atan2(dy, dx), a = th0 - phi, b = th1 - phi;
+  const md = (x: number) => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const sa = Math.sin(a), sb = Math.sin(b), ca = Math.cos(a), cb = Math.cos(b), cab = Math.cos(a - b), out: DSeg[][] = [];
+  let tmp = 2 + d * d - 2 * cab + 2 * d * (sa - sb);
+  if (tmp >= 0) { const g = Math.atan2(cb - ca, d + sa - sb); out.push([{ k: "L", v: md(-a + g) }, { k: "S", v: Math.sqrt(tmp) }, { k: "L", v: md(b - g) }]); }
+  tmp = 2 + d * d - 2 * cab + 2 * d * (sb - sa);
+  if (tmp >= 0) { const g = Math.atan2(ca - cb, d - sa + sb); out.push([{ k: "R", v: md(a - g) }, { k: "S", v: Math.sqrt(tmp) }, { k: "R", v: md(-b + g) }]); }
+  tmp = -2 + d * d + 2 * cab + 2 * d * (sa + sb);
+  if (tmp >= 0) { const p = Math.sqrt(tmp), g = Math.atan2(-ca - cb, d + sa + sb) - Math.atan2(-2, p); out.push([{ k: "L", v: md(-a + g) }, { k: "S", v: p }, { k: "R", v: md(-b + g) }]); }
+  tmp = d * d - 2 + 2 * cab - 2 * d * (sa + sb);
+  if (tmp >= 0) { const p = Math.sqrt(tmp), g = Math.atan2(ca + cb, d - sa - sb) - Math.atan2(2, p); out.push([{ k: "R", v: md(a - g) }, { k: "S", v: p }, { k: "L", v: md(b - g) }]); }
+  tmp = (6 - d * d + 2 * cab + 2 * d * (sa - sb)) / 8;
+  if (Math.abs(tmp) <= 1) { const p = md(2 * Math.PI - Math.acos(tmp)), t = md(a - Math.atan2(ca - cb, d - sa + sb) + p / 2); out.push([{ k: "R", v: t }, { k: "L", v: p }, { k: "R", v: md(a - b - t + p) }]); }
+  tmp = (6 - d * d + 2 * cab + 2 * d * (-sa + sb)) / 8;
+  if (Math.abs(tmp) <= 1) { const p = md(2 * Math.PI - Math.acos(tmp)), t = md(-a - Math.atan2(ca - cb, d + sa - sb) + p / 2); out.push([{ k: "L", v: t }, { k: "R", v: p }, { k: "L", v: md(b - a - t + p) }]); }
+  return out;
+}
+// A word's moves from a at radius R (arcs in pieces of no more than 2.5 rad: jackPoseAt takes an
+// arc's turn the short way), or null where it doesn't come to b (a formula's stray answer).
+function dubinsMoves(a: JPose, b: JPose, word: DSeg[], R: number): JMove[] | null {
+  const moves: JMove[] = [];
+  let cur = a;
+  for (const s of word) {
+    if (s.v * R < 1e-3) continue;
+    if (s.k === "S") { const [fx, fz] = jackFwd(cur.h), p1 = { x: cur.x + fx * s.v * R, z: cur.z + fz * s.v * R, h: cur.h }; moves.push({ kind: "roll", p0: cur, p1 }); cur = p1; continue; }
+    const n = Math.ceil(s.v / 2.5), sg = s.k === "L" ? 1 : -1;
+    for (let i = 0; i < n; i++) { const m = jackArc(cur, R * s.v / n, sg * s.v / n); moves.push(m); cur = m.p1; }
+  }
+  return Math.hypot(cur.x - b.x, cur.z - b.z) < 0.03 && Math.abs(jackWrap(cur.h - b.h)) < 0.03 ? moves : null;
+}
+export function jackCurve(w: JackWorld, a: JPose, b: JPose): JMove[] | null {
+  const ways: { len: number; moves: JMove[] }[] = [];
+  for (const R of JK_RADII) for (const word of dubinsWords((b.x - a.x) / R, -(b.z - a.z) / R, a.h, b.h)) {
+    const moves = dubinsMoves(a, b, word, R);
+    // (Shortest first, a tighter turn counting for a little more, and turning at all for more: a
+    // way round a little further beats a tight loop.)
+    if (moves) ways.push({ len: word.reduce((s, q) => s + (q.k === "S" ? q.v * R : q.v * (R + JK_TURN_COST)), 0) + (JK_RADII[0] - R) * 0.6, moves });
+  }
+  // (Not a way round a loop: never much longer than going straight there.)
+  const most = JK_CURVE_DETOUR[0] * Math.hypot(b.x - a.x, b.z - a.z) + JK_CURVE_DETOUR[1];
+  ways.sort((p, q) => p.len - q.len);
+  while (ways.length && ways[ways.length - 1].len > most) ways.pop();
+  for (const way of ways.slice(0, JK_CURVE_TRIES)) if (way.moves.every((m) => jackMoveClear(w, m))) return way.moves;
+  return null;
+}
+
+// ---- smoothing a plan -------------------------------------------------------------------------
+// Which way a move takes the jack: +1 pushed (forks first), -1 drawn (handle first), 0 turned on
+// the spot.
+export function jackMotion(m: JMove): number {
+  if (m.kind === "pivot") return 0;
+  const [fx, fz] = jackFwd(m.p0.h), q = jackPoseAt(m, 0.5);
+  return (q.x - m.p0.x) * fx + (q.z - m.p0.z) * fz >= 0 ? 1 : -1;
+}
+// Whether move b carries straight on from move a, rolled or steered the same way: one movement,
+// not stopped between them (crewpath.ts eases the run of them in and out only at its ends).
+export function jackFlows(a: JMove | undefined, b: JMove | undefined): boolean {
+  if (!a || !b) return false;
+  const da = jackMotion(a);
+  return da !== 0 && da === jackMotion(b) && Math.hypot(a.p1.x - b.p0.x, a.p1.z - b.p0.z) < 0.02 && Math.abs(jackWrap(a.p1.h - b.p0.h)) < 0.02;
+}
+// A plan's moves with what makes them stop and start taken out where the way stays clear:
+// pivots one after another on the same spot made one, and a pivot between two rolls the same way
+// steered round as a curve (the rolls cut short by as much as it takes, at most half of each);
+// and arcs on into arcs turning the same way marked to keep the handle swung between them.
+const JK_FILLET = [1.2, 0.8, 0.5, 0.35];
+export function jackSmooth(w: JackWorld, ms: JMove[]): JMove[] {
+  const out: JMove[] = [];
+  for (const m of ms) {
+    const last = out[out.length - 1];
+    if (m.kind === "pivot" && last?.kind === "pivot" && Math.hypot(last.p0.x - m.p0.x, last.p0.z - m.p0.z) < 0.02 && !last.from && !m.to) {
+      const turn = jackTurn(last) + jackTurn(m), one: JMove = { ...last, p1: m.p1, turn, tight: Math.min(last.tight ?? 1, m.tight ?? 1) };
+      if (Math.abs(turn) < 0.01) { out.pop(); continue; }
+      if (jackMoveClear(w, one)) { out[out.length - 1] = one; continue; }
+    }
+    out.push({ ...m });
+  }
+  for (let i = 1; i < out.length - 1; i++) {
+    const a = out[i - 1], t = out[i], b = out[i + 1];
+    if (t.kind !== "pivot" || a.kind !== "roll" || b.kind !== "roll" || t.from || t.to) continue;
+    const sa = jackMotion(a), d = jackTurn(t);
+    if (sa !== jackMotion(b) || Math.abs(d) > 2.2 || Math.abs(d) < 0.03) continue;
+    const la = Math.hypot(a.p1.x - a.p0.x, a.p1.z - a.p0.z), lb = Math.hypot(b.p1.x - b.p0.x, b.p1.z - b.p0.z);
+    for (const R of JK_FILLET) {
+      const T = R * Math.tan(Math.abs(d) / 2);
+      if (T > 0.5 * la || T > 0.5 * lb) continue;
+      const [ax, az] = jackFwd(a.p0.h), [bx, bz] = jackFwd(b.p0.h);
+      const s0: JPose = { x: t.p0.x - ax * sa * T, z: t.p0.z - az * sa * T, h: a.p0.h }, e0: JPose = { x: t.p0.x + bx * sa * T, z: t.p0.z + bz * sa * T, h: b.p0.h };
+      const arc = jackArc(s0, sa * R * Math.abs(d), d);
+      if (Math.hypot(arc.p1.x - e0.x, arc.p1.z - e0.z) > 0.03) continue;
+      const a2: JMove = { ...a, p1: s0, to: undefined }, b2: JMove = { ...b, p0: e0, from: undefined };
+      if (!jackMoveClear(w, arc) || !jackMoveClear(w, a2) || !jackMoveClear(w, b2)) continue;
+      out.splice(i - 1, 3, { ...a2, ...(a.to ? { to: a.to } : {}) }, arc, { ...b2, ...(b.from ? { from: b.from } : {}) });
+      break;
+    }
+  }
+  for (let i = 1; i < out.length; i++) {
+    const a = out[i - 1], b = out[i];
+    if (a.kind === "arc" && b.kind === "arc" && jackFlows(a, b) && Math.sign(jackTurn(a)) === Math.sign(jackTurn(b))) {
+      a.swung = [a.swung?.[0] ?? false, true]; b.swung = [true, b.swung?.[1] ?? false];
+    }
+  }
+  return out;
 }

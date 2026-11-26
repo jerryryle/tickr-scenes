@@ -17,10 +17,11 @@ export interface BodyPose {
   shLP: number; shLR: number; elL: number;   // left shoulder pitch, roll (out from the body), elbow
   shRP: number; shRR: number; elR: number;
   hipL: number; knL: number; hipR: number; knR: number;   // knee negative bends
+  sideL: number; sideR: number;   // each leg swung out to the side (hip roll: positive, the foot to the left)
   drop: number;     // hips lowered (crouch, sitting), metres
 }
-const POSE_KEYS = ["bend", "twist", "headP", "headY", "shLP", "shLR", "elL", "shRP", "shRR", "elR", "hipL", "knL", "hipR", "knR", "drop"] as const;
-export const restPose = (): BodyPose => ({ bend: 0, twist: 0, headP: 0, headY: 0, shLP: 0, shLR: 0.06, elL: 0.15, shRP: 0, shRR: 0.06, elR: 0.15, hipL: 0, knL: 0, hipR: 0, knR: 0, drop: 0 });
+const POSE_KEYS = ["bend", "twist", "headP", "headY", "shLP", "shLR", "elL", "shRP", "shRR", "elR", "hipL", "knL", "hipR", "knR", "sideL", "sideR", "drop"] as const;
+export const restPose = (): BodyPose => ({ bend: 0, twist: 0, headP: 0, headY: 0, shLP: 0, shLR: 0.06, elL: 0.15, shRP: 0, shRR: 0.06, elR: 0.15, hipL: 0, knL: 0, hipR: 0, knR: 0, sideL: 0, sideR: 0, drop: 0 });
 export function blendPose(a: BodyPose, b: BodyPose, t: number, out: BodyPose = restPose()): BodyPose {
   for (const k of POSE_KEYS) out[k] = a[k] + (b[k] - a[k]) * t;
   return out;
@@ -182,8 +183,8 @@ export class Character {
     this.head.rotation.set(0, p.headY, p.headP);
     this.shL.rotation.set(p.shLR, 0, p.shLP, "XZY"); this.elL.rotation.z = p.elL;
     this.shR.rotation.set(-p.shRR, 0, p.shRP, "XZY"); this.elR.rotation.z = p.elR;
-    this.hipL.rotation.z = p.hipL; this.knL.rotation.z = p.knL;
-    this.hipR.rotation.z = p.hipR; this.knR.rotation.z = p.knR;
+    this.hipL.rotation.set(p.sideL, 0, p.hipL); this.knL.rotation.z = p.knL;
+    this.hipR.rotation.set(p.sideR, 0, p.hipR); this.knR.rotation.z = p.knR;
   }
 }
 
@@ -200,6 +201,28 @@ export function walkPose(phase: number, out: BodyPose, arms = true, stride = 1):
   out.drop = 0.02 + 0.015 * Math.abs(Math.sin(phase * Math.PI * 4));
   out.bend = -0.04;
   if (arms) { out.shLP = -0.4 * s * stride; out.shRP = 0.4 * s * stride; out.elL = 0.3 + 0.15 * Math.max(0, -s); out.elR = 0.3 + 0.15 * Math.max(0, s); }
+  return out;
+}
+// Stepping sideways, on top of walkPose run at the same phase: each foot swung out to the side
+// and back by `e` (rad) as it swings fore and aft, so it is planted, moving neither way, through
+// the same half of the cycle. `sgn`: +1 when the phase runs forwards as the body goes right (or
+// backwards going left), -1 otherwise. Each foot keeps to its own side, the two never crossing:
+// going right, the right foot steps out and the left closes up to it. `lift` (0..1): the knee
+// lifting the swinging foot, which the fore-and-aft stride alone does too little of going across.
+// Going sideways a cycle covers SIDE_STEP of ground, where walking it covers a stride.
+export const SIDE_STEP = 0.5;
+// And walking a cycle covers this much (m, two steps): walkPose's planted foot keeps still.
+export const STRIDE = 1.6;
+export function sideStepPose(phase: number, out: BodyPose, e: number, sgn: number, lift: number): BodyPose {
+  if (e <= 0 && lift <= 0) return out;
+  const s = Math.sin(phase * Math.PI * 2), c = Math.cos(phase * Math.PI * 2);
+  // (Each foot's way out to the side, timed as walkPose's fore and aft but evenly, a straight
+  // line each half, so the planted foot keeps still under the body as it goes over: out = +z.)
+  const tri = Math.asin(Math.max(-1, Math.min(1, s))) * 2 / Math.PI;
+  const outL = e * sgn * tri - e, outR = -e * sgn * tri + e;
+  out.sideL = -outL; out.sideR = -outR;
+  out.knL += -Math.max(0, c) * 0.55 * lift; out.knR += -Math.max(0, -c) * 0.55 * lift;
+  out.hipL += Math.max(0, c) * 0.25 * lift; out.hipR += Math.max(0, -c) * 0.25 * lift;
   return out;
 }
 export function idlePose(t: number, out: BodyPose): BodyPose {

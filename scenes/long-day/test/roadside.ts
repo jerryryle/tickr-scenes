@@ -83,7 +83,7 @@ for (const kind of ["gas", "truckstop", "fruit", "attraction"] as const)
   let n = 0;
   for (const seed of proc.argv[2] ? [Number(proc.argv[2])] : [1, 2, 3, 7, 11]) {
     const seen = new Set<string>();
-    for (const m of [26, 55, 60, 85, 90, 115, 120]) {
+    for (const m of [26, 40, 55, 60, 70, 85, 90, 100, 115, 120, 135, 150]) {
       const road = new Journey(readConfig({ seed } as SceneEnv), m * 60, "autumn").country;
       if (!road || seen.has(road.key)) continue;
       seen.add(road.key);
