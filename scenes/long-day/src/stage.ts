@@ -21,6 +21,7 @@ export interface StageSpec {
   door?: boolean;              // a front door (default), or none (loads staged on the pavement)
   doorAt?: number;             // the door's middle along the truck (truck x; default: 2 m behind its back)
   doorHalf?: number;           // half the doorway's width (default: wide enough for a pallet)
+  wider?: number;              // metres more pavement between the kerb and the building (default 0)
   trees?: [number, number][];  // street trees on the pavement: truck x, metres out from the kerb
 }
 export interface Stage {
@@ -33,19 +34,19 @@ export interface Stage {
 }
 
 // A stage from its words: model cargo kind, then any of "nodoor", "door=x" (the door's middle
-// along the truck), "tree=x,out" (a street tree, along the truck and out from the kerb; any number).
+// along the truck), "half=x" (half the doorway's width), "wider=x" (that much more pavement), "tree=x,out" (a street tree, along the truck and out from the kerb; any number).
 export function stageSpec(words: string[]): StageSpec {
   const [model, cargo, kind, ...rest] = words as [TruckModel, string, "pickup" | "drop", ...string[]];
-  const bad = (why: string) => { throw new Error(`stage "${words.join(" ")}": ${why} (model cargo pickup|drop [nodoor | door=x] [tree=x,out ...])`); };
+  const bad = (why: string) => { throw new Error(`stage "${words.join(" ")}": ${why} (model cargo pickup|drop [nodoor | door=x] [half=x] [wider=x] [tree=x,out ...])`); };
   if (!model || !cargo || (kind !== "pickup" && kind !== "drop")) bad("needs a model, a cargo and pickup or drop");
   if (!(model in TRUCK_SLOTS)) bad(`no truck model "${model}"`);
   if (!CARGO_BY_ID.has(cargo)) bad(`no cargo "${cargo}"`);
   for (const w of rest) {
-    const nums = w.startsWith("door=") ? [w.slice(5)] : w.startsWith("tree=") ? w.slice(5).split(",") : w === "nodoor" ? [] : null;
+    const nums = w.startsWith("door=") || w.startsWith("half=") ? [w.slice(5)] : w.startsWith("wider=") ? [w.slice(6)] : w.startsWith("tree=") ? w.slice(5).split(",") : w === "nodoor" ? [] : null;
     if (!nums || nums.some((n) => n === "" || !Number.isFinite(Number(n))) || (w.startsWith("tree=") && nums.length !== 2)) bad(`can't read "${w}"`);
   }
-  const at = rest.find((w) => w.startsWith("door="));
-  return { model, cargo, kind, door: !rest.includes("nodoor"), doorAt: at ? Number(at.slice(5)) : undefined,
+  const at = rest.find((w) => w.startsWith("door=")), half = rest.find((w) => w.startsWith("half=")), wider = rest.find((w) => w.startsWith("wider="));
+  return { model, cargo, kind, door: !rest.includes("nodoor"), doorAt: at ? Number(at.slice(5)) : undefined, doorHalf: half ? Number(half.slice(5)) : undefined, wider: wider ? Number(wider.slice(6)) : undefined,
     trees: rest.filter((w) => w.startsWith("tree=")).map((w) => w.slice(5).split(",").map(Number) as [number, number]) };
 }
 export function makeStage(spec: StageSpec): Stage {
@@ -55,7 +56,7 @@ export function makeStage(spec: StageSpec): Stage {
   // The kerb a little out from the truck's side, the building's front KERB beyond it, the door
   // in it facing the street (-z).
   // (With no door, an open lot: the building well back, the loads staged on the pavement.)
-  const door = spec.door ?? true, kerbZ = L.hw + 0.45, wallZ = kerbZ + KERB + (door ? 0 : 9);
+  const door = spec.door ?? true, kerbZ = L.hw + 0.45, wallZ = kerbZ + KERB + (spec.wider ?? 0) + (door ? 0 : 9);
   const dx = spec.doorAt ?? L.bedRear - 2, half = spec.doorHalf ?? 0.8;
   const kerbDoor: KerbDoor | null = door ? { side: 0, a: 0, n: 0, x: dx, z: wallZ, nx: 0, nz: -1, frame: 0xf2efe8, panel: 0x23365e, half, h: 2.3, plain: false, wide: half > 0.7 } : null;
   // The bed: this stop's loads aboard for a drop, nothing else.

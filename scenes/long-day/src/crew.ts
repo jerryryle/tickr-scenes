@@ -68,6 +68,7 @@ export class Crew {
   // Where the hands go this frame (world), and how firmly (0 free .. 1 on it).
   private gripL = new THREE.Vector3(); private gripR = new THREE.Vector3(); private wL = 0; private wR = 0;
   private gripMate: { L: THREE.Vector3; R: THREE.Vector3 } | null = null;
+  private kerbM = new THREE.Matrix4(); private kerbV = new THREE.Vector3();   // (feetOnKerb)
   private v3 = new THREE.Vector3(); private v4 = new THREE.Vector3(); private v5 = new THREE.Vector3(); private v6 = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
@@ -167,7 +168,7 @@ export class Crew {
   loadState(s: CrewSave) { loadFields(this, s.f); this.gagPoint = s.gagOn ? this.gagV.copy(s.gag) : null; }
   update(dt: number, j: Journey, truck: Truck, other: Truck | null, cam: THREE.Camera) {
     this.inSeat = false; this.indoors = false;
-    this.time = j.st.simTime + j.frac;   // journey time: idle motion is the same after a scrub
+    this.time = j.clockTime + j.frac;   // the city's clock: idle motion is the same after a scrub, and wherever the visit comes
     const st = j.st, d = this.driver;
     const controls = { cab: 0, otherCab: 0, rear: 0, ramp: 0, gate: 0, drop: 0, leafL: 0, leafR: 0 };
     this.helper.root.visible = false;
@@ -261,33 +262,56 @@ export class Crew {
   }
 
   // A load too big for the facility's front door squashes to fit as it goes through, whoever
-  // carries it (the driver, a team lift, the forklift), and springs back out, wobbling, once it's
-  // clear: folded flat while it overlaps the doorway, its full size again a metre or two out. It
-  // depends only on where the load is, so a scrub shows the same thing.
+  // carries it (the driver, a team lift, the forklift). Going in (a drop), it eases down to its
+  // squashed size over the last metre or so before the doorway; coming out (a pickup), it springs
+  // back, wobbling, once it's clear. It depends only on where the load is, so a scrub shows the
+  // same thing.
   private foldAtDoor(j: Journey) {
     const load = this.load, d = j.kerbDoor;
     if (!load || !d || !load.group.visible) return;
-    const g = load.group, [l, h, w] = load.size;
+    const g = load.group, size = load.size;
     g.updateMatrixWorld();
-    const e = g.matrixWorld.elements, ax = [e[0], e[2]], az = [e[8], e[10]];   // the load's own x and z, level
-    const tx = -d.nz, tz = d.nx;
-    const along = (vx: number, vz: number) => Math.abs(ax[0] * vx + ax[1] * vz) * l + Math.abs(az[0] * vx + az[1] * vz) * w;
-    const across = along(tx, tz), deep = along(d.nx, d.nz) / 2;
-    const ox = g.position.x - d.x, oz = g.position.z - d.z;
-    if (Math.abs(ox * tx + oz * tz) > d.half + across / 2 + 1) return;   // not in front of the door
-    // How it must shrink: under the head of the doorway (from where it rides), and between the jambs.
-    const bottom = g.position.y - (load.round ? h / 2 : 0), top = CURB_H + d.h - 0.05;
-    let fy = Math.min(1, Math.max(0.15, (top - bottom) / h)), fw = Math.min(1, (d.half * 2 - 0.1) / across);
+    // The load's own axes in the world: unit vectors, its scale being 1 here (update resets it).
+    const e = g.matrixWorld.elements, axes = [[e[0], e[1], e[2]], [e[4], e[5], e[6]], [e[8], e[9], e[10]]];
+    const dot = (a: number[], vx: number, vy: number, vz: number) => Math.abs(a[0] * vx + a[1] * vy + a[2] * vz);
+    const extent = (vx: number, vy: number, vz: number) => axes.reduce((s, a, i) => s + dot(a, vx, vy, vz) * size[i], 0);
+    // Whoever carries it takes it through the doorway along the way they go: along its own x, or
+    // the forklift's (which may carry it crosswise). So it needs the doorway as wide as it is
+    // square to that, however it is turned on the way there. (Measured as it is turned instead, a
+    // load walked along the wall to the door is wider than the doorway until it turns in, and
+    // squashes and springs back before it gets there.)
+    if (this.forklift.visible) this.forklift.updateMatrixWorld();
+    const f = this.forklift.visible ? this.forklift.matrixWorld.elements : e;
+    const fl = Math.hypot(f[0], f[2]) || 1, px = -f[2] / fl, pz = f[0] / fl;
+    const across = extent(px, 0, pz), deep = extent(d.nx, 0, d.nz) / 2, tall = extent(0, 1, 0);
+    // How far it is from the doorway (1.2 m a unit): out in front of the wall, and off to the side
+    // of the jambs, together, so the squash comes and goes smoothly whichever way it approaches.
+    const tx = -d.nz, tz = d.nx, ox = g.position.x - d.x, oz = g.position.z - d.z;
+    const ahead = Math.max(0, ox * d.nx + oz * d.nz - deep - 0.15), aside = Math.max(0, Math.abs(ox * tx + oz * tz) - d.half);
+    const out = Math.hypot(ahead, aside) / 1.2, leaving = j.st.stops[0]?.kind === "pickup";
+    if (out >= (leaving ? 2.5 : 1)) return;   // clear of it: full size (the spring settled)
+    // How it must shrink: under the head of the doorway (from its sill: a garage roof's is up
+    // there), and between the jambs.
+    const midY = load.round ? g.position.y : g.position.y + axes[1][1] * size[1] / 2;
+    const bottom = midY - tall / 2, top = (d.y ?? CURB_H) + d.h - 0.05;
+    let fy = Math.min(1, Math.max(0.15, (top - bottom) / tall)), fw = Math.min(1, (d.half * 2 - 0.1) / across);
     if (fy >= 1 && fw >= 1) return;
     // More than it needs, and always enough to see (a load only just too big still gets squeezed).
     fy = fy < 1 ? Math.min(fy * 0.9, 0.62) : 1; fw = fw < 1 ? Math.min(fw * 0.9, 0.62) : 1;
-    // Clear of the doorway by `out` metres: a damped spring back to full size, overshooting, with
-    // squash and stretch (taller while it's narrower, and the other way).
-    const out = Math.max(0, ox * d.nx + oz * d.nz - deep - 0.15) / 1.2;
-    const k = out <= 0 ? 0 : 1 - Math.exp(-2.5 * out) * Math.cos(8 * out);
-    const wob = out <= 0 ? 0 : 0.22 * Math.exp(-2.5 * out) * Math.sin(8 * out);
+    // Going in: eased down to the squashed size, no overshoot. Coming out: a damped spring back to
+    // full size, overshooting, with squash and stretch (taller while it's narrower, and the other
+    // way).
+    const u = Math.min(1, out), ease = u * u * (3 - 2 * u);
+    const k = out <= 0 ? 0 : leaving ? 1 - Math.exp(-2.5 * out) * Math.cos(8 * out) : ease;
+    const wob = out <= 0 || !leaving ? 0 : 0.22 * Math.exp(-2.5 * out) * Math.sin(8 * out);
     const sy = fy + (1 - fy) * k, sw = fw + (1 - fw) * k;
-    g.scale.set(sw * (1 - wob), sy * (1 + wob), sw * (1 - wob));
+    // Each of its own axes takes the squash of the way it points: across the doorway, up, or
+    // along the way through (which keeps its length but wobbles with the width).
+    const s = axes.map((a) => {
+      const up = dot(a, 0, 1, 0), side = dot(a, px, 0, pz);
+      return (1 - (1 - sw) * side - (1 - sy) * up) * (1 - wob + 2 * wob * up);
+    });
+    g.scale.set(s[0], s[1], s[2]);
   }
 
   // The trip under way: `i` of `trips` (one per stow). A pickup's trip runs up to and through
@@ -363,6 +387,7 @@ export class Crew {
       hp.root.visible = !indoors(x, z, 0.5);
       this.placeChar(hp, truck, x, y, z, yaw);
       hp.apply(pose);
+      this.feetOnKerb(hp, truck, pose);
       this.mateSpot = indoors(x, z, -0.3) ? null : this.mateSpotV.copy(hp.root.position).setY(hp.root.position.y + 1.1);
     };
     const armsOn = (P: BodyPose) => { P.shLP = P.shRP = TEAM_BACK_ARM[0]; P.elL = P.elR = TEAM_BACK_ARM[1]; P.shLR = P.shRR = 0.12; return P; };
@@ -405,12 +430,16 @@ export class Crew {
     const path = this.path!;
     // (On a walk with the load held rigid (Chore.mate): its end the load's length from the driver,
     // the way the plan turns it.)
-    const rigidAt = (k: number, T: number): [number, number] => {
+    // (`from`: where the worker really is as it starts, after following the driver's footsteps,
+    // which the plan only estimates: from there, out or in to the load's length as it goes.)
+    const rigidAt = (k: number, T: number, from?: [number, number]): [number, number] => {
       const q = plan[k], u = THREE.MathUtils.clamp((T - start[k]) / q.len, 0, 1), d = samplePath(path, T, this.ps1), dx = d.x, dz = d.z;
       const a = q.a!, b = q.b!, [wa, wb] = q.mate!;
-      const ta = Math.atan2(-(wa[1] - a[2]), wa[0] - a[0]), tb = Math.atan2(-(wb[1] - b[2]), wb[0] - b[0]);
-      const th = ta + Math.atan2(Math.sin(tb - ta), Math.cos(tb - ta)) * u;
-      return [dx + Math.cos(th) * back, dz - Math.sin(th) * back];
+      let ta = Math.atan2(-(wa[1] - a[2]), wa[0] - a[0]), r0 = back;
+      if (from) { const d0 = samplePath(path, start[k], this.ps1); ta = Math.atan2(-(from[1] - d0.z), from[0] - d0.x); r0 = Math.hypot(from[0] - d0.x, from[1] - d0.z); }
+      const tb = Math.atan2(-(wb[1] - b[2]), wb[0] - b[0]);
+      const th = ta + Math.atan2(Math.sin(tb - ta), Math.cos(tb - ta)) * u, rr = r0 + (back - r0) * u;
+      return [dx + Math.cos(th) * rr, dz - Math.sin(th) * rr];
     };
     // (How far the worker has walked on a carry's rigid walks by T: forwards towards the driver,
     // back away from them; side-stepping, either way, as their feet go.)
@@ -430,9 +459,11 @@ export class Crew {
       let rk = -1, k0 = -1;
       for (let k = r.i0; k <= r.i1; k++) if (plan[k].mate && start[k] <= T) { rk = k; if (k0 < 0) k0 = k; }
       // (Stepping on from where the walk before them left the feet.)
-      const base = k0 > r.i0 ? mateOn(r, start[k0] - 1e-4)[2] : 0;
+      const lead = k0 > r.i0 ? mateOn(r, start[k0] - 1e-4) : null, base = lead ? lead[2] : 0;
       if (rk >= 0 && T < end(rk)) {
-        const [x, z] = rigidAt(rk, T), d = samplePath(path, T, this.ps1), q = plan[rk], v = Math.hypot(q.mate![1][0] - q.mate![0][0], q.mate![1][1] - q.mate![0][1]) / q.len;
+        // (The first of a run of rigid walks after following: from where the following left them.)
+        const after = rk > r.i0 && !plan[rk - 1].mate ? (rk === k0 ? lead! : mateOn(r, start[rk] - 1e-4)) : null;
+        const [x, z] = rigidAt(rk, T, after ? [after[0], after[1]] : undefined), d = samplePath(path, T, this.ps1), q = plan[rk], v = Math.hypot(q.mate![1][0] - q.mate![0][0], q.mate![1][1] - q.mate![0][1]) / q.len;
         return [x, z, base + rigidWalked(r, T), v, Math.atan2(-(d.z - z), d.x - x)];
       }
       const w0 = rk >= 0 ? base + rigidWalked(r, end(rk)) : 0;
@@ -484,8 +515,9 @@ export class Crew {
         return;
       }
       const [x, z, walked, step, heading] = mateOn(r, tc);
-      // (Walking only while they step: waiting for the driver to come round, they stand.)
-      const moving = idx >= r.i0 && idx <= r.i1 && c.kind === "walk" && step > 0.05;   // (m/s)
+      // (Walking only while they step, on the carry or following the load through a doorway at
+      // either end of it: waiting for the driver to come round, they stand.)
+      const moving = step > 0.05 && (c.kind === "walk" || idx === r.pre || idx === r.post);   // (m/s)
       // (Facing the load, which hangs between the two: towards the driver; the driver passing
       // close by, the way they last faced it.)
       const yaw = Math.hypot(this.drv[0] - x, this.drv[2] - z) > 0.3 || Number.isNaN(heading) ? Math.atan2(-(this.drv[2] - z), this.drv[0] - x) : heading;
@@ -705,6 +737,17 @@ export class Crew {
   private footAt(x: number, y: number, z: number, yaw: number, lat: number): [number, number, number] {
     return [x + Math.sin(yaw) * lat + Math.cos(yaw) * 0.02, y, z + Math.cos(yaw) * lat - Math.sin(yaw) * 0.02];
   }
+  // Walking across the kerb, the body goes up or down onto the pavement as its middle crosses the
+  // edge (kerbY): a foot ahead of it on the pavement while the body is still in the street is
+  // lifted onto the kerb's top rather than left in it.
+  private feetOnKerb(ch: Character, truck: Truck, P: BodyPose) {
+    if (!this.kerb) return;
+    const M = truck.root.matrixWorld, inv = this.kerbM.copy(M).invert();
+    for (const side of ["L", "R"] as const) {
+      const q = ch.sole(side, this.kerbV).applyMatrix4(inv), g = this.kerbY(q.x, q.z);
+      if (q.y < g - 0.005) { q.y = g; ch.step(side, q.applyMatrix4(M), P); }
+    }
+  }
   private footUnder(truck: Truck, x: number, y: number, z: number, yaw: number, lat: number, out: THREE.Vector3) {
     const p = this.footAt(x, y, z, yaw, lat);
     return out.set(p[0], p[1], p[2]).applyMatrix4(truck.root.matrixWorld);
@@ -912,6 +955,7 @@ export class Crew {
       P.hipL += hc; P.hipR += hc; P.knL += kc; P.knR += kc;
     }
     d.apply(P);
+    if (walking || stepping) this.feetOnKerb(d, truck, P);
     // The head never in what's held: leaning in less, and the head up, until it's clear.
     if (w > 0.001 && this.load?.group.visible) {
       for (let i = 0; i < 8 && this.headInLoad(this.load); i++) { P.bend *= 0.7; P.headP = Math.min(P.headP, 0) * 0.5 - 0.06 * (i + 1); P.twist *= 0.7; d.apply(P); }
@@ -967,6 +1011,8 @@ export class Crew {
     // stopping at the threshold (flipDepth; crewpath.ts plays the jack's moves either side so).)
     const flowing = new Map<Chore, [boolean, boolean]>();
     plan.forEach((c, i) => { if (c.kind === "fetch" && c.flip && c.tool === "palletJack") flowing.set(c, [jackIntoDoor(plan[i - 1]), jackIntoDoor(plan[i + 1])]); });
+    // (A team lift walked up to a doorway, and backed straight on in.)
+    plan.forEach((c, i) => { const p = plan[i - 1]; if (c.kind === "fetch" && c.flip && p?.kind === "walk" && p.helper && p.item && !p.mate) flowing.set(c, [true, false]); });
     const nominal = (c: Chore, u: number): Nominal => {
       if (c.kind === "walk" && c.round) { const r = roundAt(L, c, u); return { x: r.x, z: r.z, yaw: r.yaw, exact: false }; }
       if (c.kind === "walk" || c.kind === "gateRide") {

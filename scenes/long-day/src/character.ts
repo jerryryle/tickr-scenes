@@ -170,6 +170,12 @@ export class Character {
     return miss;
   }
 
+  // The sole of a leg (the point step() puts where it's asked), in the world, as posed.
+  sole(side: "L" | "R", out: THREE.Vector3): THREE.Vector3 {
+    this.root.updateMatrixWorld(true);
+    return out.set(0, -LEG_L, 0).applyMatrix4((side === "L" ? this.knL : this.knR).matrixWorld);
+  }
+
   get headNode(): THREE.Object3D { return this.head; }
   set vestOn(v: boolean) { this.vest.visible = v; }
   // The legs spread apart (radians, each thigh out to its own side) and the shins turned back

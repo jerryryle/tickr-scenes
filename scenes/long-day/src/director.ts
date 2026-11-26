@@ -263,11 +263,14 @@ export class Director {
   private pose: Pose = { x: 0, z: 0, h: 0, k: 0 };
 
   constructor(cam: THREE.PerspectiveCamera, private seed: number) { this.cam = cam; }
+  // The shots in town are chosen by the visit's job seed and index (visits.ts), so a visit is filmed
+  // the same wherever in the journey it comes; the road's by the journey seed.
+  private visitSeed = 0;
 
   // A variant for stop `stop`, never the same as the one the previous stop would get. A pure
   // function of the stop (no memory), so a scrubbed journey frames every moment the same way.
   private pick<T extends string>(beat: Beat, list: readonly T[], stop: number, salt = 0): T {
-    const at = (k: number) => Math.floor(hash3(k, salt, beat.length * 31 + beat.charCodeAt(0), this.seed, 0xca7) * list.length);
+    const at = (k: number) => Math.floor(hash3(k, salt, beat.length * 31 + beat.charCodeAt(0), this.visitSeed, 0xca7) * list.length);
     let i = at(stop);
     if (list.length > 1 && list[i] === list[at(stop - 1)]) i = (i + 1) % list.length;
     return list[i];
@@ -362,7 +365,7 @@ export class Director {
       // (With a name sign to open on: only once the truck is about to drive into its frame.)
       if (!j.isDockStop(stop) && (d < CURB_SIGN_DIST && this.curbPlan(j) ? this.curbLead(j) <= CURB_SIGN_LEAD : d < CURB_DIST)) return "curb";
       // (Only before a dock: at the kerb the curb shot would follow within seconds.)
-      if (d < ARRIVE_DIST && j.isDockStop(stop) && hash3(st.stopsDone, 3, st.city, this.seed, 0xa77) < ARRIVE_SHARE) return "arrive";
+      if (d < ARRIVE_DIST && j.isDockStop(stop) && hash3(st.stopsDone + (j.visit.index - st.city) * 1000, 3, j.visit.index, this.visitSeed, 0xa77) < ARRIVE_SHARE) return "arrive";
     }
     return "drive";
   }
@@ -378,7 +381,7 @@ export class Director {
 
   private enterBeat(beat: Beat, inp: DirectorInput) {
     const j = inp.journey, st = j.st, stop = st.stops[0];
-    const n = st.stopsDone;
+    const n = st.stopsDone + (j.visit.index - st.city) * 1000;   // (by the visit's own index: visits.ts)
     // (Normally a beat starts now; after a seek it may already be under way.)
     this.beat = beat; this.beatTime = this.started ? 0 : this.elapsedIn(beat, j); this.beatStart = this.time - this.beatTime;
     this.anchorPos.copy(this.started ? this.pos : this.cam.position);
@@ -486,6 +489,7 @@ export class Director {
   update(inp: DirectorInput) {
     const { journey: j, truck, dt } = inp;
     this.time = j.st.simTime + j.frac;   // journey time: shots follow the journey, not the frame count
+    this.visitSeed = j.visit.jobs;
     truck.root.updateMatrixWorld(true);
     inp.other?.root.updateMatrixWorld(true);
     // The rigs' heading: the truck's, smoothed (about half a second behind through a corner).

@@ -9,7 +9,10 @@ export const DEBUG_JAM_SHOT: string = "";   // DEBUG_VIEW "jam": "x,z,h", where 
 export const DEBUG_HOUR: number = -1;     // pin the hour of day, 0..24 (test renders only)
 export const DEBUG_CLIMATE: string = "";  // "season/weather", e.g. "winter/snow", for every city (test renders only)
 export const DEBUG_MEMLOG: number = 0;     // log GPU and heap counters every N scene seconds (test renders only)
-export const DEBUG_VISIT: string = "";     // test renders: the first visits' specs (visits.ts VisitSpec), as "city=metro-midtown,truck=tractor,season=winter,weather=snow,arriveBy=r12,dressing=7", the next visit's after a "+"
+export const DEBUG_VISIT: string = "";     // test renders: the first visits' specs (visits.ts VisitSpec), as "city=metro-midtown,truck=tractor,season=winter,weather=snow,arriveBy=r12,dressing=7", the next visit's after a "+"; or as JSON (visits.ts parseVisitSpecs), as journey.ts captureSpecs writes them
+export const DEBUG_STOP: number = -1;      // test renders: start DEBUG_STOP_LEAD seconds before the dwell at this stop of the first visit (0, its first: journey.ts Journey.stopTime), instead of DEBUG_SKIP_MINUTES in
+export const DEBUG_STOP_LEAD: number = 5;
+export const DEBUG_SCENARIO: string = "";  // test renders: a named scenario (scenarios.ts), its visits and its stop to watch, as DEBUG_VISIT and DEBUG_STOP would give them
 export const DEBUG_SEED: number = 0;       // test renders: this journey seed instead of the env's (0: the env's)
 export const DEBUG_SCRUBTEST: number = 0;  // test renders: play forward this many seconds, scrub back half way and play again, logging every tick
 export const DEBUG_VIGNETTE: string = "";  // test renders: spawn this street vignette (vignettes.ts VK) near the truck; DEBUG_VIEW "vignette" watches it

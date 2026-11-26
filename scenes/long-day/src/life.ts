@@ -220,7 +220,7 @@ export class StreetLife implements LifeHook {
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
     if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
-    this.crowd.step(j.plan, st.simTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt });
+    this.crowd.step(j.plan, j.clockTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt });
     const g = st.mode === "inbound" && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[j.entryGate] : null;
     const gate = g ? this.truckGate : null;
     if (gate) { gate.node = g!.node; gate.street = g!.street; }
@@ -235,11 +235,11 @@ export class StreetLife implements LifeHook {
     // rather than have everyone stop for it; after a while waiting (OUT_NOSE), it noses out and they do.)
     const out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!landing && this.outWait(j) === null && out > 0 && st.s < out + 10) { landing = this.landing; landing.path = j.path!; landing.s0 = st.s; landing.s1 = out + 25; landing.at = out; }
-    this.traffic.step(j.plan, st.simTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, p);
+    this.traffic.step(j.plan, j.clockTime, prs, tf, obs, p.h, this.crowd.obstacles, tp, gate, landing, this.crowd.crossers, this.crowd.waiters, p);
     // (Held for good: the clowns, clowns.ts.)
     this.crowd.clowns.step(j, this.traffic, this.crowd, obs);
     this.crowd.refreshClowns();
-    this.ambient.stepBlimp(p, st.simTime);
+    this.ambient.stepBlimp(p, j.clockTime);
   }
 
   // Where the truck (its rear axle, on its path) is to stop, or null: short of whatever its body

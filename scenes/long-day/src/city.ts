@@ -41,7 +41,7 @@ import type { ExitKind } from "./route.ts";
 import { GARAGE_H } from "./route.ts";
 import { buildFreewayStreet, Frame, FW_HALF, FW_OFF_K, FW_STRAIGHT, FW_STREET_COLS, freewayStreetBent } from "./freeway.ts";
 import type { FwCurve } from "./freeway.ts";
-import { batonCrown, buildCableTracks, buildElevated, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, billboardSpot, drawBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower, FURNITURE } from "./decor.ts";
+import { batonCrown, buildCableTracks, buildElevated, keepClear, buildTownSquare, cableColumn, chessStatues, DC, EL_COLUMNS, ELEVATED_Y, elevatedBent, elevatedLine, fireEscape, flagpole, ghostSign, marqueeCanopy, parkedObstacle, PAVEMENT, pavementObstacle, PK, portCrane, railSpur, billboardSpot, drawBillboard, ryderRoofSign, shopNeon, streetFurniture, waterTower, FURNITURE } from "./decor.ts";
 import type { FurnitureItem } from "./decor.ts";
 import { DOCK_PLATFORM, dockDoorH, dockStair, dockUsedBays, facilityAt, facilityName, hasSign, LOT_STALL_REAR, LOT_TRACTOR_N, siteLayout, streetNameEW, streetNameNS, wideDoor } from "./facilities.ts";
 import type { DockLayout, FacilityId, LotLayout, SiteLayout, StandLayout } from "./facilities.ts";
@@ -490,7 +490,10 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
   const own = (o: string, tiled = false) => { CONTENTS.owner = o; CONTENTS.tile = tiled ? [cx, cz] : null; CONTENTS.out?.delete(o); };
   for (const sid of T.streets) { own(`s${sid}@${cx},${cz}`, true); buildStreetPart(ground, solid, plan, G.streets[sid], ox, oz, city.length ? district : "residential", rnd); }
   // (A city that lists its contents: the streets' and the countryside's items standing in this tile.)
-  if (plan.contents) for (const r of plan.contents.tiles.get(`${cx},${cz}`) ?? []) drawRecipe(r, ground, solid, (f, fn) => inFrame(f, [ground, solid, lamps], fn));
+  if (plan.contents) for (const r of plan.contents.tiles.get(`${cx},${cz}`) ?? []) {
+    PAVEMENT.tag = r;   // (what drew its obstacles, for tools/clearstops.ts)
+    try { drawRecipe(r, ground, solid, (f, fn) => inFrame(f, [ground, solid, lamps], fn)); } finally { PAVEMENT.tag = null; }
+  }
   let stalls: StallPose[] = [], site: SiteLayout = { kind: "kerb" } as SiteLayout;
   for (const b of city) { own(`b${b.id}`); ({ stalls, site } = buildBlockPart(ground, solid, plan, b, ox, oz, rnd, takeSlot)); }
   own(`o@${cx},${cz}`, true);
@@ -511,7 +514,7 @@ function cityBatches(plan: CityPlan, cx: number, cz: number, takeSlot: ((text: s
 function inFrame(f: Frame2, bs: Batch[], fn: () => void) {
   if (f.ox === 0 && f.oz === 0 && f.rot === 0) { fn(); return; }
   const marks = bs.map((b) => b.mark()), q0 = DC.quads.length, m0 = DC.mquads.length, p0 = DC.plates?.quads.length ?? 0, l0 = DC.lampSites.length;
-  const pl0 = DC.pools.mark(), r0 = PAVEMENT.out?.length ?? 0, x0 = PAVEMENT.boxes?.length ?? 0, roofs0 = DC.roofs.length;
+  const pl0 = DC.pools.mark(), r0 = PAVEMENT.out?.length ?? 0, x0 = PAVEMENT.boxes?.length ?? 0, k0 = PAVEMENT.keep?.length ?? 0, roofs0 = DC.roofs.length;
   PLACED.frames.push(f);
   try { fn(); } finally { PLACED.frames.pop(); }
   bs.forEach((b, i) => b.transformFrom(marks[i], f));
@@ -523,6 +526,8 @@ function inFrame(f: Frame2, bs: Batch[], fn: () => void) {
   DC.pools.transformFrom(pl0, f);
   const R = PAVEMENT.out;
   if (R) for (let i = r0; i < R.length; i += 4) [R[i], R[i + 1]] = frameApply(f, R[i], R[i + 1]);
+  const K = PAVEMENT.keep;
+  if (K) for (let i = k0; i < K.length; i += 3) [K[i], K[i + 1]] = frameApply(f, K[i], K[i + 1]);
   const X = PAVEMENT.boxes;
   if (X) for (let i = x0; i < X.length; i += 4) {
     const c = [frameApply(f, X[i], X[i + 1]), frameApply(f, X[i + 2], X[i + 1]), frameApply(f, X[i], X[i + 3]), frameApply(f, X[i + 2], X[i + 3])];
@@ -2138,6 +2143,13 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   };
   const loC = clear(loF), hiC = clear(hiF);
   const loS = loF.sign !== null ? loAl(loF.sign) : null, hiS = hiF.sign !== null ? hiAl(hiF.sign) : null;
+  // (For tools/clearstops.ts: where nothing may be moved to, each side's driveway, the stretch it
+  // keeps clear and its sign, where its furniture stands.)
+  if (PAVEMENT.keep) for (const [ac, d, c, sg] of [[KERB - 0.7, loD, loC, loS], [STREET - KERB + 0.7, hiD, hiC, hiS]] as const) {
+    const mark = (p: number, r: number) => (axis === 0 ? keepClear(p, ac, r) : keepClear(ac, p, r));
+    for (const R of [d, c]) if (R) for (let p = R[0]; p <= R[1] + 1e-6; p += 0.5) mark(p, 0.6);
+    if (sg !== null) mark(sg, 1.4);
+  }
   const inDrive = (d: [number, number] | null, p: number, m: number) => !!d && p > d[0] - m && p < d[1] + m;
   // Sidewalks with a pale kerb edge on the road side; a dock driveway drops to road level.
   for (const [lo, hi, edge, d] of [[0, KERB, KERB - 0.25, loD], [STREET - KERB, STREET, STREET - KERB, hiD]] as const) {

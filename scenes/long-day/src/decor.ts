@@ -21,8 +21,12 @@ import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, 
 interface RoofSpot { r: Rect; top: number }
 // What stands on the pavement, as circles (x, z, radius, chunk-local), recorded while a probe
 // build (city.ts pavementObstacles) runs, so the driver can walk round it; null otherwise.
-export const PAVEMENT: { out: number[] | null; boxes: number[] | null } = { out: null, boxes: null };
-export function pavementObstacle(x: number, z: number, r: number, kind = 0) { PAVEMENT.out?.push(x, z, r, kind); }
+// (`src`, when a tool asks: beside each obstacle in `out`, `tag`, what in the city file drew it, as
+// the drawing sets it. `keep`: where nothing may be moved to along the pavements, as (x, z, r): a
+// driveway, a stretch kept clear, a sign (tools/clearstops.ts).)
+export const PAVEMENT: { out: number[] | null; boxes: number[] | null; src: unknown[] | null; tag: unknown; keep: number[] | null } = { out: null, boxes: null, src: null, tag: null, keep: null };
+export function pavementObstacle(x: number, z: number, r: number, kind = 0) { PAVEMENT.out?.push(x, z, r, kind); PAVEMENT.src?.push(PAVEMENT.tag); }
+export function keepClear(x: number, z: number, r: number) { PAVEMENT.keep?.push(x, z, r); }
 // What a pavement obstacle is, for the street life that uses it (vignettes.ts): 0 anything else.
 export const PK = { hydrant: 1, trash: 2, bench: 3, mailbox: 4, news: 5, meter: 6, shelter: 7, rack: 8, lamp: 9, tree: 10 } as const;
 // How far out what stands on the pavement reaches at hand height (what two carry between them,
@@ -287,7 +291,11 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
     const mh = a0 + 8 + hash2(FURNITURE.street, inward, Math.round(a0 * 10), DC.plan.seed) * Math.max(0, a1 - a0 - 16);
     if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);
   }
-  for (const [kind, p] of given ?? []) { piece[kind]?.(p); FURNITURE.out?.push(FURNITURE.street, kind, p, inward); }
+  for (const [kind, p] of given ?? []) {
+    PAVEMENT.tag = { street: FURNITURE.street, kind, p, inward };
+    try { piece[kind]?.(p); } finally { PAVEMENT.tag = null; }
+    FURNITURE.out?.push(FURNITURE.street, kind, p, inward);
+  }
 }
 
 // ---- signature pieces -------------------------------------------------------------------------------

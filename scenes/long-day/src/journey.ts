@@ -34,7 +34,7 @@
 import * as THREE from "three@0.187.0";
 import { hash2, hash3 } from "./rng.ts";
 import { setVisitSpecs, visitOf } from "./visits.ts";
-import type { RoadWay, VisitSpec } from "./visits.ts";
+import type { RoadWay, StopBatch, StopSpec, VisitSpec } from "./visits.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
 import { GATE_LEN, SPECS, truckExtents, truckLayout } from "./truck.ts";
@@ -127,6 +127,7 @@ const fronted = (G: CityGraph, all: Goal[]) => { const f = all.filter((g) => G.h
 interface JourneyState {
   city: number; citySeed: number; cityTime: number; simTime: number;
   cityStart: number; step: number;  // the city's slot start, and steps simulated in it
+  clockBase: number;                // the journey time the city's clock starts from (clockTime): its start, unless its visit's spec gives another
   retryAt: number;                  // after a failed job search, when to look again
   departAt: number;                 // city time the truck left town (the end of its gate street), or -1
   departV: number; departS0: number; departTruck: TruckModel;   // its speed, how far onto the road it already was, and its truck
@@ -141,7 +142,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; countryD?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
+  jobCounter: number; batch: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; countryD?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -186,6 +187,18 @@ const SEARCH = 12;           // blocks searched around a point for facilities
 const LOT_SEARCH = 40;
 const SWAP_SEARCH = 14;      // blocks searched for a source of another truck's cargo when a swap is due
 export const siteKey = (s: Site) => `${s.bx},${s.bz}`;
+// Where a truck stops along face d of a site at the kerb: its rear axle's distance along the face,
+// the truck centred on it (`pull` further on), or on a short face back from there as far as it
+// takes to keep its nose short of the stop line ahead (NOSE_BACK): pulling away from past the line,
+// it would go on through the junction without its turn, red light and all. (Also
+// tools/clearstops.ts, which keeps its stops' pavements clear.)
+export function kerbStopAfter(G: CityGraph, d: number, model: TruckModel, pull = 0) {
+  const { front, center } = truckExtents(model);
+  return Math.min((G.faceA0(d) + G.faceA1(d)) / 2 - center + pull, G.faceA1(d) - NOSE_BACK - front);
+}
+// A stop as a visit spec writes it (visits.ts StopSpec): its site by block.
+const stopSpec = (x: Stop): StopSpec => x.kind === "depart" ? { kind: "depart" } :
+  x.kind === "swap" ? { kind: "swap", at: siteKey(x.site!), truck: x.truck, job: x.job } : { kind: x.kind as "pickup" | "drop", at: siteKey(x.site!), cargo: x.cargo, units: x.units, job: x.job };
 
 // The city's front doors (city.ts kerbDoors), set by the scene before the first journey; tests
 // leave it unset and the driver uses a spot on the pavement instead.
@@ -284,7 +297,7 @@ export class Journey {
     this.climate = this.climateOf(N);
     this.plan = this.planOf(N);
     this.plan.climate = this.climate;
-    this.facCache.clear(); this.dockCache = null;
+    this.facCache.clear(); this.dockCache = null; this.batchLog.clear(); this.byName = null;
     for (const c of [...this.frames.keys()]) if (this.keepNeighbours ? Math.abs(c - N) > 1 : c !== N) this.frames.delete(c);
     this.path = null; this.chores = [];
     this.accel = 0; this.lastStep = 0; this.lightAhead = "-";   // (as a journey starting here has them)
@@ -300,11 +313,12 @@ export class Journey {
       truck, mode: "inbound", modeTime: 0,
       dwellTotal: 0, dwellDone: false, route: null, s: 0, v: V_JOIN, at: this.gateIn(),
       stopS: 0, backS: 0, dockExit: null, spare: null, parked: null,
-      stops: [], aboard: [], loaded: 0, unloaded: 0, jobCounter: 0,
+      stops: [], aboard: [], loaded: 0, unloaded: 0, jobCounter: 0, batch: 0,
       // The first swap falls due 2 to 12 minutes in (each city plays from its own start, so the
       // timer can't carry over from the last one). A swap job may not fit in the time left, and
       // some cities have no source of another truck's cargo, so not every city gets one.
-      swapAt: start + 60 * (2 + 10 * hash2(N, 1, this.cfg.seed, 0x5a9)), jobsSinceSwap: 0, noSwap: false, intercity: false,
+      swapAt: start + 60 * (2 + 10 * hash2(visitOf(this.cfg.seed, N).index, 1, visitOf(this.cfg.seed, N).jobs, 0x5a9)),
+      clockBase: visitOf(this.cfg.seed, N).spec?.clock ?? start, jobsSinceSwap: 0, noSwap: false, intercity: false,
       committed: "", stopGo: "", redWait: 0, preempt: [], stopsDone: N * 1000, events: [],
     };
     // By the freeway: the arrival ends at its off-ramp, where the city's route starts: down the
@@ -352,6 +366,9 @@ export class Journey {
   // A storybook city sends its wonders on: the city after one picks them up last, from the works
   // (its bolts of knitting or its cloud cushions: every storybook city has the works).
   freightFor(N: number): { cargo: string; units: number; truck: TruckModel } | null {
+    // (A visit's spec may give it.)
+    const given = visitOf(this.cfg.seed, N).spec?.freight;
+    if (given) return given === "none" ? null : { ...given };
     if (N <= 0) return null;
     const pool = CARGO.filter((c) => c.tier === "common" && c.handling !== "walkOn" && !c.season && c.truck !== "flatbed");
     const c = journeyStyle(this.cfg.seed, N - 1).storybook ? CARGO_BY_ID.get(STORY_FREIGHT[Math.floor(hash2(N, 5, this.cfg.seed, 0xf8e) * STORY_FREIGHT.length)])! : pool[Math.floor(hash2(N, 2, this.cfg.seed, 0xf8e) * pool.length)];
@@ -431,6 +448,10 @@ export class Journey {
     return out;
   }
 
+  // The city's clock, which its lights and street life run on: its time since it began, from
+  // clockBase. (A visit captured at one place in a journey keeps its clock wherever it is played.)
+  get clockTime() { return this.st.clockBase + this.st.cityTime; }
+
   get aboardUnits() { return this.st.aboard.reduce((a, b) => a + b.units, 0); }
   get aboardSlots() { return this.st.aboard.reduce((a, b) => a + b.units * b.slotsPerUnit, 0); }
   get nextStop(): Stop | null { return this.st.stops[0] ?? null; }
@@ -498,7 +519,7 @@ export class Journey {
   }
 
   // ---- job planning ---------------------------------------------------------------------------
-  private rand(salt: number) { return hash3(this.st.jobCounter, this.st.city, salt, this.visit.jobs, 0x10b); }
+  private rand(salt: number) { return hash3(this.st.jobCounter, this.visit.index, salt, this.visit.jobs, 0x10b); }
   // The visit being played (visits.ts): its city, way in and seeds.
   get visit() { return visitOf(this.cfg.seed, this.st.city); }
 
@@ -509,6 +530,7 @@ export class Journey {
     const start = spec?.season ? SEASONS[(((SEASONS.indexOf(spec.season) - N) % 4) + 4) % 4] : this.startSeason;
     let c = cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), start);
     if (spec?.weather) c = { ...c, weather: spec.weather, snowCover: c.season === "winter" && (spec.weather === "snow" || c.snowCover) };
+    if (spec?.snow !== undefined) c = { ...c, snowCover: c.season === "winter" && spec.snow };
     return this.cfg.weather ? c : { ...c, weather: "clear" };   // (weather off: clear skies; the season stays)
   }
 
@@ -549,12 +571,110 @@ export class Journey {
     return best;
   }
 
-  // Fill the stop queue when it runs dry.
+  // Fill the stop queue when it runs dry: from the visit's spec while it has batches of stops
+  // left, else drawn. Either way the batch is written down (captureSpecs).
   private planStops() {
+    const st = this.st;
+    if (st.intercity) return;
+    const k = st.batch, script = this.visit.spec?.stops, before = st.stops.length;
+    if (script && k < script.length) this.playBatch(script[k], k); else this.drawStops();
+    st.batch = k + 1;
+    this.batchLog.set(k, { stops: st.stops.slice(before).map(stopSpec), counter: st.jobCounter, noSwap: st.noSwap, intercity: st.intercity });
+  }
+  // The batches of stops planned in this city so far, by number (keyed, so a seek back over them
+  // writes the same ones again).
+  private batchLog = new Map<number, StopBatch>();
+
+  // A batch from the visit's spec: its stops as written, checked against the city (a site a
+  // pickup comes from must be one its cargo comes from, and so on), and the counter and flags.
+  private playBatch(b: StopBatch, k: number) {
+    const st = this.st, counter = b.counter ?? st.jobCounter + 1;
+    const bad = (i: number, why: string): never => { throw new Error(`visit ${st.city} (${this.visit.city.id}) stop batch ${k}, stop ${i}: ${why}`); };
+    // (The truck each stop is made in, a swap's onwards, and the slots its pickups so far take.)
+    let truck = st.truck, used = this.aboardSlots;
+    const stops = b.stops.map((x, i): Stop => {
+      const job = x.job ?? counter;
+      if (x.kind === "depart") return { kind: "depart", site: null, job: -1, cargo: "", units: 0 };
+      if (!x.at) bad(i, "no site (at)");
+      const site = this.siteAt(x.at!) ?? bad(i, `no site "${x.at}" in this city`);
+      const reach = x.kind === "swap" ? this.lotTruck(x.truck ?? truck) : truck;
+      if (!this.deliverable(reach === "tractor").some(([bx, bz]) => bx === site.bx && bz === site.bz)) bad(i, `${site.name} (${siteKey(site)}) is no block a ${reach} can stop at`);
+      if (x.kind === "swap") {
+        if (site.fac !== "rentalLot") bad(i, `${site.name} is not a rental lot`);
+        if (!x.truck) bad(i, "a swap with no truck");
+        truck = x.truck!;
+        return { kind: "swap", site, job, cargo: "", units: 0, truck: x.truck };
+      }
+      const c = CARGO_BY_ID.get(x.cargo ?? "") ?? bad(i, `no cargo "${x.cargo}"`);
+      const kinds = x.kind === "pickup" ? c.from : c.to;
+      if (!kinds.includes(site.fac)) bad(i, `${c.id} doesn't ${x.kind === "pickup" ? "come from" : "go to"} ${site.name} (a ${site.fac})`);
+      if (!(x.units! >= 1)) bad(i, "no units");
+      if (x.kind === "pickup") {
+        if (!truckCarries(truck, c.truck)) bad(i, `a ${truck} can't carry ${c.id} (it goes in a ${c.truck})`);
+        used += x.units! * c.slots;
+        if (used > TRUCK_SLOTS[truck]) bad(i, `${x.units} ${c.id} don't fit in the ${truck} (${TRUCK_SLOTS[truck]} slots, ${used} wanted)`);
+        if (handTrips(truckLayout(truck), c.handling) && x.units! > maxHandUnits(c.id)) bad(i, `${x.units} ${c.id} are more than the trips carry by hand (${maxHandUnits(c.id)})`);
+      }
+      return { kind: x.kind, site, job, cargo: c.id, units: x.units! };
+    });
+    st.stops.push(...stops);
+    st.jobCounter = counter;
+    if (b.noSwap !== undefined) st.noSwap = b.noSwap;
+    if (b.intercity) st.intercity = true;
+    this.log(`stops from the spec: ${stops.map((x) => x.kind + (x.site ? " " + x.site.name : "")).join(", ") || "none"}`);
+  }
+  // The city's sites a stop may be at, with their names and facilities (for writing a spec's stops).
+  get sites(): Site[] { return this.deliverable().map(([x, z]) => this.site(x, z)); }
+  // A site in this city by its name, or its block as "bx,bz" (a name more than one site has: by its
+  // block, which the error lists).
+  private byName: Map<string, Site[]> | null = null;
+  private siteAt(at: string): Site | null {
+    const m = /^(-?\d+),(-?\d+)$/.exec(at.trim());
+    if (m) return this.site(Number(m[1]), Number(m[2]));
+    if (!this.byName) {
+      this.byName = new Map();
+      for (const site of this.sites) this.byName.set(site.name, [...(this.byName.get(site.name) ?? []), site]);
+    }
+    const found = this.byName.get(at.trim()) ?? [];
+    if (found.length > 1) throw new Error(`"${at}" is ${found.length} sites in ${this.visit.city.id}: give one by its block, ${found.map(siteKey).join(" or ")}`);
+    return found[0] ?? null;
+  }
+
+  // The specs that play visit N (the current city) as it has played so far, and the next visit's
+  // way in (which sets this one's way out and drive, and its freight what this one picks up last):
+  // for Journey's `visits`, as the first two, with any seed. A test runs them against the seeded
+  // journey (test/visitspec.ts).
+  captureSpecs(): [VisitSpec, VisitSpec] {
+    const N = this.st.city, v = this.visit, next = visitOf(this.cfg.seed, N + 1), c = this.climateOf(N);
+    const freight = (n: number) => this.freightFor(n) ?? "none";
+    const stops = [...this.batchLog.keys()].sort((a, b) => a - b).map((k) => this.batchLog.get(k)!);
+    return [
+      { city: v.city.id, arriveBy: v.arrive.road.id, truck: this.startTruck(N), season: c.season, weather: c.weather, snow: c.snowCover, freight: freight(N),
+        index: v.index, clock: this.st.clockBase, jobs: v.jobs, dressing: v.dressing, gags: v.gags, drive: v.drive, stops },
+      { city: next.city.id, arriveBy: next.arrive.road.id, freight: freight(N + 1) },
+    ];
+  }
+
+  // Journey time when the dwell at stop k (0, the first) of visit N begins, played from the start
+  // of that visit; or null if it hasn't by the visit's end. `life`: the street life to play it
+  // with, as the journey it is for has (traffic holds the truck up, so it changes when).
+  static stopTime(cfg: Config, startSeason: Season, visits: Record<number, VisitSpec> | undefined, k: number, N = 0, life?: () => LifeHook): number | null {
+    const probe = new Journey(cfg, 0, startSeason, visits);
+    if (N > 0) probe.seekTo(probe.nominalStart(N));
+    if (life) probe.attachLife(life());
+    let seen = 0, was = probe.st.mode;
+    for (let guard = 400000; guard-- > 0 && probe.st.city === N;) {
+      probe.step();
+      if (probe.st.mode === "dwell" && was !== "dwell" && probe.st.stops[0]?.kind !== "depart" && seen++ === k) return probe.st.simTime;
+      was = probe.st.mode;
+    }
+    return null;
+  }
+
+  private drawStops() {
     const st = this.st;
     const C = this.cfg.cityMinutes * 60, cutoff = C * (24 / 30);
     const [bx, bz] = this.truckBlock();
-    if (st.intercity) return;
     const final = () => {
       // Final pickup: the next city's freight, in the truck it needs; then leave.
       let job = this.makeJob(bx, bz, true);
@@ -757,12 +877,9 @@ export class Journey {
         // lane), and on up onto its roof.
         // (At a yard stand, a little further on, so the bed clears the container: crew.ts stackPlan.)
         // (Centred on the side.)
-        const pull = -this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0), L = siteLayout(this.plan, bx, bz);
-        // (On a short face, back from the centre as far as it takes to keep its nose short of the
-        // stop line ahead (NOSE_BACK): pulling away from past the line, it would go on through the
-        // junction without its turn, red light and all.)
+        const L = siteLayout(this.plan, bx, bz);
         // (And a face that holds it so, its tail short of the junction behind, before one that doesn't.)
-        const all = blk.sides.map((f) => ({ d: f, after: Math.min((G.faceA0(f) + G.faceA1(f)) / 2 + pull, G.faceA1(f) - NOSE_BACK - this.frontX) }));
+        const all = blk.sides.map((f) => ({ d: f, after: kerbStopAfter(G, f, st.truck, this.isYardStand(stop) ? YARD_PULL : 0) }));
         const rear = 2 * this.centerX - this.frontX, holds = all.filter((g) => g.after + rear >= G.faceA0(g.d));
         goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, holds.length ? holds : all);
       }
@@ -1291,21 +1408,21 @@ export class Journey {
         const key = `${sg.node},${sg.sLine.toFixed(1)}`;
         if (st.s > target + 0.5) continue;           // already past this one
         const seed = this.plan.seed, dist = target - st.s;
-        let state = signalState(N, sg.phase, st.simTime, seed, st.preempt);
+        let state = signalState(N, sg.phase, this.clockTime, seed, st.preempt);
         // Ask for priority: most of the time the light changes for the truck.
-        st.preempt = st.preempt.filter((p) => st.simTime < p.p1 + 3);
+        st.preempt = st.preempt.filter((p) => this.clockTime < p.p1 + 3);
         if (state === "red" && dist < 90 && st.preempt.length < PREEMPT_MAX && !st.preempt.some((p) => p.node === sg.node)
-            && signalWait(N, sg.phase, st.simTime, seed) > 4
-            && hash3(N.kx, N.kz, signalCycleIndex(N, st.simTime), seed, 0x9e1) < PREEMPT_CHANCE) {
-          st.preempt.push({ node: sg.node, x: N.x, z: N.z, phase: sg.phase, p0: st.simTime, p1: st.simTime + PREEMPT_CLEAR + Math.max(6, dist / 5 + 6),
-            was: signalState(N, (sg.phase + 1) % Math.max(2, N.phases), st.simTime, seed, null), from: this.liveOther(N, sg.phase, seed) });
+            && signalWait(N, sg.phase, this.clockTime, seed) > 4
+            && hash3(N.kx, N.kz, signalCycleIndex(N, this.clockTime), seed, 0x9e1) < PREEMPT_CHANCE) {
+          st.preempt.push({ node: sg.node, x: N.x, z: N.z, phase: sg.phase, p0: this.clockTime, p1: this.clockTime + PREEMPT_CLEAR + Math.max(6, dist / 5 + 6),
+            was: signalState(N, (sg.phase + 1) % Math.max(2, N.phases), this.clockTime, seed, null), from: this.liveOther(N, sg.phase, seed) });
         }
         // Or hold a green that would change before the truck gets there.
         if (state === "green" && dist < 90 && st.preempt.length < PREEMPT_MAX && !st.preempt.some((p) => p.node === sg.node)) {
           const eta = dist / Math.max(st.v, 4);
-          if (signalGreenLeft(N, sg.phase, st.simTime, seed) < eta + 2
-              && hash3(N.kx, N.kz, signalCycleIndex(N, st.simTime), seed, 0x9e2) < PREEMPT_CHANCE)
-            st.preempt.push({ node: sg.node, x: N.x, z: N.z, phase: sg.phase, p0: st.simTime, p1: st.simTime + eta + 5, was: "red", ext: true });
+          if (signalGreenLeft(N, sg.phase, this.clockTime, seed) < eta + 2
+              && hash3(N.kx, N.kz, signalCycleIndex(N, this.clockTime), seed, 0x9e2) < PREEMPT_CHANCE)
+            st.preempt.push({ node: sg.node, x: N.x, z: N.z, phase: sg.phase, p0: this.clockTime, p1: this.clockTime + eta + 5, was: "red", ext: true });
         }
         this.lightAhead = state;
         if (state === "green" || st.committed === key) break;
@@ -1409,7 +1526,7 @@ export class Journey {
 
   // The phase of signal N other than `phase` showing green or yellow now (unpreempted), or -1.
   private liveOther(N: CNode, phase: number, seed: number): number {
-    for (let p = 0; p < Math.max(2, N.phases); p++) if (p !== phase && signalState(N, p, this.st.simTime, seed, null) !== "red") return p;
+    for (let p = 0; p < Math.max(2, N.phases); p++) if (p !== phase && signalState(N, p, this.clockTime, seed, null) !== "red") return p;
     return -1;
   }
 

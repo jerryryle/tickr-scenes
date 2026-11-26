@@ -313,6 +313,9 @@ const HT_DRAW_LINEUP = 0.9;
 // A team lift lined up square to a front door (square, planChores): turned about the load's middle
 // this far clear of the walk ramp's foot (m), and that much slower turning it, and side-stepping it.
 const TEAM_RAMP_CLEAR = 0.5, TEAM_TURN_V = 0.55, TEAM_SIDE_V = 0.6;
+// Or walked up to it any other way, backed round into it on a quarter circle of this radius (m),
+// the worker going round outside it at this much of the carrying pace (curveIn, planChores).
+const TEAM_CURVE = 1.0, TEAM_CURVE_V = 0.8;
 // A team lift turns onto and off the walk ramp this much wider than the load is long (the two
 // carriers' bodies either end of it, and room).
 const TEAM_TURN = 1.2;
@@ -1671,6 +1674,70 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
       sideStep([q.cx, 0], [q.cx, q.mid[1]], e, speed, ex);
       sideStep([q.cx, q.mid[1]], q.mid, e, speed, ex);
     };
+    // Walked to a doorway any other way, the load comes into line with it on the way in: the
+    // driver walks up beside it, TEAM_CURVE out from the line of the doorway's front, and backs
+    // round a quarter circle of that radius into the doorway, the load held in line with the way
+    // they go, so they always walk straight backwards. The worker swings their end round outside
+    // the curve, and the load is square to the doorway as the driver reaches it and goes in (the
+    // fetch). Where that swing would take the load through what stands on the pavement or into
+    // the truck, or the driver comes from nearly in front of the doorway, they come in square
+    // from the ramp (squareIn) where there is room for that, or else straight up to it, the
+    // worker in the driver's footsteps. Returns whether it curved in.
+    // (The curve in from `from` to the doorway at `at`, where it is clear: the driver's and the
+    // worker's places at angle p round it.)
+    const curveAt = (from: [number, number, number], at: [number, number, number]) => {
+      if (!kerbDoor || faceDoor === null) return null;
+      // (In the doorway's frame from S, where the fetch starts: `lat` along its front, `out` away
+      // from it. The driver comes from the side `side`, along out = R, round the circle centred
+      // at lat = side * R, out = 0: at angle p, at C + R (-side sin p, cos p), going the way
+      // m = (-side cos p, -sin p); the worker B back from there.)
+      const B = teamBack, R = TEAM_CURVE, ix = Math.cos(faceDoor), iz = -Math.sin(faceDoor);   // (into the doorway)
+      const S: [number, number] = [at[0], at[2]];
+      const world = (lat: number, out: number): [number, number] => [S[0] - iz * lat - ix * out, S[1] + ix * lat - iz * out];
+      const lat0 = (from[0] - S[0]) * -iz + (from[2] - S[1]) * ix, side = Math.sign(lat0);
+      if (Math.abs(lat0) < R + 0.5) return null;
+      const driver = (p: number) => world(side * R - side * R * Math.sin(p), R * Math.cos(p));
+      const worker = (p: number) => { const d = [side * R - side * R * Math.sin(p), R * Math.cos(p)]; return world(d[0] + B * side * Math.cos(p), d[1] + B * Math.sin(p)); };
+      // (The swing: the driver, the load and the worker clear of the pavement's things and the
+      // truck. The worker starts it the load's length back along the walk up to it, from `from`,
+      // and comes round onto their curve over its first step, as crew.ts rigidAt has them.)
+      const half = Math.max(BODY_R, teamWidth / 2) + 0.1, n = 6, A = driver(0);
+      const fa = Math.hypot(from[0] - A[0], from[2] - A[1]) || 1, w0: [number, number] = [A[0] + (from[0] - A[0]) / fa * B, A[1] + (from[2] - A[1]) / fa * B];
+      for (let k = 0; k <= 4 * n; k++) {
+        const p = k / (4 * n) * Math.PI / 2, d = driver(p), f = Math.min(1, k / 4);
+        let w = worker(p);
+        if (f < 1) {
+          // (Over the first step: from where they really start, round the driver onto the curve.)
+          const w1 = worker(Math.PI / 2 / n), a0 = Math.atan2(w0[1] - A[1], w0[0] - A[0]), a1 = Math.atan2(w1[1] - driver(Math.PI / 2 / n)[1], w1[0] - driver(Math.PI / 2 / n)[0]);
+          const a = a0 + Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)) * f;
+          w = [d[0] + Math.cos(a) * B, d[1] + Math.sin(a) * B];
+        }
+        const ux = (w[0] - d[0]) / B, uz = (w[1] - d[1]) / B;
+        if (d[0] > L.rear - BODY_R && d[0] < L.front + BODY_R && Math.abs(d[1]) < L.hw + BODY_R) return null;
+        if (obstacles.some((o) => Math.hypot(d[0] - o.x, d[1] - o.z) < o.r + BODY_R)) return null;
+        for (let s = TEAM_CLEAR; s <= B + 1e-6; s += 0.25) {
+          const px = d[0] + ux * s, pz = d[1] + uz * s, m = s >= B - 0.25 ? 0.3 : half;
+          if (px > L.rear - m && px < L.front + m && Math.abs(pz) < L.hw + m) return null;
+        }
+        for (const o of obstacles) {
+          const t = Math.max(TEAM_CLEAR, Math.min(B, (o.x - d[0]) * ux + (o.z - d[1]) * uz)), r = o.hand ?? o.r, Ro = Number.isNaN(r) ? o.r : Math.max(o.r, r);
+          if (Math.hypot(d[0] + ux * t - o.x, d[1] + uz * t - o.z) < Ro + (t >= B ? BODY_R : half)) return null;
+        }
+      }
+      return { driver, worker, n };
+    };
+    const curveIn = (from: [number, number, number], at: [number, number, number], speed: number, ex: Partial<Chore>) => {
+      const c = curveAt(from, at);
+      if (!c) return false;
+      const A = c.driver(0);
+      walk("load", from, [A[0], 0, A[1]], speed, ex);
+      // (Round in steps, the worker on their own curve outside it rather than across its chords.)
+      for (let k = 0; k < c.n; k++) {
+        const p0 = k / c.n * Math.PI / 2, p1 = (k + 1) / c.n * Math.PI / 2;
+        rigid(c.driver(p0), c.driver(p1), c.worker(p0), c.worker(p1), speed * TEAM_CURVE_V, ex);
+      }
+      return true;
+    };
     const squareOut = (speed: number, ex: Partial<Chore>) => {
       const q = square!, e: [number, number] = [0, -q.ds * q.h];
       rigid(q.S, q.O, [q.S[0] + (q.S[0] - q.O[0]), q.S[1] + (q.S[1] - q.O[1])], q.S, speed * BACKING, ex);   // (backed out, the worker coming out after)
@@ -1723,7 +1790,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
         // (Not deeper in first, from a load taken up at the bed's back: straight out from there.)
         const edge = from[0] > sill[0] ? sill : from;
         if (edge !== from) walk("load", from, sill, speed, { ...ex, linear: true });
-        if (team(item) && square) { walk("load", edge, teamIn, speed * 0.95, ex); squareIn(speed, ex); street = facility; return; }
+        if (team(item) && square && !curveAt(teamSwing, facility)) { walk("load", edge, teamIn, speed * 0.95, ex); squareIn(speed, ex); street = facility; return; }
         if (team(item)) { walk("load", edge, teamIn, speed * 0.95, ex); walk("load", teamIn, teamOn, speed, ex); walk("load", teamOn, teamSwing, speed, ex); street = teamSwing; return; }
         // (Drawn back down it: on until it is all off it, before it is turned for the door.)
         street = foot; walk("load", edge, street, speed * 0.95, ex);
@@ -1783,7 +1850,8 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
           add({ kind: "stow", group: "load", len: 1.0, face: stowFace });
           outOfBed(p, item, st.tool, slotFront(p[0]));
         } else { add({ kind: "stow", group: "load", len: 1.0, face: stowFace }); outOfBed(inAt, item); }
-        if (!(square && team(item))) toDoor(street, st.speed, { item, tool: st.tool, helper }, facilityFor(i));
+        if (team(item) && street !== facility) { const ex = { item, tool: st.tool, helper }; if (!curveIn(street, facilityFor(i), st.speed, ex)) toDoor(street, st.speed, ex, facilityFor(i)); }
+        else if (!team(item)) toDoor(street, st.speed, { item, tool: st.tool, helper }, facilityFor(i));
         add({ kind: "fetch", group: "load", len: fetchLen, face: faceDoor ?? pavementFetch(L, pave).face, tool: st.tool, ...flipIn(false) });
         fromDoor(upFrom(null), WALK, { tool: st.tool, ...(drawnBy(null, st.tool) ? { forward: true } : {}) }, facilityFor(i));
       }
