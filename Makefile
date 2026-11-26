@@ -213,7 +213,7 @@ draftworld: | $(DEPS)
 
 # The road maps' drafting tool (scenes/<scene>/tools/draftroads.ts): each road in a process of its
 # own, TEST_JOBS at a time (ARGS names the roads to draft again, else those with no map yet), then
-# the world file rewritten to import them all.
+# the road list rewritten without its drafting lengths, each road's length then being its map's.
 draftroads: | $(DEPS)
 	@mkdir -p build/$(SCENE)-draftroads
 	@$(FLATTEN) scenes/$(SCENE)/tools/draftroads.ts --root scenes/$(SCENE)/src > build/$(SCENE)-draftroads/scene.ts

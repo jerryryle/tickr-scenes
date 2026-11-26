@@ -6,8 +6,8 @@
 //   make draftroads SCENE=long-day [ARGS="r3 r7"]
 //
 // (make shares the roads out between processes, then runs it with --world.)
-// With --world it rewrites src/world-roads.ts to import every map in src/roads/ (each road's length
-// is then its map's).
+// With --world it rewrites src/world-roads.ts without the lengths the world graph was drafted with,
+// once every road has a map: each road's length is then its map's.
 import * as THREE from "three@0.187.0";
 import { gateEnd } from "../src/city.ts";
 import { ARRIVE_LEN, CountryRoad } from "../src/country.ts";

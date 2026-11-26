@@ -126,7 +126,7 @@ function debugWay(from: CityHead, to: CityHead, seed: number, n: number): RoadWa
   const want = Math.round((((gi!.dir + 2) % 4) - go!.dir + 8) % 4), turnOf = (r: WorldRoad) => Math.round(((roadHead(r).end / (Math.PI / 2)) % 4 + 4) % 4);   // (the road runs straight on past gate b)
   const fits = WORLD_ROADS.flatMap((r) => r.oneway ? [] : [[r, false], [r, true]] as const).filter(([r, back]) => (back ? (4 - turnOf(r)) % 4 : turnOf(r)) === want);
   const [R, back] = fits[pickOf(seed, n, 6, fits.length)] ?? [WORLD_ROADS[0], false];
-  return { road: { ...R, id: `debug-${n}`, a: { city: from.id, gate: go!.id }, b: { city: to.id, gate: gi!.id } }, from, out: oi, to, in: ii, back };
+  return { road: { ...R, id: `debug-${n}`, map: R.map ?? R.id, a: { city: from.id, gate: go!.id }, b: { city: to.id, gate: gi!.id } }, from, out: oi, to, in: ii, back };
 }
 
 function nextVisit(seed: number, P: Plan, n: number): Visit {

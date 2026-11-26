@@ -753,8 +753,10 @@ export class Journey {
         // (On a short face, back from the centre as far as it takes to keep its nose short of the
         // stop line ahead (NOSE_BACK): pulling away from past the line, it would go on through the
         // junction without its turn, red light and all.)
+        // (And a face that holds it so, its tail short of the junction behind, before one that doesn't.)
         const all = blk.sides.map((f) => ({ d: f, after: Math.min((G.faceA0(f) + G.faceA1(f)) / 2 + pull, G.faceA1(f) - NOSE_BACK - this.frontX) }));
-        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, all);
+        const rear = 2 * this.centerX - this.frontX, holds = all.filter((g) => g.after + rear >= G.faceA0(g.d));
+        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, holds.length ? holds : all);
       }
       // A tractor-trailer pulling away within PULL_RIGHT_MIN of the junction ahead goes on any way
       // but right there, if it can reach the stop so: its trailer, straight behind it at the kerb,

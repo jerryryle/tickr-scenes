@@ -11,14 +11,14 @@ import { unpackText } from "./pack.ts";
 // its heading at gate b (its map's last `heading`), which says which way it turns.
 export interface RoadHead { length: number; end: number }
 export function roadHead(r: WorldRoad): RoadHead {
-  const H = ROAD_HEADS[r.id];
+  const H = ROAD_HEADS[r.map ?? r.id];
   if (!H) throw new Error(`road ${r.id}: no map in src/roads/`);
   return H;
 }
 // A road's map, unpacked from those the scene carries packed (docs/long-day-cities.md, "How the
 // scene carries the cities"): for a drive along it, which holds it as long as it lives.
 export function roadMapOf(r: WorldRoad): RoadMap {
-  const p = PACKED_ROADS[r.id];
+  const p = PACKED_ROADS[r.map ?? r.id];
   if (!p) throw new Error(`road ${r.id}: no map in src/roads/`);
   return JSON.parse(unpackText(p)) as RoadMap;
 }

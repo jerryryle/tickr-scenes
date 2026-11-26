@@ -24,7 +24,11 @@ const cities = fs.readdirSync(src).filter((d) => d.startsWith("city-")).flatMap(
   .filter((c) => fs.existsSync(c.file)).sort((a, b) => (a.id < b.id ? -1 : 1));
 const roads = fs.readdirSync(path.join(src, "roads")).filter((f) => /^road-.*\.ts$/.test(f)).sort().map((f) => ({ id: f.slice("road-".length, -".ts".length), file: path.join(src, "roads", f) }));
 const inputs = [...roads.map((r) => r.file), ...cities.flatMap((c) => [c.file, ...(fs.existsSync(c.contents) ? [c.contents] : [])]), path.join(src, "pack.ts"), import.meta.filename];
-const stale = !fs.existsSync(outFile) || inputs.some((f) => fs.statSync(f).mtimeMs > fs.statSync(outFile).mtimeMs);
+// (Stale, too, when the files packed are not those it packed last, as its first line lists them: a
+// city or road renamed or deleted keeps its files' times.)
+const listed = `// From ${JSON.stringify(inputs.map((f) => path.relative(src, f)))}`;
+const lastListed = fs.existsSync(outFile) ? fs.readFileSync(outFile, "utf8").slice(0, listed.length + 1) : "";
+const stale = lastListed !== `${listed}\n` || inputs.some((f) => fs.statSync(f).mtimeMs > fs.statSync(outFile).mtimeMs);
 if (stale) {
   const heads: string[] = [], layouts: string[] = [], contents: string[] = [], roadHeads: string[] = [], roadMaps: string[] = [];
   let raw = 0, packed = 0;
@@ -49,6 +53,7 @@ if (stale) {
     roadMaps.push(`  ${JSON.stringify(r.id)}: ${JSON.stringify(pack(r.file, JSON.stringify(M)))},`);
   }
   const lines = [
+    listed,
     `// Every city and road, packed (tools/pack.ts from src/city-*/*/ and src/roads/). Build output:`,
     `// edit the city files, contents files and road maps, not this.`,
     `import type { CityHead } from "./cityfile.ts";`,

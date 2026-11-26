@@ -118,7 +118,8 @@ export class CityPlan {
   // The catalogue's is its head (cityfile.ts CityHead); its layout is unpacked as its graph is
   // built and held only by `full`, for as long as the plan lives.
   readonly file: CityHead | null;
-  full: CityFile | null = null;
+  private fullFile: CityFile | null = null;
+  get full(): CityFile | null { return this.fullFile; }
   // `dressing`: its visit's dressing seed (visits.ts), which the parked cars along its kerbs and the
   // boats moored on its river hash; the city itself is the same whatever it is.
   // (`file`: the catalogue's by default; a test may give one of its own.)
@@ -141,7 +142,7 @@ export class CityPlan {
       const self = this;
       this.job = (function* () {
         try {
-          const F = self.file ? self.full = fileOf(self.file) : null;
+          const F = self.file ? self.fullFile = fileOf(self.file) : null;
           const G = F ? yield* graphOfFile(F) : yield* self.generate();
           if (F) { self.g = G; self.ol = self.outlineAt(F.outline.scale, !!F.outline.seaOff); if (F.outline.seaOff) self.shoreOl = self.ol; self.fileBlocks(G, F); }
           linkSignals(G);

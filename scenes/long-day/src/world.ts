@@ -9,8 +9,9 @@ import { CITY_HEADS } from "./world-packed.ts";
 // itself, its length among it (roadmap.ts roadHead, roadMapOf); how long the drive takes follows
 // from the truck's speed and its stops on the way (country.ts). `key`: what the drafting tool's
 // rules hashed. `oneway`: driven only from a to b (into a freeway city's way in, where the freeway
-// runs out of town).
-export interface WorldRoad { id: string; a: { city: string; gate: string }; b: { city: string; gate: string }; key: number; oneway?: true }
+// runs out of town). `map`: the road whose map it drives, when not its own (a road made up under
+// DEBUG_STYLE: visits.ts debugWay).
+export interface WorldRoad { id: string; a: { city: string; gate: string }; b: { city: string; gate: string }; key: number; oneway?: true; map?: string }
 
 // The catalogue in its fixed order, by id: the visit planner picks from it by position, so a
 // city added goes at the end. Each is a city's head (cityfile.ts CityHead) as tools/pack.ts packs
