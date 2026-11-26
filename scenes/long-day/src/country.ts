@@ -25,6 +25,7 @@ import type { FwCurve } from "./freeway.ts";
 import { drain } from "./slices.ts";
 import { cityHeadOf } from "./visits.ts";
 import type { RoadMap, RoadMapPiece } from "./roadmap.ts";
+import { roadHead } from "./roadmap.ts";
 import type { WorldRoad } from "./world.ts";
 import type { Steps } from "./slices.ts";
 type Writable<T> = { -readonly [K in keyof T]: T[K] };
@@ -226,7 +227,7 @@ const LAT_MAX = 1.8;             // m/s^2 of sideways pull the drive allows on c
 export const ARRIVE_DUR = 40, V_JOIN = 16, V_GATE = 8;
 export const ARRIVE_LEN = V_GATE * ARRIVE_DUR + (V_JOIN - V_GATE) * ARRIVE_DUR * 0.5;   // 480 m
 // A world road's length to the hand-over into the city at its end (its map's, less the arrival straight).
-export function roadMetres(r: WorldRoad) { return r.map.length - ARRIVE_LEN; }
+export function roadMetres(r: WorldRoad) { return roadHead(r).length - ARRIVE_LEN; }
 // Within LAND_SEAM of either end the city's own countryside ring (city.ts) is the land; the road
 // is straight there and well beyond, so the seam is a straight line across it.
 export const LAND_SEAM = (RING - 1) * BLOCK;

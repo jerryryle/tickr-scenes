@@ -217,22 +217,31 @@ recipes. A city whose file lists its contents never runs them; the drafting tool
 
 ## How the scene carries the cities
 
-The scene holds a city's layout and contents only while it has the city planned. Every other city
-is a small **head**: its city file without its nodes, streets and blocks (`CityHead` in
-`src/cityfile.ts`), which is all the visit planner and the country roads read.
+The scene holds a city's layout and contents only while it has the city planned, and a road's map
+only while it has a drive along it. Every other city is a small **head**: its city file without
+its nodes, streets and blocks (`CityHead` in `src/cityfile.ts`), which is all the visit planner
+and the country roads read of it. Every other road is its entry in `src/world-roads.ts` and its
+head, its length and its heading at gate b (`RoadHead` in `src/roadmap.ts`), which is all a
+city's time and the planner read of it.
 
-The scene never imports the city files or the contents files. Before every build of the scene, a
-test or a tool, `tools/pack.ts` reads every city's folder and writes `src/cities-packed.ts`, which
-is build output and not committed. It holds each city's head as it is, and its layout and its
-contents as JSON compressed by `src/pack.ts`, 44.9 MB in all packed to 14.8 MB. `fileOf` in
-`src/city.ts` unpacks a city's layout when its plan builds the city's graph, and the plan unpacks
-its contents at the same time. The journey keeps the plans of the last three cities, so the
-current city, the next and one before it are unpacked at most. Nothing keeps an unpacked layout
-on the head, since a long day would then come to hold every city's.
+The scene never imports the city files, the contents files or the road maps. Before every build of
+the scene, a test or a tool, `tools/pack.ts` reads every city's folder and every road map and
+writes `src/world-packed.ts`, which is build output and not committed. It holds each city's head
+and each road's head as they are, and each city's layout and contents and each road's map as JSON
+compressed by `src/pack.ts`, 49.9 MB in all packed to 17.6 MB.
 
-Measured by a 60 s render of the default build when layouts were packed (2026-11-25), the scene is
-24.8 MB, holds 191.6 MB of heap after the start and starts in 2.2 s. With every city's layout
-loaded and only the contents packed, it was 38.1 MB, 334.8 MB and 2.6 s.
+1. `fileOf` in `src/city.ts` unpacks a city's layout when its plan builds the city's graph, and
+   the plan unpacks its contents at the same time. The journey keeps the plans of the last three
+   cities, so the current city, the next and one before it are unpacked at most.
+2. `roadMapOf` in `src/roadmap.ts` unpacks a road's map when the journey sets up a drive along it,
+   and the drive (`CountryRoad` in `src/country.ts`) holds it as long as it lives.
+3. Nothing keeps an unpacked layout or map on its head, since a long day would then come to hold
+   every city's and every road's.
+
+Measured by a 60 s render of the default build (2026-11-25), the scene is 20.8 MB, holds 137.0 MB
+of heap after the start and starts in 2.2 s. Before the layouts and road maps were packed, with
+only the contents packed, it was 38.1 MB, 334.8 MB and 2.6 s; with the layouts packed and the road
+maps not, 24.8 MB and 191.6 MB.
 
 ## What varies between visits
 
@@ -245,7 +254,8 @@ time of day follows the journey's clock.
 
 The world graph is a fixed, connected graph whose nodes are the catalogue's cities and whose edges
 are country roads. `src/world-roads.ts` lists each road with its id, the city and gate at either
-end, its hash key and its map, and it gives each city's place on the world map. It changes only
+end, its hash key and whether it is one way, and it gives each city's place on the world map. Each
+road's map is its own file, `src/roads/road-<id>.ts` ("Road maps"). It changes only
 when cities are added or removed.
 
 The graph keeps these properties, which `test/world.ts` checks.
@@ -268,7 +278,8 @@ the truck arrives. A city's time is planned at an average 18 m/s (`DRIVE_PACE` i
 A **road map** holds one country road as a physical road between two gates, and a drive either
 way reads the same map. It holds the road's shape, heights and land, its set pieces, and every
 item that stands beside it. It is a TypeScript data module in `src/roads/`, one per world road,
-named `road-<id>.ts` and exporting `ROAD_<ID>`, read by `src/roadmap.ts`. The 89 maps take 6.8 MB.
+named `road-<id>.ts` and exporting `ROAD_<ID>`. The 89 maps take 6.8 MB, and the scene carries
+them packed ("How the scene carries the cities").
 
 The map uses the road's own coordinates. The distance `s` runs from the end of gate a's street (0)
 to the end of gate b's street (the road's `length`, in metres), and the offset `n` is to the right

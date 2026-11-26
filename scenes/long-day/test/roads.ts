@@ -8,6 +8,7 @@ import type { StyleId } from "../src/styles.ts";
 import type { Climate } from "../src/climate.ts";
 import { CATALOGUE } from "../src/world.ts";
 import { WORLD_ROADS } from "../src/world-roads.ts";
+import { roadMapOf } from "../src/roadmap.ts";
 import type { RoadItems } from "../src/roadmap.ts";
 import { CityPlan, gateEnd } from "../src/city.ts";
 import { freewayGate } from "../src/freeway.ts";
@@ -20,7 +21,7 @@ import { freewayGate } from "../src/freeway.ts";
   let pts = 0;
   const plans = new Map<string, CityPlan>();
   for (const r of WORLD_ROADS) {
-    const M = r.map, A = CATALOGUE.find((F) => F.id === r.a.city)!, B = CATALOGUE.find((F) => F.id === r.b.city)!;
+    const M = roadMapOf(r), A = CATALOGUE.find((F) => F.id === r.a.city)!, B = CATALOGUE.find((F) => F.id === r.b.city)!;
     if (M.id !== r.id) err(`${r.id}: its map is ${M.id}'s`);
     if (M.heading.length !== M.height.length || M.hill.length !== M.heading.length) err(`${r.id}: its samples disagree in number`);
     if ((M.heading.length - 1) * 2 < M.length + 80) err(`${r.id}: its samples stop short of gate b`);

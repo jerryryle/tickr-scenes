@@ -3,6 +3,25 @@
 // street (0) to the end of gate b's (`length`); offsets `n` are to the right looking from a to b.
 // country.ts RoadGeo reads it; tools/draftroads.ts drafts it from today's rules.
 import type { RoadPiece } from "./country.ts";
+import type { WorldRoad } from "./world.ts";
+import { PACKED_ROADS, ROAD_HEADS } from "./world-packed.ts";
+import { unpackText } from "./pack.ts";
+
+// What the scene reads of a road it is not driving (tools/pack.ts packs the rest): its length, and
+// its heading at gate b (its map's last `heading`), which says which way it turns.
+export interface RoadHead { length: number; end: number }
+export function roadHead(r: WorldRoad): RoadHead {
+  const H = ROAD_HEADS[r.id];
+  if (!H) throw new Error(`road ${r.id}: no map in src/roads/`);
+  return H;
+}
+// A road's map, unpacked from those the scene carries packed (docs/long-day-cities.md, "How the
+// scene carries the cities"): for a drive along it, which holds it as long as it lives.
+export function roadMapOf(r: WorldRoad): RoadMap {
+  const p = PACKED_ROADS[r.id];
+  if (!p) throw new Error(`road ${r.id}: no map in src/roads/`);
+  return JSON.parse(unpackText(p)) as RoadMap;
+}
 
 // A set piece as country.ts has it, in the coordinates of the way it faces: `way` 1 for a driver
 // from a to b, -1 for one from b to a (its s then runs from gate b, its n to that driver's right).

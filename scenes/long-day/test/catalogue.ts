@@ -8,7 +8,7 @@ import type { StyleId } from "../src/styles.ts";
 import { CATALOGUE } from "../src/world.ts";
 import { citiesOfStyle } from "../src/visits.ts";
 import { cityFileOfPlan, cityProblems, contentsRowsOf, slugOf } from "../tools/cityfiles.ts";
-import { PACKED_CONTENTS } from "../src/cities-packed.ts";
+import { PACKED_CONTENTS } from "../src/world-packed.ts";
 import { unpackText } from "../src/pack.ts";
 
 const fails: string[] = [], ids = new Set<string>();

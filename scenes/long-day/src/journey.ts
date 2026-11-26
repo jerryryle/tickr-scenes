@@ -68,6 +68,7 @@ export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null
 // the way down ends 36 m along the frontage, in the far kerb lane).
 const GARAGE_OUT_BEFORE = 36;
 import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, roadMetres, V_GATE, V_JOIN } from "./country.ts";
+import { roadMapOf } from "./roadmap.ts";
 import { bedRearX, fetchSpots, RAMP_HOLD, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, STYLE, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
@@ -1710,7 +1711,7 @@ export class Journey {
     const P = freewayGate(fromKey) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
     const Q = freewayGate(toKey) && !toFreeway ? this.planOf(N1) : null;
     return {
-      map: way.road.map, back: way.back, toFreeway, toFreewayMerge, fromCurve, fromKey, toKey,
+      map: roadMapOf(way.road), back: way.back, toFreeway, toFreewayMerge, fromCurve, fromKey, toKey,
       toGateEnd: Q ? gateEnd(Q.graph.gates[way.in]!) : null, toCurve: Q ? Q.fwCurve : null,
       fromStyle, toStyle, fromClimate: this.climateOf(N), toClimate: this.climateOf(N1),
       fromName: cityName(fromKey, fromStyle), toName: cityName(toKey, toStyle),

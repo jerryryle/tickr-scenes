@@ -11,7 +11,7 @@ import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
 import { Batch, BATCH, frameApply, PLACED, quadGeometry, toTile } from "./geom.ts";
 import { CONTENTS, DRAW, drawRecipe, place, recipeOf } from "./contents.ts";
-import { PACKED_CONTENTS, PACKED_LAYOUTS } from "./cities-packed.ts";
+import { PACKED_CONTENTS, PACKED_LAYOUTS } from "./world-packed.ts";
 import { unpackText } from "./pack.ts";
 import type { Recipe } from "./contents.ts";
 import type { Frame2, Quad } from "./geom.ts";

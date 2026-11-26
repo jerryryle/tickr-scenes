@@ -20,7 +20,7 @@ import type { StyleId } from "./styles.ts";
 import type { CityHead } from "./cityfile.ts";
 import { CATALOGUE } from "./world.ts";
 import type { WorldRoad } from "./world.ts";
-import type { RoadMap } from "./roadmap.ts";
+import { roadHead } from "./roadmap.ts";
 import { WORLD_ROADS } from "./world-roads.ts";
 import type { Season, WeatherKind } from "./climate.ts";
 import type { TruckModel } from "./truck.ts";
@@ -123,8 +123,8 @@ function debugWay(from: CityHead, to: CityHead, seed: number, n: number): RoadWa
   const outs = from.gates.map((g, i) => [g, i] as const).filter(([g, i]) => g && i > 0 && g.dir !== gi!.dir), [go, oi] = outs[pickOf(seed, n, 4, outs.length)] ?? [from.gates[0]!, 0];
   // (Along a catalogue road's map that turns the same way, driven whichever way does: its signs
   // name its own cities.)
-  const want = Math.round((((gi!.dir + 2) % 4) - go!.dir + 8) % 4), turnOf = (M: RoadMap) => Math.round(((M.heading[M.heading.length - 1] / (Math.PI / 2)) % 4 + 4) % 4);   // (the road runs straight on past gate b)
-  const fits = WORLD_ROADS.flatMap((r) => r.oneway ? [] : [[r, false], [r, true]] as const).filter(([r, back]) => (back ? (4 - turnOf(r.map)) % 4 : turnOf(r.map)) === want);
+  const want = Math.round((((gi!.dir + 2) % 4) - go!.dir + 8) % 4), turnOf = (r: WorldRoad) => Math.round(((roadHead(r).end / (Math.PI / 2)) % 4 + 4) % 4);   // (the road runs straight on past gate b)
+  const fits = WORLD_ROADS.flatMap((r) => r.oneway ? [] : [[r, false], [r, true]] as const).filter(([r, back]) => (back ? (4 - turnOf(r)) % 4 : turnOf(r)) === want);
   const [R, back] = fits[pickOf(seed, n, 6, fits.length)] ?? [WORLD_ROADS[0], false];
   return { road: { ...R, id: `debug-${n}`, a: { city: from.id, gate: go!.id }, b: { city: to.id, gate: gi!.id } }, from, out: oi, to, in: ii, back };
 }

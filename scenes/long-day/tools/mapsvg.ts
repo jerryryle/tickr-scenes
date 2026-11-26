@@ -20,6 +20,7 @@ import { roadMetres } from "../src/country.ts";
 import { WORLD_PLACES, WORLD_ROADS } from "../src/world-roads.ts";
 import { cityById } from "../src/visits.ts";
 import { RoadGeo } from "../src/country.ts";
+import { roadMapOf } from "../src/roadmap.ts";
 import type { WorldRoad } from "../src/world.ts";
 
 // Coordinates to the centimetre for what the plan holds, to the decimetre for what is built on it.
@@ -225,7 +226,7 @@ const ROAD_LAYERS = [
 const BIOME_FILL: Record<string, string> = { coastal: "#cfe0a8", forest: "#8fbf7a", desert: "#ead2a0", farmland: "#c6dc94", prairie: "#dcdc9c", wetlands: "#a8cfa0", storybook: "#f2b8dc" };
 export const roadMapPath = (r: WorldRoad) => `build/long-day-maps/roads/road-${r.id}.svg`;
 export function roadSvg(r: WorldRoad): string {
-  const M = r.map, G = new RoadGeo(M), q = { x: 0, z: 0, h: 0, k: 0 }, L = new Map<string, string[]>(ROAD_LAYERS.map(([id]) => [id, []]));
+  const M = roadMapOf(r), G = new RoadGeo(M), q = { x: 0, z: 0, h: 0, k: 0 }, L = new Map<string, string[]>(ROAD_LAYERS.map(([id]) => [id, []]));
   G.place(0, 0, 0, 0);
   const add = (id: string, s: string) => L.get(id)!.push(s);
   const at = (s: number, n: number) => { G.point(s, n, q); return [q.x, q.z] as [number, number]; };

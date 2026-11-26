@@ -14,6 +14,7 @@ import { ARRIVE_LEN, CountryRoad } from "../src/country.ts";
 import { CountryWorld } from "../src/countryworld.ts";
 import { freewayGate } from "../src/freeway.ts";
 import type { Climate } from "../src/climate.ts";
+import { roadHead } from "../src/roadmap.ts";
 import type { RoadMap } from "../src/roadmap.ts";
 import { WORLD_PLACES, WORLD_ROADS } from "../src/world-roads.ts";
 import type { WorldRoad } from "../src/world.ts";
@@ -62,7 +63,7 @@ if (drArgs.includes("--list")) { drProc.stdout.write(WORLD_ROADS.filter((r) => !
 else for (const r of WORLD_ROADS) {
   const has = drFs.existsSync(roadFile(r.id));
   if (drWorld || (drIds.length ? !drIds.includes(r.id) : has)) continue;
-  const t0 = Date.now(), metres = (r as any).metres ?? r.map.length - ARRIVE_LEN, [A, B] = roadEnds(r);
+  const t0 = Date.now(), metres = (r as any).metres ?? roadHead(r).length - ARRIVE_LEN, [A, B] = roadEnds(r);
   const M = draftRoad(r, metres, A, B);
   const gA = gateOf(A), gB = gateOf(B);
   const toFreeway = !!M.freeway, fwA = freewayGate(A.plan.seed), fwB = freewayGate(B.plan.seed);
@@ -81,15 +82,14 @@ else for (const r of WORLD_ROADS) {
 if (drWorld && !drArgs.includes("--list")) {
   const missing = WORLD_ROADS.filter((r) => !drFs.existsSync(roadFile(r.id)));
   if (missing.length) throw new Error(`no map for ${missing.map((r) => r.id).join(", ")}: draft them first`);
-  const strip = ({ metres: _m, map: _p, ...r }: WorldRoad & { metres?: number }) => r;
+  const strip = ({ metres: _m, ...r }: WorldRoad & { metres?: number }) => r;
   drFs.writeFileSync("scenes/long-day/src/world-roads.ts", [
     `// The world graph's roads and the cities' places on the world map (docs/long-day-cities.md). Drafted`,
-    `// by tools/draftworld.ts; edited by hand from here on. Each road's map is its own file in roads/.`,
+    `// by tools/draftworld.ts; edited by hand from here on. Each road's map is its own file in roads/ (roadmap.ts).`,
     `import type { WorldRoad } from "./world.ts";`,
-    ...WORLD_ROADS.map((r) => `import { ${roadConst(r.id)} } from "./roads/road-${r.id}.ts";`),
     ``,
     `export const WORLD_ROADS: WorldRoad[] = [`,
-    ...WORLD_ROADS.map((r) => `  ${drItem(strip(r)).replace(/ }$/, `, map: ${roadConst(r.id)} }`)},`),
+    ...WORLD_ROADS.map((r) => `  ${drItem(strip(r))},`),
     `];`,
     ``,
     `// (Each city's place, x east and z south, in arbitrary units: for the world map only.)`,
