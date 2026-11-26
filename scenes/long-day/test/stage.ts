@@ -18,6 +18,7 @@ import { Crew } from "../src/crew.ts";
 import { Truck, TruckKit, truckLayout } from "../src/truck.ts";
 import type { TruckModel } from "../src/truck.ts";
 import { makeStage, stageSpec } from "../src/stage.ts";
+import { RAMP_HW } from "../src/chores.ts";
 
 const proc = (globalThis as any).process;
 // (IN_JACK: turning it on the spot in the bed, the driver steps in beside its pump, jackplan.ts
@@ -72,7 +73,11 @@ for (const cs of CASES) {
     const inAisle = D.x > L.rear - 0.05 && D.x < L.bedFront && Math.abs(D.z) < L.hw - 0.12;   // (from the box's back: over the sill)
     if (inBox && !inAisle) bad("the driver stands in the truck", L.hw - Math.abs(D.z), `${at} at ${D.x.toFixed(2)}, ${D.y.toFixed(2)}, ${D.z.toFixed(2)}`);
     // Up at the floor's height on a walk along the ground (cut across the truck's corner, say).
-    if (c.kind === "walk" && c.a && c.b && c.a[1] < 0.3 && c.b[1] < 0.3 && !c.linear && !c.over && D.y > 0.5) bad("the driver pops up to the floor on a walk on the ground", D.y, `${at} at ${D.x.toFixed(2)}, ${D.z.toFixed(2)}`);
+    // (On the walk ramp the driver is at its height. A run of walks with the hand truck is rolled
+    // as one movement timed by distance, so the driver can still be on the ramp after the walk from
+    // its foot has begun.)
+    const onRamp = L.loader === "ramp" && Math.abs(D.z) < RAMP_HW && D.x < L.bedRear && D.x > L.bedRear - 3.7;
+    if (c.kind === "walk" && c.a && c.b && c.a[1] < 0.3 && c.b[1] < 0.3 && !c.linear && !c.over && D.y > 0.5 && !onRamp) bad("the driver pops up to the floor on a walk on the ground", D.y, `${at} at ${D.x.toFixed(2)}, ${D.z.toFixed(2)}`);
     // Through a street tree's trunk.
     for (const o of S.obstacles) if (Math.hypot(D.x - o.x, D.z - o.z) < o.r + 0.1 && c.kind === "walk") bad("the driver walks through a tree", o.r + 0.1 - Math.hypot(D.x - o.x, D.z - o.z), `${at} at ${D.x.toFixed(2)}, ${D.z.toFixed(2)}, walking ${c.a?.map((v) => v.toFixed(2))} to ${c.b?.map((v) => v.toFixed(2))}`);
     // In the building: past its front, bar its doorway.
