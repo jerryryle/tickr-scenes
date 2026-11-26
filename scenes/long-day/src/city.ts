@@ -2217,15 +2217,13 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     box(g, mid, M - 0.002, cl - 0.15, len - 8, MH - 0.004, 0.12, C.yellow);
     box(g, mid, M - 0.002, cl + 0.15, len - 8, MH - 0.004, 0.12, C.yellow);
   }
-  // Loading zones (lo side, hi side): a yellow kerb and the bay's ends marked across the kerb lane,
-  // 16 m, inside the street's ends.
+  // Loading zones (lo side, hi side): 16 m of yellow kerb, inside the street's ends, and no
+  // markings on the road.
   feat.loading?.forEach((at, i) => {
     if (at === null || at === undefined) return;
-    const c = Math.max(a0 + 14, Math.min(a1 - 14, at)), kerbE = i ? STREET - KERB : KERB, ln = i ? STREET - KERB - 1.5 : KERB + 1.5;
+    const c = Math.max(a0 + 14, Math.min(a1 - 14, at)), kerbE = i ? STREET - KERB : KERB;
     if (a1 - a0 < 30) return;
     box(g, c, CURB_H + 0.012, kerbE + (i ? 0.055 : -0.055), 16, 0.02, 0.13, C.yellow);   // (a cm proud of the kerb's face, which the kerb's edge strip shares)
-    for (const e of [c - 8, c + 8]) box(g, e, 0.012, ln, 0.15, 0.02, 2.6, C.white);
-    box(g, c, 0.01, ln + (i ? -1.25 : 1.25), 16, 0.016, 0.12, C.yellow);   // (its outer edge: just under the white ends it crosses, as shared planes flicker)
   });
   if (!feat.oneway || feat.ring) for (const lane of feat.oneway ? [cl, cl + 3] : [cl - 3, cl + 3])
     for (let p = a0 + 6; p + 3 <= a1 - 6; p += 9) box(g, p + 1.5, M, lane, 3, MH, 0.12, C.white);
