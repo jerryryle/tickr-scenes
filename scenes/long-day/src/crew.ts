@@ -143,6 +143,14 @@ export class Crew {
   private doorNow = 0;   // the roll-up door's opening during a door chore (work sets it with the pose)   // a team lift's two carriers, truck frame (work)
   get workerRoot() { return this.helper.root; }   // the dock worker / team-lift carrier, for FrontDoorFx
   forkDoor = 0;   // how far the facility's front door is open for the forklift at a flatbed (FrontDoorFx)
+  // The middle of the forklift while it is in a docked trailer (worker() this frame), where main
+  // turns the spotlight on it: the driver stands out on the platform then, directing it.
+  forkSpot: THREE.Vector3 | null = null;
+  private forkSpotV = new THREE.Vector3();
+  // The teammate's chest on a team lift while they are outside (teamMate() this frame), where
+  // main turns a second spotlight on.
+  mateSpot: THREE.Vector3 | null = null;
+  private mateSpotV = new THREE.Vector3();
   private fp = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];   // its path out of the door
   inSeat = true;   // the driver is sitting in the cab (seat() this frame); main turns the driver spotlight on otherwise
   indoors = false;   // the driver is in a facility's doorway or past it (work() this frame): no spotlight then (main.ts)
@@ -169,7 +177,7 @@ export class Crew {
     this.herd?.hide();
     this.tools.handTruck.visible = this.tools.palletJack.visible = false;
     this.forklift.visible = false; this.stackWorking = false;
-    this.forkDoor = 0;
+    this.forkDoor = 0; this.forkSpot = null; this.mateSpot = null;
     this.gagPoint = null;
     d.root.visible = true;
     d.vestOn = false;   // (on for a dock stop, below: set on every update, so a scrub back takes it off)
@@ -346,13 +354,16 @@ export class Crew {
     // (Through a doorway, past half a metre in: out of sight.)
     const flips = plan.filter((q) => q.kind === "fetch" && q.flip).map((q) => ({ s: this.spotFor(q), f: q.face ?? 0 }));
     const wall = this.kerb ? 0.5 : 0;
-    const indoors = (x: number, z: number) => flips.some(({ s, f }) => (x - s[0]) * Math.cos(f) - (z - s[2]) * Math.sin(f) > wall + 0.5 && Math.abs((x - s[0]) * Math.sin(f) + (z - s[2]) * Math.cos(f)) < 2);
+    // (`by`: how far past the wall. The spotlight is off from 0.3 m short of it, as the driver's is
+    // (work()), so the building stays solid.)
+    const indoors = (x: number, z: number, by: number) => flips.some(({ s, f }) => (x - s[0]) * Math.cos(f) - (z - s[2]) * Math.sin(f) > wall + by && Math.abs((x - s[0]) * Math.sin(f) + (z - s[2]) * Math.cos(f)) < 2);
     const place = (x: number, z: number, yaw: number, pose: BodyPose, attached: boolean) => {
       const y = terrain(x, z);
       this.mate.x = x; this.mate.y = y; this.mate.z = z; this.mate.yaw = yaw; this.mate.attached = attached;
-      hp.root.visible = !indoors(x, z);
+      hp.root.visible = !indoors(x, z, 0.5);
       this.placeChar(hp, truck, x, y, z, yaw);
       hp.apply(pose);
+      this.mateSpot = indoors(x, z, -0.3) ? null : this.mateSpotV.copy(hp.root.position).setY(hp.root.position.y + 1.1);
     };
     const armsOn = (P: BodyPose) => { P.shLP = P.shRP = TEAM_BACK_ARM[0]; P.elL = P.elR = TEAM_BACK_ARM[1]; P.shLR = P.shRR = 0.12; return P; };
     // Where on a carry's path the worker stands when the driver is `Dd` along it: back along the
@@ -1235,6 +1246,11 @@ export class Crew {
       fl.position.copy(this.v); fl.rotation.set(0, truck.heading + yaw, 0);
     }
     this.forks.position.y = fy;
+    // In a docked trailer from when its mast passes the doors: the spotlight on its middle.
+    if (dock && L.trailer && A[0] + (B[0] - A[0]) * k > L.bedRear) {
+      fl.updateMatrixWorld();
+      this.forkSpot = this.forkSpotV.set(-0.7, 1.1, 0).applyMatrix4(fl.matrixWorld);
+    }
     // At a dock the worker walks from where they waved the truck in to the forklift first.
     const walkIn = dock && ph.phase === "park";
     hp.root.visible = true;

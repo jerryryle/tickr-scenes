@@ -68,6 +68,7 @@ const STREAM_RADIUS = 3;
 // slots, so the cache sheds its oldest when either atlas runs low.
 const CHUNK_CACHE_BYTES = 512e6;
 const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
+const FORK_SPOT_RADIUS = 1.8;   // the spotlight on the forklift in a docked trailer (m): it and its load, from the side
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH = 3;   // ENTRY_PREFETCH: blocks on in from the gate built coming in to town
@@ -644,11 +645,16 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const held = director.beat === "curb" || director.beat === "load" || director.beat === "swap";
     cutUniforms.uNearClip.value = held && !director.interior ? 7 : 3;
     updateCutaway(cam, truck.cutBoxes, director.cutaway);   // (only what stands between the camera and the truck)
-    // The driver spotlight: only while the truck's door is open at a stop (journey.driverSpotOn), and
+    // The driver spotlight (cutaway.ts): only while the truck's door is open at a stop (journey.driverSpotOn), and
     // the driver is out of the seat and the camera outside; never following them into a facility.
     const d = crew.driver.root.position;
     const out = !director.interior && !crew.inSeat && !crew.indoors && journey.driverSpotOn;
-    updateDriverSpot(cam, out ? spotChest.copy(d).setY(d.y + 1.1) : null);
+    // Otherwise, while the forklift is in a docked trailer, the spotlight is on the forklift
+    // (crew.forkSpot), wide enough for it and its load. The teammate on a team lift gets a second
+    // spot on the same terms as the driver's (crew.mateSpot).
+    const mate = !director.interior && journey.driverSpotOn ? crew.mateSpot : null;
+    if (out) updateDriverSpot(cam, spotChest.copy(d).setY(d.y + 1.1), 1.0, mate);
+    else updateDriverSpot(cam, director.interior ? null : crew.forkSpot, FORK_SPOT_RADIUS, mate);
     // The view: as far as the city is built round the camera (never further, so nothing is seen
     // popping in), and out on the open land the country's longer view; eased across the edge of town.
     const hard = Math.hypot(streamer.clearDistance(cam.position.x, cam.position.z), cam.position.y);
