@@ -130,7 +130,9 @@ export const CITY_METRO_GRAND_CENTRAL: CityFile = {
 The file holds these parts.
 
 1. **Nodes** are the junctions, each with its place, its control (signals unless it says `stop` or
-   `none`), its signal poles and its stop signs' posts.
+   `none`), its signal poles, its stop signs' posts and the moves through it a tractor-trailer
+   never takes (`noTractor`). Each move is a street in and a street out, as "Tractor-trailers'
+   turns" describes.
 2. **Streets** join two nodes. A street may be named, curved, one-way, part of a roundabout's
    ring, tagged as carrying an elevated line, a cable car or the freeway, or lie outside the town.
    Its `furniture` lists its hydrants, bins, benches, mailboxes, newspaper boxes, meters, shelters
@@ -402,11 +404,19 @@ on: no tool rewrites a file that exists. Replacing a city means drafting a new o
    `tools/citygen.ts`, `tools/outlinegen.ts`, `tools/freewaygen.ts`), keeps those
    `cityProblems` in `tools/cityfiles.ts` finds fit for play, and writes the five that differ most
    as new city folders, each with its city file and contents file. It names them from the style's
-   list of names in its style file.
+   list of names in its style file. Once they are in `src/world.ts`, `make tractorturns` (step 4)
+   writes their tractor bans.
 2. `make draftworld SCENE=long-day` runs `tools/draftworld.ts`, which drafts the world graph's
    roads and assigns gates to them.
 3. `make draftroads SCENE=long-day` runs `tools/draftroads.ts`, which drafts a map for every road
    that has none from the generator's rules (`tools/roadgen.ts`).
+4. `make tractorturns SCENE=long-day [ARGS="<city id> ..."]` runs `tools/tractorturns.ts`, which
+   writes each city's `noTractor` lists afresh and changes nothing else in its file. Run it after a
+   hand edit that moves a junction, a signal pole, a stop sign or a piece of street furniture.
+
+`test/tractorturns.ts` checks that a city of each style lists the moves the sweep bans, that a
+tractor can still get in and out by every gate, and that a tractor driven through two towns keeps
+to its moves and clear of every pole.
 
 `test/catalogue.ts` checks that every catalogue city loads, is fit for normal play (its streets let
 the truck and traffic get from every node to every other, and every site's kerb is drivable),
@@ -414,6 +424,32 @@ reads back as written with its contents, and has an id matching its style and na
 `test/contents.ts` checks that a city drawn from its listed recipes is the city the rules draw,
 chunk by chunk and triangle for triangle (to 2 cm), for a city of each style. `test/roads.ts`
 checks every road map, and `test/world.ts` the world graph and the planner.
+
+## Tractor-trailers' turns
+
+A tractor-trailer never takes a move through a junction that would drag its trailer across a
+corner. Its trailer's axles are 10 m behind its kingpin (`KINGPIN_TO_AXLES` in `src/hitch.ts`), and
+on a turn they cut inside the path the tractor drives. Round a grid city's square corners, its
+right turns swung wide (`src/route.ts`), they clear every corner. In organic and warped towns they
+run over a corner's sidewalk on many sharp bends (which the route counts as going straight on) and
+on some odd-angled rights, and a tractor goes round those by other ways.
+
+`tools/tractorsweep.ts` decides which moves are banned. It drives each move on the path a tractor's
+route gives it, in from just past the junction before, its trailer swung as `hitchStep` in
+`src/journey.ts` swings it, and bans the move if the rig comes more than 0.3 m into a block or
+passes through anything on the pavement near the junction. The city file lists the banned moves
+(`noTractor`), so the scene does no sweeping. `planRoute` keeps a tractor's routes off them, and a
+tractor's jobs go only to blocks it can drive to and away from (`tractorReach` in
+`src/citygraph.ts`); `tools/tractorturns.ts` reports what each city leaves it.
+
+The trailer is 10 m from kingpin to axles because at that length the grid cities need no bans at
+all and a tractor still reaches 99.8% of the catalogue's street directions, and 98.8% in the city
+that loses most. With its 12.9 m box the rig is 18.2 m overall, still the longest vehicle in town. The 26 ft box truck is 11.35 m (`truckExtents` in
+`src/truck.ts`). The trailer was 13 m from kingpin to axles, a 53 ft trailer, and two things made
+that length unworkable. The sweep banned 1,119 to 2,063 right turns in every city, nearly all of
+them. Even then, a move clear on its own could hit a pole as part of a route, because a turn just
+before or after it changed its path, and sweeping each move in those contexts took over 20 minutes
+for an organic town.
 
 ## Maps
 

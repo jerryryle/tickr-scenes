@@ -104,8 +104,10 @@ export const SPECS: Record<TruckModel, TruckSpec> = {
   },
 };
 
-// 53 ft dry van, in its own frame: origin at the kingpin, extending to -x.
-export const TRAILER = { front: 0.9, rear: -15.25, floor: 1.25, top: 4.1, hw: 1.3, axles: [-12.4, -13.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
+// A dry van, its box 12.9 m long, in its own frame: origin at the kingpin, extending to -x. It is a
+// city trailer, shorter than a 53 ft one. Its axles are 10 m behind the kingpin, so it clears a square
+// corner on a wide right (docs/long-day-cities.md, "Tractor-trailers' turns").
+export const TRAILER = { front: 0.9, rear: -12.0, floor: 1.25, top: 4.1, hw: 1.3, axles: [-9.4, -10.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
 // How far a trailer's swing door turns from shut to lying back along the side (rad).
 export const LEAF_OPEN = 4.55;
 // The height of its lock rods' handles over the road (m).
@@ -240,7 +242,7 @@ function toonRegions(s: TruckSpec): ToonRegion[] {
   if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0, side: 0.8, pillow: 0.08 });
   return R;
 }
-const TRAILER_REGION: ToonRegion[] = [{ x0: -15.25, x1: 0.9, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08 }];
+const TRAILER_REGION: ToonRegion[] = [{ x0: TRAILER.rear, x1: TRAILER.front, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08 }];
 
 export class Truck {
   readonly spec: TruckSpec;
@@ -1269,8 +1271,8 @@ export class Truck {
     for (const z of [-1, 1]) {
       P.span(-2.0, 0.28, z * 0.55, -1.86, t.floor - 0.1, z * 0.66, TC.frame);
       P.span(-2.08, 0.2, z * 0.5, -1.78, 0.28, z * 0.72, TC.frame);
-      P.span(-3.4, 0.48, z * (t.hw - 0.05), -11.4, t.floor - 0.12, z * (t.hw - 0.02), TC.skirt);
-      P.span(-14.3, 0.62, z * 0.5, -11.8, t.floor - 0.12, z * 0.6, TC.frame);
+      P.span(-3.4, 0.48, z * (t.hw - 0.05), t.axles[0] + 1, t.floor - 0.12, z * (t.hw - 0.02), TC.skirt);   // (The skirt stops a metre short of the tandem.)
+      P.span(t.axles[1] - 0.65, 0.62, z * 0.5, t.axles[0] + 0.6, t.floor - 0.12, z * 0.6, TC.frame);   // (The tandem's slider runs past its axles.)
     }
     P.span(-0.58, t.floor - 0.18, -0.9, 0.9, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
     P.span(-0.05, t.floor - 0.3, -0.05, 0.05, t.floor - 0.18, 0.05, TC.chrome);   // kingpin

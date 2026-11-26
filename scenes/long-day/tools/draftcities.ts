@@ -49,6 +49,7 @@ while (chosen.length < 5 && chosen.length < drafts.length) {
 if (chosen.length < 5) throw new Error(`only ${chosen.length} good ${draftStyle} drafts`);
 
 let written = 0;
+const draftedIds: string[] = [];
 chosen.forEach((d, i) => {
   const name = draftNames[i], F = cityFileOfPlan(d.plan, `${draftStyle}-${slugOf(name)}`, name), file = path.resolve(cityPath(F));
   if (fs.existsSync(file)) { console.log(`${file}: exists, left as it is`); return; }
@@ -62,6 +63,10 @@ chosen.forEach((d, i) => {
   fs.writeFileSync(file, text);
   fs.writeFileSync(contentsPath(F), contentsFileText(F, C));   // (its contents beside it)
   console.log(`${path.relative(draftProc.cwd(), file)}: seed ${d.seed}, ${JSON.stringify(d.traits)}`);
+  draftedIds.push(F.id);
 });
 // (A style whose names all have files already gets nothing new: say so, and fail.)
 if (!written) throw new Error(`every ${draftStyle} name in styles.ts already has a city file: add names to draft more`);
+// (The moves a tractor-trailer never takes are swept from the files as written, their furniture
+// slid clear of the doors by then: tools/tractorturns.ts, once the cities are in world.ts.)
+console.log(`then, with them in src/world.ts: make tractorturns SCENE=long-day ARGS="${draftedIds.join(" ")}"`);

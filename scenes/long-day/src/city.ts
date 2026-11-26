@@ -850,6 +850,12 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
 // upper floors' tile, an awning's colour), a park's `pavilion`, a `house` (set back behind its
 // front garden) or industrial `works` (its one tall floor's height). Its wall's colour; the roof's
 // cap and clutter from its own draws.
+// Its detail follows its style as the grid's buildings do, drawn from its own seed so the city
+// files name none of it: a house is the style's kind (CityStyle houses), gabled with perhaps a
+// chimney where detached (and where a coastal town's Victorians are), a punched-window bungalow
+// in the desert, else a brick or apartment front under a cornice; a shop may have neon and, three
+// floors up or more, a fire escape (CityStyle neon, fireEscapes); a tall, wide tower may step in
+// to a crown of a few floors.
 DRAW.lotBuilding = (R, _g, s, rnd) => {
   const [x0, z0, x1, z1] = R.rect as number[], b: Rect = { x0, z0, x1, z1 }, wall = R.wall as number, side = R.side as number;
   const door = (dx0: number, dx1: number, n: number, painted = false) => {
@@ -860,8 +866,16 @@ DRAW.lotBuilding = (R, _g, s, rnd) => {
   switch (R.use) {
     case "tower": {
       door(b.x0, b.x1, b.z0);
-      const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: R.ground as number, floors: 1, floorH: 5 }, { tile: R.tile as number, floors: R.floors as number, floorH: 3.6 }], wall);
-      flatRoof(s, b, top, wall, rnd, 3);
+      const floors = R.floors as number, tile = R.tile as number;
+      // (A crown: its top few floors stepped in 2.5 m all round, where there is room for one.)
+      const crown = floors >= 8 && b.x1 - b.x0 >= 12 && b.z1 - b.z0 >= 10 && rnd() < 0.5 ? irange(rnd, 2, 4) : 0;
+      let top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: R.ground as number, floors: 1, floorH: 5 }, { tile, floors: floors - crown, floorH: 3.6 }], wall);
+      if (crown) {
+        { const ci = inset(b, 0.04); s.span(ci.x0, top - 0.05, ci.z0, ci.x1, top + 0.05, ci.z1, C.roofLight); }   // (inside the walls: flatRoof)
+        const cr = inset(b, 2.5);
+        top = facadeBox(s, cr.x0, cr.z0, cr.x1, cr.z1, top, [{ tile, floors: crown, floorH: 3.6 }], wall);
+        flatRoof(s, cr, top, wall, rnd, 2);
+      } else flatRoof(s, b, top, wall, rnd, 3);
       break;
     }
     case "shop": {
@@ -871,6 +885,8 @@ DRAW.lotBuilding = (R, _g, s, rnd) => {
       const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, bands, wall);
       flatRoof(s, b, top, wall, rnd, floors > 2 ? 2 : 1);
       if (R.awning !== undefined) awning(s, b, 2, R.awning as number);
+      if (rnd() < CS.neon) shopNeon(s, b, 2, rnd);
+      if (CS.fireEscapes && floors >= 3 && rnd() < 0.5) fireEscape(s, b, 2, floors, 4.2, 3.4, rnd);
       break;
     }
     case "pavilion": {
@@ -881,8 +897,18 @@ DRAW.lotBuilding = (R, _g, s, rnd) => {
     }
     case "house": {
       door(b.x0, b.x1, b.z0, true);
-      const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.RESIDENTIAL, floors: R.floors as number, floorH: 3.1 }], wall, 2, FACADE.DOOR);
-      flatRoof(s, b, top, wall, rnd, 0);
+      const kind = CS.houses === "row" && CS.id !== "coastal" ? "row" : CS.houses === "bungalow" ? "bungalow" : "gabled";
+      const tile = kind === "gabled" ? FACADE.SIDING : kind === "bungalow" ? FACADE.PUNCHED : pick(rnd, [FACADE.BRICK, FACADE.RESIDENTIAL, FACADE.APARTMENT]);
+      const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile, floors: R.floors as number, floorH: 3.1 }], wall, 2, FACADE.DOOR);
+      if (kind === "gabled") {
+        // (Its ridge along the street, as the grid's detached houses have theirs.)
+        const rd = b.z1 - b.z0 + 0.8, rh = rd * 0.36;
+        s.prism((b.x0 + b.x1) / 2, top + rh / 2, (b.z0 + b.z1) / 2, b.x1 - b.x0 + 0.5, rh, rd, pick(rnd, CS.gables), 0);
+        if (rnd() < 0.5) s.box(b.x0 + 1.2, top + rh * 0.9, (b.z0 + b.z1) / 2, 0.7, rh * 1.2, 0.7, 0x8a4a3a);
+      } else {
+        flatRoof(s, b, top, wall, rnd, kind === "bungalow" ? 1 : 0);
+        if (kind === "row") s.span(b.x0, top - 0.35, b.z0 - 0.35, b.x1, top + 0.1, b.z0, shade(wall, 0.7));   // a cornice along its front
+      }
       break;
     }
     default: {
@@ -1972,13 +1998,13 @@ function signQuad(quads: Quad[], uv: ReturnType<SignAtlas["uv"]>, side: number, 
 // sign (no tree under it), in frontage `a` of block (bx, bz)'s side `side`.
 // `clear`: a stretch kept free of street trees and lights; `free`: of the bins and hydrants too
 // (where the truck's crew walks to a stand's counter).
-interface Frontage { side: number; drive: [number, number] | null; sign: number | null; clear?: [number, number]; free?: boolean }
+export interface Frontage { side: number; drive: [number, number] | null; sign: number | null; clear?: [number, number]; free?: boolean }
 export const BLADE_A = 31.5;
 // The block side whose frontage ends at the corner where side i's begins. A dock's bay is near
 // that corner, and the side view of a truck working there looks back across it, so that side
 // keeps most of its length free of street trees and lights.
 const PREV_SIDE = [2, 3, 1, 0];
-function streetFrontage(plan: CityPlan, bx: number, bz: number, side: number): Frontage {
+export function streetFrontage(plan: CityPlan, bx: number, bz: number, side: number): Frontage {
   const blk = plan.blockOf(bx, bz);
   if (!blk?.inCity) return { side, drive: null, sign: null };   // countryside
   const L = siteLayout(plan, bx, bz), dl = plan.siteDelta(bx, bz), mv = (r: [number, number]): [number, number] => [r[0] + dl, r[1] + dl];

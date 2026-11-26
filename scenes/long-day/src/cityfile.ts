@@ -58,6 +58,10 @@ export interface CityFileNode {
   control?: Control;              // (It is "stop" or "none" where the junction has no signals.)
   poles?: [number, number, number, number, number][];   // (Its signal poles: each [arm, x, z, heading, mast reach], signals.ts SignalPole.)
   stops?: [number, number, number][];                   // (Its stop signs' posts: each [arm, x, z].)
+  // (The moves through it a tractor-trailer never takes, each as [street in, street out]. On each,
+  // its trailer would swing across a corner and through what stands there. tools/tractorturns.ts
+  // works them out.)
+  noTractor?: [number, number][];
 }
 export type StreetTag = "elevated" | "cable" | "freeway";
 export interface CityFileStreet {
@@ -131,6 +135,10 @@ export function* graphOfFile(F: CityFile): Steps<CityGraph> {
     stops.set(id, new Map((n.stops ?? []).map(([arm, x, z]) => [arm, [x, z] as [number, number]])));
   }
   presetJunctionPosts(G, poles, stops);
+  for (const n of F.nodes) for (const [a, b] of n.noTractor ?? []) {
+    const id = node.get(n.id)!, A = G.streets[street.get(a)!], B = G.streets[street.get(b)!];
+    G.noTractor.add((A.id * 2 + (A.n1 === id ? 0 : 1)) * 65536 + B.id * 2 + (B.n0 === id ? 0 : 1));
+  }
   F.gates.forEach((g, i) => {
     if (!g) { G.gates.push(null); return; }
     const sid = street.get(g.street)!, st = G.streets[sid], out = g.out === "b" ? 1 : 0;

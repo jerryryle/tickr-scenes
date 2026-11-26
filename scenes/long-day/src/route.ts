@@ -12,8 +12,11 @@
 // corner radius of 6.5 m (the rear axle passing 4.3 m from a right-angled kerb corner), left turns
 // inner lane to inner lane on 9 m. A tractor-trailer (a route's `wide`) swings its right turns out
 // of the inner lane instead, round onto the inner lane's far side nearer the centre line, and eases
-// back over after: its trailer axles, 13 m back, cut far inside the tractor's path, and from the
-// kerb lane they would drag the trailer across the corner's sidewalk and into the building on it. A
+// back over after: its trailer axles, 10 m back, cut inside the tractor's path, and from the
+// kerb lane they would drag the trailer across the corner's sidewalk and into the building on it.
+// Where even a wide one would (an organic town's odd angles and sharp bends), a tractor's routes
+// keep off the move (planRoute's `move`, citygraph.ts noTractor; docs/long-day-cities.md,
+// "Tractor-trailers' turns"). A
 // bend where a street carries straight on at an angle keeps its lane, on a wide radius. Between
 // turns a line keeps to the kerb lane, unless both of its ends are in the inner lane (out of a left
 // and into another): then it stays there rather than weave out and back. The journey ignores
@@ -521,8 +524,9 @@ const TURN_COST: Record<Move, number> = { S: 0, R: 14, L: 26 };
 // Cheapest route from the start (dedge d, `before` metres short of its end) to any goal: A* over
 // dedges (no U-turns), costed by length and turns. The first move is made at the node being
 // approached, so a goal on the current dedge is reached by going round the block.
-// `ok`: whether a dedge may be driven (the city's streets).
-export function planRoute(G: CityGraph, d: number, before: number, goals: Goal[], maxExpand = 6000, ok: ((d: number) => boolean) | null = null): Route | null {
+// `ok`: whether a dedge may be driven (the city's streets). `move`: whether the move from one dedge
+// onto the next may be made (a tractor-trailer's: citygraph.ts noTractor).
+export function planRoute(G: CityGraph, d: number, before: number, goals: Goal[], maxExpand = 6000, ok: ((d: number) => boolean) | null = null, move: ((d: number, e: number) => boolean) | null = null): Route | null {
   type State = { d: number; g: number; f: number; edges: number[] };
   const goalPts = goals.map((gl) => G.nodes[G.dedgeFrom(gl.d)]);
   const h = (e: number) => {
@@ -543,6 +547,7 @@ export function planRoute(G: CityGraph, d: number, before: number, goals: Goal[]
     // (Moves in a fixed order, straight on first, then right, then left, as on the old grid.)
     const moves = G.movesFrom(st.d).sort((p, q) => MOVE_ORDER[p.move] - MOVE_ORDER[q.move] || p.turn - q.turn);
     for (const mv of moves) {
+      if (move && !move(st.d, mv.to)) continue;
       for (const gl of goals)
         if (gl.d === mv.to && (!gl.straight || mv.move === "S")) {
           // Goal edges are checked when popped, so the first one found is the cheapest.

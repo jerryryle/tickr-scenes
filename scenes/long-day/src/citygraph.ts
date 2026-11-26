@@ -82,6 +82,34 @@ export class CityGraph {
   readonly streets: CStreet[] = [];
   readonly blocks: CBlock[] = [];
   readonly gates: (CGate | null)[] = [];   // the town's gates: the entry first, then its exits (tools/citygen.ts trimToOutline)
+  // The moves through a junction a tractor-trailer never takes, each its dedge in and its dedge out
+  // (tractorMove): its trailer, swung in behind it, would cut across a corner's sidewalk and through
+  // what stands there. A city file lists them (cityfile.ts CityFileNode noTractor).
+  readonly noTractor = new Set<number>();
+  tractorMove(d: number, e: number) { return !this.noTractor.has(d * 65536 + e); }
+  // The dedges a tractor-trailer can drive, keeping to its moves. It must reach each in by every
+  // gate it can drive in by, since a visit may come in by any, and leave town from it by a gate's
+  // way out. Job planning asks it of every block, so it is worked out once.
+  private tractorSet: Set<number> | null = null;
+  tractorReach(): Set<number> {
+    if (this.tractorSet) return this.tractorSet;
+    const ok = (d: number) => { const st = this.streets[d >> 1]; return (st.inCity || st.gate >= 0) && !(st.oneway && (d & 1)); };
+    const next = (d: number) => this.movesFrom(d).map((m) => m.to).filter((e) => ok(e) && this.tractorMove(d, e));
+    const into = (g: CGate) => g.street * 2 + g.out, outOf = (g: CGate) => g.street * 2 + (g.out ^ 1);
+    // A street of the town counts only if the tractor reaches it in by every gate.
+    const ins = this.gates.flatMap((g) => (g && ok(into(g)) ? [into(g)] : [])), counts = new Map<number, number>();
+    for (const d0 of ins) {
+      const seen = new Set<number>([d0]), todo = [d0];
+      while (todo.length) for (const e of next(todo.pop()!)) if (!seen.has(e)) { seen.add(e); todo.push(e); }
+      for (const d of seen) counts.set(d, (counts.get(d) ?? 0) + 1);
+    }
+    const fwd = new Set<number>([...counts].filter(([d, n]) => n === ins.length || !this.streets[d >> 1].inCity).map(([d]) => d));
+    const prev = new Map<number, number[]>();
+    for (let d = 0; d < this.streets.length * 2; d++) if (ok(d)) for (const e of next(d)) (prev.get(e) ?? prev.set(e, []).get(e)!).push(d);
+    const back = new Set<number>(this.gates.flatMap((g) => (g ? [outOf(g)] : []))), todo2 = [...back];
+    while (todo2.length) for (const d of prev.get(todo2.pop()!) ?? []) if (!back.has(d)) { back.add(d); todo2.push(d); }
+    return (this.tractorSet = new Set([...fwd].filter((d) => back.has(d))));
+  }
   // The edge round the outside of the town (the backs of its outermost sidewalks), the largest
   // such cycle: where the land ends (outline.ts), and along the sea, the shore.
   outer: [number, number][] | null = null;
