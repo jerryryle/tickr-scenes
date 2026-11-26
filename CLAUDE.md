@@ -10,6 +10,12 @@ diff it against the source or carry editor changes back into `src/`.
 `build/<scene>/` just for that, then run `make <scene>` (which regenerates `scene.ts` from `src/`),
 build, make the thumbnail, and publish.
 
+A scene whose build packs assets of its own (`scenes/<scene>/assets-packed/`, such as Long Day's
+`world_<hash>`) needs each uploaded with `asset_add`, under its file name, before its source is
+published or sent as a draft. The source reads the asset by that name, so without it the scene
+fails to start. A packed asset is named after its contents, so a new one is added beside the old
+one; adding it changes only the scene's draft.
+
 ## Correct, simple and fast enough is the bar
 
 Designs, code and reviews all aim at the same three things: a scene that behaves correctly in the
