@@ -9,9 +9,14 @@
 // kept-clear stretches and signs (city.ts buildStreet's keep marks); one with nowhere within
 // SHIFT_MAX goes. Signal poles, stop signs and an elevated line's or a freeway's columns stay, and
 // are reported. Run tools/tractorturns.ts again afterwards: the furniture bounds a tractor's turns.
-// Args: a city's id, or --list (every catalogue city's id, one a line).
+// With --doors it redrafts the city's facility doors instead: each block's doors as its buildings
+// put them with the file's own left out (city.ts kerbDoors, as test/doors.ts checks them), since
+// what stands on the pavement steers where a door goes. The clearing and the redrafting each move
+// what the other reads, so they are run in turn (make clearstops, then make clearstops DOORS=1, each
+// of which repacks the cities first) until both change nothing.
+// Args: a city's id [--dry] [--doors], or --list (every catalogue city's id, one a line).
 import * as THREE from "three@0.187.0";
-import { CityPlan, CITY_HI, CITY_LO, cityDistance, kerbDoors, makeCityChunkBuilder } from "../src/city.ts";
+import { CityPlan, CITY_HI, CITY_LO, cityDistance, fileOf, kerbDoors, makeCityChunkBuilder } from "../src/city.ts";
 import type { Recipe } from "../src/contents.ts";
 import { PAVEMENT, PK } from "../src/decor.ts";
 import { BLOCK, RING } from "../src/grid.ts";
@@ -22,7 +27,7 @@ import { CARGO, truckCarries } from "../src/cargo.ts";
 import { kerbStopAfter } from "../src/journey.ts";
 import { truckLayout } from "../src/truck.ts";
 import type { TruckModel } from "../src/truck.ts";
-import { slugOf } from "./cityfiles.ts";
+import { cityFileOfPlan, fileDoorsOf, fileItem, slugOf } from "./cityfiles.ts";
 
 const csProc = (globalThis as any).process, csFs = csProc.getBuiltinModule("node:fs");
 const MODELS: TruckModel[] = ["box16", "box26", "reefer", "flatbed", "tractor"];
@@ -38,11 +43,51 @@ const FURNITURE_NAME = Object.fromEntries(Object.entries(PK).map(([k, v]) => [v,
 
 interface Item { x: number; z: number; r: number; kind: number }
 interface Zone { face: number; lo: number; hi: number }
-const csArg: string = csProc.argv[2] ?? "", csDry = csProc.argv.includes("--dry");
+const csArg: string = csProc.argv[2] ?? "", csDry = csProc.argv.includes("--dry"), csDoors = csProc.argv.includes("--doors");
+const csCity = CATALOGUE.find((c) => c.id === csArg);
+const cityFileOf = (F: typeof CATALOGUE[number]) => `scenes/long-day/src/city-${F.style}/${slugOf(F.name)}/${slugOf(F.name)}.ts`;
 if (csArg === "--list") for (const F of CATALOGUE) console.log(F.id);
+else if (!csCity) { console.error(`usage: clearstops <city id> [--dry] [--doors] | --list (no city ${csArg})`); csProc.exit(2); }
+else if (csDoors) {
+  // Each facility block's doors are worked out from its buildings and written over the file's where
+  // they differ. (A block's line is found by its place in the file's blocks, the plan's block order.)
+  const F = csCity, file = fileOf(F), bare = new CityPlan(F.key, STYLES[F.style], F.key, { ...file, blocks: file.blocks.map(({ doors: _d, ...b }) => b) });
+  const path = cityFileOf(F), lines: string[] = csFs.readFileSync(path, "utf8").split("\n");
+  const blockLines = lines.flatMap((l, i) => (/^ {4}\{ at: /.test(l) ? [i] : []));
+  let changed = 0, doors = 0, kept = 0, dirty = false;
+  const blocks = file.blocks.map((b) => ({ ...b }));
+  bare.graph.blocks.forEach((B, i) => {
+    const own = file.blocks[i].doors;
+    if (!own) return;
+    const now = fileDoorsOf(bare, B.kx, B.kz) ?? [];
+    doors += own.length;
+    // (A door counts as moved as test/doors.ts judges it: more than 2 cm along or out, or another
+    // panel or height. The centimetre a curved face's rounding gives is let be.)
+    type D = (typeof now)[number];
+    const same = (d: D | undefined, e: D | undefined) => !!d && !!e && Math.abs(d.a - e.a) <= 0.02 && Math.abs(d.n - e.n) <= 0.02 && d.panel === e.panel && Math.abs(d.h - e.h) <= 0.02;
+    const n = [0, 1, 2, 3, 4, 5, 6, 7].filter((side) => (own.some((d) => d.side === side) || now.some((e) => e.side === side)) && !same(own.find((d) => d.side === side), now.find((e) => e.side === side))).length;
+    if (!n) return;
+    changed += n;
+    blocks[i].doors = now; dirty = true;
+    lines[blockLines[i]] = lines[blockLines[i]].replace(/doors: \[[^\]]*\]/, `doors: ${fileItem(now)}`);
+  });
+  // The furniture is kept off the doors as they now are, as the file's writer keeps it (tools/
+  // cityfiles.ts cityFileOfPlan, clearDoors), so that the file reads back as written.
+  {
+    const streets = cityFileOfPlan(new CityPlan(F.key, STYLES[F.style], F.key, { ...file, blocks }), F.id, F.name).streets;
+    const streetLines = lines.flatMap((l, i) => (/^ {4}\{ id: \d+, a: \d+, b: \d+/.test(l) ? [i] : []));
+    streets.forEach((st, i) => {
+      const was = file.streets[i].furniture ?? [], now = st.furniture ?? [];
+      if (fileItem(was) === fileItem(now)) return;
+      kept += was.filter((w) => !now.some((x) => fileItem(x) === fileItem(w))).length; dirty = true;
+      lines[streetLines[i]] = now.length ? lines[streetLines[i]].replace(/furniture: \[.*\]/, `furniture: ${fileItem(now)}`) : lines[streetLines[i]].replace(/, furniture: \[.*\]/, "");
+    });
+  }
+  if (!csDry && dirty) csFs.writeFileSync(path, lines.join("\n"));
+  console.log(`${F.id}: doors redrafted ${changed} of ${doors}, furniture kept off them ${kept}`);
+}
 else {
-  const F = CATALOGUE.find((c) => c.id === csArg);
-  if (!F) { console.error(`usage: clearstops <city id> | --list (no city ${csArg})`); csProc.exit(2); }
+  const F = csCity;
   const t0 = Date.now(), plan = new CityPlan(F!.key, STYLES[F!.style]), G = plan.graph;
   // What stands on the pavements, by what drew it, and where nothing may go (world).
   const mats = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
@@ -111,7 +156,8 @@ else {
     let face = -1, fa = 0, fd = Infinity;
     for (const Z of zones) { const r = along(Z.face, g[0].x, g[0].z); if (r.d < fd) { fd = r.d; face = Z.face; fa = r.a; } }
     const P0 = G.facePt(face, fa - 0.5, 0), P1 = G.facePt(face, fa + 0.5, 0), tl = Math.hypot(P1.x - P0.x, P1.z - P0.z), tx = (P1.x - P0.x) / tl, tz = (P1.z - P0.z) / tl;
-    const others = placed.filter((q) => !g.includes(q));
+    // (Only what stands within reach of some shift can be in the way.)
+    const others = placed.filter((q) => !g.includes(q) && Math.hypot(q.x - g[0].x, q.z - g[0].z) < SHIFT_MAX + 10);
     let got: { dx: number; dz: number } | null = null;
     for (let k = 1; k * SHIFT_STEP <= SHIFT_MAX && !got; k++) for (const s of [1, -1]) {
       const dx = tx * s * k * SHIFT_STEP, dz = tz * s * k * SHIFT_STEP, moved = g.map((o) => ({ ...o, x: o.x + dx, z: o.z + dz }));
@@ -129,7 +175,7 @@ else {
   }
   const blocked = fixed.filter((o) => o.kind !== PK.tree && inZone(o)).length;
   // Into the files: furniture along its street (its `at`), a tree's or lamp's place in its row.
-  const dir = `scenes/long-day/src/city-${F!.style}/${slugOf(F!.name)}`, cityFile = `${dir}/${slugOf(F!.name)}.ts`, contentsFile = `${dir}/${slugOf(F!.name)}-contents.ts`;
+  const cityFile = cityFileOf(F), contentsFile = cityFile.replace(/\.ts$/, "-contents.ts");
   const lines: string[] = csFs.readFileSync(cityFile, "utf8").split("\n"), clines: string[] = csFs.readFileSync(contentsFile, "utf8").split("\n");
   let moved = 0, gone = 0;
   // (Each street's line in the city file, and its rows in the contents file.)
@@ -158,7 +204,10 @@ else {
         const P = G.streetPt(t.street, 1, 0), Q = G.streetPt(t.street, 2, 0), sx = Q.x - P.x, sz = Q.z - P.z, sl = Math.hypot(sx, sz);
         list[i][2] = Math.round((list[i][2] + (mv.dx * sx + mv.dz * sz) / sl) * 100) / 100; moved++;
       } else { list.splice(i, 1); gone++; }
-      lines[li] = lines[li].replace(/furniture: \[.*\]/, `furniture: ${JSON.stringify(list).replace(/,/g, ", ")}`);
+      // (The list is written back as tools/cityfiles.ts cityFileOfPlan writes it: it is in order
+      // along the street, and a street with none left has no list.)
+      list.sort((p, q) => p[2] - q[2] || (p[1] < q[1] ? -1 : 1));
+      lines[li] = list.length ? lines[li].replace(/furniture: \[.*\]/, `furniture: ${JSON.stringify(list).replace(/,/g, ", ")}`) : lines[li].replace(/, furniture: \[.*\]/, "");
     } else {
       // A tree or lamp: its row's x and z (and a lamp's head), tile-local in the street's tile.
       const [sid, n] = streetOf.get(key as Recipe)!, li = rowLine.get(`${sid}:${n}`)!;
@@ -174,7 +223,9 @@ else {
   }
   if (!csDry) {
     csFs.writeFileSync(cityFile, lines.join("\n"));
-    csFs.writeFileSync(contentsFile, clines.filter((_, i) => !dropLines.has(i)).join("\n"));
+    // (A street with no rows left is dropped, since tools/cityfiles.ts contentsRowsOf lists none.)
+    const kept = clines.filter((_, i) => !dropLines.has(i));
+    csFs.writeFileSync(contentsFile, kept.filter((l, i) => !(/^ {4}\d+: \[$/.test(l) && kept[i + 1] === "    ],") && !(l === "    ]," && /^ {4}\d+: \[$/.test(kept[i - 1] ?? ""))).join("\n"));
   }
   const zl = zones.reduce((a, Z) => a + Z.hi - Z.lo, 0), fl = zones.reduce((a, Z) => a + G.faceA1(Z.face) - G.faceA0(Z.face), 0);
   console.log(`${F!.id}: work areas ${(100 * zl / fl).toFixed(0)}% of their sides' length, ${groups.size} movable items in all`);

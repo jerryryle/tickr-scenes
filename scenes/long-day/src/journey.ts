@@ -77,7 +77,7 @@ import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 // short of someone or something in its way (a crosser, a car ahead, a car with the junction before
 // it), or null; reverseBlocked, whether someone is in the way of its next metres back into a bay.
 // Without street life (tests of the bare journey) the way is always clear.
-export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; gapHeld?: boolean; reverseBlocked?(j: Journey): boolean; rescue?(): { id: number; x: number; z: number; h: number; side: number; up: boolean } | null }   // gapHeld: truckStop's stop is a wait for a gap to pull out (no gridlock)
+export interface LifeHook { reset(j: Journey): void; step(j: Journey): void; save(): string; load(s: string, j: Journey): void; truckStop?(j: Journey): number | null; gapHeld?: boolean; heldByWaiter?: boolean; reverseBlocked?(j: Journey): boolean; rescue?(): { id: number; x: number; z: number; h: number; side: number; up: boolean } | null }   // gapHeld: truckStop's stop is a wait for a gap to pull out (no gridlock); heldByWaiter: what it stops for waits on the truck in turn (a deadlock)
 type StopKind = "pickup" | "drop" | "swap" | "depart";
 interface Site { bx: number; bz: number; fac: FacilityId; name: string }
 export interface Stop { kind: StopKind; site: Site | null; job: number; cargo: string; units: number; truck?: TruckModel; slot?: number }   // slot: where its loads go in the bed (set when the stop begins)
@@ -142,7 +142,7 @@ interface JourneyState {
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
   stops: Stop[]; aboard: Aboard[]; loaded: number; unloaded: number;
-  jobCounter: number; batch: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; countryD?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
+  jobCounter: number; batch: number; swapAt: number; jobsSinceSwap: number; noSwap: boolean; intercity: boolean; committed: string; stopGo: string; redWait: number; preempt: SignalPreempt[]; hitchYaw?: number; hitchFrom?: number; holdS?: number; holdT?: number; countryD?: number; jamT?: number; jamGo?: number; jamMoved?: number; jamHeld?: boolean; acc?: number; lim?: number;   // acc, lim: its acceleration and speed limit last step (easing between them)   // hold: where street life last had it stop, for how much longer   // jam: how long street life has held it standing (its own light not red, or held by what waits on it: life.ts heldByWaiter), how far it has gone since last held and in all since the director's shot of it (JAM_SHOT), and whether it is held now   // stopGo: the all-way stop it has stood at and goes on from (apart from committed, which the lights write)
   stopsDone: number; events: string[];
 }
 
@@ -175,8 +175,9 @@ const JERK = 4, BRAKE_JERK = 20, LIM_TAU = 0.4;
 // HOLD_CREEP (m/s): how slowly it rolls up the last of the way to where street life holds it;
 // HOLD_KEEP (s): how long, moving, it keeps a hold street life stops seeing (one passing close).
 const HOLD_CREEP = 0.15, HOLD_KEEP = 0.5;
-// Gridlock: held standing by street life JAM_HONK s (its own light not red, its own way back into a
-// bay not clear of traffic), the truck honks, every HONK_EVERY s. Nobody pays it any mind. It never
+// Gridlock: held standing by street life JAM_HONK s (its own light not red, unless what holds it
+// waits on it in turn, life.ts heldByWaiter; its own way back into a bay not clear of traffic), the
+// truck honks, every HONK_EVERY s. Nobody pays it any mind. It never
 // moves into anyone itself: held on, the clowns come for what holds it up (clowns.ts). A jam it has
 // honked in is over once it has gone JAM_CLEAR m (stopping again behind the next thing in its way, a
 // car length on, it is still the same jam: the clowns come back for that).
@@ -1462,10 +1463,11 @@ export class Journey {
       else st.holdT = 0;
       // (Held standing by it, its own light not red nor turning: the jam's clock runs. Not waiting
       // for a gap to pull out of a bay: that ends in its nosing out (life.ts outWait), not a honk.
-      // Once it has stood held through a green long enough to honk, though, the light ahead isn't
-      // what holds it (a tractor stuck in a junction, its trailer swung across a car): the clock
-      // runs on through the light's red, or the clowns come a whole cycle late.)
-      const light = this.lightAhead !== "red" && this.lightAhead !== "yellow" || (st.jamT ?? 0) >= JAM_HONK;
+      // Held by what waits on the truck in turn, though, a deadlock (a tractor whose trailer would
+      // swing across a car standing in its way, someone crossing who waits on it as it waits on
+      // them: life.ts heldByWaiter), the light ahead isn't what holds it: the clock runs on through
+      // its red, or the clowns come whole cycles late where the greens are short.)
+      const light = this.lightAhead !== "red" && this.lightAhead !== "yellow" || !!this.life?.heldByWaiter;
       this.jam(dt, ys !== null && st.v < 0.05 && ys <= st.s + 0.5 && light && !this.life?.gapHeld);
       // (Too close to stop there comfortably: it brakes as hard as it can all the same.)
       if (ys !== null) limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, ys - st.s)));

@@ -51,6 +51,9 @@ export class StreetLife implements LifeHook {
   // (From the traffic as it stands: the same played on as when scrubbed to.)
   private outGo = false;
   gapHeld = false;   // (this step: held where it waits for that gap, truckStop; not a gridlock, journey.ts jam)
+  // (This step: what truckStop stops the truck for is itself waiting on the truck, a car
+  // (traffic.ts waitsOnTruck) or someone on foot (crowd.ts Ped onTruck): a deadlock, journey.ts jam.)
+  heldByWaiter = false;
   private outWait(j: Journey): number | null {
     const st = j.st, out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!(out > 0)) { this.outGo = false; return null; }
@@ -249,7 +252,7 @@ export class StreetLife implements LifeHook {
   // before it (traffic.truckZoneStop).
   truckStop(j: Journey): number | null {
     const st = j.st, P = j.path;
-    this.gapHeld = false;
+    this.gapHeld = false; this.heldByWaiter = false;
     if (st.mode !== "drive" || !P) return null;
     // (Pulling out of a bay, where it waits for a gap in the traffic: and short of anything in its
     // way before that, all the same.)
@@ -265,6 +268,8 @@ export class StreetLife implements LifeHook {
     // (Held for good, out of a gridlock, the clowns come for what holds it up: clowns.ts.)
     const zs = this.traffic.truckZoneStop();
     let stop = ow === null ? zs : zs === null ? ow : Math.min(ow, zs);
+    if (zs !== null && stop === zs) this.heldByWaiter = this.traffic.waitsOnTruck(this.traffic.truckWaitsOn);
+    const people = this.crowd.people, pedWaits = (k: number) => k < people.length && !!people[k].onTruck;
     // (A car moving its way, on along its own way CUT_IN_LOOK s: easing over into its lane in front
     // of it, say, or turning in ahead of it. Its circles moved on with it; seen while it begins, so the truck
     // eases off rather than coming on to stop dead once it is across its nose.)
@@ -278,19 +283,19 @@ export class StreetLife implements LifeHook {
       if (!a) continue;
       // (Its heading then at least partly the truck's way: turning in ahead of it from a side street
       // too; not one coming the other way, nor one crossing, which its junction booking keeps clear.)
-      if (Math.cos(a.h - j.pose.h) > 0.2) CI.push({ x: c.x + a.dx, z: c.z + a.dz, r: c.r });
+      if (Math.cos(a.h - j.pose.h) > 0.2) CI.push({ x: c.x + a.dx, z: c.z + a.dz, r: c.r, owner: c.owner });
       if (c.owner !== undefined && !VA.has(c.owner)) VA.set(c.owner, Math.max(0, (a.dx * pfx + a.dz * pfz) / CUT_IN_LOOK));
     }
     // (Where those on foot and the vehicles about will be in MOVE_LOOK s, as they go: one stepping out
     // ahead of its nose, or a vehicle pulling up into where its trailer swings, is seen coming. Not
     // those on foot by its trailer: they sidestep this way and that, and it would brake for each.)
     const PP = this.pedsAhead, TP = this.trailerAhead; PP.length = 0; TP.length = 0;
-    for (const p of peds) if (p.vx !== undefined && Math.hypot(p.vx, p.vz ?? 0) > 0.2 && Math.abs(p.x - j.pose.x) < 40 && Math.abs(p.z - j.pose.z) < 40) PP.push({ x: p.x + p.vx * MOVE_LOOK, z: p.z + (p.vz ?? 0) * MOVE_LOOK, r: p.r, pad: 0.4 });
+    peds.forEach((p, k) => { if (p.vx !== undefined && Math.hypot(p.vx, p.vz ?? 0) > 0.2 && Math.abs(p.x - j.pose.x) < 40 && Math.abs(p.z - j.pose.z) < 40) PP.push({ x: p.x + p.vx * MOVE_LOOK, z: p.z + (p.vz ?? 0) * MOVE_LOOK, r: p.r, pad: 0.4, who: k }); });
     if (fw !== undefined) {
       for (const c of C) {
         if (Math.abs(c.x - j.pose.x) > 40 || Math.abs(c.z - j.pose.z) > 40 || this.traffic.waitsForTruck(c.owner) || (c.x - j.pose.x) * pfx + (c.z - j.pose.z) * pfz > E.front + 0.5) continue;
         const a = this.traffic.aheadOf(c.owner, MOVE_LOOK);
-        if (a) TP.push({ x: c.x + a.dx, z: c.z + a.dz, r: c.r, pad: 0.3 });
+        if (a) TP.push({ x: c.x + a.dx, z: c.z + a.dz, r: c.r, pad: 0.3, who: c.owner ?? -1 });
       }
     }
     for (let s = st.s + 0.5, step = FINE_STEP, came = 0; s <= Math.min(P.length, st.s + reach) && s < (stop ?? Infinity); came = step, s += step) {
@@ -301,7 +306,8 @@ export class StreetLife implements LifeHook {
       // (A crosser: where they are and the rest of their way across.)
       // (Its trailer, a tractor's, from the kingpin at its angle: pulling out of a bay or round a
       // corner it swings across the pavement. Anyone near it there.)
-      let hit = false;
+      // (`waits` says whether what it stops for there waits on the truck in turn.)
+      let hit = false, waits = false;
       if (fw !== undefined) {
         const kx = q.x + fx * fw, kz = q.z + fz * fw, d = Math.hypot(kx - ax, kz - az) || 1;
         ax = kx - (kx - ax) / d * KINGPIN_TO_AXLES; az = kz - (kz - az) / d * KINGPIN_TO_AXLES;
@@ -311,6 +317,7 @@ export class StreetLife implements LifeHook {
           if (Math.abs(ex) > 20 || Math.abs(ez) > 20) continue;
           const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
           hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + peds[k].r + 0.4;
+          waits = hit && pedWaits(k);
         }
         // (And a vehicle standing there, waiting at its line, say, that its trailer would cut in
         // across; or one ahead of its nose now.)
@@ -324,12 +331,14 @@ export class StreetLife implements LifeHook {
           const pad = this.traffic.waitsForTruck(C[k].owner) ? -0.02 : 0.3;
           const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
           hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + C[k].r + pad;
+          waits = hit && this.traffic.waitsOnTruck(C[k].owner);
         }
         for (let k = 0; k < TP.length && !hit; k++) {
           const ex = TP[k].x - kx, ez = TP[k].z - kz;
           if (Math.abs(ex) > 20 || Math.abs(ez) > 20) continue;
           const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
           hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + TP[k].r + TP[k].pad;
+          waits = hit && this.traffic.waitsOnTruck(TP[k].who);
         }
       }
       for (let i = 0; i < X.length && !hit; i += 4) {
@@ -344,15 +353,16 @@ export class StreetLife implements LifeHook {
           // driving on it slides past.)
           hit = this.nearBody(q, fx, fz, E!.front, E!.rear, x, z, 0.8) && (!this.underTruck(x, z, E!.front, E!.rear, j) || (x - j.pose.x) * pfx + (z - j.pose.z) * pfz > E!.front);
         }
+        waits = hit && !!this.crowd.crosserPeds[i / 4]?.onTruck;
       }
       // (Anyone on foot ahead of its nose now, in the way it goes: crossing a driveway it pulls out
       // across, say. One beside it already steps back out of its way.)
-      for (let k = 0; k < peds.length && !hit; k++) if (Math.abs(peds[k].x - q.x) < 20 && Math.abs(peds[k].z - q.z) < 20 && (peds[k].x - j.pose.x) * pfx + (peds[k].z - j.pose.z) * pfz > E.front) hit = this.nearBody(q, fx, fz, E!.front, E!.rear, peds[k].x, peds[k].z, peds[k].r + 0.4);
-      for (let k = 0; k < PP.length && !hit; k++) if (Math.abs(PP[k].x - q.x) < 20 && Math.abs(PP[k].z - q.z) < 20 && (PP[k].x - j.pose.x) * pfx + (PP[k].z - j.pose.z) * pfz > E.front) hit = this.nearBody(q, fx, fz, E!.front, E!.rear, PP[k].x, PP[k].z, PP[k].r + 0.4);
+      for (let k = 0; k < peds.length && !hit; k++) if (Math.abs(peds[k].x - q.x) < 20 && Math.abs(peds[k].z - q.z) < 20 && (peds[k].x - j.pose.x) * pfx + (peds[k].z - j.pose.z) * pfz > E.front) { hit = this.nearBody(q, fx, fz, E!.front, E!.rear, peds[k].x, peds[k].z, peds[k].r + 0.4); waits = hit && pedWaits(k); }
+      for (let k = 0; k < PP.length && !hit; k++) if (Math.abs(PP[k].x - q.x) < 20 && Math.abs(PP[k].z - q.z) < 20 && (PP[k].x - j.pose.x) * pfx + (PP[k].z - j.pose.z) * pfz > E.front) { hit = this.nearBody(q, fx, fz, E!.front, E!.rear, PP[k].x, PP[k].z, PP[k].r + 0.4); waits = hit && pedWaits(PP[k].who); }
       // (A vehicle ahead of its nose now: one level with it, beside, drops back out of its way. Not
       // one stopped short of where its junction booking has it wait for the truck to go through.)
-      for (let k = 0; k < C.length && !hit; k++) if (!this.traffic.waitsForTruck(C[k].owner) && Math.abs(C[k].x - q.x) < 25 && Math.abs(C[k].z - q.z) < 25 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz > E.front + 0.5) { hit = this.nearBody(q, fx, fz, E!.front, E!.rear, C[k].x, C[k].z, C[k].r + 0.3); if (hit) { const u = VA.get(C[k].owner ?? -1) ?? 0; shift = (u * u) / (2 * CAR_BRAKE); } }
-      for (let k = 0; k < CI.length && !hit; k++) if (Math.abs(CI[k].x - q.x) < 25 && Math.abs(CI[k].z - q.z) < 25 && (CI[k].x - j.pose.x) * pfx + (CI[k].z - j.pose.z) * pfz > E.front + 0.5) hit = this.nearBody(q, fx, fz, E!.front, E!.rear, CI[k].x, CI[k].z, CI[k].r + 0.3);
+      for (let k = 0; k < C.length && !hit; k++) if (!this.traffic.waitsForTruck(C[k].owner) && Math.abs(C[k].x - q.x) < 25 && Math.abs(C[k].z - q.z) < 25 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz > E.front + 0.5) { hit = this.nearBody(q, fx, fz, E!.front, E!.rear, C[k].x, C[k].z, C[k].r + 0.3); if (hit) { const u = VA.get(C[k].owner ?? -1) ?? 0; shift = (u * u) / (2 * CAR_BRAKE); waits = this.traffic.waitsOnTruck(C[k].owner); } }
+      for (let k = 0; k < CI.length && !hit; k++) if (Math.abs(CI[k].x - q.x) < 25 && Math.abs(CI[k].z - q.z) < 25 && (CI[k].x - j.pose.x) * pfx + (CI[k].z - j.pose.z) * pfz > E.front + 0.5) { hit = this.nearBody(q, fx, fz, E!.front, E!.rear, CI[k].x, CI[k].z, CI[k].r + 0.3); waits = hit && this.traffic.waitsOnTruck(CI[k].owner); }
       // (And one standing, or slower than it (SLOW_BESIDE), beside it that its body would come
       // into, swinging round a corner into the lane where it waits, say: a standing one doesn't
       // drop back out of the way. Only nearer than it is now, so it slides on past one it is
@@ -371,17 +381,18 @@ export class StreetLife implements LifeHook {
         // (Nor one moving, in the lane beside, that it passes close: only one it would touch.)
         const pad = this.traffic.waitsForTruck(c.owner) || this.traffic.speedOf(c.owner) > 0.5 ? -0.02 : 0.15;
         hit = (then < touch + pad && then < now - 0.05) || (now < touch && then < touch && then < now + 0.05);
+        waits = hit && this.traffic.waitsOnTruck(c.owner);
       }
       // (Short of it by the step it was found in too: it began somewhere since the last sample.)
-      if (hit) { stop = Math.min(stop ?? Infinity, s - 1.5 - came + shift); if (!shift) break; }
+      if (hit) { const at = s - 1.5 - came + shift; if (at < (stop ?? Infinity)) { stop = at; this.heldByWaiter = waits; } if (!shift) break; }
     }
     this.gapHeld = ow !== null && stop === ow;
     return stop;
   }
-  private cutIn: { x: number; z: number; r: number }[] = [];
+  private cutIn: { x: number; z: number; r: number; owner?: number }[] = [];
   private aheadV = new Map<number, number>();
-  private pedsAhead: { x: number; z: number; r: number; pad: number }[] = [];
-  private trailerAhead: { x: number; z: number; r: number; pad: number }[] = [];
+  private pedsAhead: { x: number; z: number; r: number; pad: number; who: number }[] = [];   // (`who` is its place in the crowd's obstacles.)
+  private trailerAhead: { x: number; z: number; r: number; pad: number; who: number }[] = [];   // (`who` is the car's id.)
   // How far (x, z) is from the middle line of the truck's body standing at q (heading fx, fz).
   private bodyDist(q: { x: number; z: number }, fx: number, fz: number, front: number, rear: number, x: number, z: number): number {
     const dx = x - q.x, dz = z - q.z, a = Math.max(rear, Math.min(front, dx * fx + dz * fz));

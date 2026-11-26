@@ -31,8 +31,20 @@ const saguaroMattresses: VisitSpec = {
   ] }],
 };
 
+// A box truck in Seacliff on a clear autumn morning: four mattresses from the furniture warehouse
+// at block 9,0, two into each of the houses at 9,2 and 9,1, a team lift through each front door.
+const seacliffMattresses: VisitSpec = {
+  city: "coastal-seacliff", arriveBy: "r83", truck: "box26", season: "autumn", weather: "clear", hour: 10, freight: "none",
+  stops: [{ stops: [
+    { kind: "pickup", at: "9,0", cargo: "mattresses", units: 4 },
+    { kind: "drop", at: "9,2", cargo: "mattresses", units: 2 },
+    { kind: "drop", at: "9,1", cargo: "mattresses", units: 2 },
+  ] }],
+};
+
 export const SCENARIOS: Record<string, Scenario> = {
   "mattress-dock-pickup": { note: "mattresses taken up at a furniture warehouse's loading dock, team lift", visits: { 0: grandCentralMattresses }, stop: 0 },
   "mattress-drop": { note: "mattresses into an apartment's front door from along the pavement, team lift", visits: { 0: grandCentralMattresses }, stop: 1 },
   "mattress-door-pickup": { note: "mattresses out of a furniture warehouse's front door, team lift", visits: { 0: saguaroMattresses }, stop: 0 },
+  "mattress-curve-in": { note: "mattresses into a house's front door, the team lift curving in round from along the pavement", visits: { 0: seacliffMattresses }, stop: 2 },
 };

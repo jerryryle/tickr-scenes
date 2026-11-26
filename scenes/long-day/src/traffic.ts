@@ -50,6 +50,7 @@ interface Car {
   stillT: number; committed: number; color: number; beyondT?: number;   // beyondT: s held at its line, on its green, by a light just past the junction   // committed: the signal (index on the path) it is going through
   stopFor: number;                     // the signal (index on the path) it is stopping for, -1: none
   blockedBy: number; slowT: number; pedT: number; acc: number;   // acc: current acceleration (eased)
+  byTruck?: boolean;                   // whether the truck set its gap last step, stopping it short (waitsOnTruck)
   passId?: number; passT?: number;      // a car it was let through past out of a deadlock, and for how much longer
   clownHold?: boolean;                 // held where it stands for the clowns coming to carry it off (clowns.ts)
   held?: boolean;                      // holding at a junction's line last step (for a car with priority, or the way out blocked)
@@ -718,7 +719,7 @@ export class Traffic {
     // (Not stuck behind anyone any more, as far as a deadlock goes: else, in a ring, one stuck behind
     // it would be let through it, deadlockBlocker. Its junction booking kept: standing in the
     // junction, those booked after it wait clear of it till it is lifted, zoneStop.)
-    c.clownHold = true; c.v = 0; c.acc = 0; c.blockedBy = -1; c.slowT = 0; c.truckHold = false; c.held = false;
+    c.clownHold = true; c.v = 0; c.acc = 0; c.blockedBy = -1; c.byTruck = false; c.slowT = 0; c.truckHold = false; c.held = false;
     return { x: c.x, z: c.z, h: c.h, len: c.kind.len, width: c.kind.width };
   }
   // (The car the truck's junction booking has it wait for, or -1: truckZoneStop.)
@@ -776,6 +777,17 @@ export class Traffic {
     if (!c || c.v < 0.5) return null;
     const q = c.path.peek(Math.min(c.path.length, c.s + c.v * secs), this.aheadP);
     return { dx: q.x + Math.sin(q.h) * c.dodge - c.x, dz: q.z + Math.cos(q.h) * c.dodge - c.z, h: q.h };
+  }
+  // Whether car `id` stands waiting on the truck: where its junction booking has it wait for the
+  // truck, giving way to it, or stopped short of it, itself or behind a short chain of cars each
+  // stopped behind the next (journey.ts jam: a deadlock, where the truck waits on it in turn).
+  waitsOnTruck(id: number | undefined): boolean {
+    let c = id === undefined ? undefined : this.byId.get(id);
+    for (let k = 0; k < 4 && c && c.v < 0.5; k++) {
+      if (c.waitFor === -2 || c.truckHold || c.byTruck) return true;
+      c = c.blockedBy >= 0 ? this.byId.get(c.blockedBy) : undefined;
+    }
+    return false;
   }
   // Whether car `id` stands waiting, where its junction booking has it, for the truck to go through.
   waitsForTruck(id: number | undefined): boolean {
@@ -1372,6 +1384,7 @@ export class Traffic {
     c.stillT = c.v < 0.05 ? c.stillT + dt : 0;
     c.slowT = c.v < 0.5 ? c.slowT + dt : 0;
     c.blockedBy = gap < 3 ? gapOwner : -1;
+    c.byTruck = gap < 3 && truckAhead <= gap;
     c.pedT = gap < 3 && gapPed ? c.pedT + dt : c.v > 2 ? 0 : c.pedT;
     c.passStill = stillAhead < 35;
     // Ease across: the sideways rate builds and fades gently and is tied to forward speed, so a
