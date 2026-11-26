@@ -100,11 +100,13 @@ export function updateCutaway(camera: THREE.Camera, boxes: readonly CutBox[], on
 // everything big that can hide the driver (the trucks, buildings and street furniture, cars, and
 // the street vignettes' big props, but not passers-by: main.ts), in a narrow cone from the camera
 // to the driver whenever the driver is out of the seat, so the driver stays in view working
-// inside the box or walking behind the truck.
+// inside the box or walking behind the truck. A second spot, the same shape, follows the
+// teammate on a team lift. The first follows the forklift instead while it is in a docked
+// trailer and the driver directs it from the platform, at a radius that takes in the forklift and
+// its load (main.ts).
 const spotUniforms = {
-  uSpotFocus: { value: new THREE.Vector3() },  // the driver's chest in view space
-  uSpotRadius: { value: 1.0 },
-  uSpotOn: { value: 0.0 },
+  uSpotFocus: { value: [new THREE.Vector3(), new THREE.Vector3()] },  // the spots' middles in view space
+  uSpotRadius: { value: [0, 0] },   // (0: that spot is off)
 };
 export function applyDriverSpot(mat: THREE.Material) {
   const prev = mat.onBeforeCompile.bind(mat);
@@ -118,29 +120,35 @@ export function applyDriverSpot(mat: THREE.Material) {
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
 varying vec3 vSpotView;
-uniform vec3 uSpotFocus; uniform float uSpotRadius; uniform float uSpotOn;`)
+uniform vec3 uSpotFocus[2]; uniform float uSpotRadius[2];
+// Whether this fragment is cut away by the spot on f, of radius rad.
+bool spotCut(vec3 f, float rad) {
+  if (rad <= 0.0) return false;
+  float t = clamp(dot(vSpotView, f) / dot(f, f), 0.0, 1.0);
+  float d = distance(vSpotView, f * t);
+  // Widening from the camera to full radius over the last few metres before the focus.
+  float r = rad * clamp(t * 1.6, 0.0, 1.0);
+  // Only what is in front of the focus (nearer the camera than the front of the body), so walls,
+  // floors and loads beside or behind it stay solid, but a load in the next column or a wall
+  // half a metre away still clears.
+  float flen = length(f);
+  if (t * flen >= flen - 0.3 || d >= r) return false;
+  // Clear in the middle (a dither there just speckles the figure at this resolution), with a
+  // sparse rim, one pixel in nine, so the occluder's cut edge still reads.
+  if (d < r * 0.8) return true;
+  vec2 c3 = mod(floor(gl_FragCoord.xy), 3.0);
+  return c3.x != 1.0 || c3.y != 1.0;
+}`)
       .replace("void main() {", `void main() {
-  if (uSpotOn > 0.5) {
-    float t = clamp(dot(vSpotView, uSpotFocus) / dot(uSpotFocus, uSpotFocus), 0.0, 1.0);
-    float d = distance(vSpotView, uSpotFocus * t);
-    // Widening from the camera to full radius over the last few metres before the driver.
-    float r = uSpotRadius * clamp(t * 1.6, 0.0, 1.0);
-    // Only what is in front of the driver (nearer the camera than the front of the body), so
-    // walls, floors and loads beside or behind the driver stay solid, but a load in the next
-    // column or a wall half a metre away still clears.
-    float flen = length(uSpotFocus);
-    if (t * flen < flen - 0.3 && d < r) {
-      // Clear in the middle (a dither there just speckles the driver at this resolution), with a
-      // sparse rim, one pixel in nine, so the occluder's cut edge still reads.
-      if (d < r * 0.8) discard;
-      vec2 c3 = mod(floor(gl_FragCoord.xy), 3.0); if (c3.x != 1.0 || c3.y != 1.0) discard;
-    }
-  }`);
+  if (spotCut(uSpotFocus[0], uSpotRadius[0]) || spotCut(uSpotFocus[1], uSpotRadius[1])) discard;`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|spot-v5";
+  mat.customProgramCacheKey = () => prevKey() + "|spot-v6";
   mat.needsUpdate = true;
 }
-export function updateDriverSpot(camera: THREE.Camera, chest: THREE.Vector3 | null) {
-  spotUniforms.uSpotOn.value = chest ? 1 : 0;
-  if (chest) spotUniforms.uSpotFocus.value.copy(cutTmp.copy(chest).applyMatrix4(camera.matrixWorldInverse));
+// The spots this frame, each its middle in world space and its radius, or null when off.
+export function updateDriverSpot(camera: THREE.Camera, first: THREE.Vector3 | null, radius = 1.0, mate: THREE.Vector3 | null = null) {
+  const F = spotUniforms.uSpotFocus.value, R = spotUniforms.uSpotRadius.value;
+  R[0] = first ? radius : 0; R[1] = mate ? 1.0 : 0;
+  if (first) F[0].copy(first).applyMatrix4(camera.matrixWorldInverse);
+  if (mate) F[1].copy(mate).applyMatrix4(camera.matrixWorldInverse);
 }
