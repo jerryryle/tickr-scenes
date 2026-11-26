@@ -31,7 +31,7 @@ import type { Coat } from "./farm.ts";
 import type { BiomeId, RoadGeo, RoadPiece, RoadSign, RoadView } from "./country.ts";
 import type { RoadItems, RoadMapPiece } from "./roadmap.ts";
 import { storyTree } from "./city-storybook/storybook-buildings-town.ts";
-import { CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
+import { applyPaintTint, CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
 import { boatAt, deckW, hull, wedge } from "./boats.ts";
@@ -266,7 +266,7 @@ export class CountryWorld {
   constructor(scene: THREE.Scene, private mats: CityMaterials, private fleet: FleetBuilder | null) {
     scene.add(this.group);
     this.group.visible = false;
-    const carMat = this.carMat = new THREE.MeshLambertMaterial({ vertexColors: true }); applyDriverSpot(carMat); applyLampGlow(carMat); applyLampLight(carMat);
+    const carMat = this.carMat = new THREE.MeshLambertMaterial({ vertexColors: true }); applyDriverSpot(carMat); applyLampGlow(carMat); applyLampLight(carMat); applyPaintTint(carMat);
     // The after-dark glow takes each car's own colour (a plain grey glow washed them all out).
     { const prev = carMat.onBeforeCompile.bind(carMat), prevKey = carMat.customProgramCacheKey.bind(carMat);
       carMat.onBeforeCompile = (shader, r) => { prev(shader, r); shader.fragmentShader = shader.fragmentShader.replace("#include <emissivemap_fragment>", "#ifdef USE_COLOR\n  totalEmissiveRadiance *= vColor.rgb;\n#endif\n#include <emissivemap_fragment>"); };

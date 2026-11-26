@@ -22,6 +22,7 @@ import { OCCLUSION } from "./occlusion.ts";
 import { applyCutaway, applyDriverSpot, cutUniforms, NO_CUT_BOXES, updateCutaway, updateDriverSpot } from "./cutaway.ts";
 import { Engine } from "./engine.ts";
 import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, HEAD_Y, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
+import { applyPaintTint } from "./cars.ts";
 import { Hud } from "./hud.ts";
 import { PuffSystem } from "./puffs.ts";
 import { keepStrapsWarm, LIVERY_ASSETS, Truck, TruckKit, truckLayout } from "./truck.ts";
@@ -1008,7 +1009,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // driver spotlight, the vignettes' big props (a food truck, a couch) included. Passers-by (the
       // crowd and the vignettes' people) don't: they're small and soon gone, so they may hide the
       // driver for a moment.
-      const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers);
+      const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers); applyPaintTint(movers);
       const people = engine.mats.ground.clone(); applyLampGlow(people); applyLampLight(people);
       traffic = new Traffic(engine.scene, movers, (model, toon) => fleet.build([{ model, x: 0, z: 0, h: 0, toon }]));
       crowd = new Crowd(engine.scene, people, movers);

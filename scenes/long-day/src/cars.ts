@@ -5,8 +5,9 @@
 // A car is x forward, its origin on the ground at its middle. The body above the wheel arches is
 // lofted through cross-sections along its length (a sloped hood, raked glass, a roof drawn in from
 // the sides, rounded ends), flat-shaded; under it a lower body cut away over the wheels, bumpers,
-// lamps and plates. Paint is pure white unless given, so instanceColor can tint it (Batch.stamp
-// repaints it the same way); glass, tyres and trim stay dark.
+// lamps and plates. Paint is pure white unless given, so a car can be painted later: Batch.stamp
+// and an instanced car's material (applyPaintTint) repaint only the pure white, and glass, tyres,
+// wheels, lamps and trim keep their own colours.
 import * as THREE from "three@0.187.0";
 import { Batch, BATCH, keepWarm } from "./geom.ts";
 import type { BatchModel } from "./geom.ts";
@@ -179,6 +180,21 @@ function lower(b: Batch, s: CarSpec, paint: number) {
   }
 }
 
+// Has instanceColor repaint only the pure-white vertices of `mat`'s instanced meshes, as
+// Batch.stamp does, and leave every other vertex its own colour. (Three.js multiplies every
+// vertex by instanceColor, which paints a car's wheels, plates and lamps too.)
+export function applyPaintTint(mat: THREE.Material) {
+  const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (shader, renderer) => {
+    prev(shader, renderer);
+    shader.vertexShader = shader.vertexShader.replace("#include <color_vertex>", `#include <color_vertex>
+#if defined( USE_INSTANCING_COLOR ) && defined( USE_COLOR )
+  if (any(lessThan(color.rgb, vec3(0.999)))) vColor.rgb = color.rgb;
+#endif`);
+  };
+  mat.customProgramCacheKey = () => prevKey() + "|painttint-v1";
+}
+
 // One car of `kind` at the origin into `b`. `lit`: lamps tagged for the night glow.
 export function carModel(b: Batch, kind: CarKind, paint = 0xffffff, lit = true) {
   const s = CAR_SPECS[kind];
@@ -189,7 +205,7 @@ export function carModel(b: Batch, kind: CarKind, paint = 0xffffff, lit = true) 
   LIT = true;
 }
 
-// A car's geometry for an InstancedMesh, painted white for instanceColor.
+// A car's geometry for an InstancedMesh, painted white for instanceColor (applyPaintTint).
 export function carGeometry(kind: CarKind, material: THREE.Material): THREE.BufferGeometry {
   const b = new Batch(); carModel(b, kind);
   return b.build(material)!.geometry;
