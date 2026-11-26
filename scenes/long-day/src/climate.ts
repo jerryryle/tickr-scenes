@@ -10,7 +10,7 @@ import { DEBUG_CLIMATE } from "./debug.ts";
 import type { CityStyle } from "./styles.ts";
 
 export type Season = "spring" | "summer" | "autumn" | "winter";
-type WeatherKind = "clear" | "cloudy" | "overcast" | "rain" | "storm" | "snow" | "fog";
+export type WeatherKind = "clear" | "cloudy" | "overcast" | "rain" | "storm" | "snow" | "fog";
 export interface Climate { season: Season; weather: WeatherKind; snowCover: boolean }
 
 const SEASONS: Season[] = ["winter", "spring", "summer", "autumn"];

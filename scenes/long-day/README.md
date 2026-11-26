@@ -10,9 +10,59 @@ make check-long-day     # type-check, load-test and run the tests
 
 ## Source
 
+Every city is a catalogue city: a folder in `src/city-<style>/` listed in `src/world.ts`
+(`docs/long-day-cities.md` describes how cities work). `src/cityfile.ts` reads a city file into its street
+graph. Country roads join the cities' gates in a fixed world graph (`src/world-roads.ts`, drafted
+by `tools/draftworld.ts` with `make draftworld`), and `src/visits.ts` plans each journey along it:
+which city comes next, by which road, and so which gate the truck leaves and enters by.
+`test/world.ts` checks the graph and runs the planner over many journeys. Each road has a map of
+its own in `src/roads/` (`src/roadmap.ts`): its shape, heights, land, set pieces and every tree,
+rock, pole and fence beside it, the same whichever way it is driven. `CountryRoad` in
+`src/country.ts` drives a road's map from either end, and `src/countryworld.ts` draws it in the
+map's coordinates (docs/long-day-cities.md, "Road maps"). `tools/draftroads.ts` drafts a road's map
+from the generator's rules (`tools/roadgen.ts`):
+
+```bash
+make draftroads SCENE=long-day                # a map for every road that has none (ARGS="r12" drafts r12 again)
+```
+ Each city of a journey is a visit:
+its city, its way in, and seeds for its jobs, its dressing (traffic, pedestrians, parked cars and
+boats), its vignettes and its drive out. A test may build any visit (`Journey`'s `visits`
+argument, `VisitSpec` in `src/visits.ts`), and a render its first one:
+
+```bash
+make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=coastal-seacliff,truck=tractor,season=winter,weather=snow"
+make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=metro-midtown+city=brick-ironworks,arriveBy=r40"   # two visits: midtown, then along r40
+``` A city file holds
+the city's streets, gates and blocks, and its contents file beside it lists everything that
+stands on them. `tools/draftcities.ts` drafts new city files with the
+generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit
+for play:
+
+```bash
+make draft SCENE=long-day ARGS="metro 40"   # five new metro cities into src/city-metro/ (never overwrites)
+```
+
+`make maps` draws each city's and each road's layered SVG map (`tools/mapsvg.ts`) into `build/long-day-maps/`, to
+open in an editor and mark up on its markup layer: the plan's blocks, streets, junctions, sites
+and gates, and the lots, buildings, trees, street furniture, signal poles, stop signs and doors where
+the city's builders put them (`PLACED` in `src/geom.ts`, `PAVEMENT` in `src/decor.ts`). The
+street furniture, signal poles, stop signs and facilities' front doors come from the city file,
+and so does everything else that stands on the layout, as recipes in the city's contents file
+beside it (`src/contents.ts`; docs/long-day-cities.md, "City contents"). The scene carries every city
+and road packed in one binary asset and unpacks one only while it uses it: `tools/pack.ts` packs
+them into `assets-packed/` before every build (docs/long-day-cities.md, "How the scene carries the
+cities"). The maps are build output, too big to commit, and nothing reads them back:
+
+```bash
+make maps SCENE=long-day                      # every city's and road's map; ARGS="metro-midtown r40" for some
+```
+
 `src/citygraph.ts` is the city as a street graph: intersections, straight streets, the blocks
 they enclose and each block's faces along its streets (a face's frontage frame, `facePt`, is
-where everything along a street is placed). `src/citygen.ts` makes it from the city's seed: the
+where everything along a street is placed). The generator that drafts a city's file lives in
+`tools/` and is not part of the scene (`tools/generatedplan.ts`, `tools/citygen.ts`). From a seed
+it lays out the
 square grid; one bent out of square, with dropped streets, rivers, superblock parks, diagonal
 avenues, old towns, sweeping avenues, radial circuses and one-way roundabouts (where traffic
 yields on entry); or, in towns without a freeway, an organic town with no grid at all (a relaxed
@@ -28,8 +78,8 @@ big block's middle, past its lots, is filled for its district: set-back towers d
 where people live, a fenced back garden behind each house, with trees beyond. Routing, signals,
 traffic, the crowd and the city's drawing all work from the graph.
 
-`src/outline.ts` gives each town its outline. Every layout is laid over the whole square, then
-`trimToOutline` (`src/citygen.ts`) cuts it back: each side's land edge stands in by up to a block
+The generator's outline (`tools/outlinegen.ts`) shapes each town. Every layout is laid over the
+whole square, then `trimToOutline` (`tools/citygen.ts`) cuts it back: each side's land edge stands in by up to a block
 and a half (long, gentle swells, none where the freeway, an elevated line or a cable car runs out
 of town), and every coastal and port town has the sea along one side, always the side on the
 left of the way in, its shore 1 to 3.5 blocks in with bays and headlands. The gates keep their
@@ -38,7 +88,7 @@ the streets begin, and a gate on the sea side (or out in the sea) is closed, whi
 of town skips. A port's shore is a stone quay with boats and piers on piles; a coastal town's a
 sandy beach below the promenade, with lifeguard towers and, in summer, umbrellas. The sea is one
 plane under the town, and the land round it (the outskirts) stops at the water. In about two cities in three,
-downtown's streets are one-way, alternate lattice lines each way (`oneWays` in `src/citygen.ts`,
+downtown's streets are one-way, alternate lattice lines each way (`oneWays` in `tools/generatedplan.ts`,
 kept only where the network stays strongly connected): traffic keeps to the right half, and the
 other half is a green bike lane and a loading lane of parked vans and cars. Sites never face the
 far side of a one-way street, whose kerb the truck can't drive along. Downtown and commercial
@@ -104,7 +154,7 @@ same code. The showroom's last frames line the boats up afloat and ashore, then 
 The storybook city is a fantasy town that now and then takes a real city's turn. It is never one
 of the first two cities, and it never comes within `STORYBOOK_GAP` cities of the last one; past
 that, each city is one with `STORYBOOK_ODDS` (`isStorybookCity` in `src/styles.ts`). Its town is
-built in `src/storybook.ts` and its knitting works in `src/works.ts`.
+built in `src/city-storybook/storybook-buildings-town.ts` and its knitting works in `src/city-storybook/storybook-landmark-knitting-works.ts`.
 
 Its streets are purple-grey with polka-dot centre lines, checkered pavements, shepherd's-crook
 lamps and bunting, and the road in passes under a corkscrew arch. Its buildings are bent towers of
@@ -114,8 +164,8 @@ holds it to `BUDGET` times the dearest real style. Its trees are tufts, pancakes
 topiary, and its country rolls away in striped hills.
 
 The drive to a storybook city changes the land slowly over its whole length, where other drives
-change it around their middle. `CountryRoad.storyAt` in `src/country.ts` says how much of the
-storybook there is at each point. From soon after the last city the real land brightens, and
+change it around their middle. The road's map holds how much of the storybook there is every 10 m
+(`story`, drafted by `tools/roadgen.ts`). From soon after the last city the real land brightens, and
 candy-coloured crowns and the odd storybook tree turn up among its own trees (`storyLook` in
 `src/countryworld.ts`). Patches of storybook land grow more common and the hills and sky come round,
 until the arrival straight is all storybook. Leaving one, the drive runs the same way in reverse.

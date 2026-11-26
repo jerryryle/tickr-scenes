@@ -7,8 +7,7 @@
 // layouts (warped, organic, roundabouts).
 // Args (all optional): seconds
 import * as THREE from "three@0.187.0";
-import { readConfig } from "../src/env.ts";
-import { Journey, SIM_DT } from "../src/journey.ts";
+import { SIM_DT } from "../src/journey.ts";
 import { CityPlan } from "../src/city.ts";
 import { citySeedOf } from "../src/country.ts";
 import { journeyStyle } from "../src/styles.ts";
@@ -30,7 +29,6 @@ import { Traffic } from "../src/traffic.ts";
   // (Each by where it lies: the junction there, or, where the town's outline (outline.ts) has cut it
   // away, the nearest junction of three streets or more. Node ids change with the outline.)
   for (const [seed, city, wx, wz] of [[7, 0, -78, -578], [3, 0, -651, -711], [11, 0, -651, -711], [3, 1, -651, -711], [2, 0, 369, -711], [5, 0, -651, -711], [8, 0, -531, 429], [13, 0, -651, -711], [13, 0, -471, -711]]) {
-    void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (sets the city limits the plan reads)
     const plan = new CityPlan(citySeedOf(seed, city), journeyStyle(seed, city));
     const n = plan.graph.nodes.filter((q) => q.arms.length >= 3).sort((p, q) => Math.hypot(p.x - wx, p.z - wz) - Math.hypot(q.x - wx, q.z - wz))[0], spot = n?.id;
     if (!n) { errs.push(`seed ${seed} city ${city}: no junction near ${wx},${wz}`); continue; }

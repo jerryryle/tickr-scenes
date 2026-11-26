@@ -13,8 +13,8 @@
 //   snail:    a striped spiral shell sits on a soft body whose foot ripples.
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
-import { SB, SB_BULB, SB_LENS, SB_PUFF, sbCurve, sbTube } from "./storybook.ts";
-import type { SbP3 } from "./storybook.ts";
+import { SB, SB_BULB, SB_LENS, SB_PUFF, sbCurve, sbTube } from "./city-storybook/storybook-buildings-town.ts";
+import type { SbP3 } from "./city-storybook/storybook-buildings-town.ts";
 
 export interface RigState { odo: number; v: number; t: number; seed: number }
 export interface StoryRig {
@@ -23,7 +23,7 @@ export interface StoryRig {
   pose(s: RigState, out: THREE.Matrix4[]): void;
 }
 
-// (The rigs are made at first use, all in a closure: its names are its own, and storybook.ts's palette is
+// (The rigs are made at first use, all in a closure: its names are its own, and storybook-buildings-town.ts's palette is
 // there by then whatever order the modules load in.)
 let rigsMade: StoryRig[] | null = null;
 export function storyRigs(): StoryRig[] { return rigsMade ??= makeRigs(); }

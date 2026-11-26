@@ -314,7 +314,6 @@ function sweep(tris: Tri[], style: string, clashes: Map<string, Clash>, fresh = 
 const mat = { ground: new THREE.MeshLambertMaterial({ vertexColors: true }), solid: new THREE.MeshLambertMaterial({ vertexColors: true }), lamp: new THREE.MeshLambertMaterial({ vertexColors: true }) };
 const VIG_GROUP = 6;   // vignette kinds a part
 function runPart(part: string, clashes: Map<string, Clash>) {
-  void new Journey(readConfig({ seed: SEED } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
   const [what, a, b] = part.split(":"), N = Number(a);
   if (what === "city") {
   {

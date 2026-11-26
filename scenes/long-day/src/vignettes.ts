@@ -176,6 +176,9 @@ const washSeen = [0, 9, 0, 30, 0], washPt = [0, 0], washF = [1, 0, 0, 1];   // t
 
 // ---- colours ----------------------------------------------------------------------------------
 const OLD_HAIR = [0xcfcfcf, 0xe8e8e8, 0xaaaaaa];
+// Where a dog pack's dogs walk across the pavement (n): clear of the furniture row, 0.7 m in from
+// the kerb (decor.ts streetFurniture), to the buildings.
+const PACK_N0 = -1.6, PACK_N1 = -0.25;
 const DOGS = [0xf4ead8, 0x8a5a3a, 0x222222, 0xc8a060, 0xeeeeee, 0x6a4a2a, 0xd9b48c, 0x4a4a4a];
 const V_BELLE = 0xf4ead8;
 const CONE = 0xd9a45a, SCOOPS = [0xff9ec0, 0xb8f0c8, 0x6a3a1e, 0xfff2c0];
@@ -442,7 +445,9 @@ const K: Record<VK, Kind> = {
       for (let i = 0; i < n; i++) {
         const col = pick(r, DOGS), S = 0.65 + r() * 1.3, wob = r() * 10;
         for (let k = 0; k < 30; k++) {
-          const lat = (i / (n - 1) - 0.5) * 2.1 + (r() - 0.5) * 0.3, reach = 1.4 + r() * 2.0;
+          // (Between the walker's leash hand and the buildings' side of the furniture row by the kerb:
+          // the dogs walked through news boxes and hydrants.)
+          const lat = THREE_CLAMP((i / (n - 1) - 0.5) * 2.1 + (r() - 0.5) * 0.3, PACK_N0 + 0.2 - v.n, PACK_N1 - 0.2 - v.n), reach = 1.4 + r() * 2.0;
           if (dogs.some(([l, re, s2]) => Math.abs(l - lat) < 0.15 * (S + s2) + 0.45 && Math.abs(re - reach) < 0.4 * (S + s2) + 0.55)) continue;
           dogs.push([lat, reach, S]); v.c.push(col, S, lat, reach, wob); break;
         }
@@ -464,7 +469,7 @@ const K: Record<VK, Kind> = {
       const n = (v.c.length - 4) / 5;
       for (let i = 0; i < n; i++) {
         const o = 4 + i * 5, col = v.c[o], S = v.c[o + 1], lat = v.c[o + 2], reach = v.c[o + 3] + drag * 1.4, wob = v.c[o + 4];
-        const pa = a + reach + Math.sin(t * 0.9 + wob) * 0.25 * (1 - drag), pn = THREE_CLAMP(v.n + lat * (1 - drag * 0.4) + Math.sin(t * 0.6 + wob * 2) * 0.2, -2.8, -0.25);
+        const pa = a + reach + Math.sin(t * 0.9 + wob) * 0.25 * (1 - drag), pn = THREE_CLAMP(v.n + lat * (1 - drag * 0.4) + Math.sin(t * 0.6 + wob * 2) * 0.2, PACK_N0, PACK_N1);
         const [dx, dz] = pathPt(v, pa, pn), dyaw = sidePathYaw(v, pa) + Math.sin(t * 1.3 + wob) * 0.25 * (1 - drag);
         F.dog({ x: dx, z: dz, yaw: dyaw, phase: t * (drag > 0 ? 4.2 : 2.0) + wob, gait: drag > 0 ? 0.95 : 0.6, color: col, size: S, legs: S > 1.4 ? 1.25 : 1, belle: col === V_BELLE, tail: t * 12 + wob, pitch: drag * 0.12 });
         leash(F, hands, dx + Math.cos(dyaw) * 0.19 * S, Y0 + 0.4 * S, dz - Math.sin(dyaw) * 0.19 * S);

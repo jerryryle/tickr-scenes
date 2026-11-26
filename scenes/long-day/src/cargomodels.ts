@@ -323,11 +323,13 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   cheese: { size: [0.9, 0.9, 0.36], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.45, z, 0.45, 0.36, 0xf4c430, 14, Math.PI / 2); b.cyl(x, y + 0.45, z, 0.46, 0.04, 0xc8961e, 14, Math.PI / 2);
   } },
-  cake: { size: [0.7, 1.1, 0.7], build: (b, x, y, z) => {
+  // (Four tiers in a box low enough to carry alone: a taller one put its top in the driver's face
+  // as they stooped to set it down.)
+  cake: { size: [0.7, 0.9, 0.7], build: (b, x, y, z) => {
     b.box(x, y + 0.02, z, 0.72, 0.04, 0.72, 0xd8d8d8);
-    for (let k = 0; k < 5; k++) b.cyl(x, y + 0.1 + k * 0.19, z, 0.3 - k * 0.05, 0.17, k % 2 ? 0xfff6e8 : 0xf8e0e8, 12);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(x + sx * 0.35, y + 0.55, z + sz * 0.35, 0.02, 1.1, 0.02, 0xe0f0ff);   // clear box edges
-    b.box(x, y + 1.1, z, 0.72, 0.02, 0.72, 0xe0f0ff);
+    for (let k = 0; k < 4; k++) b.cyl(x, y + 0.1 + k * 0.19, z, 0.3 - k * 0.06, 0.17, k % 2 ? 0xfff6e8 : 0xf8e0e8, 12);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(x + sx * 0.35, y + 0.45, z + sz * 0.35, 0.02, 0.9, 0.02, 0xe0f0ff);   // clear box edges
+    b.box(x, y + 0.9, z, 0.72, 0.02, 0.72, 0xe0f0ff);
   } },
   gym: { size: [1.8, 1.3, 0.8], build: (b, x, y, z) => {
     b.box(x, y + 0.15, z, 1.8, 0.3, 0.8, 0x2a2a2a); b.box(x, y + 0.31, z, 1.5, 0.02, 0.6, 0x111111);

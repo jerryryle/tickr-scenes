@@ -1,0 +1,281 @@
+// A catalogue city's map (docs/long-day-cities.md, "Maps"): a layered SVG drawn top
+// down from its plan, 1 unit a metre in world coordinates (x east, z south, so north is up). Each
+// layer is a top-level group that Inkscape and Illustrator open as a layer, and every item carries
+// an id naming what it is in the plan. The map is a view: nothing reads it back.
+//
+// The streets, blocks, gates and junctions come from the plan. The lots, buildings and trees are
+// where the city's own builders put them: every chunk is built as the scene builds it, and what it
+// recorded in geom.ts PLACED is read back.
+import * as THREE from "three@0.187.0";
+import { CityPlan, kerbDoors, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI, siteSquare } from "../src/city.ts";
+import type { CityFile, CityHead } from "../src/cityfile.ts";
+import { facilityAt, facilityName, siteLayout } from "../src/facilities.ts";
+import { PAVEMENT, PK } from "../src/decor.ts";
+import { signalPoles, stopSignPosts } from "../src/signals.ts";
+import { PLACED } from "../src/geom.ts";
+import { BLOCK, RING } from "../src/grid.ts";
+import { STYLES } from "../src/styles.ts";
+import { CATALOGUE } from "../src/world.ts";
+import { roadMetres } from "../src/country.ts";
+import { WORLD_PLACES, WORLD_ROADS } from "../src/world-roads.ts";
+import { cityById } from "../src/visits.ts";
+import { RoadGeo } from "../src/country.ts";
+import { roadMapOf } from "../src/roadmap.ts";
+import type { WorldRoad } from "../src/world.ts";
+
+// Coordinates to the centimetre for what the plan holds, to the decimetre for what is built on it.
+const cmOf = (v: number) => String(Math.round(v * 100) / 100);
+const dmOf = (v: number) => String(Math.round(v * 10) / 10);
+const ptsOf = (p: [number, number][], f = cmOf) => p.map(([x, z]) => `${f(x)},${f(z)}`).join(" ");
+const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const DISTRICT_FILL: Record<string, string> = { downtown: "#c9b8d8", commercial: "#e8d4a8", residential: "#cfe3b8", industrial: "#c8c8c8", park: "#8fc77a" };
+
+// The layers, bottom to top: an id, the name an editor shows, and what is drawn in it.
+const LAYERS = [
+  ["ground", "Ground and districts"], ["water", "Water and shore"], ["streets", "Streets and pavements"],
+  ["names", "Street names"], ["controls", "Junction controls"], ["lots", "Lots"], ["buildings", "Buildings"],
+  ["sites", "Sites"], ["doors", "Doors"], ["trees", "Trees and parks"], ["furniture", "Street furniture"], ["lines", "Freeway and elevated lines"], ["gates", "Gates"],
+  ["pins", "Pinned dressing"], ["markup", "Markup"],
+] as const;
+type LayerId = typeof LAYERS[number][0];
+
+// The city's built lots, building footprints and trees, as the chunk builders placed them (world
+// coordinates; a block's lot built in more than one chunk counted once).
+function builtCity(plan: CityPlan) {
+  const mats = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
+  const build = makeCityChunkBuilder(mats, plan), quads = (a: number[], ox: number, oz: number) => {
+    const out: [number, number][][] = [];
+    for (let i = 0; i + 7 < a.length; i += 8) out.push([0, 2, 4, 6].map((k) => [a[i + k] + ox, a[i + k + 1] + oz] as [number, number]));
+    return out;
+  };
+  const lots = new Map<string, [number, number][]>(), feet = new Map<string, [number, number][]>(), trees = new Map<string, [number, number]>();
+  const furniture = new Map<string, { x: number; z: number; r: number; kind: number }>();
+  const keyOf = (q: [number, number][]) => q.map(([x, z]) => `${dmOf(x)},${dmOf(z)}`).join(" ");
+  for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
+    if (cityDistance(cx, cz) > 0) continue;
+    // (What stands on the pavement, as street life's probe build records it: city.ts pavementObstacles.)
+    const rec: number[] = [];
+    PAVEMENT.out = rec;
+    try { const gen = build(cx, cz); let r = gen.next(); while (!r.done) r = gen.next(); } finally { PAVEMENT.out = null; }
+    const ox = cx * BLOCK, oz = cz * BLOCK;
+    for (let i = 0; i + 3 < rec.length; i += 4) { const o = { x: rec[i] + ox, z: rec[i + 1] + oz, r: rec[i + 2], kind: rec[i + 3] }; furniture.set(`${dmOf(o.x)},${dmOf(o.z)},${o.kind}`, o); }
+    for (const q of quads(PLACED.lots, ox, oz)) lots.set(keyOf(q), q);
+    for (const q of quads(PLACED.foot, ox, oz)) feet.set(keyOf(q), q);
+    for (let i = 0; i + 1 < PLACED.trees.length; i += 2) { const p: [number, number] = [PLACED.trees[i] + ox, PLACED.trees[i + 1] + oz]; trees.set(`${dmOf(p[0])},${dmOf(p[1])}`, p); }
+  }
+  return { lots: [...lots.values()], feet: [...feet.values()], trees: [...trees.values()], furniture: [...furniture.values()] };
+}
+
+export function citySvg(F: CityHead): string {
+  const plan = new CityPlan(F.key, STYLES[F.style]), G = plan.graph;
+  plan.climate = { season: "summer", weather: "clear", snowCover: false };
+  const L = new Map<LayerId, string[]>(LAYERS.map(([id]) => [id, []]));
+  const add = (layer: LayerId, line: string) => L.get(layer)!.push(line);
+  const blockId = (x: number, z: number) => { const B = G.blockAt(x, z) ?? G.nearestBlock(x, z); return B ? `${B.kx}_${B.kz}` : "none"; };
+  // (Items numbered within their block, in order along x then z, so an id stays put while the rest moves.)
+  const numbered = <T>(items: T[], at: (t: T) => [number, number]) => {
+    const tagged = items.map((t) => { const [x, z] = at(t); return { t, x, z, b: blockId(x, z) }; }).sort((p, q) => p.b < q.b ? -1 : p.b > q.b ? 1 : p.x - q.x || p.z - q.z);
+    const n = new Map<string, number>();
+    return tagged.map((e) => { const k = (n.get(e.b) ?? 0) + 1; n.set(e.b, k); return { ...e, id: `${e.b}-${k}` }; });
+  };
+  const mid = (q: [number, number][]): [number, number] => [q.reduce((a, p) => a + p[0], 0) / q.length, q.reduce((a, p) => a + p[1], 0) / q.length];
+
+  // Ground and districts; water and shore.
+  for (const B of G.blocks) {
+    const id = `${B.kx}_${B.kz}`;
+    if (B.water) { add("water", `<polygon id="water-${id}" points="${ptsOf(B.poly)}" fill="#6fa8dc"/>`); continue; }
+    const d = B.park ? "park" : plan.district(B.kx, B.kz);
+    add("ground", `<polygon id="block-${id}" points="${ptsOf(B.poly)}" fill="${B.inCity ? DISTRICT_FILL[d] : "#e4e0d4"}"><title>block ${id}: ${d}</title></polygon>`);
+  }
+  if (G.outer) add("water", `<polygon id="outline" points="${ptsOf(G.outer)}" fill="none" stroke="#555" stroke-width="1"/>`);
+  plan.shore.forEach((e, i) => add("water", `<line id="shore-${i}" x1="${cmOf(e.ax)}" y1="${cmOf(e.az)}" x2="${cmOf(e.bx)}" y2="${cmOf(e.bz)}" stroke="#2f78b8" stroke-width="4"/>`));
+
+  // Streets and pavements, their names, and the freeway and elevated lines over them.
+  const band = (id: number, lo: number, hi: number) => {
+    const st = G.streets[id], n = Math.max(1, st.k === 0 ? 1 : Math.ceil(st.len / 4)), a: [number, number][] = [], b: [number, number][] = [];
+    for (let i = 0; i <= n; i++) { const s = (st.len * i) / n, p = G.streetPt(id, s, lo), q = G.streetPt(id, s, hi); a.push([p.x, p.z]); b.push([q.x, q.z]); }
+    return [...a, ...b.reverse()];
+  };
+  for (const st of G.streets) {
+    const road = st.half - st.kerb, out = st.inCity || st.gate >= 0;
+    add("streets", `<polygon id="pavement-${st.id}" points="${ptsOf(band(st.id, -st.half, st.half))}" fill="#b0ada2"/>`);
+    add("streets", `<polygon id="street-${st.id}" points="${ptsOf(band(st.id, -road, road))}" fill="${out ? "#3a3b3f" : "#77766f"}"><title>street ${st.id}${st.name ? `: ${esc(st.name)}` : ""}${st.oneway ? " (one way)" : ""}</title></polygon>`);
+    const tag = st.tags.freeway ? "freeway" : st.tags.elevated ? "elevated" : st.tags.cable ? "cable" : null;
+    if (tag) { const A = G.streetPt(st.id, 0, 0), Z = G.streetPt(st.id, st.len, 0); add("lines", `<line id="${tag}-${st.id}" x1="${cmOf(A.x)}" y1="${cmOf(A.z)}" x2="${cmOf(Z.x)}" y2="${cmOf(Z.z)}" stroke="${tag === "freeway" ? "#d98c1e" : tag === "elevated" ? "#7a4fb0" : "#b03a3a"}" stroke-width="5" stroke-opacity="0.8"/>`); }
+    if (st.name && st.len >= 30) {
+      const M = G.streetPt(st.id, st.len / 2, 0);
+      let deg = -M.h * 180 / Math.PI;
+      if (deg > 90) deg -= 180; else if (deg < -90) deg += 180;
+      add("names", `<text id="name-${st.id}" x="${cmOf(M.x)}" y="${cmOf(M.z)}" transform="rotate(${dmOf(deg)} ${cmOf(M.x)} ${cmOf(M.z)})" font-size="5" text-anchor="middle" dominant-baseline="middle" fill="#fff">${esc(st.name)}</text>`);
+    }
+  }
+  if (plan.interchange) { const ic = plan.interchange; add("lines", `<text id="interchange" x="${cmOf(ic.ix * BLOCK + 9)}" y="${cmOf(ic.iz * BLOCK + 9)}" font-size="8" fill="#d98c1e">interchange (${ic.kind})</text>`); }
+
+  // Junction controls: each junction's control, its signal poles and its stop signs' posts.
+  for (const N of G.nodes) {
+    for (const p of signalPoles(G, N)) add("controls", `<circle id="signal-pole-${N.id}-${p.i}" cx="${cmOf(p.px)}" cy="${cmOf(p.pz)}" r="0.6" fill="#111"><title>signal pole, node ${N.id}</title></circle>`);
+    for (const [arm, [x, z]] of [...stopSignPosts(G, N)].sort((a, b) => a[0] - b[0])) add("controls", `<circle id="stop-sign-${N.id}-${arm}" cx="${cmOf(x)}" cy="${cmOf(z)}" r="0.8" fill="#c0392b" stroke="#fff" stroke-width="0.2"><title>stop sign, node ${N.id}</title></circle>`);
+    if (N.arms.length < 3) continue;
+    if (N.control === "signal") add("controls", `<circle id="node-${N.id}" cx="${cmOf(N.x)}" cy="${cmOf(N.z)}" r="3" fill="#2e9e3e"><title>node ${N.id}: signals</title></circle>`);
+    else if (N.control === "stop") add("controls", `<rect id="node-${N.id}" x="${cmOf(N.x - 2.5)}" y="${cmOf(N.z - 2.5)}" width="5" height="5" fill="#c0392b"><title>node ${N.id}: all-way stop</title></rect>`);
+    else add("controls", `<circle id="node-${N.id}" cx="${cmOf(N.x)}" cy="${cmOf(N.z)}" r="2" fill="none" stroke="#fff" stroke-width="1"><title>node ${N.id}: no control</title></circle>`);
+  }
+
+  // Sites, and each block's facility.
+  for (const B of G.blocks) {
+    if (!B.inCity || B.water) continue;
+    const id = `${B.kx}_${B.kz}`, S = siteLayout(plan, B.kx, B.kz), fac = facilityAt(plan, B.kx, B.kz);
+    if (S.kind !== "kerb") {
+      const sq = B.square ? B.poly : B.anchor ? siteSquare(G, B.anchor) : B.poly;
+      add("sites", `<polygon id="site-${id}" points="${ptsOf(sq)}" fill="none" stroke="#1f5fbf" stroke-width="1.2" stroke-dasharray="3 2"><title>${S.kind} site</title></polygon>`);
+    }
+    add("sites", `<text id="facility-${id}" x="${cmOf(B.cx)}" y="${cmOf(B.cz)}" font-size="4" text-anchor="middle" fill="#123">${esc(facilityName(plan, fac, B.kx, B.kz))}${S.kind !== "kerb" ? ` (${S.kind})` : ""}</text>`);
+  }
+
+  // Lots, buildings and trees, as built; parks.
+  const built = builtCity(plan);
+  for (const e of numbered(built.lots, mid)) add("lots", `<polygon id="lot-${e.id}" points="${ptsOf(e.t, dmOf)}" fill="none" stroke="#8a7a5a" stroke-width="0.4"/>`);
+  for (const e of numbered(built.feet, mid)) add("buildings", `<polygon id="building-${e.id}" points="${ptsOf(e.t, dmOf)}" fill="#a0522d" fill-opacity="0.85"/>`);
+  for (const B of G.blocks) if (B.park) add("trees", `<polygon id="park-${B.kx}_${B.kz}" points="${ptsOf(B.poly)}" fill="none" stroke="#2e7d32" stroke-width="1"/>`);
+  const allTrees = new Map<string, [number, number]>();
+  for (const p of [...built.trees, ...built.furniture.filter((o) => o.kind === PK.tree).map((o) => [o.x, o.z] as [number, number])]) allTrees.set(`${dmOf(p[0])},${dmOf(p[1])}`, p);
+  for (const e of numbered([...allTrees.values()], (p) => p)) add("trees", `<circle id="tree-${e.id}" cx="${dmOf(e.t[0])}" cy="${dmOf(e.t[1])}" r="1.5" fill="#2e7d32"/>`);
+  // Street furniture by kind (decor.ts PK; 0, anything else), the trees aside.
+  const KIND = Object.fromEntries(Object.entries(PK).map(([k, v]) => [v, k])) as Record<number, string>;
+  const FURNITURE_FILL: Record<string, string> = { hydrant: "#d62828", trash: "#4a4a4a", bench: "#8b5a2b", mailbox: "#1d4ed8", news: "#e07b00", meter: "#6b7280", shelter: "#0e7490", rack: "#9ca3af", lamp: "#f2c200" };
+  for (const e of numbered(built.furniture.filter((o) => o.kind !== PK.tree), (o) => [o.x, o.z])) {
+    const kind = KIND[e.t.kind] ?? "other";
+    add("furniture", `<circle id="${kind}-${e.id}" cx="${dmOf(e.t.x)}" cy="${dmOf(e.t.z)}" r="${dmOf(Math.max(0.35, Math.min(e.t.r, 2)))}" fill="${FURNITURE_FILL[kind] ?? "#555"}"><title>${kind}</title></circle>`);
+  }
+
+  // The facilities' front doors, as the city file lists them (city.ts kerbDoors): each a bar
+  // across its width in its frame's colour, at the foot of its wall.
+  for (const B of G.blocks) for (const d of B.inCity ? kerbDoors(plan, B.kx, B.kz) : []) {
+    if (!d) continue;
+    const tx = -d.nz * d.half, tz = d.nx * d.half, hex = `#${d.panel.toString(16).padStart(6, "0")}`;
+    add("doors", `<line id="door-${B.kx}_${B.kz}-${d.side}" x1="${cmOf(d.x - tx)}" y1="${cmOf(d.z - tz)}" x2="${cmOf(d.x + tx)}" y2="${cmOf(d.z + tz)}" stroke="${hex}" stroke-width="0.6"><title>${esc(`door, block ${B.kx},${B.kz} side ${d.side}, ${d.a.toFixed(2)} m along${d.wide ? ", wide" : ""}`)}</title></line>`);
+  }
+
+  // Gates, each with the world road it serves (world-roads.ts) and the city at the road's far end.
+  F.gates.forEach((g) => {
+    if (!g) return;
+    const r = WORLD_ROADS.find((x) => (x.a.city === F.id && x.a.gate === g.id) || (x.b.city === F.id && x.b.gate === g.id));
+    const far = r ? cityById(r.a.city === F.id ? r.b.city : r.a.city)! : null, into = r?.oneway && r.b.city === F.id;
+    const label = r ? `${g.id}: ${r.id} to ${far!.name}${r.oneway ? into ? " (in only)" : " (out only)" : ""}` : `${g.id}: no road`;
+    add("gates", `<circle id="gate-${g.id}" cx="${cmOf(g.x)}" cy="${cmOf(g.z)}" r="6" fill="${r ? "#f2c200" : "#bbb"}" stroke="#000" stroke-width="0.8"><title>gate ${esc(label)}</title></circle>`);
+    add("gates", `<text id="gate-label-${g.id}" x="${cmOf(g.x)}" y="${cmOf(g.z - 9)}" font-size="8" text-anchor="middle" fill="#000">${esc(label)}</text>`);
+  });
+
+  const m = 40, { x0, z0, x1, z1 } = G.bounds, w = x1 - x0 + 2 * m, h = z1 - z0 + 2 * m;
+  const out = [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<!-- ${esc(F.name)} (${F.id}), drawn from src/city-${F.style}/${F.id.slice(F.style.length + 1)}/${F.id.slice(F.style.length + 1)}.ts by tools/maps.ts (make maps). Build output, regenerated and never read back: mark up a copy. -->`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="${cmOf(x0 - m)} ${cmOf(z0 - m)} ${cmOf(w)} ${cmOf(h)}" width="${Math.round(w)}" height="${Math.round(h)}">`,
+    `<title>${esc(F.name)}</title>`,
+    `<rect id="backdrop" x="${cmOf(x0 - m)}" y="${cmOf(z0 - m)}" width="${cmOf(w)}" height="${cmOf(h)}" fill="#f4f1e8"/>`,
+  ];
+  for (const [id, label] of LAYERS) {
+    out.push(`<g id="${id}" inkscape:groupmode="layer" inkscape:label="${label}">`);
+    for (const line of L.get(id)!) out.push(line);
+    out.push(`</g>`);
+  }
+  out.push(`</svg>`, ``);
+  return out.join("\n");
+}
+
+// Where a city's map is written: build output, in a folder for its style as its file is.
+export const mapPath = (F: CityHead) => `build/long-day-maps/city-${F.style}/${F.id.slice(F.style.length + 1)}.svg`;
+
+// The world map (docs/long-day-cities.md, "Maps"): the world graph alone, one node a city at its place
+// (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and
+// length; a road driven one way only has an arrow at the city it runs into.
+const STYLE_FILL: Record<string, string> = { coastal: "#2f78b8", metro: "#6b6b8a", desert: "#d9a441", brick: "#a0522d", mainstreet: "#4f9a3c", port: "#1f6f78", storybook: "#d83a9a" };
+export function worldSvg(): string {
+  // (Scaled to fit 1400 units across, the places' own units being arbitrary.)
+  const span = Math.max(1, ...Object.values(WORLD_PLACES).flat()), S = 1400 / span, at = (id: string) => WORLD_PLACES[id].map((v) => v * S + 80) as [number, number];
+  const xs = CATALOGUE.map((F) => at(F.id)[0]), zs = CATALOGUE.map((F) => at(F.id)[1]), w = Math.max(...xs) + 80, h = Math.max(...zs) + 80;
+  const out = [`<?xml version="1.0" encoding="UTF-8"?>`, `<!-- The world graph, drawn from src/world-roads.ts by tools/maps.ts (make maps). Build output. -->`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">`,
+    `<defs><marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker></defs>`,
+    `<rect id="backdrop" width="${w}" height="${h}" fill="#f4f1e8"/>`, `<g id="roads" inkscape:groupmode="layer" inkscape:label="Roads">`];
+  for (const r of WORLD_ROADS) {
+    const [ax, az] = at(r.a.city), [bx, bz] = at(r.b.city);
+    out.push(`<line id="${r.id}" x1="${ax}" y1="${az}" x2="${bx}" y2="${bz}" stroke="#555" stroke-width="2"${r.oneway ? ` marker-end="url(#arrow)"` : ""}><title>${r.id}: ${r.a.city} ${r.a.gate} to ${r.b.city} ${r.b.gate}, ${(roadMetres(r) / 1000).toFixed(1)} km</title></line>`);
+    out.push(`<text id="${r.id}-label" x="${(ax + bx) / 2}" y="${(az + bz) / 2 - 3}" font-size="9" text-anchor="middle" fill="#333">${r.id} ${(roadMetres(r) / 1000).toFixed(1)} km</text>`);
+  }
+  out.push(`</g>`, `<g id="cities" inkscape:groupmode="layer" inkscape:label="Cities">`);
+  for (const F of CATALOGUE) {
+    const [x, z] = at(F.id);
+    out.push(`<circle id="${F.id}" cx="${x}" cy="${z}" r="14" fill="${STYLE_FILL[F.style] ?? "#777"}" stroke="#000" stroke-width="1"><title>${esc(F.name)} (${F.style})</title></circle>`);
+    out.push(`<text id="${F.id}-label" x="${x}" y="${z + 27}" font-size="11" text-anchor="middle" fill="#000">${esc(F.name)}</text>`);
+  }
+  out.push(`</g>`, `<g id="markup" inkscape:groupmode="layer" inkscape:label="Markup"></g>`, `</svg>`, ``);
+  return out.join("\n");
+}
+export const worldMapPath = "build/long-day-maps/world.svg";
+
+// A road's map (docs/long-day-cities.md, "Road maps"): its map drawn top down in its own coordinates,
+// gate a's street end at the origin heading east (+x), 1 unit a metre: the road, its land (a's
+// and b's, and the coast), its set pieces (each labelled with its kind and the way it faces) and
+// its roadside items, a layer each.
+const ROAD_LAYERS = [
+  ["land", "Land"], ["road", "Road"], ["pieces", "Set pieces"], ["signs", "Signs"], ["trees", "Trees"],
+  ["items", "Rocks, ponds, farms and cows"], ["lines", "Poles, pylons, turbines and fences"], ["markup", "Markup"],
+] as const;
+const BIOME_FILL: Record<string, string> = { coastal: "#cfe0a8", forest: "#8fbf7a", desert: "#ead2a0", farmland: "#c6dc94", prairie: "#dcdc9c", wetlands: "#a8cfa0", storybook: "#f2b8dc" };
+export const roadMapPath = (r: WorldRoad) => `build/long-day-maps/roads/road-${r.id}.svg`;
+export function roadSvg(r: WorldRoad): string {
+  const M = roadMapOf(r), G = new RoadGeo(M), q = { x: 0, z: 0, h: 0, k: 0 }, L = new Map<string, string[]>(ROAD_LAYERS.map(([id]) => [id, []]));
+  G.place(0, 0, 0, 0);
+  const add = (id: string, s: string) => L.get(id)!.push(s);
+  const at = (s: number, n: number) => { G.point(s, n, q); return [q.x, q.z] as [number, number]; };
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let s = -40; s <= M.length + 40; s += 20) for (const n of [-180, 180]) { const [x, z] = at(s, n); x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z); }
+  // The land in 10 m bands either side, a's or b's by its blend; the coast's sea on its side.
+  for (let s = 0; s < M.length; s += 10) for (const side of [-1, 1]) {
+    const b = G.blendAt(s + 5), fill = BIOME_FILL[b < 0.5 ? M.biomes[0] : M.biomes[1]];
+    const sea = side === G.coastSide && G.coastAt(s + 5) > 0.5;
+    const poly = [at(s, side * 11), at(s + 10, side * 11), at(s + 10, side * 170), at(s, side * 170)];
+    add("land", `<polygon points="${ptsOf(poly, dmOf)}" fill="${sea ? "#9cc4e8" : fill}" stroke="none"/>`);
+  }
+  // The road: its centre line every 2 m, and its edges.
+  const line = (n: number) => { const p: [number, number][] = []; for (let s = -40; s <= M.length + 40; s += 2) p.push(at(s, n)); return p; };
+  add("road", `<polyline id="road" points="${ptsOf(line(0), dmOf)}" fill="none" stroke="#34353a" stroke-width="8.2"/>`);
+  add("road", `<polyline id="centre-line" points="${ptsOf(line(0), dmOf)}" fill="none" stroke="#f2c200" stroke-width="0.4"/>`);
+  for (const [s, label] of [[0, `gate a: ${r.a.city} ${r.a.gate}`], [M.length, `gate b: ${r.b.city} ${r.b.gate}`]] as const) {
+    const [x, z] = at(s, 0);
+    add("road", `<circle id="${s ? "gate-b" : "gate-a"}" cx="${dmOf(x)}" cy="${dmOf(z)}" r="6" fill="#c0392b"><title>${esc(label)}</title></circle>`);
+    add("road", `<text x="${dmOf(x)}" y="${dmOf(z - 10)}" font-size="14" text-anchor="middle">${esc(label)}</text>`);
+  }
+  // The set pieces: each its span of road, on its side; a sign's text by it.
+  M.pieces.forEach((p, i) => {
+    const m = G.inMap(p), n0 = m.side * 6, n1 = m.side * (p.kind === "tunnel" || p.kind === "overpass" || p.kind === "rail" || p.kind === "bridge" || p.kind === "ferry" ? -40 : 40);
+    const poly = [at(m.s, n0), at(m.s + m.len, n0), at(m.s + m.len, n1), at(m.s, n1)], [tx, tz] = at(m.s + m.len / 2, m.side * 50);
+    const sign = !!p.text && (p.kind === "leave" || p.kind === "distance" || p.kind === "welcome");
+    add(sign ? "signs" : "pieces", `<polygon id="piece-${i}-${p.kind}" points="${ptsOf(poly, dmOf)}" fill="${sign ? "#1e6b3a" : "#e8701a"}" fill-opacity="0.5" stroke="#333" stroke-width="0.5"><title>${esc(`${p.kind} at ${p.s.toFixed(0)} m, facing ${p.way > 0 ? "a to b" : "b to a"}${p.text ? `: ${p.text}` : ""}`)}</title></polygon>`);
+    add(sign ? "signs" : "pieces", `<text x="${dmOf(tx)}" y="${dmOf(tz)}" font-size="10" text-anchor="middle">${esc(`${p.text ?? p.kind} ${p.way > 0 ? "→" : "←"}`)}</text>`);
+  });
+  // The roadside items.
+  const I = M.items, TREE_FILL = ["#3c7a46", "#5a8a3a", "#24592c", "#ff7fb5", "#ff9a2e", "#4f7a34", "#9a6cf0", "#6a8a44", "#6e5a48", "#2f6a34"];
+  for (let i = 0; i < I.trees.length; i += 4) { const [x, z] = at(I.trees[i] / 10, I.trees[i + 1] / 10); add("trees", `<circle cx="${dmOf(x)}" cy="${dmOf(z)}" r="1.6" fill="${TREE_FILL[I.trees[i + 2]] ?? "#3c7a46"}"/>`); }
+  for (let i = 0; i < I.rocks.length; i += 2) { const [x, z] = at(I.rocks[i] / 10, I.rocks[i + 1] / 10); add("items", `<circle cx="${dmOf(x)}" cy="${dmOf(z)}" r="1.2" fill="#8a8478"/>`); }
+  for (let i = 0; i < I.ponds.length; i += 2) { const [x, z] = at(I.ponds[i] / 10, I.ponds[i + 1] / 10); add("items", `<ellipse cx="${dmOf(x)}" cy="${dmOf(z)}" rx="14" ry="8" fill="#2f78b8"/>`); }
+  for (let i = 0; i < I.farms.length; i += 2) { const [x, z] = at(I.farms[i] / 10, I.farms[i + 1] / 10); add("items", `<rect x="${dmOf(x - 6)}" y="${dmOf(z - 4.5)}" width="12" height="9" fill="#a83a2a"><title>farm</title></rect>`); }
+  for (let i = 0; i < I.cows.length; i += 2) { const [x, z] = at(I.cows[i] / 10, I.cows[i + 1] / 10); add("items", `<circle cx="${dmOf(x)}" cy="${dmOf(z)}" r="3" fill="#f2f2ee" stroke="#222" stroke-width="0.4"><title>cows</title></circle>`); }
+  for (let i = 0; i < I.turbines.length; i += 2) { const [x, z] = at(I.turbines[i] / 10, I.turbines[i + 1] / 10); add("lines", `<circle cx="${dmOf(x)}" cy="${dmOf(z)}" r="3" fill="#e6e9ea" stroke="#555" stroke-width="0.4"><title>wind turbine</title></circle>`); }
+  for (const v of I.pylons) { const [x, z] = at(v / 10, -60); add("lines", `<rect x="${dmOf(x - 1.6)}" y="${dmOf(z - 1.6)}" width="3.2" height="3.2" fill="#9aa0a6"><title>pylon</title></rect>`); }
+  for (const v of I.poles) { const [x, z] = at(v / 10, 12.5); add("lines", `<circle cx="${dmOf(x)}" cy="${dmOf(z)}" r="0.8" fill="#6b5a44"><title>utility pole</title></circle>`); }
+  for (let i = 0; i < I.fences.length; i += 2) { const s = I.fences[i] / 10, n = I.fences[i + 1] * 14.5; add("lines", `<polyline points="${ptsOf([at(s, n), at(s + 6, n)], dmOf)}" fill="none" stroke="#8a6a48" stroke-width="0.5"/>`); }
+  const m = 40, w = x1 - x0 + 2 * m, h = z1 - z0 + 2 * m;
+  const out = [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<!-- World road ${r.id} (${esc(r.a.city)} to ${esc(r.b.city)}), drawn from src/roads/road-${r.id}.ts by tools/maps.ts (make maps). Build output, regenerated and never read back: mark up a copy. -->`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="${cmOf(x0 - m)} ${cmOf(z0 - m)} ${cmOf(w)} ${cmOf(h)}" width="${Math.round(w)}" height="${Math.round(h)}">`,
+    `<title>Road ${r.id}: ${(M.length / 1000).toFixed(2)} km</title>`,
+    `<rect id="backdrop" x="${cmOf(x0 - m)}" y="${cmOf(z0 - m)}" width="${cmOf(w)}" height="${cmOf(h)}" fill="#f4f1e8"/>`,
+  ];
+  for (const [id, label] of ROAD_LAYERS) { out.push(`<g id="${id}" inkscape:groupmode="layer" inkscape:label="${label}">`, ...L.get(id)!, `</g>`); }
+  out.push(`</svg>`, ``);
+  return out.join("\n");
+}

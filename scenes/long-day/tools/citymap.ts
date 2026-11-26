@@ -4,8 +4,7 @@
 // into PNGs: see the Makefile's `citymap` target).
 // Args: outDir seed [cities]
 import { readConfig } from "../src/env.ts";
-import { Journey } from "../src/journey.ts";
-import { CityPlan, setCityLimits } from "../src/city.ts";
+import { CityPlan } from "../src/city.ts";
 import { citySeedOf } from "../src/country.ts";
 import { journeyStyle } from "../src/styles.ts";
 {
@@ -13,8 +12,6 @@ import { journeyStyle } from "../src/styles.ts";
   const [outDir, seedArg, nArg] = proc.argv.slice(2);
   const seed = Number(seedArg ?? 1), n = Number(nArg ?? 4);
   const cfg = readConfig({ seed } as SceneEnv);
-  void new Journey(cfg, 0, "autumn");   // (sets the city's limits and gates as the scene does)
-  setCityLimits(cfg.cityMinutes);
   const DIST: Record<string, [number, number, number]> = { downtown: [150, 160, 190], commercial: [215, 190, 150], residential: [170, 210, 150], industrial: [190, 180, 170], park: [90, 170, 90] };
   for (let N = 0; N < n; N++) {
     const plan = new CityPlan(citySeedOf(seed, N), journeyStyle(seed, N)), G = plan.graph;

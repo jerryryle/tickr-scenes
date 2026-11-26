@@ -4,8 +4,6 @@
 // BUDGET times the dearest of the real styles, by mean and by 95th percentile, or this fails.
 // The optional args are seed (default 1) and cities per style (default 2).
 import * as THREE from "three@0.187.0";
-import { readConfig } from "../src/env.ts";
-import { Journey } from "../src/journey.ts";
 import { CityPlan, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI } from "../src/city.ts";
 import { citySeedOf } from "../src/country.ts";
 import { STYLES } from "../src/styles.ts";
@@ -16,7 +14,6 @@ const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const SEED = argv[0] ? Number(argv[0]) : 1, PER = argv[1] ? Number(argv[1]) : 2;
 const BUDGET = 1.2;
 
-void new Journey(readConfig({ seed: SEED } as SceneEnv), 0, "autumn");   // (this sets up the city's limits and gates)
 const mat = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
 const pct = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const rows: { id: string; mean: number; p95: number; max: number; meshes: number }[] = [];

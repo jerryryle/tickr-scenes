@@ -3,23 +3,29 @@
 // a plan starting somewhere other than where the last one left it), and none turns faster than
 // TURN_MAX (a snap: a turn squeezed tight, or taken too fast). Traffic alone, round each spot.
 // And no gridlock: round signalled junctions in two cities, no car stands still for 60 s.
-// Args (all optional): seed (its first city must have a roundabout)
+// Args (all optional): a catalogue city's id (it must have a roundabout); by default the first in
+// src/world.ts that has one and four signalled crossroads.
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey, SIM_DT } from "../src/journey.ts";
 import { CityPlan } from "../src/city.ts";
 import { citySeedOf } from "../src/country.ts";
-import { journeyStyle } from "../src/styles.ts";
+import { journeyStyle, STYLES } from "../src/styles.ts";
+import { CATALOGUE } from "../src/world.ts";
 import { Traffic } from "../src/traffic.ts";
 {
-  const proc = (globalThis as any).process, seed = Number(proc.argv[2] ?? 3), TURN_MAX = 1.5, errs: string[] = [];
-  void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
-  const plan = new CityPlan(citySeedOf(seed, 0), journeyStyle(seed, 0)), G = plan.graph;
-  const ring = [...new Set(G.streets.filter((s) => s.oneway).map((s) => s.n0))];
-  if (!ring.length) { console.error(`seed ${seed}: no roundabout in its first city`); proc.exit(1); }
+  const proc = (globalThis as any).process, TURN_MAX = 1.5, errs: string[] = [];
+  void new Journey(readConfig({ seed: 3 } as SceneEnv), 0, "autumn");
+  const crossroads = (P: CityPlan) => P.graph.nodes.filter((n) => n.control === "signal" && n.arms.length === 4).length;
+  const town = CATALOGUE.find((F) => proc.argv[2] ? F.id === proc.argv[2] : (() => { const P = new CityPlan(F.key, STYLES[F.style]); return P.graph.streets.some((s) => s.ring) && crossroads(P) >= 4; })());
+  if (!town) { console.error(`no catalogue city ${proc.argv[2] ?? "with a roundabout and four signalled crossroads"}`); proc.exit(1); }
+  const seed = town!.id, plan = new CityPlan(town!.key, STYLES[town!.style]), G = plan.graph;
+  console.log(`traffic: ${seed}`);
+  const ring = [...new Set(G.streets.filter((s) => s.ring).map((s) => s.n0))];
+  if (!ring.length) { console.error(`${seed}: no roundabout`); proc.exit(1); }
   const rx = ring.reduce((a, n) => a + G.nodes[n].x, 0) / ring.length, rz = ring.reduce((a, n) => a + G.nodes[n].z, 0) / ring.length;
   const cross = G.nodes.filter((n) => n.control === "signal" && n.arms.length === 4).sort((a, b) => Math.hypot(a.x - rx, a.z - rz) - Math.hypot(b.x - rx, b.z - rz))[3];
-  if (!cross) { console.error(`seed ${seed}: fewer than four signalled crossroads in its first city`); proc.exit(1); }
+  if (!cross) { console.error(`${seed}: fewer than four signalled crossroads`); proc.exit(1); }
   for (const [name, cx, cz] of [["roundabout", rx, rz], ["crossroads", cross.x, cross.z]] as [string, number, number][]) {
     const T = new Traffic(new THREE.Scene(), new THREE.MeshBasicMaterial(), null), prev = new Map<number, { x: number; z: number; h: number }>();
     let jump = 0, yaw = 0, samples = 0;

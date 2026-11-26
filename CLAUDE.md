@@ -10,15 +10,23 @@ diff it against the source or carry editor changes back into `src/`.
 `build/<scene>/` just for that, then run `make <scene>` (which regenerates `scene.ts` from `src/`),
 build, make the thumbnail, and publish.
 
+A scene whose build packs assets of its own (`scenes/<scene>/assets-packed/`, such as Long Day's
+`world_<hash>`) needs each uploaded with `asset_add`, under its file name, before its source is
+published or sent as a draft. The source reads the asset by that name, so without it the scene
+fails to start. A packed asset is named after its contents, so a new one is added beside the old
+one; adding it changes only the scene's draft.
+
 ## Correct, simple and fast enough is the bar
 
 Designs, code and reviews all aim at the same three things: a scene that behaves correctly in the
 conditions it actually meets, code no more complex than that behaviour needs, and no wildly
 wasteful work. The behaviour asked for is itself open to question when a simpler one would serve.
 
-- **Correct means correct in normal play.** Normal play is every seed, every city style and
-  layout the generator can produce, a whole day from first frame to last, and every value a
-  `DEFINE` or a scene setting admits. A defect there is always in scope.
+- **Correct means correct in normal play.** Normal play is every seed, every city in Long Day's
+  catalogue (`scenes/long-day/src/world.ts`), a whole day from first frame to last, and every
+  value a `DEFINE` or a scene setting admits. A defect there is always in scope. The city
+  generator now only drafts cities (`scenes/long-day/tools/draftcities.ts`), so a layout it could
+  produce but no catalogue city has is outside normal play.
 - **Rare failures outside the scene are not a goal.** A scene does not need to ride out the board
   or the tickr service misbehaving. A reviewer does not ask for handling of it, and machinery
   added only for it is complexity to remove.

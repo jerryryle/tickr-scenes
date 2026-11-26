@@ -109,9 +109,11 @@ export class StreetLife implements LifeHook {
   private carsClear = (x0: number, z0: number, x1: number, z1: number, secs: number) => this.traffic.crossingClear(x0, z0, x1, z1, secs);
 
   reset(j: Journey) {
-    const s = j.st.citySeed;
+    // (By the visit's dressing seed: a catalogue city's traffic and crowd differ from one visit to
+    // another. Its vignettes by its gag seed.)
+    const s = j.visit.dressing;
     this.traffic.reset(Math.floor(hash2(s, 1, 0, 0x7a4f) * 2 ** 32));
-    this.crowd.reset(Math.floor(hash2(s, 2, 0, 0xc40d) * 2 ** 32));
+    this.crowd.reset(Math.floor(hash2(s, 2, 0, 0xc40d) * 2 ** 32), j.visit.gags);
     this.outGo = false;
     this.ambient.resetBlimp();
   }
@@ -219,7 +221,7 @@ export class StreetLife implements LifeHook {
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
     if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
     this.crowd.step(j.plan, st.simTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt });
-    const g = st.mode === "inbound" && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[0] : null;
+    const g = st.mode === "inbound" && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[j.entryGate] : null;
     const gate = g ? this.truckGate : null;
     if (gate) { gate.node = g!.node; gate.street = g!.street; }
     // (Coming down a freeway exit ramp, which joins the streets off any junction: traffic gives way

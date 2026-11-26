@@ -15,7 +15,6 @@ import { interchangeFace, interchangeTrack } from "../src/interchange.ts";
 {
   const proc = (globalThis as any).process;
   const seed = Number(proc.argv[2] ?? 1);
-  void new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");   // (the city's limits and gates)
   const errs: string[] = [], seen: Record<string, number> = {};
   for (let N = 0; N < 80 && Object.keys(seen).length < 2; N++) {
     const plan = new CityPlan(citySeedOf(seed, N), journeyStyle(seed, N)), ic = plan.interchange;

@@ -45,15 +45,6 @@
       "type": "range"
     },
     {
-      "name": "countrySeconds",
-      "configurable": true,
-      "default": 45,
-      "max": 60,
-      "min": 30,
-      "step": 5,
-      "type": "range"
-    },
-    {
       "name": "debugHud",
       "configurable": false,
       "default": false,

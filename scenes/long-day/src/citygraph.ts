@@ -1,7 +1,7 @@
 // The city as a street graph: intersections (nodes), streets between them (straight or circular
 // arcs, two lanes each way), the blocks they enclose and the faces of those blocks along each
 // street. Every other module asks the graph instead of doing grid arithmetic, so a city can take
-// any layout a generator gives it (citygen.ts). The graph is built once per city from its seed
+// any layout a generator gives it (tools/citygen.ts). The graph is built once per city from its seed
 // and never changes, so everything derived from it stays a pure function of the seed (seeking
 // and scrubbing rely on that).
 //
@@ -61,8 +61,8 @@ export interface CBlock {
   inCity: boolean;
   area: number;
   square: boolean;              // the old grid's block: 42 m square, sides north, south, west and east (the grid's own builders and sites fit it)
-  water: boolean;               // a river (citygen.ts): water between its quays, nothing built
-  park: boolean;                // a superblock park (citygen.ts): several blocks' worth of green
+  water: boolean;               // a river (tools/citygen.ts): water between its quays, nothing built
+  park: boolean;                // a superblock park (tools/citygen.ts): several blocks' worth of green
   // Where the old grid's 42 m square block fits against one of its faces, for a site laid out
   // for it (a dock, garage, rental lot or stand): that face, and how far along it the square's
   // frontage starts past the grid's (a square's frontage a is the face's a - delta). Null on a
@@ -81,7 +81,7 @@ export class CityGraph {
   readonly nodes: CNode[] = [];
   readonly streets: CStreet[] = [];
   readonly blocks: CBlock[] = [];
-  readonly gates: (CGate | null)[] = [];   // the town's gates: the entry first, then its exits (citygen.ts trimToOutline)
+  readonly gates: (CGate | null)[] = [];   // the town's gates: the entry first, then its exits (tools/citygen.ts trimToOutline)
   // The edge round the outside of the town (the backs of its outermost sidewalks), the largest
   // such cycle: where the land ends (outline.ts), and along the sea, the shore.
   outer: [number, number][] | null = null;
@@ -92,7 +92,7 @@ export class CityGraph {
   private blockGrid = new Map<number, number[]>();
   bounds = { x0: 0, z0: 0, x1: 0, z1: 0 };
 
-  // ---- building (citygen.ts) -------------------------------------------------------------
+  // ---- building (tools/citygen.ts) -------------------------------------------------------------
   addNode(x: number, z: number, kx: number, kz: number): number {
     const id = this.nodes.length;
     this.nodes.push({ id, x, z, arms: [], control: "signal", kx, kz, phaseOf: [], phases: 1 });
@@ -225,6 +225,11 @@ export class CityGraph {
         if (ok) { B.anchor = { face: f, delta }; break; }
       }
     }
+  }
+  // The blocks' hash keys from a city file (cityfile.ts), in place of those findBlocks gave them.
+  setBlockKeys(keys: readonly [number, number][]) {
+    this.blockKey.clear();
+    this.blocks.forEach((B, i) => { [B.kx, B.kz] = keys[i]; this.blockKey.set(`${B.kx},${B.kz}`, i); });
   }
   // A block's side number for face f (its index in sides), or -1.
   sideOf(f: number): number { const b = this.faceBlock[f]; return b < 0 ? -1 : this.blocks[b].sides.indexOf(f); }

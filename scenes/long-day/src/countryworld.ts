@@ -21,15 +21,16 @@ import { bareTree, shade } from "./city.ts";
 import type { CityMaterials, FleetBuilder, Rand, StallPose } from "./city.ts";
 import { AD_BATON, AD_BILLBOARD, AD_RYDER, PlateSet, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
-import { BORE_H, BORE_HALF, COAST_N, CountryRoad, LANE, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
+import { BORE_H, BORE_HALF, COAST_N, CountryRoad, FERRY_LEN, LANE, MirrorView, PIECE_KINDS, TWO_WAY_SIGNS, CATTLE_X, ROAD_PAD, ONCOMING_SPEED, OVER_ABUT, OVER_DECK, OVER_HALF, pieceSigns, SEA_N, TRAIN_CAR, TRAIN_CARS, TRAIN_SPEED, tunnelTop,
   WEIGH_BACK, WEIGH_GREEN, FORECOURT, GAS_SIGN, GAS_SIGN_N, TS_SIGN_N, paveAt, piecePaving, WEIGH_LEN, WEIGH_LIGHT, WEIGH_N, WEIGH_OUT, WEIGH_SCALE, BOAT_L, BOAT_W, WATER_DROP } from "./country.ts";
 import type { FerryPlan } from "./country.ts";
 import { COW_GATE, herdDist, TRACTOR_B, TRACTOR_R } from "./country.ts";
 import type { CattlePlan, HerdMember } from "./country.ts";
 import { Cow, Horse, Tractor } from "./farm.ts";
 import type { Coat } from "./farm.ts";
-import type { BiomeId, RoadPiece, RoadSign } from "./country.ts";
-import { storyTree } from "./storybook.ts";
+import type { BiomeId, RoadGeo, RoadPiece, RoadSign, RoadView } from "./country.ts";
+import type { RoadItems, RoadMapPiece } from "./roadmap.ts";
+import { storyTree } from "./city-storybook/storybook-buildings-town.ts";
 import { CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -40,7 +41,10 @@ const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
 const STORY_STEPS = 8;           // the storybook's creep into the real land near it goes in this many steps (storyLook)
-const SIDE_W = 170;              // scenery either side of the road
+const SIDE_W = 170;
+// The roadside trees' kinds, as a map lists them (their index), and those with the darker greens.
+const TREE_KINDS = ["broad", "palm", "conifer", "tuft", "pancake", "droop", "spiral", "cactus", "shrub", "cypress"];
+const CGREEN = new Set(["conifer", "cypress", "cactus"]);              // scenery either side of the road
 // The land's mesh: its columns across the road (each side), out past the fog. Field and beach
 // edges fall on columns.
 const LAND_N = [0, 6.8, 11, 14, 20, 28, 37, 47, -COAST_N, 66, -SEA_N, 88, 106, 128, 150, SIDE_W, 210, 260, 320];
@@ -61,7 +65,7 @@ export const BIOMES: Record<BiomeId, BiomeLook> = {
   prairie: { ground: 0xb0b25c, ground2: 0x9aa64e, trees: ["broad", "shrub"], greens: [0x4f7a34, 0x5a8a3a], density: 0.12, rocks: 0.1, fence: true, turbines: true, cows: true },
   wetlands: { ground: 0x5a8a50, ground2: 0x6a9a58, trees: ["broad", "shrub", "shrub", "conifer"], greens: [0x3c6a3c, 0x4a7a40], density: 0.4, rocks: 0.05, ponds: true, pylons: true },
   // The storybook city's country is rolling hills in bands of lime, mint, butter and pink, dotted
-  // with tuft trees, pancake trees and topiary (storybook.ts).
+  // with tuft trees, pancake trees and topiary (storybook-buildings-town.ts).
   storybook: { ground: 0x98dc62, ground2: 0x6fd38a, trees: ["tuft", "tuft", "pancake", "spiral"], greens: [0xff7fb5, 0xff9a2e, 0xf2c230, 0x9a6cf0, 0x6fe0e8], density: 0.6, rocks: 0,
     fields: [0xa6e05a, 0x5fcf8a, 0xf3e07a, 0x5fcf8a, 0xff9fc0] },
 };
@@ -302,7 +306,7 @@ export class CountryWorld {
   private looks = new Map<string, BiomeLook & { cgreens: number[] }>();
   private tmpC = new THREE.Color();
   // (Near the storybook city its colours and trees creep into the real land too: storyLook.)
-  private look(road: CountryRoad, sa: number, n = 0) {
+  private look(road: RoadView, sa: number, n = 0) {
     const id = road.biomeAt(sa, n), c = road.climateAt(sa, n);
     if (id === "storybook") return this.lookOf(id, c);
     const w = road.storyAt(sa);
@@ -352,25 +356,27 @@ export class CountryWorld {
     this.setOffset(0, 0);
     if (!road) return;
     // The train and the crossing gates, if this drive has a crossing.
-    const rail = road.pieces.find((p) => p.kind === "rail");
-    if (rail) {
-      this.train = this.buildTrain(road, rail.s);
+    this.geo = road.geo;
+    const railP = road.geo.pieces.find((p) => p.kind === "rail"), G = road.geo;
+    if (railP) {
+      const rs = this.railS = railP.way === 1 ? railP.s : G.length - railP.s;   // (the track, in the map's coordinates)
+      this.train = this.buildTrain(G, rs);
       this.group.add(this.train);
-      road.center(rail.s, this.p);
+      G.center(rs, this.p);
       for (const [ds, side] of [[-7, 1], [7, -1]] as const) {
-        road.point(rail.s + ds, side * 6.2, this.q);
+        G.point(rs + ds, side * 6.2, this.q);
         const g = new THREE.Group(), b = new Batch();
         // The arm, along local -z (towards the road) from the pivot.
         for (let i = 0; i < 6; i++) b.box(0, 0, -0.5 - i, 0.12, 0.12, 1.0, i % 2 ? CW.red : 0xf2f2f2);
         g.add(b.build(this.mats.solid)!);
-        g.position.set(this.q.x, 1.1 + road.heightAt(rail.s), this.q.z);
+        g.position.set(this.q.x, 1.1 + G.heightAt(rs), this.q.z);
         g.rotation.order = "YXZ"; g.rotation.y = this.p.h + (side > 0 ? 0 : Math.PI);
         this.group.add(g); this.gates.push(g);
         for (const k of [-0.3, 0.3]) {
           const lb = new Batch(); lb.box(0, 0, 0, 0.3, 0.3, 0.1, 0xff3020);
           const l = lb.build(this.lightMat)!;
-          road.point(rail.s + ds - Math.sign(ds) * 0.9, side * 6.6, this.q);
-          l.position.set(this.q.x, 2.6 + road.heightAt(rail.s), this.q.z);
+          G.point(rs + ds - Math.sign(ds) * 0.9, side * 6.6, this.q);
+          l.position.set(this.q.x, 2.6 + G.heightAt(rs), this.q.z);
           l.position.x += Math.sin(this.p.h) * k * side; l.position.z += Math.cos(this.p.h) * k * side;
           l.rotation.y = this.p.h + Math.PI / 2 * Math.sign(ds);
           l.userData.k = k; this.group.add(l); this.lights.push(l);
@@ -408,6 +414,8 @@ export class CountryWorld {
     }
   }
 
+  private geo: RoadGeo | null = null;
+  private railS = 0;
   clear() {
     for (const g of this.segs.values()) { this.group.remove(g); disposeTree(g); }
     this.segs.clear();
@@ -426,15 +434,17 @@ export class CountryWorld {
   update(u: number, sTruck: number, jumped: boolean, baseToo = true) {
     const road = this.road;
     if (!road) return;
-    const i0 = Math.floor((sTruck - SEG_BEHIND) / SEG), i1 = Math.floor((sTruck + SEG_AHEAD) / SEG);
+    // (Segments in the map's coordinates, the same whichever way the road is driven.)
+    const sm = road.ds(sTruck), back = road.dir < 0;
+    const i0 = Math.floor((sm - (back ? SEG_AHEAD : SEG_BEHIND)) / SEG), i1 = Math.floor((sm + (back ? SEG_BEHIND : SEG_AHEAD)) / SEG);
     const keep = this.exact ? 0 : 1;
     for (const [i, g] of this.segs) if (i < i0 - keep || i > i1 + keep) { this.group.remove(g); disposeTree(g); this.segs.delete(i); }
     let budget = jumped || this.exact ? Infinity : 1;
     // Nearest first: the one ahead of the truck, then outwards.
     const want: number[] = [];
-    const iMax = Math.floor((road.length - 0.01) / SEG);
+    const iMax = Math.floor((Math.max(road.length, road.geo.length) - 0.01) / SEG);
     for (let i = i0; i <= i1; i++) if (i >= 0 && i <= iMax && !this.segs.has(i)) want.push(i);
-    want.sort((a, b) => Math.abs(a * SEG + SEG / 2 - sTruck) - Math.abs(b * SEG + SEG / 2 - sTruck));
+    want.sort((a, b) => Math.abs(a * SEG + SEG / 2 - sm) - Math.abs(b * SEG + SEG / 2 - sm));
     for (const i of want) {
       if (budget-- <= 0) break;
       const t0 = performance.now();
@@ -517,9 +527,9 @@ export class CountryWorld {
     const len = (TRAIN_CARS + 1) * TRAIN_CAR;
     this.train.visible = front > -240 && front - len < 240;
     if (this.train.visible) {
-      const rs = road.pieces.find((p) => p.kind === "rail")!.s;
-      road.point(rs, front, this.p);
-      this.train.position.set(this.p.x, road.heightAt(rs), this.p.z);
+      const G = road.geo, rs = this.railS;
+      G.point(rs, front, this.p);
+      this.train.position.set(this.p.x, G.heightAt(rs), this.p.z);
     }
     const down0 = rail ? rail.arrive - 7 : 1e9, up0 = tt + (150 + 8 + len) / TRAIN_SPEED + 0.5;
     const down = THREE.MathUtils.clamp(Math.min((u - down0) / 3, (up0 + 3 - u) / 3), 0, 1);
@@ -562,8 +572,9 @@ export class CountryWorld {
     g.add(foam); this.foam = foam;
     return g;
   }
-  // The ferry's near terminal (in the segment with its quay): the booth under a canopy, waiting
-  // lanes and the terminal building on the right, the quay with the ramp's gantry and fenders.
+  // A ferry terminal (in the segment with its quay): the booth under a canopy, waiting lanes and
+  // the terminal building on the right, the quay with the ramp's gantry and fenders. (The far one is
+  // this turned half round: buildSegment.)
   private ferryNear(g: Batch, s: Batch, F: FerryPlan, y: number) {
     const Q = F.q0, S = F.s, CON = CW.concrete, WALL = 0x8a867c;
     this.rbox(g, Q - 14.995, 0, -0.1, 30.01, 0.1, 80, CON);   // (5 cm under the road, and a cm past its end)
@@ -580,27 +591,13 @@ export class CountryWorld {
     this.rbox(g, (a0 + a1) / 2, 10, -0.045, a1 - a0, 0.1, 11.8, CW.asphalt);
     for (const n of [7, 10, 13]) this.rbox(g, (a0 + a1) / 2, n, 0.005, a1 - a0 - 1, 0.02, 0.14, CW.white);
     ([[a0 + 4, 8.5], [a0 + 11, 8.5], [a0 + 6, 11.5], [a0 + 20, 14.5]] as const).forEach(([a, n], k) => {
-      const [x, z, h] = this.L(a, n), r = hash2(k, Math.round(F.s), 0xfe7, 0x31);
-      parkedCar(s, carKindAt(r), x, 0.005, z, h, carPaintAt(hash2(k, Math.round(F.s), 0xfe8, 0x32)));
+      const kk = k + (this.flip ? 4 : 0), [x, z, h] = this.L(a, n), r = hash2(kk, Math.round(F.s), 0xfe7, 0x31);   // (the far terminal's cars its own)
+      parkedCar(s, carKindAt(r), x, 0.005, z, h, carPaintAt(hash2(kk, Math.round(F.s), 0xfe8, 0x32)));
     });
     this.rbox(s, S + 57, 26, 3.5, 34, 7, 12, 0xe8e2d6); this.rbox(s, S + 57, 26, 3.0, 34.1, 2.2, 12.1, 0x2a3440); this.rbox(s, S + 57, 26, 7.2, 34.6, 0.4, 12.6, 0x1d3a6b);
     const uv = this.slot("FERRY TERMINAL", { bg: "#1d3a6b", fg: "#ffffff", logo: false });
     if (uv) { const [x, z, h] = this.L(S + 57, 19.88); this.quads.push({ x, y: y + 5.6, z, w: 9.6, h: 1.2, rotY: Math.atan2(-Math.sin(h), -Math.cos(h)), ...uv }); }
   }
-  // The far terminal: the quay and its ramp's gantry, a small building on the left.
-  private ferryFar(g: Batch, s: Batch, F: FerryPlan, y: number) {
-    const Q = F.q1, CON = CW.concrete, WALL = 0x8a867c;
-    this.rbox(g, Q + 14.995, 0, -0.1, 30.01, 0.1, 80, CON);   // (as at the near terminal)
-    this.rbox(s, Q + 0.59, 0, -1.9, 1.22, 3.6, 80.02, WALL);
-    for (const n of [-7.6, 7.6]) this.rbox(s, Q - 0.15, n, -0.9, 0.3, 1.4, 1.0, 0x222222);
-    for (const n of [-30, -18, 18, 30]) { const [x, z] = this.L(Q + 1.2, n); s.cyl(x, 0.3, z, 0.25, 0.6, 0x2a2b2e, 8); }
-    for (const n of [-5.2, 5.2]) this.rbox(s, Q + 1.2, n, 3.2, 0.5, 6.4, 0.5, CW.yellow);
-    this.rbox(s, Q + 1.2, 0, 6.6, 0.7, 0.7, 11, CW.yellow);
-    this.rbox(s, Q + 45, -24, 2.5, 16, 5, 9, 0xe8e2d6); this.rbox(s, Q + 45, -24, 5.2, 16.6, 0.4, 9.6, 0x1d3a6b);
-    const uv = this.slot("FERRY", { bg: "#1d3a6b", fg: "#ffffff", logo: false });
-    if (uv) { const [x, z, h] = this.L(Q + 45, -19.38); this.quads.push({ x, y: y + 3.6, z, w: 5, h: 1.0, rotY: Math.atan2(Math.sin(h), Math.cos(h)), ...uv }); }
-  }
-
   // The herd: each cow walks from its spot in the pasture to the gate, across the road and through
   // the corral's gate to its spot there, reaching the pasture gate at the herd's time + its turn;
   // the rider brings up the rear and stops just inside the corral gate. Paths in road
@@ -654,7 +651,7 @@ export class CountryWorld {
     let prev: number | null = null;
     for (let a = Math.ceil(a0 / step) * step; a <= a1; a += step) {
       if (open(a)) { prev = null; continue; }
-      const gy = this.road!.groundAt(a, n);
+      const gy = this.V.groundAt(a, n);
       s.dy = gy; this.rbox(s, a, n, 0.6, 0.13, 1.2, 0.13, W);
       if (prev !== null && !open(a - step / 2)) for (const y of [0.55, 1.0]) this.rbox(s, a - step / 2, n, y, step, 0.08, 0.05, 0x9a7a56);
       prev = a;
@@ -665,7 +662,7 @@ export class CountryWorld {
     const W = 0x8a6a48, keep = s.dy, sg = Math.sign(n1 - n0), step = 3.5, len = Math.abs(n1 - n0);
     for (let k = 0; k <= len / step; k++) {
       const n = n0 + sg * k * step;
-      s.dy = this.road!.groundAt(a, n); this.rbox(s, a, n, 0.6, 0.13, 1.2, 0.13, W);
+      s.dy = this.V.groundAt(a, n); this.rbox(s, a, n, 0.6, 0.13, 1.2, 0.13, W);
       if (k > 0) for (const y of [0.55, 1.0]) this.rbox(s, a, n - sg * step / 2, y, 0.05, 0.08, step, 0x9a7a56);
     }
     s.dy = keep;
@@ -678,7 +675,7 @@ export class CountryWorld {
     this.rbox(s, a + half + 0.12, n + sg * half, 0.75, 0.06, 0.95, 0.06, 0xa8acb0);
   }
 
-  private buildTrain(road: CountryRoad, rs: number): THREE.Group {
+  private buildTrain(road: RoadView, rs: number): THREE.Group {
     const b = new Batch();
     freightTrain(b);
     const g = new THREE.Group();
@@ -691,9 +688,18 @@ export class CountryWorld {
   // ---- segments -----------------------------------------------------------------------------
   // Local position of (s, n) in the segment being built, the road's heading there and the
   // ground's height.
+  // (The view segments draw through: the map's coordinates, or turned half round about a piece's
+  // middle for its other face, or about the road's for a piece facing b to a: mirrored.)
+  private V!: RoadView;
+  private flip = false;
+  private mirrored(c: number, fn: () => void) {
+    const keep = this.V, kf = this.flip;
+    this.V = new MirrorView(keep, c); this.flip = !kf;
+    try { fn(); } finally { this.V = keep; this.flip = kf; }
+  }
   private L(s: number, n: number): [number, number, number, number] {
-    this.road!.point(s, n, this.q);
-    return [this.q.x - this.ox, this.q.z - this.oz, this.q.h, this.road!.groundAt(s, n)];
+    this.V.point(s, n, this.q);
+    return [this.q.x - this.ox, this.q.z - this.oz, this.q.h, this.V.groundAt(s, n)];
   }
   // A box aligned with the road at (s, n): `len` along it, `wid` across, tilted to `grade`.
   // (Its height is above the batch's dy.)
@@ -711,7 +717,7 @@ export class CountryWorld {
   }
   // The lowest ground within r of (s, n): what a building there stands on (sunk into the slope).
   private foot(s: number, n: number, r: number) {
-    const G = (a: number, b: number) => this.road!.groundAt(a, b);
+    const G = (a: number, b: number) => this.V.groundAt(a, b);
     return Math.min(G(s, n), G(s - r, n), G(s + r, n), G(s, n - r), G(s, n + r)) - 0.15;
   }
   // A sign quad at (s, n) facing back down the road (towards the truck) or along it.
@@ -728,25 +734,46 @@ export class CountryWorld {
     return signAtlas.uv(k);
   }
 
+  // Drafting a road's map (tools/draftroads.ts): the roadside items are placed by today's rules and
+  // recorded here, in place of being drawn from the map's lists.
+  record: RoadItems | null = null;
+  // Every segment of the road built once with the items placed by the rules, and what was placed.
+  recordItems(road: CountryRoad): RoadItems {
+    const rec: RoadItems = { trees: [], rocks: [], ponds: [], turbines: [], pylons: [], farms: [], cows: [], poles: [], fences: [] };
+    this.setRoad(null); this.record = rec;
+    try {
+      this.setRoad(road);
+      for (let i = 0; i <= Math.floor((road.length - 0.01) / SEG); i++) disposeTree(this.buildSegment(road, i));
+    } finally { this.record = null; this.setRoad(null); }
+    // (Each kind in order of s, then n.)
+    const strides: Record<keyof RoadItems, number> = { trees: 4, rocks: 2, ponds: 2, turbines: 2, pylons: 1, farms: 2, cows: 2, poles: 1, fences: 2 };
+    for (const k of Object.keys(strides) as (keyof RoadItems)[]) {
+      const st = strides[k], A = rec[k], rows: number[][] = [];
+      for (let i = 0; i < A.length; i += st) rows.push(A.slice(i, i + st));
+      rows.sort((x, y) => x[0] - y[0] || (x[1] ?? 0) - (y[1] ?? 0));
+      rec[k] = rows.flat();
+    }
+    return rec;
+  }
   private buildSegment(road: CountryRoad, i: number): THREE.Group {
-    const s0 = i * SEG, s1 = s0 + SEG;
+    const R = road.geo, s0 = i * SEG, s1 = s0 + SEG, key = R.key, LEN = R.length;
+    this.V = R; this.flip = false;
     this.treesHere.length = 0;
-    road.center(s0, this.p);
+    R.center(s0, this.p);
     this.ox = this.p.x; this.oz = this.p.z;
     this.quads = []; this.slots = []; this.ads = false; this.plates = new PlateSet();
     const g = new Batch(), s = new Batch(), glow = this.glow, spins: TurbineSpin[] = [];
-    const rnd = mulberry32(Math.floor(hash3(i, road.inp.city, 7, road.inp.seed, 0x5e9) * 4294967296));
     // Land: a mesh over the ground's heights, in rows across the road, coloured by cell: by
     // biome, in bands (fields in farm country), sand and sea on a coast.
-    const land = (a: number) => a >= road.landFrom && a <= road.landTo;
-    const r0 = Math.max(s0, road.landFrom), r1 = Math.min(s1, road.landTo);
+    const land = (a: number) => a >= R.landFrom && a <= R.landTo;
+    const r0 = Math.max(s0, R.landFrom), r1 = Math.min(s1, R.landTo);
     if (r1 > r0 + 0.01) {
       const rows: number[] = [];
       for (let a = r0; a < r1 - 0.01; a = Math.min(r1, (Math.floor(a / LAND_ROW) + 1) * LAND_ROW)) rows.push(a);
       rows.push(r1);
       // (A tunnel's portals are rows of their own, the land stepping up there from the road to
       // the hill over it: the land just short of the portal ends one quad, just past it starts the next.)
-      const cliffs = road.cliffs;
+      const cliffs = R.cliffs;
       for (const e of cliffs) if (e > r0 + 0.01 && e < r1 - 0.01 && !rows.includes(e)) rows.push(e);
       rows.sort((x, y) => x - y);
       const portal = (a: number) => cliffs.some((e) => Math.abs(a - e) < 1e-6);
@@ -759,16 +786,16 @@ export class CountryWorld {
         if (prev) {
           const pa = rows[ri - 1], sm = (pa + a) / 2;
           for (let c = 0; c + 1 < cols.length; c++) {
-            let color = this.landColor(road, sm, pa, cols[c], cols[c + 1]);
+            let color = this.landColor(R, sm, pa, cols[c], cols[c + 1]);
             const A = c * 3, B = (c + 1) * 3;
             // Steep ground (a cutting, a hillside over a portal) is bare rock.
             const ys = [prev[A + 1], prev[B + 1], row[A + 1], row[B + 1]], rise = Math.max(...ys) - Math.min(...ys);
-            if (rise > 0.75 * Math.min(cols[c + 1] - cols[c], a - pa) && rise > 1.5) color = shade(CW.rock, 0.92 + 0.16 * hash2(Math.floor(pa), c, road.inp.seed, 0x70c));
+            if (rise > 0.75 * Math.min(cols[c + 1] - cols[c], a - pa) && rise > 1.5) color = shade(CW.rock, 0.92 + 0.16 * hash2(Math.floor(pa), c, key, 0x70c));
             g.tri(prev[A], prev[A + 1], prev[A + 2], prev[B], prev[B + 1], prev[B + 2], row[B], row[B + 1], row[B + 2], color);
             g.tri(prev[A], prev[A + 1], prev[A + 2], row[B], row[B + 1], row[B + 2], row[A], row[A + 1], row[A + 2], color);
           }
-          // The sea, level, beyond a coast's beach on the left.
-          if (road.coastAt(sm) > 0.5) this.rbox(g, sm, (SEA_N - 320) / 2, -0.07, a - pa + 0.4 + Math.abs(road.center(sm, this.p).k) * (a - pa) * 320, 0.1, 320 + SEA_N, CW.water);
+          // The sea, level, beyond a coast's beach.
+          if (R.coastAt(sm) > 0.5) this.rbox(g, sm, -R.coastSide * (SEA_N - 320) / 2, -0.07, a - pa + 0.4 + Math.abs(R.center(sm, this.p).k) * (a - pa) * 320, 0.1, 320 + SEA_N, CW.water);
         }
         prev = cut ? rowAt(a + 1e-4) : row;
       }
@@ -777,21 +804,22 @@ export class CountryWorld {
     // is allowed on the straights is overkill at this size: solid).
     // Near a gate it widens to a city street's carriageway, to meet the gate street.
     // (None across a ferry's water: each 6 m piece is cut back to the quays.)
-    const Fy = road.ferry;
-    for (let a = s0; a < s1 && a < road.gateS; a += 6) {
+    const Fy = R.ferry;
+    for (let a = s0; a < s1 && a < LEN; a += 6) {
       const spans: [number, number][] = !Fy || a + 6.1 <= Fy.q0 || a - 0.1 >= Fy.q1 ? [[a - 0.1, a + 6.1]]
         : [[a - 0.1, Math.min(a + 6.1, Fy.q0)], [Math.max(a - 0.1, Fy.q1), a + 6.1]].filter(([b0, b1]) => b1 - b0 > 0.05) as [number, number][];
       for (const [b0, b1] of spans) {
-        const sm = (b0 + b1) / 2, ln = b1 - b0, w = road.widthAt(sm), half = 4.1 + 1.9 * w, gr = road.gradeAt(sm);
-        g.dy = road.heightAt(sm);
+        const sm = (b0 + b1) / 2, ln = b1 - b0, w = R.widthAt(sm), half = 4.1 + 1.9 * w, gr = R.gradeAt(sm);
+        g.dy = R.heightAt(sm);
         this.rbox(g, sm, 0, -0.064, ln, 0.12, half * 2, CW.asphalt, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
         for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, ln, 0.1, 1.8, CW.shoulder, 0, gr); this.rbox(g, sm, k * (half - 0.25), 0.005, ln, 0.02, 0.14, CW.white, 0, gr); }
         if (Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, Math.max(0.05, ln - 0.2), 0.02, 0.24, CW.yellow, 0, gr);
       }
     }
     g.dy = 0;
-    // Into a freeway city: the freeway, and the flyover the road comes up on (freeway.ts), in
-    // 60 m stretches out from the gate end, each drawn with the segment its middle is beside.
+    // Into a freeway city by its way in: the freeway, and the flyover the road comes up on
+    // (freeway.ts), in 60 m stretches out from the gate end, each drawn with the segment its
+    // middle is beside. (Only ever driven from a to b: the map's coordinates are the drive's.)
     if (road.inp.toFreeway) {
       const F = road.freewayFrame!, L = road.gateS;
       for (let d = 0; d < FW_TIP; d += 60) {
@@ -800,98 +828,58 @@ export class CountryWorld {
         buildFreeway(g, F, d, Math.min(FW_TIP, d + 60), this.ox, this.oz, { main: true, ramp: true }, null, this.plates);   // (the ground batch: the truck's see-through spotlight leaves it be)
       }
     }
+    // The roadside items: the map's, or (drafting) placed by the rules and recorded.
+    const rec = this.record, items = rec ? null : R.map.items;
     // Utility poles on the right, every 50 m where the land is clear, with wires only between two
     // poles. Where the line stops, the wires either end at the last pole or, now and then, have
     // snapped and hang from its crossarm to the ground, the slack lying in the grass.
-    const hasPole = (a: number) => land(a) && (road.clearAt(a, 12) || road.pieces.some((p) => p.kind === "billboards" && a > p.s - 40 && a < p.s + p.len + 40));
+    const poleSet = items ? this.itemSet(R, "poles", 1, (v) => `${v[0]}`) : null;
+    const hasPole = (a: number) => poleSet ? poleSet.has(`${Math.round(a * 10)}`)
+      : land(a) && (R.clearAt(a, 12) || R.pieces.some((q) => { const p = R.inMap(q); return p.kind === "billboards" && a > p.s - 40 && a < p.s + p.len + 40; }));
     const WIRE = 0x2a2a2a;
     const arm = (a: number, k: number): [number, number] => { const [x, z, h] = this.L(a, 12.5); return [x + Math.sin(h) * k, z + Math.cos(h) * k]; };
     for (let a = Math.ceil(s0 / 50) * 50; a < s1; a += 50) {
       if (!hasPole(a)) continue;
+      rec?.poles.push(Math.round(a * 10));
       const [x, z, h, gy] = this.L(a, 12.5);
       s.dy = gy - 0.3;   // (a little into the ground: it stands on a slope)
       s.cyl(x, 4.8, z, 0.14, 9.6, CW.pole, 6); s.dy = gy; s.box(x, 8.4, z, 0.14, 0.14, 2.2, CW.pole, h);
       for (const dir of [1, -1]) {
         const b = a + dir * 50;
         if (dir > 0 && hasPole(b)) {
-          const gb = road.groundAt(b, 12.5);
+          const gb = R.groundAt(b, 12.5);
           for (const k of [-0.9, 0.9]) {
             const [ax, az] = arm(a, k), [bx, bz] = arm(b, k);
             this.beam(s, ax, gy + 8.2, az, bx, gb + 8.2, bz, 0.05, 0.05, WIRE);
           }
-        } else if (!hasPole(b) && hash3(a, dir, road.inp.city, road.inp.seed, 0xd1e) < 0.35) {
+        } else if (!hasPole(b) && hash3(a, dir, 0, key, 0xd1e) < 0.35) {
           // Broken: each wire drops straight down from its end of the crossarm, and a few metres
           // of it trail off along the line on the ground.
           const fx = Math.cos(h) * dir, fz = -Math.sin(h) * dir;
           for (const k of [-0.9, 0.9]) {
-            const [ax, az] = arm(a, k), tail = 2 + hash3(a, dir, k > 0 ? 1 : 2, road.inp.seed, 0x7a1) * 4;
+            const [ax, az] = arm(a, k), tail = 2 + hash3(a, dir, k > 0 ? 1 : 2, key, 0x7a1) * 4;
             s.box(ax + fx * 0.05, 4.1, az + fz * 0.05, 0.05, 8.2, 0.05, WIRE, h);
             s.box(ax + fx * (0.05 + tail / 2), 0.03, az + fz * (0.05 + tail / 2), tail, 0.05, 0.05, WIRE, Math.atan2(-fz, fx) + (k > 0 ? 0.15 : -0.1));
           }
         }
       }
     }
+    // Fences, by bay (each 6 m).
+    const fenceSet = items ? this.itemSet(R, "fences", 2, (v) => `${v[0]}:${v[1]}`) : null;
+    for (let a = s0; a < s1; a += 6) for (const side of [-1, 1] as const) if (land(a)) this.fence(s, R, a, side, land, fenceSet);
     // Scenery by biome.
-    for (let a = s0; a < s1; a += 6) for (const side of [-1, 1] as const) {
-      if (!land(a)) continue;
-      const bio = this.look(road, a, side * 40);
-      if (bio.fence) rnd();   // fences used to roll here; keep the draw so the rest of the scenery stays put
-      this.fence(s, road, a, side, land);
-      const tries = bio.density * 2.2;
-      for (let t = 0; t < tries; t++) {
-        if (rnd() > tries - t) break;
-        const n = side * (15 + Math.pow(rnd(), 0.8) * (SIDE_W - 20));
-        if (bio.water && side < 0 && n < -55) continue;
-        const sa = a + rnd() * 6;
-        if (!road.clearAt(sa, n)) continue;
-        const [x, z, , gy] = this.L(sa, n);
-        const kind = bio.trees[Math.floor(rnd() * bio.trees.length)], greens = kind === "conifer" || kind === "cypress" || kind === "cactus" ? bio.cgreens : bio.greens;
-        s.dy = gy - 0.25;
-        this.tree(s, x, z, kind, greens[Math.floor(rnd() * greens.length)], rnd);
-      }
-      if (rnd() < bio.rocks * 0.25) {
-        const n = side * (13 + rnd() * 120), sa = a + rnd() * 6;
-        if (road.clearAt(sa, n)) { const [x, z, , gy] = this.L(sa, n), r = 0.5 + rnd() * 1.6; s.dy = gy; s.ico(x, r * 0.3, z, r, rnd() < 0.5 ? 0x8a8478 : 0x9a8a72, 0.6, rnd() * 6); }
-      }
-      if (bio.ponds && rnd() < 0.02) {
-        const n = side * (40 + rnd() * 90), sa = a + rnd() * 6;
-        if (road.clearAt(sa, n)) { const [x, z, h] = this.L(sa, n); g.dy = s.dy = this.foot(sa, n, 14) + 0.15; g.box(x, -0.06, z, 18 + rnd() * 20, 0.1, 10 + rnd() * 14, CW.water, h + rnd()); for (let r = 0; r < 6; r++) s.box(x + (rnd() - 0.5) * 20, 0.5, z + (rnd() - 0.5) * 14, 0.15, 1, 0.15, 0x7a8a3a); }
-      }
-      if (bio.turbines && Math.floor(a / 6) % 25 === 0 && side > 0) {
-        const n = 70 + rnd() * 70, sa = a;
-        if (road.clearAt(sa, n)) {
-          const ph = rnd() * 6.3;
-          // Facing the wind, the same way all along the drive (windYaw). In a breeze it turns, 9
-          // to 17 rpm with the wind (each a little different); in a calm, or one in a dozen
-          // stopped for service, it stands still.
-          const [x, z] = this.L(sa, n), c = road.climateAt(sa, n), wind = this.windIn(road, c), yaw = this.windYaw(road);
-          const tk = Math.floor(a / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.seed, 0x3ab3) < 0.08;
-          const rpm = wind < 0.3 || stopped ? 0 : (9 + 8 * Math.min(1, (wind - 0.3) / 0.6)) * (0.94 + 0.12 * hash3(tk, road.inp.city, 8, road.inp.seed, 0x3ab4));
-          // (The transformer stands on the ground at its own spot, beside the tower's foot.)
-          const [bx, bz] = TURBINE_BOX, cy = Math.cos(yaw), sy = Math.sin(yaw), dx = cy * bx + sy * bz, dz = -sy * bx + cy * bz;
-          const h = this.L(sa, n)[2], bs = sa + dx * Math.cos(h) - dz * Math.sin(h), bn = n + dx * Math.sin(h) + dz * Math.cos(h);
-          s.dy = this.foot(sa, n, 3.5); this.turbine(s, x, z, yaw, rpm * Math.PI / 30, ph, spins, this.foot(bs, bn, 1) - s.dy);
-        }
-      }
-      if (bio.pylons && Math.floor(a / 6) % 30 === 0 && side < 0) { const [x, z, h] = this.L(a, -60); s.dy = this.foot(a, -60, 2); this.pylon(s, x, z, h); }
-      if (bio.barns && Math.floor(a / 6) % 60 === 17 && rnd() < 0.7) {
-        const n = side * (45 + rnd() * 50);
-        if (road.clearAt(a, n)) { const [x, z, h] = this.L(a, n); s.dy = this.foot(a, n, 9); this.farm(s, x, z, h, rnd); }
-      }
-      if (bio.cows && rnd() < 0.05) {
-        const n = side * (25 + rnd() * 60);
-        if (road.clearAt(a, n)) { const [x, z, , gy] = this.L(a, n); s.dy = gy - 0.1; for (let c = 0; c < 3; c++) this.cow(s, x + (rnd() - 0.5) * 12, z + (rnd() - 0.5) * 12, rnd() * 6.3); }
-      }
-    }
+    if (rec) this.placeScenery(R, s0, s1, g, s, spins, land, rec, road);
+    else this.drawScenery(R, s0, s1, g, s, spins, road);
     // A ferry's water (in the stretch of it in this segment) and its terminals (each with the
-    // segment its quay is in, so neither goes before the truck is well past it).
+    // segment its quay is in, so neither goes before the truck is well past it). The two are
+    // alike, the far one the near one turned half round.
     if (Fy) {
-      const w0 = Math.max(s0, Fy.q0), w1 = Math.min(s1, Fy.q1), wy = road.waterY;
+      const w0 = Math.max(s0, Fy.q0), w1 = Math.min(s1, Fy.q1), wy = R.waterY;
       if (w1 > w0) {
         this.rbox(g, (w0 + w1) / 2, 0, wy - 0.05, w1 - w0, 0.1, 2000, CW.water);
         // Wave streaks, lighter and darker, scattered over it (each at a height of its own a
         // few cm up, so no two share a plane where they cross).
-        const wr = mulberry32(Math.floor(hash3(i, road.inp.city, 11, road.inp.seed, 0x3a7e) * 4294967296));
+        const wr = mulberry32(Math.floor(hash3(i, 0, 11, key, 0x3a7e) * 4294967296));
         const n = Math.round((w1 - w0) * 1.4);
         for (let k = 0; k < n; k++) {
           const a = w0 + 3 + wr() * Math.max(0.1, w1 - w0 - 6), nn = (wr() - 0.5) * 520, ln = 2 + wr() * 6;
@@ -902,38 +890,44 @@ export class CountryWorld {
           this.rbox(g, a, nn, wy + 0.02 + (k % 6) * 0.012 + (light ? 0 : 0.006), ln, 0.012, w, light ? 0x5a9ad2 : 0x245f98, (wr() - 0.5) * 0.3);
         }
       }
-      for (const [q, near] of [[Fy.q0, true], [Fy.q1, false]] as const) if (q >= s0 && q < s1) {
-        const y = road.baseAt(q);
-        g.dy = s.dy = y;
-        if (near) this.ferryNear(g, s, Fy, y); else this.ferryFar(g, s, Fy, y);
-        g.dy = s.dy = 0;
+      for (const q of [Fy.q0, Fy.q1]) if (q >= s0 && q < s1) {
+        const draw = () => { const y = this.V.baseAt(Fy.q0); g.dy = s.dy = y; this.ferryNear(g, s, Fy, y); g.dy = s.dy = 0; };
+        if (q === Fy.q0) draw(); else this.mirrored(Fy.s + FERRY_LEN / 2, draw);
       }
     }
+    // Each piece in its own way's coordinates: one facing b to a is drawn through the road turned
+    // half round. (This segment's stretch, s0 to s1, in those coordinates: a0 to a1.)
+    const inWay = (p: RoadMapPiece, fn: (a0: number, a1: number) => void) => { if (p.way === 1) fn(s0, s1); else this.mirrored(LEN / 2, () => fn(LEN - s1, LEN - s0)); };
     // The tractor's fields: a fence along the right of its stretch, open at the gate it pulls out
     // of and the one it turns into, each with a track into its field (built per segment: the
     // stretch is long).
-    for (const p of road.pieces) if (p.kind === "tractor" && road.tractor && p.s < s1 && p.s + p.len > s0) {
-      const gA = road.tractor.s - TRACTOR_R + 1, gB = road.tractor.s + TRACTOR_B + TRACTOR_R - 1, N = 14.6;
-      this.railFence(s, Math.max(s0, p.s), Math.min(s1, p.s + p.len) - 0.01, N, [[gA - 3.6, gA + 3.6], [gB - 3.6, gB + 3.6]]);
-      for (const ga of [gA, gB]) if (ga >= s0 && ga < s1) {
-        g.dy = s.dy = road.groundAt(ga, N);
+    for (const p of R.pieces) if (p.kind === "tractor") inWay(p, (a0, a1) => {
+      if (p.s >= a1 || p.s + p.len <= a0) return;
+      const ts = p.s + 260, gA = ts - TRACTOR_R + 1, gB = ts + TRACTOR_B + TRACTOR_R - 1, N = 14.6;
+      this.railFence(s, Math.max(a0, p.s), Math.min(a1, p.s + p.len) - 0.01, N, [[gA - 3.6, gA + 3.6], [gB - 3.6, gB + 3.6]]);
+      for (const ga of [gA, gB]) if (ga >= a0 && ga < a1) {
+        g.dy = s.dy = this.V.groundAt(ga, N);
         this.fieldGate(s, ga, N, 3.4);
         this.rbox(g, ga, N + 14, -0.04, 4.2, 0.1, 26, 0x7a6a4a);
         g.dy = s.dy = 0;
       }
-    }
+    });
     // The pieces' paving: whatever of it lies in this segment, each at its piece's level.
-    for (const p of road.pieces) {
-      const [g0, g1] = road.groundOf(p);
-      if (g1 > s0 && g0 < s1) this.pave(g, p, road.baseAt(p.s), s0, s1);
+    for (const p of R.pieces) {
+      const [g0, g1] = R.groundOf(p);
+      if (g1 > s0 && g0 < s1) inWay(p, (a0, a1) => this.pave(g, p, this.V.baseAt(p.s), a0, a1));
     }
     // Set pieces that start in this segment.
     // (Each on the level ground the road holds round it.)
-    for (const p of road.pieces) if (p.s >= s0 && p.s < s1) {
-      const q0 = this.quads.length, y = road.baseAt(p.s);
-      g.dy = s.dy = glow.dy = y; this.pieceY = y;
-      this.piece(g, s, p, rnd);
-      for (let k = q0; k < this.quads.length; k++) this.quads[k].y += y;
+    for (const p of R.pieces) {
+      const at = p.way === 1 ? p.s : LEN - p.s;
+      if (at < s0 || at >= s1) continue;
+      inWay(p, () => {
+        const q0 = this.quads.length, y = this.V.baseAt(p.s);
+        g.dy = s.dy = glow.dy = y; this.pieceY = y;
+        this.piece(g, s, p, road, mulberry32(Math.floor(hash3(Math.floor(p.s), PIECE_KINDS.indexOf(p.kind), p.way, key, 0x9e7) * 4294967296)));
+        for (let k = q0; k < this.quads.length; k++) this.quads[k].y += y;
+      });
     }
     g.dy = s.dy = glow.dy = 0;
     // Assemble.
@@ -963,6 +957,117 @@ export class CountryWorld {
     group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (sm) signAtlas.detach(sm); pm?.dispose(); OCCLUSION.remove(hf); turbines?.rotors.dispose(); turbines?.beacons.dispose(); };
     return group;
   }
+  // A map's items of one kind as a set of keys (kept per map).
+  private itemSets = new WeakMap<object, Map<string, Set<string>>>();
+  private itemSet(R: RoadGeo, kind: keyof RoadItems, stride: number, keyOf: (v: number[]) => string) {
+    let m = this.itemSets.get(R.map);
+    if (!m) this.itemSets.set(R.map, m = new Map());
+    let set = m.get(kind);
+    if (!set) {
+      set = new Set();
+      const A = R.map.items[kind];
+      for (let i = 0; i < A.length; i += stride) set.add(keyOf(A.slice(i, i + stride)));
+      m.set(kind, set);
+    }
+    return set;
+  }
+  // The items of one kind (stride numbers each, s first in decimetres) from s0 to s1.
+  private *itemsIn(A: number[], stride: number, s0: number, s1: number) {
+    let lo = 0, hi = A.length / stride;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (A[mid * stride] < s0 * 10) lo = mid + 1; else hi = mid; }
+    for (let i = lo * stride; i < A.length && A[i] < s1 * 10; i += stride) yield i;
+  }
+  // An item's own draws (its shape and colours), from its place.
+  private itemRnd(sdm: number, ndm: number, salt: number, key: number) { return mulberry32(Math.floor(hash3(sdm, ndm, salt, key, 0x17e) * 4294967296)); }
+
+  // The roadside scenery by today's rules, recorded (drafting): what drawScenery draws from a map.
+  private placeScenery(R: RoadGeo, s0: number, s1: number, g: Batch, s: Batch, spins: TurbineSpin[], land: (a: number) => boolean, rec: RoadItems, road: CountryRoad) {
+    const key = R.key, rnd = mulberry32(Math.floor(hash3(Math.floor(s0 / SEG), 0, 7, key, 0x5e9) * 4294967296));
+    const dm = (x: number) => Math.round(x * 10);
+    for (let a = s0; a < s1; a += 6) for (const side of [-1, 1] as const) {
+      if (!land(a)) continue;
+      const bio = this.look(R, a, side * 40);
+      const tries = bio.density * 2.2;
+      for (let t = 0; t < tries; t++) {
+        if (rnd() > tries - t) break;
+        const n = dm(side * (15 + Math.pow(rnd(), 0.8) * (SIDE_W - 20))) / 10;
+        if (bio.water && side === R.coastSide && Math.abs(n) > 55) continue;
+        const sa = Math.min(dm(a + rnd() * 6), dm(a + 5.9)) / 10;
+        if (!R.clearAt(sa, n)) continue;
+        const kind = bio.trees[Math.floor(rnd() * bio.trees.length)], greens = CGREEN.has(kind) ? bio.cgreens : bio.greens, green = Math.floor(rnd() * greens.length);
+        if (this.drawTree(R, s, sa, n, TREE_KINDS.indexOf(kind), green)) rec.trees.push(dm(sa), dm(n), TREE_KINDS.indexOf(kind), green);
+      }
+      if (rnd() < bio.rocks * 0.25) {
+        const n = dm(side * (13 + rnd() * 120)) / 10, sa = dm(a + rnd() * 6) / 10;
+        if (R.clearAt(sa, n)) { rec.rocks.push(dm(sa), dm(n)); this.drawRock(R, s, sa, n); }
+      }
+      if (bio.ponds && rnd() < 0.02) {
+        const n = dm(side * (40 + rnd() * 90)) / 10, sa = dm(a + rnd() * 6) / 10;
+        if (R.clearAt(sa, n)) { rec.ponds.push(dm(sa), dm(n)); this.drawPond(R, g, s, sa, n); }
+      }
+      if (bio.turbines && Math.floor(a / 6) % 25 === 0 && side > 0) {
+        const n = dm(70 + rnd() * 70) / 10;
+        if (R.clearAt(a, n)) { rec.turbines.push(dm(a), dm(n)); this.drawTurbine(R, s, a, n, spins, road); }
+      }
+      if (bio.pylons && Math.floor(a / 6) % 30 === 0 && side < 0) { rec.pylons.push(dm(a)); this.drawPylon(R, s, a); }
+      if (bio.barns && Math.floor(a / 6) % 60 === 17 && rnd() < 0.7) {
+        const n = dm(side * (45 + rnd() * 50)) / 10;
+        if (R.clearAt(a, n)) { rec.farms.push(dm(a), dm(n)); this.drawFarm(R, s, a, n); }
+      }
+      if (bio.cows && rnd() < 0.05) {
+        const n = dm(side * (25 + rnd() * 60)) / 10;
+        if (R.clearAt(a, n)) { rec.cows.push(dm(a), dm(n)); this.drawCows(R, s, a, n); }
+      }
+    }
+  }
+  // The map's roadside items from s0 to s1.
+  private drawScenery(R: RoadGeo, s0: number, s1: number, g: Batch, s: Batch, spins: TurbineSpin[], road: CountryRoad) {
+    const I = R.map.items;
+    for (const i of this.itemsIn(I.trees, 4, s0, s1)) this.drawTree(R, s, I.trees[i] / 10, I.trees[i + 1] / 10, I.trees[i + 2], I.trees[i + 3]);
+    for (const i of this.itemsIn(I.rocks, 2, s0, s1)) this.drawRock(R, s, I.rocks[i] / 10, I.rocks[i + 1] / 10);
+    for (const i of this.itemsIn(I.ponds, 2, s0, s1)) this.drawPond(R, g, s, I.ponds[i] / 10, I.ponds[i + 1] / 10);
+    for (const i of this.itemsIn(I.turbines, 2, s0, s1)) this.drawTurbine(R, s, I.turbines[i] / 10, I.turbines[i + 1] / 10, spins, road);
+    for (const i of this.itemsIn(I.pylons, 1, s0, s1)) this.drawPylon(R, s, I.pylons[i] / 10);
+    for (const i of this.itemsIn(I.farms, 2, s0, s1)) this.drawFarm(R, s, I.farms[i] / 10, I.farms[i + 1] / 10);
+    for (const i of this.itemsIn(I.cows, 2, s0, s1)) this.drawCows(R, s, I.cows[i] / 10, I.cows[i + 1] / 10);
+  }
+  // A tree of kind TREE_KINDS[kind] at (sa, n), its green the green'th of its land's there.
+  // (False if it stood too close to one already in the segment: tree.)
+  private drawTree(R: RoadGeo, s: Batch, sa: number, n: number, kind: number, green: number) {
+    const bio = this.look(R, Math.floor(sa / 6) * 6, Math.sign(n) * 40), k = TREE_KINDS[kind], greens = CGREEN.has(k) ? bio.cgreens : bio.greens;
+    const [x, z, , gy] = this.L(sa, n);
+    s.dy = gy - 0.25;
+    return this.tree(s, x, z, k, greens[green % greens.length], this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 1, R.key));
+  }
+  private drawRock(R: RoadGeo, s: Batch, sa: number, n: number) {
+    const r = this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 2, R.key), [x, z, , gy] = this.L(sa, n), rad = 0.5 + r() * 1.6;
+    s.dy = gy; s.ico(x, rad * 0.3, z, rad, r() < 0.5 ? 0x8a8478 : 0x9a8a72, 0.6, r() * 6);
+  }
+  private drawPond(R: RoadGeo, g: Batch, s: Batch, sa: number, n: number) {
+    const r = this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 3, R.key), [x, z, h] = this.L(sa, n);
+    g.dy = s.dy = this.foot(sa, n, 14) + 0.15; g.box(x, -0.06, z, 18 + r() * 20, 0.1, 10 + r() * 14, CW.water, h + r());
+    for (let k = 0; k < 6; k++) s.box(x + (r() - 0.5) * 20, 0.5, z + (r() - 0.5) * 14, 0.15, 1, 0.15, 0x7a8a3a);
+    g.dy = 0;
+  }
+  // A wind turbine, facing the wind, the same way all along the drive (windYaw). In a breeze it
+  // turns, 9 to 17 rpm with the wind (each a little different); in a calm, or one in a dozen
+  // stopped for service, it stands still. (Its speed is the drive's.)
+  private drawTurbine(R: RoadGeo, s: Batch, sa: number, n: number, spins: TurbineSpin[], road: CountryRoad) {
+    const r = this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 4, R.key), ph = r() * 6.3;
+    const [x, z, h] = this.L(sa, n), c = R.climateAt(sa, n), wind = this.windIn(road, c), yaw = this.windYaw(road);
+    const tk = Math.floor(sa / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.driveSeed, 0x3ab3) < 0.08;
+    const rpm = wind < 0.3 || stopped ? 0 : (9 + 8 * Math.min(1, (wind - 0.3) / 0.6)) * (0.94 + 0.12 * hash3(tk, road.inp.city, 8, road.inp.driveSeed, 0x3ab4));
+    // (The transformer stands on the ground at its own spot, beside the tower's foot.)
+    const [bx, bz] = TURBINE_BOX, cy = Math.cos(yaw), sy = Math.sin(yaw), dx = cy * bx + sy * bz, dz = -sy * bx + cy * bz;
+    const bs = sa + dx * Math.cos(h) - dz * Math.sin(h), bn = n + dx * Math.sin(h) + dz * Math.cos(h);
+    s.dy = this.foot(sa, n, 3.5); this.turbine(s, x, z, yaw, rpm * Math.PI / 30, ph, spins, this.foot(bs, bn, 1) - s.dy);
+  }
+  private drawPylon(_R: RoadGeo, s: Batch, a: number) { const [x, z, h] = this.L(a, -60); s.dy = this.foot(a, -60, 2); this.pylon(s, x, z, h); }
+  private drawFarm(R: RoadGeo, s: Batch, a: number, n: number) { const [x, z, h] = this.L(a, n); s.dy = this.foot(a, n, 9); this.farm(s, x, z, h, this.itemRnd(Math.round(a * 10), Math.round(n * 10), 5, R.key)); }
+  private drawCows(R: RoadGeo, s: Batch, a: number, n: number) {
+    const r = this.itemRnd(Math.round(a * 10), Math.round(n * 10), 6, R.key), [x, z, , gy] = this.L(a, n);
+    s.dy = gy - 0.1; for (let c = 0; c < 3; c++) this.cow(s, x + (r() - 0.5) * 12, z + (r() - 0.5) * 12, r() * 6.3);
+  }
   private fleetJobs: { stalls: StallPose[]; y: number }[] = [];
   private pieceY = 0;
   private glow = new Batch();   // lamps that are always lit (a tunnel's), in the segment being built
@@ -971,10 +1076,10 @@ export class CountryWorld {
   // A cell of land between n0 and n1 across the road, at sm along it (its row starting at a):
   // the biome's ground in hashed bands, or a patchwork of fields (whole columns, 96 m long); sand
   // and sea on a coast.
-  private landColor(road: CountryRoad, sm: number, a: number, n0: number, n1: number) {
-    const nm = (n0 + n1) / 2, side = nm < 0 ? -1 : 1, an = Math.abs(nm), seed = road.inp.seed;
+  private landColor(road: RoadGeo, sm: number, a: number, n0: number, n1: number) {
+    const nm = (n0 + n1) / 2, side = nm < 0 ? -1 : 1, an = Math.abs(nm), seed = road.key;
     const bio = this.look(road, sm, side * 50);
-    if (side < 0 && road.coastAt(sm) > 0.5) { if (nm < SEA_N) return CW.water; if (nm < COAST_N) return CW.sand; }
+    if (side === road.coastSide && road.coastAt(sm) > 0.5) { if (-an < SEA_N) return CW.water; if (-an < COAST_N) return CW.sand; }
     if (an > SIDE_W) return bio.ground;
     if (bio.fields) {
       if (an < 14) return bio.ground;
@@ -995,19 +1100,21 @@ export class CountryWorld {
     const T = this.treesHere, near: number[] = [];
     for (let i = 0; i < T.length; i += 3) {
       const d = Math.hypot(T[i] - x, T[i + 1] - z);
-      if (d < 1.6) return;
+      if (d < 1.6) return false;
       if (d < 5) near.push(T[i + 2]);
     }
     T.push(x, z, landTree(s, x, z, kind, green, rnd, near));
+    return true;
   }
   // A post-and-rail fence along the land, 14.5 m out, in 6 m bays: bay i runs from 6i to 6i + 6.
   // Whether a bay stands is hashed from its index, so a segment can see its neighbours' bays and
   // every rail ends on a post. Now and then a bay has come down: its top rail has dropped to the
   // ground at one end and its lower rail lies in the grass, and at the end of a run the post that
   // held them lies beside its stump.
-  private fence(s: Batch, road: CountryRoad, a: number, side: -1 | 1, land: (a: number) => boolean) {
-    const N = side * 14.5, seed = road.inp.seed, city = road.inp.city;
+  private fence(s: Batch, road: RoadGeo, a: number, side: -1 | 1, land: (a: number) => boolean, bays: Set<string> | null) {
+    const N = side * 14.5, seed = road.key, city = 0;
     const bay = (i: number) => {
+      if (bays) return bays.has(`${i * 60}:${side}`);
       const b0 = i * 6, b1 = b0 + 6;
       return land(b0) && land(b1) && !!this.look(road, b0, side * 40).fence && road.clearAt(b0, side * 14) && road.clearAt(b1, side * 14)
         && hash3(i, side, city, seed, 0xfe1) < 0.5;
@@ -1015,6 +1122,7 @@ export class CountryWorld {
     const broken = (i: number) => hash3(i, side, city, seed, 0xb70) < 0.05;
     const i = Math.round(a / 6);
     const prev = bay(i - 1), here = bay(i), next = here && bay(i + 1);
+    if (here && !bays) this.record?.fences.push(i * 60, side);
     // A broken bay at the end of a run loses its free post; a broken bay inside a run hangs from
     // its posts. Which end gives way: the free one, else a coin toss.
     const dropsAt = (j: number, startFree: boolean, endFree: boolean) =>
@@ -1089,7 +1197,7 @@ export class CountryWorld {
       road.point(road.landFrom, 0, this.q); const x0 = this.q.x, z0 = this.q.z;
       road.point(road.landTo, 0, this.q);
       const H = Math.atan2(-(this.q.z - z0), this.q.x - x0);
-      this.windFor = road; this.windYawV = H + Math.PI / 2 + (hash2(road.inp.city, 5, road.inp.seed, 0x3ab2) - 0.5) * 1.05;
+      this.windFor = road; this.windYawV = H + Math.PI / 2 + (hash2(road.inp.city, 5, road.inp.driveSeed, 0x3ab2) - 0.5) * 1.05;
     }
     return this.windYawV;
   }
@@ -1097,7 +1205,7 @@ export class CountryWorld {
   // its own for each place (a clear day may be breezy or still; fog comes with still air).
   private windIn(road: CountryRoad, c: Climate) {
     const base = { clear: 0.45, cloudy: 0.6, overcast: 0.6, rain: 0.7, storm: 1.0, snow: 0.55, fog: 0.08 }[c.weather];
-    const r = hash3(road.inp.city, c === road.inp.fromClimate ? 0 : 1, 3, road.inp.seed, 0x3ab1);
+    const r = hash3(road.inp.city, c === road.inp.fromClimate ? 0 : 1, 3, road.inp.driveSeed, 0x3ab1);
     return THREE.MathUtils.clamp(base * (0.25 + r * 1.1), 0, 1);
   }
   private pylon(s: Batch, x: number, z: number, h: number) {
@@ -1182,22 +1290,26 @@ export class CountryWorld {
     if (uv) this.signAt(pieceSigns(p)[0], uv);
   }
 
-  private piece(g: Batch, s: Batch, p: RoadPiece, rnd: Rand) {
+  private piece(g: Batch, s: Batch, p: RoadMapPiece, road: CountryRoad, rnd: Rand) {
     const S = p.s, side = p.side;
+    // (A sign that faces both ways: drawn again turned half round about the piece's middle.)
+    const both = (fn: () => void) => { fn(); if (TWO_WAY_SIGNS.has(p.kind)) this.mirrored(S + p.len / 2, fn); };
     switch (p.kind) {
       case "leave": case "distance": case "welcome": this.greenSign(s, p, p.text ?? ""); break;
       case "billboards": {
-        for (let k = 0; k < 3; k++) {
-          const a = S + 30 + k * 110, n = (k % 2 ? -1 : 1) * 22, sd = Math.sign(n);
-          const pool = [...AD_BILLBOARD, ...AD_BATON, ...AD_BATON, ...AD_RYDER];
-          const ad = pool[Math.floor(hash2(k, Math.floor(S), this.road!.inp.seed, 0xad) * pool.length)];
-          for (const d of [-3, 3]) this.rbox(s, a + 0.51, n + d * sd, 3.2, 0.3, 6.4, 0.3, 0x5a5f66);   // behind the board
-          this.rbox(s, a + 0.2, n, 9.0, 0.3, 5.4, 15.4, 0x2a2b2e);
-          this.rbox(s, a + 0.5, n, 6.3, 0.15, 0.15, 15, 0x5a5f66);   // catwalk
-          const b = pieceSigns(p)[k], [x, z, h] = this.L(b.s, b.n);
-          this.quads.push({ x, y: b.y, z, w: b.w, h: b.h, rotY: Math.atan2(-Math.cos(h), Math.sin(h)), ...signAtlas.adUV(ad) });
-          this.ads = true;
-        }
+        both(() => {
+          for (let k = 0; k < 3; k++) {
+            const a = S + 30 + k * 110, n = (k % 2 ? -1 : 1) * 22, sd = Math.sign(n);
+            const pool = [...AD_BILLBOARD, ...AD_BATON, ...AD_BATON, ...AD_RYDER];
+            const ad = pool[Math.floor(hash2(k + (this.flip ? 3 : 0), Math.floor(S), this.geo!.key, 0xad) * pool.length)];
+            for (const d of [-3, 3]) this.rbox(s, a + 0.51, n + d * sd, 3.2, 0.3, 6.4, 0.3, 0x5a5f66);   // behind the board
+            this.rbox(s, a + 0.2, n, 9.0, 0.3, 5.4, 15.4, 0x2a2b2e);
+            this.rbox(s, a + 0.5, n, 6.3, 0.15, 0.15, 15, 0x5a5f66);   // catwalk
+            const b = pieceSigns(p)[k], [x, z, h] = this.L(b.s, b.n);
+            this.quads.push({ x, y: b.y, z, w: b.w, h: b.h, rotY: Math.atan2(-Math.cos(h), Math.sin(h)), ...signAtlas.adUV(ad) });
+            this.ads = true;
+          }
+        });
         break;
       }
       case "truckstop": {
@@ -1220,7 +1332,7 @@ export class CountryWorld {
         const stalls: StallPose[] = [];
         for (let k = 0; k < 3; k++) {
           const [x, z, h] = this.L(S + 95 + k * 9, 59);
-          stalls.push({ model: (["box26", "box16", "tractor"] as TruckModel[])[k], x, z, h: h + Math.PI / 2, toon: this.road!.storyAt(S + 95 + k * 9) });
+          stalls.push({ model: (["box26", "box16", "tractor"] as TruckModel[])[k], x, z, h: h + Math.PI / 2, toon: this.V.storyAt(S + 95 + k * 9) });
         }
         this.fleetJobs.push({ stalls, y: this.pieceY });
         break;
@@ -1239,15 +1351,17 @@ export class CountryWorld {
           s.box(px, 2.6, pz, 0.15, 0.4, 1.0, 0x2a2b2e, h + Math.PI / 2);
           const [gx, gz] = this.L(S + ds, sd * 6.2); s.box(gx, 0.55, gz, 0.5, 1.1, 0.5, 0x5a5f66, h);
         }
-        this.rbox(g, S - 22, LANE, 0.006, 0.5, 0.02, 3.4, CW.white);   // stop line
+        for (const k of [-1, 1]) this.rbox(g, S - 22 * k, LANE * k, 0.006, 0.5, 0.02, 3.4, CW.white);   // the stop lines, one each way
         break;
       }
       case "construction": {
         for (let a = S + 20; a < S + p.len - 20; a += 9) { const [x, z] = this.L(a, 4.4); s.cone(x, 0.4, z, 0.25, 0.8, CW.orange, 6); s.cyl(x, 0.35, z, 0.27, 0.12, 0xf2f2f2, 6); }
-        const uv = this.slot("ROAD WORK AHEAD", { bg: "#e8701a", fg: "#111111", logo: false });
-        this.rbox(s, S + 0.15, 9, 1.2, 0.12, 2.4, 0.12, 0x8d9296);   // behind the board
-        this.rbox(s, S + 0.05, 9, 2.6, 0.06, 1.0, 5.4, CW.orange);
-        if (uv) this.signAt(pieceSigns(p)[0], uv);
+        both(() => {
+          const uv = this.slot("ROAD WORK AHEAD", { bg: "#e8701a", fg: "#111111", logo: false });
+          this.rbox(s, S + 0.15, 9, 1.2, 0.12, 2.4, 0.12, 0x8d9296);   // behind the board
+          this.rbox(s, S + 0.05, 9, 2.6, 0.06, 1.0, 5.4, CW.orange);
+          if (uv) this.signAt(pieceSigns(p)[0], uv);
+        });
         // A roller and an excavator on the shoulder, and a stockpile.
         const [x, z, h] = this.L(S + p.len / 2, 12);
         s.box(x, 1.3, z, 3.4, 1.4, 1.8, 0xf2c200, h); s.cyl(x + Math.cos(h) * 2.1, 0.75, z - Math.sin(h) * 2.1, 0.75, 1.9, 0x5a5f66, 10, Math.PI / 2, -h);
@@ -1306,7 +1420,7 @@ export class CountryWorld {
       case "weigh": {
         // Its lane beside the road (the scale on it, the scale house beyond), paved over to the
         // road's shoulder where the lane leaves it and comes back.
-        const N = WEIGH_N, open = !!p.open;
+        const N = WEIGH_N, open = p.way === road.dir && road.weighOpen;
         for (let a = S; a < S + WEIGH_LEN; a += 10) { this.rbox(g, a + 5, N, -0.045, 10.2, 0.1, 7, CW.asphalt); this.rbox(g, a + 5, N + 3.1, 0.005, 10, 0.02, 0.14, CW.white); }
         for (const [a0, a1] of [[S + WEIGH_OUT[0], S + WEIGH_OUT[1]], [S + WEIGH_BACK[0], S + WEIGH_BACK[1]]]) for (let a = a0; a < a1; a += 10) this.rbox(g, a + 5, 7.45, -0.05, 10.2, 0.1, 3.1, CW.asphalt);
         const sc = (WEIGH_SCALE[0] + WEIGH_SCALE[1]) / 2, sl = WEIGH_SCALE[1] - WEIGH_SCALE[0];
@@ -1325,18 +1439,22 @@ export class CountryWorld {
         break;
       }
       case "ferry": {
-        const uv = this.slot(p.text ?? "FERRY", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
-        for (const k of [-3.6, 3.6]) this.rbox(s, S - 149.8, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);   // behind the board
-        this.rbox(s, S - 149.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
-        if (uv) this.signAt(pieceSigns(p)[0], uv);
+        both(() => {
+          const uv = this.slot((this.flip ? p.back : p.text) ?? "FERRY", { bg: "#1e6b3a", fg: "#ffffff", logo: false });
+          for (const k of [-3.6, 3.6]) this.rbox(s, S - 149.8, 10 + k, 2.4, 0.18, 4.8, 0.18, 0x8d9296);   // behind the board
+          this.rbox(s, S - 149.94, 10, 4.0, 0.08, 2.0, 8.8, CW.green);
+          if (uv) this.signAt(pieceSigns(p)[0], uv);
+        });
         break;
       }
       case "cattle": {
-        const c = this.road!.cattle!, X = c.cross, A = c.sideA, B = -A;
-        const uv = this.slot(p.text ?? "CATTLE XING", { bg: "#f2c200", fg: "#111111", logo: false });
-        this.rbox(s, S - 149.85, 9, 1.4, 0.12, 2.8, 0.12, 0x8d9296);   // behind the board
-        this.rbox(s, S - 149.95, 9, 2.9, 0.06, 0.9, 4.6, 0xf2c200);
-        if (uv) this.signAt(pieceSigns(p)[0], uv);
+        const X = S + CATTLE_X, A = -side, B = -A;
+        both(() => {
+          const uv = this.slot(p.text ?? "CATTLE XING", { bg: "#f2c200", fg: "#111111", logo: false });
+          this.rbox(s, S - 149.85, 9, 1.4, 0.12, 2.8, 0.12, 0x8d9296);   // behind the board
+          this.rbox(s, S - 149.95, 9, 2.9, 0.06, 0.9, 4.6, 0xf2c200);
+          if (uv) this.signAt(pieceSigns(p)[0], uv);
+        });
         // The pasture (side A) and the corral (side B), each with its gate open onto the road.
         for (const n of [A * COW_GATE, B * COW_GATE]) { this.railFence(s, X - 44, X + 44, n, [[X - 3.4, X + 3.4]]); this.fieldGate(s, X, n, 3.2); }
         for (const a of [X - 44, X + 44]) this.crossFence(s, a, A * COW_GATE, A * 62);
@@ -1443,7 +1561,7 @@ export class CountryWorld {
         // The way over: on the deck, then down the embankments onto the land.
         const keep = s.dy; s.dy = 0;
         for (let n = -150; n < 150; n += 6) {
-          const n1 = n + 6, y0 = this.road!.groundAt(C, n), y1 = this.road!.groundAt(C, n1);
+          const n1 = n + 6, y0 = this.V.groundAt(C, n), y1 = this.V.groundAt(C, n1);
           const onDeck = Math.abs(n + 3) < OVER_ABUT + 1.5, ya = onDeck ? this.pieceY + OVER_DECK : y0, yb = onDeck ? this.pieceY + OVER_DECK : y1;
           const [x0, z0] = this.L(C, n), [x1, z1] = this.L(C, n1), run = Math.hypot(x1 - x0, z1 - z0);
           const yaw = h - Math.PI / 2, pitch = Math.atan2(yb - ya, run);

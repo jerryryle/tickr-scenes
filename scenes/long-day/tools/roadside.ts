@@ -7,13 +7,16 @@
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
+import { setWorldBytes } from "../src/worlddata.ts";
+import { WORLD_ASSET } from "../src/world-packed.ts";
 import { CountryWorld } from "../src/countryworld.ts";
 import type { CountryRoad, RoadPiece } from "../src/country.ts";
 
 const SEED = 1, MINUTES = [26.3, 59.9, 89.5, 120];   // journey times on its first drives (seed 1)
 const KINDS = new Set(["gas", "truckstop", "fruit", "attraction"]);
 
-export default function createScene({ sys }: SceneInputs): Scene {
+export default function createScene({ sys, assets }: SceneInputs): Scene {
+  setWorldBytes(assets[WORLD_ASSET].bytes);   // (the cities and roads its journeys drive: worlddata.ts)
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera, world: CountryWorld;
   const shots: { road: CountryRoad; p: RoadPiece }[] = [];
   const P = { x: 0, z: 0, h: 0, k: 0 }, Q = { x: 0, z: 0, h: 0, k: 0 };

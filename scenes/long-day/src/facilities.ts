@@ -141,6 +141,8 @@ for (const d of ["downtown", "commercial", "residential", "industrial", "park"] 
 }
 
 export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
+  const own = plan.fileFacility(bx, bz);
+  if (own) return own;
   if (plan.style.storybook && plan.worksBlock >= 0 && plan.blockOf(bx, bz)?.id === plan.worksBlock) return "knittingWorks";
   const park = !!plan.blockOf(bx, bz)?.park, wf = park ? null : waterfrontAt(plan, bx, bz);
   if (wf) return wf;
@@ -307,7 +309,7 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
     return { kind: "stand", side, a: STAND_DOOR_A, stand: STANDS[fac] ?? "farmStand", look: h(0x57d), forklift: WIDE_DOOR.has(fac) };
   }
   // Stores that take pallets by tractor-trailer have a truck yard as deep as an industrial one.
-  // (The knitting works has a shallow van dock with its process laid out beside it: storybook.ts.)
+  // (The knitting works has a shallow van dock with its process laid out beside it: storybook-buildings-town.ts.)
   const deep = fac !== "knittingWorks" && (plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery");
   const edge = deep ? 22.5 : 12;
   const a0 = 11.5, a1 = deep ? 48.5 : 29.5;

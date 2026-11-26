@@ -2,6 +2,8 @@
 // loading docks, swapping trucks at Ryder rental lots and moving on to a new city every ~30
 // minutes; the camera director films it, and the crew (the driver and a dock worker) does the
 // work at each stop.
+import { setWorldBytes } from "./worlddata.ts";
+import { WORLD_ASSET } from "./world-packed.ts";
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { SEA_REACH } from "./outline.ts";
@@ -9,6 +11,8 @@ import { hash2 } from "./rng.ts";
 import { drain } from "./slices.ts";
 import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
+import { DEBUG_VISIT } from "./debug.ts";
+import { parseVisitSpec } from "./visits.ts";
 import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
@@ -53,7 +57,7 @@ import { CLOCK, VIG_LOG } from "./vignettes.ts";
 import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
 import { SEA_ALONG, SeaLife } from "./sealife.ts";
-import { KnittingWorksFx } from "./works.ts";
+import { KnittingWorksFx } from "./city-storybook/storybook-landmark-knitting-works.ts";
 import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 
@@ -70,6 +74,7 @@ const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam" && DEBUG_VIEW !== "top" && !DEBUG_VIEW.startsWith("crew");   // test renders with a tour camera
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
+  setWorldBytes(assets[WORLD_ASSET].bytes);   // (every city and road, packed: worlddata.ts)
   const cfg = readConfig(env);
   let engine: Engine, streamer: ChunkStreamer, hud: Hud;
   let puffs: PuffSystem, kit: TruckKit, fleet: FleetBaker, truck: Truck, journey: Journey, mats: CityMaterials, director: Director, crew: Crew, dockFx: DockFx, frontDoor: FrontDoorFx;
@@ -230,8 +235,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // they are built while it is still out on the road, not as it arrives: on a board too slow to
     // build them then, the fog that hides what isn't built would roll in over the town.)
     if (st.mode === "inbound") {
-      const g = journey.plan.entryGate, ix = -[1, 0, -1, 0][g.dir], iz = -[0, -1, 0, 1][g.dir];
-      for (let k = 0; k <= ENTRY_PREFETCH && cells.length < PREFETCH_MAX; k++) ring(g.ix + ix * k, g.iz + iz * k, STREAM_RADIUS);
+      const g = journey.plan.graph.gates[journey.entryGate]!, n = journey.plan.graph.nodes[g.node], ix = -[1, 0, -1, 0][g.dir], iz = -[0, -1, 0, 1][g.dir];
+      for (let k = 0; k <= ENTRY_PREFETCH && cells.length < PREFETCH_MAX; k++) ring(Math.floor(n.x / BLOCK) + ix * k, Math.floor(n.z / BLOCK) + iz * k, STREAM_RADIUS);
     }
     for (const p of st.stops.slice(0, PREFETCH_STOPS)) if (p.site && cells.length < PREFETCH_MAX) ring(p.site.bx, p.site.bz, STREAM_RADIUS);
     if (cells.length > PREFETCH_MAX) cells.length = PREFETCH_MAX;
@@ -665,7 +670,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const r = pickRoad0();
     if (!r) return null;
     // The last city's road, after the hand-over: moved into this city's coordinates.
-    if (r.road === journey.previousExit) { r.road.center(r.road.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2); return { ...r, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }; }
+    if (r.road === journey.previousExit) { r.road.center(r.road.SB, tmpPose); journey.arrivalRoad.center(journey.arrivalRoad.SB, tmpPose2); return { ...r, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }; }
     return { ...r, dx: 0, dz: 0 };
   }
   function pickRoad0(): { road: CountryRoad; u: number; s: number } | null {
@@ -678,12 +683,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     }
     const arr = journey.arrivalRoad;
     let sArr: number;
-    if (st.mode === "inbound") sArr = arr.sAt(journey.countryU + journey.frac);
-    else { arr.center(ARRIVE_LEN, tmpPose); sArr = ARRIVE_LEN + Math.hypot(p.x - tmpPose.x, p.z - tmpPose.z); }
+    // (sArr: from where the arrival straight begins, its road's hand-over.)
+    if (st.mode === "inbound") sArr = arr.sAt(journey.countryU + journey.frac) - arr.SB;
+    else { arr.center(arr.gateS, tmpPose); sArr = ARRIVE_LEN + Math.hypot(p.x - tmpPose.x, p.z - tmpPose.z); }
     if (sArr > ARRIVE_LEN + 450) return null;
     const prev = journey.previousExit;
     if (prev) return { road: prev, u: prev.duration + st.cityTime + journey.frac, s: prev.SB + sArr };
-    return { road: arr, u: st.cityTime + journey.frac, s: sArr };
+    return { road: arr, u: st.cityTime + journey.frac, s: arr.SB + sArr };
   }
   // The world moved by (dx, dz): the next city took over out on the road. Everything on screen
   // that isn't placed from the journey each frame moves with it, so nothing visibly changes.
@@ -793,7 +799,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (journey.st.city !== presCity) {
       const prev = journey.previousExit;
       if (!fresh && presCity >= 0 && journey.st.city === presCity + 1 && prev) {
-        prev.center(prev.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2);
+        prev.center(prev.SB, tmpPose); journey.arrivalRoad.center(journey.arrivalRoad.SB, tmpPose2);
         rebase(tmpPose2.x - tmpPose.x, tmpPose2.z - tmpPose.z);
         presCity = journey.st.city;
         buildCity();
@@ -826,7 +832,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     {
       const rr = [{ road: journey.arrivalRoad, dx: 0, dz: 0 }], ex = journey.exitRoadAhead, pv = journey.previousExit;
       if (ex) rr.push({ road: ex, dx: 0, dz: 0 });
-      if (pv && pv !== ex) { pv.center(pv.SB, tmpPose); journey.arrivalRoad.center(0, tmpPose2); rr.push({ road: pv, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }); }
+      if (pv && pv !== ex) { pv.center(pv.SB, tmpPose); journey.arrivalRoad.center(journey.arrivalRoad.SB, tmpPose2); rr.push({ road: pv, dx: tmpPose2.x - tmpPose.x, dz: tmpPose2.z - tmpPose.z }); }
       elevatedReach.update(journey.plan, rr);
       freewayReach.update(journey.plan, rr);
     }
@@ -891,7 +897,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       return s < mid ? { city: st.city, p: fall(s) } : { city: st.city + 1, p: rise(L - s) };
     }
     if (pr && pr.road === journey.previousExit) return { city: st.city, p: rise(pr.road.gateS - pr.s) };
-    if (pr && pr.road === journey.arrivalRoad) return { city: st.city, p: rise(ARRIVE_LEN - pr.s) };
+    if (pr && pr.road === journey.arrivalRoad) return { city: st.city, p: rise(pr.road.gateS - pr.s) };
     return { city: st.city, p: 1 };
   }
   let fogClear = -1;   // the view distance in use (eased through the edge of town)
@@ -942,7 +948,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       base = DEBUG_SKIP_MINUTES * 60;   // (from the start: the skip, test renders only)
       setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
-      journey = new Journey(cfg, base, realSeason());
+      journey = new Journey(cfg, base, realSeason(), DEBUG_VISIT ? Object.fromEntries(DEBUG_VISIT.split("+").map((t, i) => [i, parseVisitSpec(t)])) : undefined);
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).

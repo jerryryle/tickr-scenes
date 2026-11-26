@@ -26,6 +26,18 @@
 #   make citymap SCENE=long-day [SEED=1 CITIES=4 DEFINE=...]
 #                              draw the street graphs of a journey's first cities, top down, to
 #                              build/<scene>-citymap/city<N>.png (needs ffmpeg)
+#   make draft SCENE=long-day ARGS="<style> [candidates]"
+#                              draft five new city files of a style into
+#                              scenes/long-day/src/city-<style>/ (tools/draftcities.ts)
+#   make draftroads SCENE=long-day [ARGS="<road id> ..."]
+#                              draft the roads' maps into scenes/long-day/src/roads/
+#                              (tools/draftroads.ts)
+#   make draftworld SCENE=long-day [ARGS="<seed>"]
+#                              draft the world graph's roads into
+#                              scenes/long-day/src/world-roads.ts (tools/draftworld.ts)
+#   make maps SCENE=long-day [ARGS="<city id> ..."]
+#                              write each catalogue city's layered SVG map into
+#                              build/<scene>-maps/city-<style>/ (tools/maps.ts), TEST_JOBS at a time
 #   make clean / distclean
 #
 # A modular scene's entry is scenes/<scene>/src/main.ts; scripts/flatten.ts follows its imports
@@ -50,13 +62,17 @@ node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-le
   $$(grep -oE '^import .* from "[^".][^"]*@[0-9][^"]*"' $(1) | sed -E 's/.*"(.+)@([^@"]+)"$$/--alias:\1@\2=\1/' | sort -u) \
   --outfile=$(2)
 
+# A build's scene.json: the scene's own, with any assets a build step packed listed too
+# (scripts/scenejson.ts). $(call scene-json,scenes/<scene>,dst)
+scene-json = node scripts/scenejson.ts $(1) $(2)
 # Copy a scene's assets for the toolkit, which finds each asset by its scene.json name with no
-# extension (assets/logo.png -> assets/logo). $(call copy-assets,src,dst)
+# extension (assets/logo.png -> assets/logo), and any a build step packed beside them
+# (<src>-packed/: long-day's world asset). $(call copy-assets,src,dst)
 copy-assets = rm -rf $(2) && mkdir -p $(2) && \
-  for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
+  for f in $(1)/* $(1)-packed/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); case "$$n" in *.tmp) continue;; esac; d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -69,7 +85,7 @@ list:
 
 # A scene: its scene.ts, scene.json and assets.
 $(SCENES): %: build/%/scene.ts
-	@cp scenes/$*/scene.json build/$*/scene.json
+	@$(call scene-json,scenes/$*,build/$*)
 	@$(call copy-assets,scenes/$*/assets,build/$*/assets)
 	@echo "$* -> build/$*/"
 
@@ -79,7 +95,7 @@ $(SCENES): %: build/%/scene.ts
 # otherwise leave that published source in place and get it published again.
 replace-if-changed = if cmp -s $(1).tmp $(1); then rm -f $(1).tmp; else mv -f $(1).tmp $(1); fi
 
-build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts) scripts/flatten.ts FORCE | $(DEPS)
+build/%/scene.ts: scenes/%/src/main.ts $$(wildcard scenes/$$*/src/*.ts scenes/$$*/src/*/*.ts) scripts/flatten.ts FORCE | $(DEPS)
 	@mkdir -p $(@D)
 	@$(FLATTEN) $< --root scenes/$*/src > $@.tmp
 	@$(call replace-if-changed,$@)
@@ -152,7 +168,7 @@ $(addprefix scrub-,$(SCENES)): scrub-%: | $(DEPS)
 	    secs=$$(echo "$$line" | sed -nE 's/.*DEBUG_SCRUBTEST=([0-9]+).*/\1/p'); \
 	    if [ -z "$$secs" ]; then echo "scenes/$*/scrub.txt: no DEBUG_SCRUBTEST in: $$line"; echo "FAIL $*: scrub check $$cn"; \
 	    elif ! { $(FLATTEN) scenes/$*/src/main.ts --root scenes/$*/src $$defs > $$out/scene.ts && \
-	             cp scenes/$*/scene.json $$out/ && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/; }; then \
+	             $(call scene-json,scenes/$*,$$out) && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/; }; then \
 	      echo "FAIL $*: scrub check $$cn, building $$line"; \
 	    elif ! $(TICKR) render $$out --seconds $$(( secs * 5 / 4 + 1 )) --every 1000 > $$out/log.txt 2>&1; then \
 	      tail -5 $$out/log.txt; echo "FAIL $*: scrub check $$cn, $$line (log: $$out/log.txt)"; \
@@ -171,7 +187,7 @@ debug: | $(DEPS)
 	@test -n "$(SCENE)" || { echo "usage: make debug SCENE=<scene> DEFINE='NAME=VALUE ...'" >&2; exit 2; }
 	@mkdir -p build/$(SCENE)-debug
 	$(FLATTEN) scenes/$(SCENE)/src/main.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-debug/scene.ts
-	@cp scenes/$(SCENE)/scene.json build/$(SCENE)-debug/
+	@$(call scene-json,scenes/$(SCENE),build/$(SCENE)-debug)
 	@$(call copy-assets,scenes/$(SCENE)/assets,build/$(SCENE)-debug/assets)
 	@echo "$(SCENE) debug build -> build/$(SCENE)-debug/"
 
@@ -183,6 +199,43 @@ run: | $(DEPS)
 	@$(call node-bundle,build/$(SCENE)-$(TEST)/scene.ts,build/$(SCENE)-$(TEST)/$(TEST).mjs)
 	@node build/$(SCENE)-$(TEST)/$(TEST).mjs $(ARGS)
 
+# The drafting tool (scenes/<scene>/tools/draftcities.ts), run from the repo root with its
+# arguments, its output shown.
+draft: | $(DEPS)
+	@test -f "scenes/$(SCENE)/tools/draftcities.ts" || { echo "usage: make draft SCENE=<scene> ARGS='<style> [candidates]'" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-draft-$(firstword $(ARGS))
+	@$(FLATTEN) scenes/$(SCENE)/tools/draftcities.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts
+	@$(call node-bundle,build/$(SCENE)-draft-$(firstword $(ARGS))/scene.ts,build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs)
+	@node build/$(SCENE)-draft-$(firstword $(ARGS))/draft.mjs $(ARGS)
+
+# The world graph's drafting tool (scenes/<scene>/tools/draftworld.ts), run from the repo root.
+draftworld: | $(DEPS)
+	@mkdir -p build/$(SCENE)-draftworld
+	@$(FLATTEN) scenes/$(SCENE)/tools/draftworld.ts --root scenes/$(SCENE)/src > build/$(SCENE)-draftworld/scene.ts
+	@$(call node-bundle,build/$(SCENE)-draftworld/scene.ts,build/$(SCENE)-draftworld/draftworld.mjs)
+	@node build/$(SCENE)-draftworld/draftworld.mjs $(ARGS)
+
+# The road maps' drafting tool (scenes/<scene>/tools/draftroads.ts): each road in a process of its
+# own, TEST_JOBS at a time (ARGS names the roads to draft again, else those with no map yet), then
+# the road list rewritten without its drafting lengths, each road's length then being its map's.
+draftroads: | $(DEPS)
+	@mkdir -p build/$(SCENE)-draftroads
+	@$(FLATTEN) scenes/$(SCENE)/tools/draftroads.ts --root scenes/$(SCENE)/src > build/$(SCENE)-draftroads/scene.ts
+	@$(call node-bundle,build/$(SCENE)-draftroads/scene.ts,build/$(SCENE)-draftroads/draftroads.mjs)
+	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-draftroads/draftroads.mjs --list; fi; } | \
+	  xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-draftroads/draftroads.mjs
+	@node build/$(SCENE)-draftroads/draftroads.mjs --world
+
+# The city maps (scenes/<scene>/tools/maps.ts), each city in a process of its own, TEST_JOBS at a
+# time; ARGS names the cities to draw, all of them by default.
+maps: | $(DEPS)
+	@test -f "scenes/$(SCENE)/tools/maps.ts" || { echo "usage: make maps SCENE=<scene> [ARGS='<city id> ...']" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-maps
+	@$(FLATTEN) scenes/$(SCENE)/tools/maps.ts --root scenes/$(SCENE)/src > build/$(SCENE)-maps/scene.ts
+	@$(call node-bundle,build/$(SCENE)-maps/scene.ts,build/$(SCENE)-maps/maps.mjs)
+	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-maps/maps.mjs --list; fi; } | \
+	  xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-maps/maps.mjs
+
 # One test scene from a scene's tools/, rendered a frame a second for SECS seconds, its frames
 # tiled 2 across at 2x into one PNG (needs ffmpeg).
 SECS     ?= 12
@@ -192,7 +245,8 @@ tool: | $(DEPS)
 	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
 	@mkdir -p $(TOOL_OUT)
 	@$(FLATTEN) scenes/$(SCENE)/tools/$(TOOL).ts --root scenes/$(SCENE)/src $(DEFINES) > $(TOOL_OUT)/scene.ts
-	@cp scenes/$(SCENE)/scene.json $(TOOL_OUT)/
+	@$(call scene-json,scenes/$(SCENE),$(TOOL_OUT))
+	@$(call copy-assets,scenes/$(SCENE)/assets,$(TOOL_OUT)/assets)
 	@$(TICKR) render $(TOOL_OUT) --seconds $(SECS) --every 1000 | tail -1
 	@ffmpeg -loglevel error -y -i $(TOOL_OUT)/dist/frames/frame-%03d.png -frames:v 1 \
 	  -vf "scale=iw*2:ih*2:flags=neighbor,tile=2x$$(( ($(SECS) + 1) / 2 ))" $(TOOL_OUT)/$(TOOL).png
@@ -209,7 +263,7 @@ stage: | $(DEPS)
 	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
 	@mkdir -p build/long-day-stage
 	@$(FLATTEN) scenes/long-day/tools/stage.ts --root scenes/long-day/src --define 'STAGE_SPEC=$(STAGE)' --define STAGE_VIEW=$(VIEW) --define STAGE_FROM=$(FROM) --define STAGE_SPEED=$(SPEED) $(DEFINES) > build/long-day-stage/scene.ts
-	@cp scenes/long-day/scene.json build/long-day-stage/
+	@$(call scene-json,scenes/long-day,build/long-day-stage)
 	@$(call copy-assets,scenes/long-day/assets,build/long-day-stage/assets)
 	@rm -rf build/long-day-stage/dist
 	@$(TICKR) render build/long-day-stage --seconds $(SECS) --every 100 | tail -1

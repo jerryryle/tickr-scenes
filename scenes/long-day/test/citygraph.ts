@@ -2,15 +2,15 @@
 // exactly: one block per grid block with the same key, its four faces in the old side order with
 // the same frontage frame (city.ts frontPt), usable frontage [9, 51], and two signal phases at
 // every four-way node, east-west first. Also checks blocks and faces are consistent in general.
-import { cityGraph, trimToOutline } from "../src/citygen.ts";
-import type { CityOpts } from "../src/citygen.ts";
+import { cityGraph, trimToOutline } from "../tools/citygen.ts";
+import type { CityOpts } from "../tools/citygen.ts";
 // (The organic preset: each block's point moved up to 40% of a block, then evened out; CityPlan's.)
 const organicGraph = (o: Parameters<typeof cityGraph>[0], seed: number, x: CityOpts = {}) => cityGraph(o, seed, { move: (bx, bz) => [(hash2(bx, bz, seed, 0x0a1) - 0.5) * 48, (hash2(bx, bz, seed, 0x0a2) - 0.5) * 48], relax: () => 1, ...x });
 // (A warped one: each point moved up to j metres either way.)
 const warpGraph = (o: Parameters<typeof cityGraph>[0], seed: number, j: number, x: CityOpts = {}) => cityGraph(o, seed, { move: (bx, bz) => [(hash2(bx, bz, seed, 0x5e1) - 0.5) * 2 * j, (hash2(bx, bz, seed, 0x5e2) - 0.5) * 2 * j], ...x });
 const riverRow = (iz: number, lo: number, hi: number): [number, number][] => [[lo * BLOCK + 9, iz * BLOCK + 39], [(hi + 1) * BLOCK + 9, iz * BLOCK + 39]];
-import { CityOutline } from "../src/outline.ts";
-import { entryGateOf, GATE_SLOTS, setCityLimits } from "../src/city.ts";
+import { entryGateOf, TrimOutline } from "../tools/outlinegen.ts";
+import { GATE_SLOTS, setCityLimits } from "../src/city.ts";
 import { STYLES } from "../src/styles.ts";
 import { Path, planRoute } from "../src/route.ts";
 import { hash2 } from "../src/rng.ts";
@@ -183,7 +183,7 @@ import { BLOCK } from "../src/grid.ts";
   setCityLimits(5);   // (12 blocks square: lo -6, hi 5, gates at 3, as above)
   let trimmed = 0, seas = 0, exits = 0, noExit = 0;
   for (let seed = 1; seed <= 18; seed++) {
-    const style = [STYLES.coastal, STYLES.port, STYLES.brick][seed % 3], O = new CityOutline(seed * 7919, style, { freeway: null, straightRows: [], straightCols: [] });
+    const style = [STYLES.coastal, STYLES.port, STYLES.brick][seed % 3], O = new TrimOutline(seed * 7919, style, { freeway: null, straightRows: [], straightCols: [] });
     const eg = entryGateOf(seed * 7919), go = { lo, hi, gates: [eg], slots: GATE_SLOTS, nameEW: (i: number) => `E${i}`, nameNS: (i: number) => `N${i}`, elevatedRow: () => false, cableColumn: () => false };
     const L = seed % 3 === 0 ? organicGraph(go, seed, { river: seed % 2 === 0 }) : seed % 3 === 1 ? cityGraph(go, seed) : warpGraph(go, seed, 10, { drop: { p: () => 0.1, keep: () => true }, riverLine: riverRow(1, lo, hi) });
     const T = trimToOutline(L, O, eg, seed);

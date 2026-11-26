@@ -12,13 +12,13 @@
 // pavement's back, y up), so the chunk draws the still parts (buildWorksStatic, in the block's
 // grid frame) and KnittingWorksFx the moving ones (in the world) from one layout.
 import * as THREE from "three@0.187.0";
-import { Batch } from "./geom.ts";
-import { facadeBox } from "./facade.ts";
-import { FACADE } from "./facadetiles.ts";
-import { SB, sbCurve, sbTube, storyTree } from "./storybook.ts";
-import type { SbP3 } from "./storybook.ts";
-import type { CityPlan } from "./city.ts";
-import type { DockLayout } from "./facilities.ts";
+import { Batch } from "../geom.ts";
+import { facadeBox } from "../facade.ts";
+import { FACADE } from "../facadetiles.ts";
+import { SB, sbCurve, sbTube, storyTree } from "./storybook-buildings-town.ts";
+import type { SbP3 } from "./storybook-buildings-town.ts";
+import type { CityPlan } from "../city.ts";
+import type { DockLayout } from "../facilities.ts";
 
 // WORKS holds the layout, in the site frame.
 export const WORKS = {

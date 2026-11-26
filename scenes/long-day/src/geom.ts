@@ -63,7 +63,8 @@ export function frameApply(f: Frame2, x: number, z: number): [number, number] {
 // What a chunk build has placed so far, in its tile's coordinates, so later pieces keep out of it
 // (city.ts cityBatches clears it; inFrame keeps `frames`, the parts' frames being drawn in, inner
 // last): trees' trunks (x, z pairs) and buildings' footprints (four corners each, x, z pairs).
-export const PLACED = { frames: [] as Frame2[], trees: [] as number[], foot: [] as number[] };
+// (lots: each block lot's four corners in tile coordinates, city.ts buildLots, for the city maps: tools/mapsvg.ts.)
+export const PLACED = { frames: [] as Frame2[], trees: [] as number[], foot: [] as number[], lots: [] as number[] };
 // (x, z) in the frame being drawn in, in the tile's coordinates.
 export function toTile(x: number, z: number): [number, number] {
   for (let i = PLACED.frames.length - 1; i >= 0; i--) [x, z] = frameApply(PLACED.frames[i], x, z);
@@ -109,7 +110,7 @@ export class Batch {
     this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, rotY, rotX, 0, r, h, r);
   }
   // An open cylinder (it has no end caps) is for a piece of a chain whose ends are inside its neighbours or
-  // under something (storybook.ts sbTube), and has half the triangles of a capped one.
+  // under something (storybook-buildings-town.ts sbTube), and has half the triangles of a capped one.
   tubeSeg(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0, rotY = 0) {
     this.emit(batchTemplate("tube" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg, 1, true)), x, y, z, color, rotY, rotX, rotZ, r, h, r);
   }

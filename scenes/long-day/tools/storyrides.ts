@@ -5,7 +5,7 @@
 // 100 ms. Build and render it with
 //   make tool SCENE=long-day TOOL=storyrides SECS=16   -> build/long-day-storyrides/storyrides.png
 import * as THREE from "three@0.187.0";
-import "../src/works.ts";   // (first: storybook.ts and works.ts import each other round about, and works.ts needs the palette as it loads)
+import "../src/city-storybook/storybook-landmark-knitting-works.ts";   // (first: storybook-buildings-town.ts and storybook-landmark-knitting-works.ts import each other round about, and storybook-landmark-knitting-works.ts needs the palette as it loads)
 import { Batch } from "../src/geom.ts";
 import { storyRigColors, storyRigs } from "../src/storyvehicles.ts";
 import type { StoryRig } from "../src/storyvehicles.ts";

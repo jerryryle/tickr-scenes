@@ -8,3 +8,7 @@ dist/
 .tickr-scene/
 
 .DS_Store
+
+# Long Day's cities and roads, packed (scenes/long-day/tools/pack.ts)
+/scenes/long-day/src/world-packed.ts
+/scenes/long-day/assets-packed/

@@ -1,16 +1,16 @@
 // The journey: an endless chain of jobs, simulated independently of rendering.
 //
-// Time is deterministic and seekable. The journey runs on a fixed clock of SIM_DT steps. Each city
-// aims to take about `period` (cityMinutes + countrySeconds): its jobs are planned to end in time
-// to leave, and the road out is laid for the drive left to the slot's nominal end (dEst). But that
-// is a guideline, not a deadline: running late, the truck finishes what it is doing and leaves,
-// the drive out takes the time its road was laid for, and the next city starts when the truck gets
-// there (cityStart). A city's starting state (truck, freight carried in, route start) is a pure
+// Time is deterministic and seekable. The journey runs on a fixed clock of SIM_DT steps. Its cities
+// and the roads between them are the visit planner's (visits.ts). Each city aims to take about
+// `period` (cityMinutes, and the drive out along its world road, that road's own seconds): its jobs
+// are planned to end in time to leave, and the drive out takes its road's seconds (dEst). But that
+// is a guideline, not a deadline: running late or early, the truck finishes what it is doing and
+// leaves, and the next city starts when the truck gets there (cityStart). A city's starting state (truck, freight carried in, route start) is a pure
 // function of the journey seed and N, so a city is replayed from its start; the starts of the
 // cities played so far are kept (starts), and within a city keyframes every KEYFRAME_STEPS make
 // seeking (and scrubbing backwards) instant. A seek past what has been played plays on to it,
 // every city between included (slow, far ahead in the preview; a board never seeks). A journey started at time t (tests, test renders)
-// takes t's city at its nominal start, N * period; it gets there before street life is attached
+// takes t's city at its nominal start (nominalStart: the periods before it, end to end); it gets there before street life is attached
 // (main.ts), so where that crosses a hand-over, the next city starts where a run without traffic
 // would put it, not where a board's continuous play does.
 //
@@ -33,7 +33,8 @@
 // in its keyframes, so seeking replays it exactly. The journey never reads it back.
 import * as THREE from "three@0.187.0";
 import { hash2, hash3 } from "./rng.ts";
-import { journeyPeriod } from "./env.ts";
+import { setVisitSpecs, visitOf } from "./visits.ts";
+import type { RoadWay, VisitSpec } from "./visits.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
 import { GATE_LEN, SPECS, truckExtents, truckLayout } from "./truck.ts";
@@ -46,14 +47,14 @@ import { cityName, journeyStyle } from "./styles.ts";
 import { seaSide } from "./outline.ts";
 import { cargoSeason, cityClimate, seasonalStyle } from "./climate.ts";
 import type { Climate, Season } from "./climate.ts";
-import { CITY_HI, CITY_LO, CityPlan, entryGateOf, gateEnd, gateEndSlot, setCityLimits } from "./city.ts";
+import { CITY_HI, CITY_LO, CityPlan, gateEnd } from "./city.ts";
 import { BLOCK, CURB_H, STREET } from "./grid.ts";
 import type { Gate, KerbDoor } from "./city.ts";
 import type { CityGraph, CNode } from "./citygraph.ts";
 import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
 import { CARGO, CARGO_BY_ID, pickCargo, SEA_CARGO, STORY_CARGO, STORY_FREIGHT, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
-import { blockGoals, LANE_KERB, Path, planRoute } from "./route.ts";
+import { blockGoals, LANE_KERB, Path, planRoute, STOP_BACK } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
 import { interchangeTrack } from "./interchange.ts";
@@ -66,8 +67,9 @@ export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null
 // Out of a garage, the street leg back towards its node starts this far from it (garage.ts:
 // the way down ends 36 m along the frontage, in the far kerb lane).
 const GARAGE_OUT_BEFORE = 36;
-import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, V_GATE, V_JOIN } from "./country.ts";
-import { bedRearX, fetchSpots, RAMP_HOLD, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, swapChores } from "./chores.ts";
+import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, roadMetres, V_GATE, V_JOIN } from "./country.ts";
+import { roadMapOf } from "./roadmap.ts";
+import { bedRearX, fetchSpots, RAMP_HOLD, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, STYLE, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
 // Street life is stepped and saved with the journey (keyframes), so the truck may answer to it and a
@@ -112,6 +114,7 @@ type DwellPhase = "park" | ChoreGroup | "startup";
 export interface DwellNow { phase: DwellPhase; t: number; len: number; chore: Chore | null; ct: number }
 const STOP_SIGN_PAUSE = 1.5;     // s the truck stands at a stop sign's line before going on
 const SWAP_GAP = 2.5;          // metres between the old truck's nose and the new truck's tail
+const PULL_RIGHT_MIN = 35;    // metres to the junction ahead a tractor-trailer pulling away needs to turn right there (routeTo)
 const WALK_SPEED = 1.35;
 export const SWAP_RAMP = 0.6;   // a swap's walk: seconds getting up to WALK_SPEED, and slowing to a stop at the new door (director.ts swapWalkU)
 const GATE_TRIM = STREET / 2;   // a gate street's outer end (the hand-over to the country road) is this short of its far node
@@ -148,9 +151,14 @@ const truckNose = (m: TruckModel) => SPECS[m].noseFront + 0.05;
 const truckTail = (m: TruckModel) => SPECS[m].fifthWheel === undefined ? -truckExtents(m).rear : 1.5;
 export const SIM_DT = 0.1;              // the fixed simulation step
 const KEYFRAME_STEPS = 100;       // a keyframe every 10 s of journey within the current city
+const DRIVE_PACE = 18;          // m/s a drive averages, stops and all (for planning a city's time)
 const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is never planned shorter than this
+// A world road's key, driven one way or the other: each way is a road of its own, the same each time.
 // A rig pulling up at a kerb is lined up straight over this run in (m: hitchStep).
 const STRAIGHTEN = 18;
+// m: how far short of a face's end a truck stopping at the kerb has its nose: short of the stop
+// line ahead (STOP_BACK short of the street's mouth), where a car stopped there would be.
+const NOSE_BACK = STOP_BACK + 0.5;
 const THROUGH = 1e9;              // stopS of a path driven straight through its end (JSON has no Infinity)
 const GATE_SPEED = 6.5;           // rough average speed across town, for timing the way out
 // (Metres) what a drive takes beyond the graph's corner to corner: round to the kerb, the lights
@@ -226,27 +234,47 @@ export class Journey {
   readonly startSeason: Season;   // the first city's season (main: saved, or the real month's; always given, so a test can't pick up the month by leaving it out)
   climate!: Climate;
 
-  constructor(readonly cfg: Config, t: number, startSeason: Season) {
+  // `visits`: what a test gives for some of the journey's visits (visits.ts VisitSpec), the rest
+  // planned from the seed as ever.
+  constructor(readonly cfg: Config, t: number, startSeason: Season, visits?: Record<number, VisitSpec>) {
+    setVisitSpecs(cfg.seed, visits);
     this.startSeason = startSeason;
-    setCityLimits(cfg.cityMinutes);
     this.st = this.entryState(this.cityAt(Math.max(0, t)));
     ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
     this.placePose();
     this.advanceTo(Math.max(0, t));
   }
 
-  get period() { return journeyPeriod(this.cfg); }
-  // When city N started (or, not reached yet, will at the earliest: its nominal start, N * period,
-  // or later), and the city under journey time t: the last one started by then, of those played.
+  // City N's visit (visits.ts): the way it arrives by and the way it leaves by (the next city's
+  // way in), and the drive out's seconds as planned. Its period: cityMinutes in town and that drive.
+  private arriveOf(N: number) { return visitOf(this.cfg.seed, N).arrive; }
+  private leaveOf(N: number) { return visitOf(this.cfg.seed, N + 1).arrive; }
+  // (Planned at an average drive's pace, DRIVE_PACE: the drive itself takes as long as its road's
+  // length, the truck's speed and its stops make it, country.ts.)
+  private driveOf(N: number) { return Math.round(roadMetres(this.leaveOf(N).road) / DRIVE_PACE); }
+  periodOf(N: number) { return this.cfg.cityMinutes * 60 + this.driveOf(N); }
+  get period() { return this.periodOf(this.st.city); }
+  // City N's nominal start: the periods of the cities before it, end to end.
+  private nominal: number[] = [0];
+  nominalStart(N: number) {
+    while (this.nominal.length <= N) { const k = this.nominal.length - 1; this.nominal.push(this.nominal[k] + this.periodOf(k)); }
+    return this.nominal[N];
+  }
+  private nominalAt(t: number) { let N = 0; while (this.nominalStart(N + 1) <= t + 1e-9) N++; return N; }
+  // When city N started (or, not reached yet, will at the earliest: its nominal start, or later),
+  // and the city under journey time t: the last one started by then, of those played.
   private starts = new Map<number, number>();
-  cityStart(N: number) { return this.starts.get(N) ?? N * this.period; }
+  cityStart(N: number) { return this.starts.get(N) ?? this.nominalStart(N); }
   cityAt(t: number) {
-    if (!this.starts.size) return Math.max(0, Math.floor(t / this.period + 1e-9));
+    if (!this.starts.size) return this.nominalAt(Math.max(0, t));
     let best = -1, bt = -Infinity;
     for (const [N, s] of this.starts) if (s <= t + 1e-9 && s > bt) { bt = s; best = N; }
     // (Before every city played: by the nominal starts, as a journey started there would take it.)
-    return best >= 0 ? best : Math.max(0, Math.floor(t / this.period + 1e-9));
+    return best >= 0 ? best : this.nominalAt(Math.max(0, t));
   }
+  // The gate the truck comes in at (the graph's gates): its way in's (visits.ts).
+  private entry = 0;
+  get entryGate() { return this.entry; }
 
   // ---- city starts --------------------------------------------------------------------------
   // City N's starting state, from the seed alone: it enters at the same edge every time, in the
@@ -262,12 +290,14 @@ export class Journey {
     this.accel = 0; this.lastStep = 0; this.lightAhead = "-";   // (as a journey starting here has them)
     const start = at ?? this.cityStart(N);
     this.starts.set(N, start);
-    const freight = this.freightFor(N);
-    // In through the entry gate: the slot starts on the highway, ARRIVE_DUR seconds out.
-    const gate = this.plan.entryGate, inward = (gate.dir + 2) % 4;
+    // (A visit's spec may give the truck it starts in: it then comes in empty, unless the freight
+    // it would have brought rides in that truck.)
+    const carried = this.freightFor(N), truck = this.startTruck(N), freight = carried && carried.truck === truck ? carried : null;
+    // In through the gate its way in arrives at: the slot starts on the highway, ARRIVE_DUR seconds out.
+    this.entry = this.arriveOf(N).in;
     const st: JourneyState = {
       city: N, citySeed, cityTime: 0, simTime: start, cityStart: start, step: 0, retryAt: 0, departAt: -1, departV: 0, departS0: 0, departTruck: "box26", exit: null,
-      truck: freight?.truck ?? "box26", mode: "inbound", modeTime: 0,
+      truck, mode: "inbound", modeTime: 0,
       dwellTotal: 0, dwellDone: false, route: null, s: 0, v: V_JOIN, at: this.gateIn(),
       stopS: 0, backS: 0, dockExit: null, spare: null, parked: null,
       stops: [], aboard: [], loaded: 0, unloaded: 0, jobCounter: 0,
@@ -306,14 +336,14 @@ export class Journey {
   // The city block at the way in's inner end (where the way in is planned from): the block on
   // the right of the way in.
   private gateBlock(): [number, number] {
-    const G = this.plan.graph, b = G.faceBlock[this.gateIn().d], gt = G.gates[0]!;
+    const G = this.plan.graph, b = G.faceBlock[this.gateIn().d], gt = G.gates[this.entry]!;
     const blk = b >= 0 ? G.blocks[b] : G.nearestBlock(G.nodes[gt.node].x, G.nodes[gt.node].z);
     return blk ? [blk.kx, blk.kz] : [0, 0];
   }
   // The way in: down the entry's gate street from its outer end (GATE_TRIM short of the node
   // beyond), towards the perimeter node.
   gateIn(): { d: number; before: number } {
-    const G = this.plan.graph, gt = G.gates[0]!, st = G.streets[gt.street];
+    const G = this.plan.graph, gt = G.gates[this.entry]!, st = G.streets[gt.street];
     return { d: st.id * 2 + (gt.out === 1 ? 1 : 0), before: st.len - GATE_TRIM };
   }
 
@@ -460,11 +490,17 @@ export class Journey {
   }
 
   // ---- job planning ---------------------------------------------------------------------------
-  private rand(salt: number) { return hash3(this.st.jobCounter, this.st.city, salt, this.cfg.seed, 0x10b); }
+  private rand(salt: number) { return hash3(this.st.jobCounter, this.st.city, salt, this.visit.jobs, 0x10b); }
+  // The visit being played (visits.ts): its city, way in and seeds.
+  get visit() { return visitOf(this.cfg.seed, this.st.city); }
 
   private season() { return cargoSeason(this.climate); }
   climateOf(N: number): Climate {
-    const c = cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), this.startSeason);
+    // (A visit's spec may give its season, as if the journey had started so, and its weather.)
+    const spec = visitOf(this.cfg.seed, N).spec, SEASONS: Season[] = ["winter", "spring", "summer", "autumn"];
+    const start = spec?.season ? SEASONS[(((SEASONS.indexOf(spec.season) - N) % 4) + 4) % 4] : this.startSeason;
+    let c = cityClimate(this.cfg.seed, N, journeyStyle(this.cfg.seed, N), start);
+    if (spec?.weather) c = { ...c, weather: spec.weather, snowCover: c.season === "winter" && (spec.weather === "snow" || c.snowCover) };
     return this.cfg.weather ? c : { ...c, weather: "clear" };   // (weather off: clear skies; the season stays)
   }
 
@@ -517,7 +553,7 @@ export class Journey {
       // Only if there is time for it and the drive out of town after it (a short stay may not).
       if (job) {
         const last = job[job.length - 1].site!;
-        if (st.cityTime + this.estimate(job, this.fromTruck()) + this.gateTime(this.fromBlock(last.bx, last.bz)) + COUNTRY_MIN + 20 > this.period) { this.log("no time for a final pickup"); job = null; }
+        if (st.cityTime + this.estimate(job, this.fromTruck()) + this.gateTime(this.fromBlock(last.bx, last.bz)) + this.driveOf(st.city) + 20 > this.period) { this.log("no time for a final pickup"); job = null; }
       }
       // Without it, the truck still has to be the one the next city starts with.
       const want = this.freightFor(st.city + 1)?.truck;
@@ -703,10 +739,10 @@ export class Journey {
       else if (stop.kind === "swap") {
         // (Nose just short of the stop line ahead.)
         const front = truckExtents(stop.truck!).front, L = siteLayout(this.plan, bx, bz);
-        const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - 4 - front, straight: true }));
+        const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - NOSE_BACK - front, straight: true }));
         // (A rental lot's frontage ends at a 51 past its square's start: on a block where the
         // square sits on an anchor, the face can run on past it, the truck must not.)
-        goals = L.kind === "lot" ? [{ ...all[L.side], after: Math.min(G.faceA1(blk.sides[L.side]), 51 + this.plan.siteDelta(bx, bz)) - 4 - front }] : fronted(G, all);
+        goals = L.kind === "lot" ? [{ ...all[L.side], after: Math.min(G.faceA1(blk.sides[L.side]) - NOSE_BACK, 51 + this.plan.siteDelta(bx, bz) - 4) - front }] : fronted(G, all);
       } else {
         // A park's stand is on one side of it: stop there. A garage: along the side its ramp is
         // on, to where the way in turns off (straight through the node before, to be in the kerb
@@ -714,10 +750,20 @@ export class Journey {
         // (At a yard stand, a little further on, so the bed clears the container: crew.ts stackPlan.)
         // (Centred on the side.)
         const pull = -this.centerX + (this.isYardStand(stop) ? YARD_PULL : 0), L = siteLayout(this.plan, bx, bz);
-        const all = blk.sides.map((f) => ({ d: f, after: (G.faceA0(f) + G.faceA1(f)) / 2 + pull }));
-        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, all);
+        // (On a short face, back from the centre as far as it takes to keep its nose short of the
+        // stop line ahead (NOSE_BACK): pulling away from past the line, it would go on through the
+        // junction without its turn, red light and all.)
+        // (And a face that holds it so, its tail short of the junction behind, before one that doesn't.)
+        const all = blk.sides.map((f) => ({ d: f, after: Math.min((G.faceA0(f) + G.faceA1(f)) / 2 + pull, G.faceA1(f) - NOSE_BACK - this.frontX) }));
+        const rear = 2 * this.centerX - this.frontX, holds = all.filter((g) => g.after + rear >= G.faceA0(g.d));
+        goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, holds.length ? holds : all);
       }
-      st.route = planRoute(G, st.at.d, st.at.before, goals, 6000, this.drivable);
+      // A tractor-trailer pulling away within PULL_RIGHT_MIN of the junction ahead goes on any way
+      // but right there, if it can reach the stop so: its trailer, straight behind it at the kerb,
+      // would cut across the corner, signal pole and all.
+      const noRight = SPECS[st.truck].fifthWheel !== undefined && st.at.before < PULL_RIGHT_MIN ? G.movesFrom(st.at.d).find((m) => m.move === "R")?.to : undefined;
+      st.route = noRight === undefined ? null : planRoute(G, st.at.d, st.at.before, goals, 6000, (d) => d !== noRight && this.drivable(d));
+      st.route ??= planRoute(G, st.at.d, st.at.before, goals, 6000, this.drivable);
       // (Where no way in comes straight on through the corner before it, as at a Y-junction, any way in.)
       if (!st.route && goals.some((g) => g.straight)) st.route = planRoute(G, st.at.d, st.at.before, goals.map((g) => ({ ...g, straight: false })), 6000, this.drivable);
       if (st.route && st.at.lane !== undefined) st.route.lane = st.at.lane;
@@ -781,7 +827,11 @@ export class Journey {
   // tractor-trailer, whose trailer would cut across the off-ramp's loop. (From the seed alone: the
   // truck it comes in is the one its freight needs.)
   private takesFreeway(N: number) {
-    return freewayMerge(citySeedOf(this.cfg.seed, N)) && (this.freightFor(N)?.truck ?? "box26") !== "tractor";
+    return this.arriveOf(N).in === 0 && freewayMerge(citySeedOf(this.cfg.seed, N)) && this.startTruck(N) !== "tractor";
+  }
+  // The truck city N starts in: its visit spec's, else the one its freight needs.
+  private startTruck(N: number): TruckModel {
+    return visitOf(this.cfg.seed, N).spec?.truck ?? this.freightFor(N)?.truck ?? "box26";
   }
   // Whether a stop is up on a garage's roof (a garage site, and a truck that goes up its ramps).
   garageStop(stop: Stop | undefined | null, model: TruckModel = this.st.truck) {
@@ -898,15 +948,20 @@ export class Journey {
       if (dd < 45 && this.doorTakes(stop.site, d, stop.cargo)) cands.push([dd, d]);
     }
     cands.sort((p, q) => p[0] - q[0]);
-    // A load left on the pallet jack (jackStays): only through a door its moves can be planned to
-    // from where the truck stands, the nearest such; else none, and it waits on the pavement.
+    // A load moved with a pallet jack: through the nearest door its moves can be planned to from
+    // where the truck stands (one level with the cab is too far along the truck's side to reach
+    // clear of it); else to a spot on the pavement behind the truck it can be planned to. Only a
+    // load that may leave the jack (not jackStays) falls back to the nearest door, walked
+    // unplanned. A load moved any other way goes through the nearest door.
     // (Worked out once for the stop and where it stands: asked as the truck nears it, too.)
-    if (!jackStays(L, stop.cargo)) return cands[0]?.[1] ?? null;
+    if (STYLE[CARGO_BY_ID.get(stop.cargo)!.handling].tool !== "palletJack") return cands[0]?.[1] ?? null;
     const key = this.pickKey(stop, pose);
     const got = this.doorPick.get(key);
     if (got) return got.door;
+    const stays = jackStays(L, stop.cargo);
     let pick: { door: KerbDoor | null; chores: Chore[] | null; pave: number } = { door: null, chores: null, pave: 0 };
-    const planned = (ch: Chore[]) => { const walks = ch.filter((c) => c.kind === "walk" && c.tool === "palletJack"); return walks.length > 0 && walks.every((c) => c.jack); };
+    const jackWalks = (ch: Chore[]) => ch.filter((c) => c.kind === "walk" && c.tool === "palletJack");
+    const planned = (ch: Chore[]) => { const walks = jackWalks(ch); return walks.length > 0 && walks.every((c) => c.jack); };
     for (const [, d] of cands.slice(0, 2)) {
       const ch = this.kerbChores(stop, d, pose, true);
       if (planned(ch)) { pick = { door: d, chores: ch, pave: 0 }; break; }
@@ -916,6 +971,18 @@ export class Journey {
       const ch = this.kerbChores(stop, null, pose, true, k);
       if (planned(ch)) pick = { door: null, chores: ch, pave: k };
     }
+    // (Nothing planned on a quick look: those doors again, then the pavement spots, planned in full
+    // with the brushes past the bed's loads the last tries allow, before the nearest door walked
+    // unplanned.)
+    if (!pick.chores && !stays) for (const [, d] of cands.slice(0, 2)) {
+      const ch = this.kerbChores(stop, d, pose, true, 0, true);
+      if (planned(ch)) { pick = { door: d, chores: ch, pave: 0 }; break; }
+    }
+    for (let k = 0; !pick.chores && !stays && k < PAVE_SPOTS; k++) {
+      const ch = this.kerbChores(stop, null, pose, true, k, true);
+      if (planned(ch)) pick = { door: null, chores: ch, pave: k };
+    }
+    if (!pick.chores && !stays) pick.door = cands[0]?.[1] ?? null;
     this.doorPick.set(key, pick);
     return pick.door;
   }
@@ -962,7 +1029,7 @@ export class Journey {
   }
   // A stop's chores, the truck standing at `pose`, through door `kd` (or none). `trial`: only to
   // see whether they can be planned (nothing aboard changes: its slots worked out on a copy).
-  private kerbChores(stop: Stop, kd: KerbDoor | null, pose: Pose, trial: boolean, pave = 0): Chore[] {
+  private kerbChores(stop: Stop, kd: KerbDoor | null, pose: Pose, trial: boolean, pave = 0, full = false): Chore[] {
     const st = this.st, others = trial ? this.othersAt(stop).map((a) => ({ ...a })) : this.othersAt(stop);
     const slot = stop.slot ?? this.slotFor(stop, others);
     // The back of the loads before and after (where the hand truck or pallet jack rests), from
@@ -1012,7 +1079,7 @@ export class Journey {
     // (No door: the building's front from the nearest one there at all, whatever its use, all wall.)
     const fr = !kd && !dp ? this.frontDoor(stop, pose) : null;
     const plan = () => planChores(st.truck, stop, dp ? dp.stair : null, slot, before, after, door, obstacles, boxes, kd && !dp ? this.stackKind(stop) : null, others, true, pave, fr ? frame(fr) : null, dp?.geom.door ? dp.geom.door.w / 2 : null);
-    return trial ? jackTrial(plan) : plan();
+    return trial && !full ? jackTrial(plan) : plan();
   }
   // Whether a door can take a cargo at all: not one with something big stood just before it, a
   // freeway's column, a conifer (nothing carried, wheeled or two-handed gets in or out past it;
@@ -1528,7 +1595,8 @@ export class Journey {
     if (st.cityTime >= 2 * this.period) { this.log("out of time: forced onto the road"); this.forceLeave(); return; }
     if (st.mode !== "drive" || st.stops.some((x) => x.kind === "depart")) return;
     // (Long before the end, no drive out could be long enough: not worth timing it every step.)
-    if (st.cityTime < this.period - COUNTRY_MIN - GATE_MAX - 150 || st.cityTime < this.period - COUNTRY_MIN - this.gateTime(this.fromTruck()) - (this.path ? 150 : 40)) return;
+    const drive = this.driveOf(st.city);
+    if (st.cityTime < this.period - drive - GATE_MAX - 150 || st.cityTime < this.period - drive - this.gateTime(this.fromTruck()) - (this.path ? 150 : 40)) return;
     // A stop it is already driving to is still made (the truck can't turn off mid-street).
     const keep = this.path && st.stops[0] ? [st.stops[0]] : [];
     const n = this.aboardUnits - keep.reduce((a, k) => a + (k.kind === "drop" ? k.units : 0), 0);
@@ -1538,55 +1606,30 @@ export class Journey {
     const want = this.freightFor(st.city + 1)?.truck, swap: Stop[] = [];
     if (want && want !== st.truck && !keep.some((k) => k.kind === "swap")) {
       const lot = this.findNear(["rentalLot"], bx, bz, LOT_SEARCH, new Set(), 1)[0];
-      if (lot && st.cityTime + this.estimate([...keep, { kind: "swap", site: lot, job: 0, cargo: "", units: 0 }], this.fromTruck()) + this.gateTime(this.fromBlock(lot.bx, lot.bz)) + COUNTRY_MIN < this.period)
+      if (lot && st.cityTime + this.estimate([...keep, { kind: "swap", site: lot, job: 0, cargo: "", units: 0 }], this.fromTruck()) + this.gateTime(this.fromBlock(lot.bx, lot.bz)) + this.driveOf(st.city) < this.period)
         swap.push({ kind: "swap", site: lot, job: ++st.jobCounter, cargo: "", units: 0, truck: want });
     }
     st.stops = [...keep, ...swap, { kind: "depart", site: null, job: -1, cargo: "", units: 0 }]; st.intercity = true;
   }
 
-  // Rough seconds to drive out of town from nodes `from`, by the nearest gate it may leave by.
+  // Rough seconds to drive out of town from nodes `from`, by the gate the way on leaves by.
   private gateTime(from: readonly number[]) {
-    const inward = (entryGateOf(citySeedOf(this.cfg.seed, this.st.city + 1)).dir + 2) % 4;
-    const G = this.plan.graph, gates: number[] = [];
-    // (The gates planExit may leave by.)
-    G.gates.forEach((gt, i) => { if (gt && this.mayLeaveBy(i, inward)) gates.push(gt.node); });
-    // (None of them open: no way out it may take, as before the graph: the deadline is now.)
-    return gates.length ? (this.driveTo(from, gates) + GATE_SLACK) / GATE_SPEED + 20 : Infinity;
+    const gt = this.plan.graph.gates[this.leaveOf(this.st.city).out];
+    return gt ? (this.driveTo(from, [gt.node]) + GATE_SLACK) / GATE_SPEED + 20 : Infinity;
   }
 
-  // The way out: a route from where the truck is now to the end of a gate street, choosing among
-  // the gates whose way out is at most a quarter turn from the next city's way in (and straight
-  // on when the drive will be short), and how long the road to the hand-over is planned to be.
+  // The way out: a route from where the truck is now to the end of the gate street its way on
+  // leaves by (visits.ts), and the drive's own seconds to the next city's hand-over.
   private planExit(): { route: Route; gate: number; dEst: number } | null {
-    const st = this.st, at = this.pathEnd();
-    const inward = (entryGateOf(citySeedOf(this.cfg.seed, st.city + 1)).dir + 2) % 4;
-    const G = this.plan.graph;
-    let best: { route: Route; gate: number; dEst: number; cost: number } | null = null;
-    for (let i = 0; i < G.gates.length; i++) {
-      const gt = G.gates[i];
-      if (!gt || !this.mayLeaveBy(i, inward)) continue;
-      const turn = (inward - gt.dir + 4) % 4;
-      const gst = G.streets[gt.street];
-      const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable);
-      if (!route) continue;
-      if (at.lane !== undefined) route.lane = at.lane;
-      route.wide = st.truck === "tractor" || undefined;
-      route.nose = truckNose(st.truck); route.tail = truckTail(st.truck);
-      const len = new Path(G, route).length;
-      const dEst = Math.round((this.period - st.cityTime - len / GATE_SPEED) * 10) / 10;
-      const cost = len + (turn !== 0 && dEst < 50 ? 1500 : 0);
-      if (!best || cost < best.cost) best = { route, gate: i, dEst, cost };
-    }
-    if (!best) return null;
-    best.dEst = Math.max(COUNTRY_MIN, best.dEst);
-    return best;
-  }
-  // Whether the truck may leave by gate i (the graph's) towards the next city's way in, `inward`:
-  // at most a quarter turn from it, and not out under the flyover the highway came in on (a
-  // freeway town's way in).
-  private mayLeaveBy(i: number, inward: number) {
-    const gt = this.plan.graph.gates[i];
-    return !!gt && (inward - gt.dir + 4) % 4 !== 2 && !(i === 0 && this.plan.freeway);
+    const st = this.st, at = this.pathEnd(), G = this.plan.graph, i = this.leaveOf(st.city).out, gt = G.gates[i];
+    if (!gt) return null;
+    const gst = G.streets[gt.street];
+    const route = planRoute(G, at.d, at.before, [{ d: gst.id * 2 + (gt.out === 1 ? 0 : 1), after: gst.len - GATE_TRIM }], 6000, this.drivable);
+    if (!route) return null;
+    if (at.lane !== undefined) route.lane = at.lane;
+    route.wide = st.truck === "tractor" || undefined;
+    route.nose = truckNose(st.truck); route.tail = truckTail(st.truck);
+    return { route, gate: i, dEst: this.driveOf(st.city) };
   }
   // Where the next route starts from: the current edge.
   private pathEnd() { return this.st.at; }
@@ -1602,7 +1645,7 @@ export class Journey {
     // (As long as the road was laid for, or as long as it takes: country.ts fitDuration.)
     const road = this.exitEntry(false)?.road;
     if (road) road.finish();
-    st.countryD = road ? road.fitDuration(Math.max(COUNTRY_MIN, st.exit?.dEst ?? COUNTRY_MIN), st.v, s0) : undefined;
+    st.countryD = road ? road.fitDuration(Math.max(COUNTRY_MIN, road.plannedSeconds), st.v, s0) : undefined;
     st.spare = null; st.parked = null; st.dockExit = null; st.lastDock = null; st.garageExit = null; st.intercity = true;
     st.stops = st.stops.filter((s) => s.kind !== "depart");
     this.path = null; st.route = null;
@@ -1612,12 +1655,7 @@ export class Journey {
   private forceLeave() {
     const st = this.st;
     if (!st.exit) {
-      const inward = (entryGateOf(citySeedOf(this.cfg.seed, st.city + 1)).dir + 2) % 4;
-      // (Straight on if it can, else at most a quarter turn, else any gate.)
-      const G = this.plan.graph, turn = (i: number) => (inward - G.gates[i]!.dir + 4) % 4;
-      const idx = [...G.gates.keys()], ok = (k: number) => this.mayLeaveBy(k, inward);
-      const i = idx.find((k) => ok(k) && turn(k) === 0) ?? idx.find(ok) ?? idx.find((k) => this.plan.gateOpen(k)) ?? 0;
-      st.exit = { gate: i, dEst: Math.max(COUNTRY_MIN, this.period - st.cityTime) };
+      st.exit = { gate: this.leaveOf(st.city).out, dEst: this.driveOf(st.city) };
     }
     st.v = 8;
     this.leave(0);
@@ -1660,20 +1698,26 @@ export class Journey {
   // The last city's road out, while it is still at hand (continuous playback: main.ts keeps drawing
   // it behind the truck after the hand-over).
   // City N's road out by gate `gate` (a pure function of the seed and these: the gate is its graph's,
-  // so the city's plan is built for it, the last city's too after a seek).
-  private makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel, ahead = false): CountryRoad {
-    const gt = this.planOf(N).graph.gates[gate], e = gt ? gateEnd(gt) : gateEndSlot(entryGateOf(citySeedOf(this.cfg.seed, N))), N1 = N + 1, toClimate = this.climateOf(N1), fromClimate = this.climateOf(N);
-    const toStyle = this.styleOf(N1), fromStyle = this.styleOf(N);
-    const inward = (entryGateOf(citySeedOf(this.cfg.seed, N1)).dir + 2) % 4;
-    const toFreeway = !!freewayGate(citySeedOf(this.cfg.seed, N1), toStyle), toFreewayMerge = toFreeway && this.takesFreeway(N1);
-    // (The freeway's curve out of this city as it was laid: its graph built first, so a town whose
-    // organic layout fell back, straight, has none.)
-    const P = freewayGate(citySeedOf(this.cfg.seed, N), fromStyle) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
-    return new CountryRoad({ toFreeway, toFreewayMerge, toSea: this.onSea(N1), fromCurve,
-      seed: this.cfg.seed, city: N, kind: "exit", frame: e, dEst, endH: inward * Math.PI / 2,
-      fromTruck, toTruck: this.freightFor(N1)?.truck ?? "box26",
-      fromStyle, toStyle, fromClimate, toClimate, fromName: cityName(citySeedOf(this.cfg.seed, N), fromStyle), toName: cityName(citySeedOf(this.cfg.seed, N1), toStyle),
-    }, ahead);
+  // so the city's plan is built for it, the last city's too after a seek): its world road's map,
+  // driven this way (from b to a when the road's b is this city), on to the next city's gate, up
+  // beside the freeway when that gate is the freeway's way in (g0).
+  makeExitRoad(N: number, gate: number, dEst: number, fromTruck: TruckModel, ahead = false): CountryRoad {
+    const gt = this.planOf(N).graph.gates[gate]!, e = gateEnd(gt), N1 = N + 1;
+    return new CountryRoad({ ...this.roadInputs(N, N1, this.leaveOf(N)), seed: this.cfg.seed, city: N, kind: "exit", driveSeed: visitOf(this.cfg.seed, N).drive, frame: e, dEst, fromTruck, toTruck: this.startTruck(N1) }, ahead);
+  }
+  // A drive's road and its cities, from city N to city N1 along `way`.
+  private roadInputs(N: number, N1: number, way: RoadWay) {
+    const fromKey = citySeedOf(this.cfg.seed, N), toKey = citySeedOf(this.cfg.seed, N1), toStyle = this.styleOf(N1), fromStyle = this.styleOf(N);
+    const toFreeway = way.in === 0 && !!freewayGate(toKey), toFreewayMerge = toFreeway && this.takesFreeway(N1);
+    // (The freeways' curves as the cities were laid out: their graphs built first.)
+    const P = freewayGate(fromKey) ? this.planOf(N) : null, fromCurve = P ? (void P.graph, P.fwCurve) : null;
+    const Q = freewayGate(toKey) && !toFreeway ? this.planOf(N1) : null;
+    return {
+      map: roadMapOf(way.road), back: way.back, toFreeway, toFreewayMerge, fromCurve, fromKey, toKey,
+      toGateEnd: Q ? gateEnd(Q.graph.gates[way.in]!) : null, toCurve: Q ? Q.fwCurve : null,
+      fromStyle, toStyle, fromClimate: this.climateOf(N), toClimate: this.climateOf(N1),
+      fromName: cityName(fromKey, fromStyle), toName: cityName(toKey, toStyle),
+    };
   }
   // The last city's road out, while it is still at hand: main.ts keeps drawing it behind the truck
   // after the hand-over. From the journey state, so a seek within this city finds it too.
@@ -1698,9 +1742,9 @@ export class Journey {
   private plans = new Map<number, CityPlan>();
   private styleOf(N: number) { return seasonalStyle(journeyStyle(this.cfg.seed, N), this.climateOf(N)); }
   private planOf(N: number): CityPlan {
-    const seed = citySeedOf(this.cfg.seed, N), have = this.plans.get(N);
-    if (have && have.seed === seed) { this.plans.delete(N); this.plans.set(N, have); return have; }
-    const plan = new CityPlan(seed, this.styleOf(N));
+    const seed = citySeedOf(this.cfg.seed, N), dressing = visitOf(this.cfg.seed, N).dressing, have = this.plans.get(N);
+    if (have && have.seed === seed && have.dressing === dressing) { this.plans.delete(N); this.plans.set(N, have); return have; }
+    const plan = new CityPlan(seed, this.styleOf(N), dressing);
     this.plans.set(N, plan);
     if (this.plans.size > 3) this.plans.delete(this.plans.keys().next().value!);
     return plan;
@@ -1718,21 +1762,19 @@ export class Journey {
     return P;
   }
   // Whether city N is on the sea: only built out to see when it could be (seaSide).
-  private onSea(N: number) { return seaSide(citySeedOf(this.cfg.seed, N), this.styleOf(N)) !== null && this.planOf(N).outline.sea !== null; }
+  private onSea(N: number) { return seaSide(citySeedOf(this.cfg.seed, N)) !== null && this.planOf(N).outline.sea !== null; }
   // The arrival straight into this city (pure: from the seed alone).
   private arrivalCache: CountryRoad | null = null;
   get arrivalRoad(): CountryRoad {
-    const st = this.st, key = `${this.cfg.seed}/${st.city}`;
+    const st = this.st;
     if (!this.arrivalCache || this.arrivalCache.inp.city !== st.city || this.arrivalCache.inp.seed !== this.cfg.seed) {
-      const g = this.plan.entryGate, e = gateEndSlot(g), h = e.h + Math.PI;
-      const N0 = Math.max(0, st.city - 1), fromClimate = this.climateOf(N0);
+      const e = gateEnd(this.plan.graph.gates[this.entry]!), N0 = Math.max(0, st.city - 1);
+      // (Its last stretch: the drive before it is the last city's. Placed by its end, at this gate.)
       this.arrivalCache = new CountryRoad({
-        seed: this.cfg.seed, city: st.city, kind: "arrival", toSea: this.plan.outline.sea !== null, toFreeway: !!this.plan.freeway, toFreewayMerge: !!this.plan.freeway && this.takesFreeway(st.city),
-        frame: { x: e.x - Math.cos(h) * ARRIVE_LEN, z: e.z + Math.sin(h) * ARRIVE_LEN, h }, dEst: 0, endH: h,
-        fromTruck: st.truck, toTruck: st.truck,
-        fromStyle: this.plan.style, toStyle: this.plan.style, fromClimate, toClimate: this.climate, fromName: this.plan.name, toName: this.plan.name,
+        ...this.roadInputs(N0, st.city, this.arriveOf(st.city)), seed: this.cfg.seed, city: st.city, kind: "arrival", driveSeed: this.visit.drive,
+        endFrame: { x: e.x, z: e.z, h: e.h + Math.PI }, dEst: 0, fromTruck: st.truck, toTruck: st.truck,
+        toStyle: this.plan.style, toClimate: this.climate, toName: this.plan.name,
       });
-      void key;
     }
     return this.arrivalCache;
   }

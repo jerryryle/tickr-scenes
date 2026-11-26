@@ -11,18 +11,20 @@
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey, SIM_DT } from "../src/journey.ts";
+import { parseVisitSpec } from "../src/visits.ts";
 import { DockFx } from "../src/dockfx.ts";
 {
   const proc = (globalThis as any).process;
-  const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:12", "2:72"];   // (seed 2's first tractor dock is at ~69 min)
+  // (Each run "seed:minutes", or "seed:minutes:spec" with its first visit built (visits.ts parseVisitSpec).)
+  const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["1:12", "1:3:city=metro-midtown,truck=tractor"];   // (Midtown in a tractor docks within two minutes)
   const errs: string[] = [];
   let problems = 0;
   const fail = (m: string) => { problems++; if (errs.length < 10) errs.push(m); };
   const docked: Record<string, number> = {};
   const MAX_STEP = 1.0;   // metres of doorway per 0.1 s step: backing in at walking pace moves it ~0.3
   for (const run of runs) {
-    const [seed, minutes] = run.split(":").map(Number);
-    const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
+    const [seedS, minutesS, spec] = run.split(":"), seed = Number(seedS), minutes = Number(minutesS);
+    const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn", spec ? { 0: parseVisitSpec(spec) } : undefined);
     const fx = new DockFx(new THREE.Scene()), hole = (fx as any).hole as THREE.Mesh, lip = (fx as any).lip as THREE.Object3D;
     let prev = 0, pmode = j.st.mode, top = 0, plip = false, stops = 0;
     const lipAt = new THREE.Vector3();

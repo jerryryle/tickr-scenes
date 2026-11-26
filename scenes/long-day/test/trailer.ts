@@ -8,9 +8,10 @@
 // load as it comes to the doors and goes; and the journey pulls up at the kerb with the trailer
 // straight behind the tractor (journey.ts hitchStep), so the chores, worked out round a straight
 // one, keep out of it.
-// Args (all optional): seed minutes, for the journey part (seed 7 has tractor kerb stops early on).
+// Args (all optional): seed minutes, for the journey part (by default Dry Gulch in a tractor, a built visit).
 import { readConfig } from "../src/env.ts";
 import { Journey, setDoorProbe, setPavementProbe, setParkedProbe } from "../src/journey.ts";
+import { parseVisitSpec } from "../src/visits.ts";
 import { kerbDoors, parkedObstacles, pavementObstacles } from "../src/city.ts";
 import { bedRearX, leafAt, leafBlocked, toolStore, trailerJackPlan } from "../src/chores.ts";
 import { LEAF_OPEN, truckLayout } from "../src/truck.ts";
@@ -160,8 +161,9 @@ for (const kind of ["pickup", "drop"]) {
 
 // The journey: at each tractor kerb stop the trailer stands straight behind the tractor.
 setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
-const seed = Number(proc.argv[2] ?? 7), minutes = Number(proc.argv[3] ?? 75);
-const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
+// (By default Dry Gulch, its first visit built in a tractor: a kerb stop within two minutes.)
+const seed = Number(proc.argv[2] ?? 1), minutes = Number(proc.argv[3] ?? 6), spec = proc.argv[4] ?? (proc.argv[2] ? "" : "city=desert-dry-gulch,truck=tractor");
+const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn", spec ? { 0: parseVisitSpec(spec) } : undefined);
 let prev = j.st.mode, kerb = 0;
 while (j.st.simTime < minutes * 60) {
   j.step();

@@ -3,7 +3,7 @@
 // square's clock tower, the water tower with the town name), plus plaza statues, flags, the
 // Ryder rooftop sign and marquees. Builders run inside the chunk builder and read the chunk's
 // context from DC.
-import type { PlateSet } from "./signs.ts";
+import type { PlateSet, SignStyle } from "./signs.ts";
 import { Batch } from "./geom.ts";
 import type { Quad } from "./geom.ts";
 import { PoolBuilder } from "./atmosphere.ts";
@@ -13,8 +13,9 @@ import { FLAG_WAVE, NEON_BLINK, NEON_CHASE, NEON_STEADY } from "./signals.ts";
 import type { CityStyle } from "./styles.ts";
 import { C, CITY_HI, CITY_LO, CityPlan, cityTree, CS, faceYaw, GATE_SLOTS, inset, irange, pick, range, shade, streetSide } from "./city.ts";
 import { BLOCK, CURB_H, LOT_TOP, STREET } from "./grid.ts";
-import type { District, Rand, Rect } from "./city.ts";
+import type { District, Rand, Rect, StallPose } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
+import { hash2 } from "./rng.ts";
 import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, signAtlas, SignAtlas } from "./signs.ts";
 
 interface RoofSpot { r: Rect; top: number }
@@ -41,6 +42,9 @@ export const DC = {
   roofs: [] as RoofSpot[],             // flat roofs built in this chunk (for billboards)
   fac: "residence" as FacilityId,
   plan: null as unknown as CityPlan,
+  // (The chunk's sign slots, and a rental lot's stalls as it is drawn, tile-local: city.ts.)
+  takeSlot: null as ((text: string, style: SignStyle) => ReturnType<SignAtlas["uv"]> | null) | null,
+  stalls: [] as StallPose[],
   cx: 0, cz: 0,
   pools: null as unknown as PoolBuilder,   // light pools under the streetlights
   lampSites: [] as number[],   // streetlight heads (x, y, z), for applyLampLight
@@ -148,20 +152,27 @@ export function shopNeon(s: Batch, b: Rect, side: number, rnd: Rand) {
 
 // ---- billboards and ghost signs -------------------------------------------------------------------
 // A billboard on one of the chunk's flat roofs, facing the nearest street.
-export function roofBillboard(s: Batch, B: Rect, rnd: Rand) {
+// A billboard on a roof drawn in this block (DC.roofs) facing a street: the roof (r, its top), the
+// side it faces, and its ad (a pool, AD_POOLS, and the ad's place in it); or null.
+export const AD_POOLS: Record<string, readonly unknown[]> = { ryder: AD_RYDER, baton: AD_BATON, billboard: AD_BILLBOARD };
+export function billboardSpot(B: Rect, rnd: Rand): { r: Rect; top: number; side: number; ad: [string, number] } | null {
   const spots = DC.roofs.filter((sp) => sp.top > 3 && sp.top < 30 && Math.min(sp.r.x1 - sp.r.x0, sp.r.z1 - sp.r.z0) >= 6);
-  if (!spots.length) return;
+  if (!spots.length) return null;
   const sp = pick(rnd, spots), side = streetSide(sp.r, B, 30);
-  if (side < 0) return;
-  const w = Math.min(8, wallLen(sp.r, side) - 1), h = w * 0.375;
+  if (side < 0) return null;
+  const k = rnd(), pool = k < 0.25 ? "ryder" : k < 0.37 ? "baton" : "billboard";
+  return { r: sp.r, top: sp.top, side, ad: [pool, Math.floor(rnd() * AD_POOLS[pool].length)] };
+}
+export function drawBillboard(s: Batch, r: Rect, top: number, side: number, ad: [string, number]) {
+  const w = Math.min(8, wallLen(r, side) - 1), h = w * 0.375;
   const [nx, nz] = SIDE_N[side], [rx, rz] = sideRight(side);
-  const [x, z] = onWall(sp.r, side, 0, -1.0);
-  const base = sp.top + 1.4, yaw = Math.atan2(-rz, rx);
-  for (const k of [-0.33, 0.33]) s.box(x + rx * w * k - nx * 0.4, sp.top + (base - sp.top + h) / 2, z + rz * w * k - nz * 0.4, 0.22, base - sp.top + h, 0.22, C.pole);
+  const [x, z] = onWall(r, side, 0, -1.0);
+  const base = top + 1.4, yaw = Math.atan2(-rz, rx);
+  for (const k of [-0.33, 0.33]) s.box(x + rx * w * k - nx * 0.4, top + (base - top + h) / 2, z + rz * w * k - nz * 0.4, 0.22, base - top + h, 0.22, C.pole);
   s.boxR(x, base + h / 2, z, w + 0.3, h + 0.3, 0.28, 0x2a2c30, 0, yaw, 0);
   s.boxR(x - nx * 0.2, base - 0.15, z - nz * 0.2, w, 0.08, 0.7, C.pole, 0, yaw, 0);   // catwalk
-  const k = rnd(), ad = k < 0.25 ? pick(rnd, AD_RYDER) : k < 0.37 ? pick(rnd, AD_BATON) : pick(rnd, AD_BILLBOARD);
-  DC.quads.push({ x: x + nx * 0.15, y: base + h / 2, z: z + nz * 0.15, w, h, rotY: faceYaw(nx, nz), ...signAtlas.adUV(ad) });
+  const pool = AD_POOLS[ad[0]] ?? AD_BILLBOARD;
+  DC.quads.push({ x: x + nx * 0.15, y: base + h / 2, z: z + nz * 0.15, w, h, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pool[ad[1] % pool.length] as never) });
   DC.ads = true;
 }
 // A faded painted sign high on a blank wall.
@@ -196,63 +207,87 @@ export function fireEscape(s: Batch, b: Rect, side: number, floors: number, firs
 // an across offset to a box call; `busy` holds along positions already taken (trees, lights,
 // signs, driveways), widened as items are placed.
 // (Along the segment from a0 to a1: on the old grid, STREET to BLOCK.)
-export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcross: number, inward: number, axis: 0 | 1, busy: number[][], rnd: Rand, a0 = STREET, a1 = BLOCK) {
+// Furniture a city file lists for one side of a street (cityfile.ts): each piece's kind (PK) and
+// its place along the street, in the street's frame. And, while drafting, what the placing below
+// picks: [street, kind, along, inward] for each piece (FURNITURE.out, read by tools/cityfiles.ts).
+export type FurnitureItem = [number, number];
+export const FURNITURE = { out: null as number[] | null, street: -1 };
+// The pavement's furniture along one side of a street: a hydrant, a bin, benches, a mailbox, and
+// in the shops newspaper boxes, parking meters, a bus shelter and a bike rack, each clear of what
+// already stands there (busy). `given`: what a city file lists for this side, drawn in place of
+// what the placing picks. (The placing still runs, drawing nothing: its random draws are taken as
+// ever, so what the chunk lays out after it stays where it was.)
+export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcross: number, inward: number, axis: 0 | 1, busy: number[][], rnd: Rand, a0 = STREET, a1 = BLOCK, given: readonly FurnitureItem[] | null = null) {
   const box = (al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
     axis === 0 ? s.box(al, y, ac, lal, h, lac, color) : s.box(ac, y, al, lac, h, lal, color);
   const cyl = (al: number, y: number, ac: number, r: number, h: number, color: number, seg = 8) =>
     axis === 0 ? s.cyl(al, y, ac, r, h, color, seg) : s.cyl(ac, y, al, r, h, color, seg);
   const rec = (p: number, across: number, r: number, kind = 0) => axis === 0 ? pavementObstacle(p, across, r, kind) : pavementObstacle(across, p, r, kind);
+  const ac = kerbAcross + inward * 0.7, y0 = CURB_H;   // 0.7 m in from the kerb face
+  // Each kind drawn at p along, with what it stands in the walkers' way as (a bus shelter, long and
+  // set back, as a row of circles along its roof; a bench, long and shallow, as a row along it).
+  const piece: Record<number, (p: number) => void> = {
+    [PK.hydrant]: (p) => { cyl(p, y0 + 0.35, ac, 0.13, 0.7, 0xc0392b); cyl(p, y0 + 0.74, ac, 0.16, 0.1, 0xc0392b); box(p, y0 + 0.45, ac, 0.42, 0.1, 0.1, 0xd04a3a); rec(p, ac, 0.45, PK.hydrant); },
+    [PK.trash]: (p) => { cyl(p, y0 + 0.45, ac, 0.28, 0.9, 0x2e4a3a); cyl(p, y0 + 0.92, ac, 0.3, 0.06, 0x223a2e); rec(p, ac, 0.45, PK.trash); },
+    [PK.bench]: (p) => {
+      box(p, y0 + 0.45, ac + inward * 0.1, 1.8, 0.08, 0.45, 0x7a5232); box(p, y0 + 0.75, ac + inward * 0.33, 1.8, 0.4, 0.06, 0x7a5232);
+      for (const k of [-0.8, 0.8]) box(p + k, y0 + 0.22, ac + inward * 0.1, 0.07, 0.44, 0.4, 0x2a2b2e);
+      for (const k of [-0.6, 0, 0.6]) rec(p + k, ac + inward * 0.2, 0.42, PK.bench);
+    },
+    // (A mailbox's lid overhangs: shared planes flicker.)
+    [PK.mailbox]: (p) => { box(p, y0 + 0.55, ac, 0.5, 1.1, 0.45, 0x1f4f9f); box(p, y0 + 1.1, ac, 0.52, 0.1, 0.47, 0x1a3f80); rec(p, ac, 0.45, PK.mailbox); },
+    [PK.news]: (p) => { for (const [k, c] of [[-0.4, 0xc0392b], [0.3, 0xf2c200]] as const) box(p + k, y0 + 0.5, ac, 0.45, 1.0, 0.4, c); rec(p, ac, 0.9, PK.news); },
+    [PK.meter]: (p) => { cyl(p, y0 + 0.6, kerbAcross + inward * 0.45, 0.04, 1.2, 0x55585c, 5); box(p, y0 + 1.28, kerbAcross + inward * 0.45, 0.2, 0.28, 0.16, 0x9aa0a6); rec(p, kerbAcross + inward * 0.45, 0.15, PK.meter); },
+    [PK.shelter]: (p) => {
+      const back = kerbAcross + inward * 1.75, front = kerbAcross + inward * 0.35;   // open to the kerb, clear of the walkway
+      box(p, y0 + 1.25, back, 3.6, 2.5, 0.06, 0x8fb8c8); box(p, y0 + 2.55, (back + front) / 2, 3.8, 0.1, 1.6, 0x3a3d40);
+      for (const k of [-1.75, 1.75]) box(p + k, y0 + 1.25, (back + front) / 2, 0.08, 2.5, 1.4, 0x3a3d40);
+      box(p, y0 + 0.45, back - inward * 0.3, 2.8, 0.08, 0.4, 0x55585c);
+      for (const k of [-1.425, -0.475, 0.475, 1.425]) rec(p + k, kerbAcross + inward * 1.05, 0.8, PK.shelter);
+    },
+    [PK.rack]: (p) => { for (const k of [-0.6, 0, 0.6]) box(p + k, y0 + 0.4, ac, 0.05, 0.8, 0.6, 0x9aa0a6); rec(p, ac, 1.05, PK.rack); },
+  };
+  const put = (kind: number, p: number) => {
+    if (given) return;
+    piece[kind](p);
+    FURNITURE.out?.push(FURNITURE.street, kind, p, inward);
+  };
   const free = (p: number, half: number, end = 2.5) => p - half > a0 + end && p + half < a1 - end && busy.every(([a, b]) => p + half < a || p - half > b);
-  const place = (half: number, f: (p: number) => void, kind = 0) => {
+  const place = (half: number, kind: number) => {
     // (A bus shelter 6 m clear of the corners, where the crossing guard's children gather
     // (vignettes.ts guard): they walked through its glass.)
     const end = kind === PK.shelter ? 6 : 2.5;
     for (let t = 0; t < 12; t++) {
       const p = range(rnd, a0 + 3, a1 - 3);
-      if (free(p, half, end)) {
-        f(p); busy.push([p - half - 0.4, p + half + 0.4]);
-        // (A bus shelter, long and set back: as a row of circles along its roof, not one as wide as
-        // it is long out into the road.)
-        if (kind === PK.shelter) for (const k of [-1.425, -0.475, 0.475, 1.425]) rec(p + k, kerbAcross + inward * 1.05, 0.8, kind);
-        // (A bench, long and shallow: a row of circles along it, not one as wide as it is long.)
-        else if (kind === PK.bench) for (const k of [-0.6, 0, 0.6]) rec(p + k, ac + inward * 0.2, 0.42, kind);
-        else rec(p, ac, half + 0.15, kind);
-        return true;
-      }
+      if (free(p, half, end)) { put(kind, p); busy.push([p - half - 0.4, p + half + 0.4]); return true; }
     }
     return false;
   };
-  const ac = kerbAcross + inward * 0.7, y0 = CURB_H;   // 0.7 m in from the kerb face
   // Every sidewalk gets a hydrant.
-  place(0.3, (p) => { cyl(p, y0 + 0.35, ac, 0.13, 0.7, 0xc0392b); cyl(p, y0 + 0.74, ac, 0.16, 0.1, 0xc0392b); box(p, y0 + 0.45, ac, 0.42, 0.1, 0.1, 0xd04a3a); }, PK.hydrant);
-  if (district === "industrial") return;
-  // Trash can and a bench.
-  place(0.3, (p) => { cyl(p, y0 + 0.45, ac, 0.28, 0.9, 0x2e4a3a); cyl(p, y0 + 0.92, ac, 0.3, 0.06, 0x223a2e); }, PK.trash);
-  if (district !== "residential" || rnd() < 0.3)
-    place(0.95, (p) => { box(p, y0 + 0.45, ac + inward * 0.1, 1.8, 0.08, 0.45, 0x7a5232); box(p, y0 + 0.75, ac + inward * 0.33, 1.8, 0.4, 0.06, 0x7a5232);
-      for (const k of [-0.8, 0.8]) box(p + k, y0 + 0.22, ac + inward * 0.1, 0.07, 0.44, 0.4, 0x2a2b2e); }, PK.bench);
-  if (rnd() < 0.5) place(0.3, (p) => { box(p, y0 + 0.55, ac, 0.5, 1.1, 0.45, 0x1f4f9f); box(p, y0 + 1.1, ac, 0.52, 0.1, 0.47, 0x1a3f80); }, PK.mailbox);   // mailbox (the lid overhangs: shared planes flicker)
-  if (district === "commercial" || district === "downtown") {
-    place(0.75, (p) => { for (const [k, c] of [[-0.4, 0xc0392b], [0.3, 0xf2c200]] as const) box(p + k, y0 + 0.5, ac, 0.45, 1.0, 0.4, c); }, PK.news);   // newspaper boxes
-    // A row of parking meters along the kerb.
-    const start = range(rnd, a0 + 6, a0 + 14);
-    for (let i = 0; i < 4; i++) {
-      const p = start + i * 6;
-      if (!free(p, 0.15)) continue;
-      cyl(p, y0 + 0.6, kerbAcross + inward * 0.45, 0.04, 1.2, 0x55585c, 5); box(p, y0 + 1.28, kerbAcross + inward * 0.45, 0.2, 0.28, 0.16, 0x9aa0a6);
-      busy.push([p - 0.3, p + 0.3]); rec(p, kerbAcross + inward * 0.45, 0.15, PK.meter);
+  place(0.3, PK.hydrant);
+  if (district !== "industrial") {
+    // Trash can and a bench.
+    place(0.3, PK.trash);
+    if (district !== "residential" || rnd() < 0.3) place(0.95, PK.bench);
+    if (rnd() < 0.5) place(0.3, PK.mailbox);
+    if (district === "commercial" || district === "downtown") {
+      place(0.75, PK.news);   // newspaper boxes
+      // A row of parking meters along the kerb.
+      const start = range(rnd, a0 + 6, a0 + 14);
+      for (let i = 0; i < 4; i++) {
+        const p = start + i * 6;
+        if (!free(p, 0.15)) continue;
+        put(PK.meter, p); busy.push([p - 0.3, p + 0.3]);
+      }
+      if (rnd() < 0.3) place(1.9, PK.shelter);   // bus shelter
     }
-    if (rnd() < 0.3) place(1.9, (p) => {     // bus shelter
-      const back = kerbAcross + inward * 1.75, front = kerbAcross + inward * 0.35;   // open to the kerb, clear of the walkway
-      box(p, y0 + 1.25, back, 3.6, 2.5, 0.06, 0x8fb8c8); box(p, y0 + 2.55, (back + front) / 2, 3.8, 0.1, 1.6, 0x3a3d40);
-      for (const k of [-1.75, 1.75]) box(p + k, y0 + 1.25, (back + front) / 2, 0.08, 2.5, 1.4, 0x3a3d40);
-      box(p, y0 + 0.45, back - inward * 0.3, 2.8, 0.08, 0.4, 0x55585c);
-    }, PK.shelter);
+    if (district === "downtown" && rnd() < 0.5) place(0.9, PK.rack);   // bike rack
+    // A manhole cover in the road (where by its street and side, as the stream's draws differ between
+    // a city drawn by its rules and one drawn from its file).
+    const mh = a0 + 8 + hash2(FURNITURE.street, inward, Math.round(a0 * 10), DC.plan.seed) * Math.max(0, a1 - a0 - 16);
+    if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);
   }
-  if (district === "downtown" && rnd() < 0.5) place(0.9, (p) => { for (const k of [-0.6, 0, 0.6]) box(p + k, y0 + 0.4, ac, 0.05, 0.8, 0.6, 0x9aa0a6); }, PK.rack);   // bike rack
-  // A manhole cover in the road.
-  const mh = range(rnd, a0 + 8, a1 - 8);
-  if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);
+  for (const [kind, p] of given ?? []) { piece[kind]?.(p); FURNITURE.out?.push(FURNITURE.street, kind, p, inward); }
 }
 
 // ---- signature pieces -------------------------------------------------------------------------------
