@@ -8,8 +8,7 @@ import type { StyleId } from "../src/styles.ts";
 import { CATALOGUE } from "../src/world.ts";
 import { citiesOfStyle } from "../src/visits.ts";
 import { cityFileOfPlan, cityProblems, contentsRowsOf, slugOf } from "../tools/cityfiles.ts";
-import { PACKED_CONTENTS } from "../src/world-packed.ts";
-import { unpackText } from "../src/pack.ts";
+import { unpackWorld } from "../src/worlddata.ts";
 
 const fails: string[] = [], ids = new Set<string>();
 for (const F of CATALOGUE) {
@@ -26,9 +25,9 @@ for (const F of CATALOGUE) {
   const strip = (f: CityFile) => JSON.stringify(Object.entries({ ...f, blocks: f.blocks.map(({ at: _, ...b }) => b) }).sort(([p], [q]) => (p < q ? -1 : 1)));
   if (strip(cityFileOfPlan(plan, F.id, F.name)) !== strip(fileOf(F))) fails.push(`${F.id}: its file does not read back as written`);
   // (Its contents, packed and unpacked: as its contents file lists them.)
-  const C = PACKED_CONTENTS[F.id];
+  const C = unpackWorld("contents", F.id);
   if (!C) fails.push(`${F.id}: no contents`);
-  else if (JSON.stringify(contentsRowsOf(plan)) !== unpackText(C)) fails.push(`${F.id}: its contents do not read back as listed`);
+  else if (JSON.stringify(contentsRowsOf(plan)) !== C) fails.push(`${F.id}: its contents do not read back as listed`);
   console.log(`${F.id}: ${plan.graph.nodes.length} nodes, ${plan.graph.streets.length} streets, ${plan.graph.blocks.length} blocks`);
 }
 for (const id of Object.keys(STYLES) as StyleId[]) if (citiesOfStyle(id).length !== 5) fails.push(`${id}: ${citiesOfStyle(id).length} cities, not 5`);

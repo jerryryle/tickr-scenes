@@ -4,8 +4,8 @@
 // country.ts RoadGeo reads it; tools/draftroads.ts drafts it from today's rules.
 import type { RoadPiece } from "./country.ts";
 import type { WorldRoad } from "./world.ts";
-import { PACKED_ROADS, ROAD_HEADS } from "./world-packed.ts";
-import { unpackText } from "./pack.ts";
+import { ROAD_HEADS } from "./world-packed.ts";
+import { unpackWorld } from "./worlddata.ts";
 
 // What the scene reads of a road it is not driving (tools/pack.ts packs the rest): its length, and
 // its heading at gate b (its map's last `heading`), which says which way it turns.
@@ -15,12 +15,12 @@ export function roadHead(r: WorldRoad): RoadHead {
   if (!H) throw new Error(`road ${r.id}: no map in src/roads/`);
   return H;
 }
-// A road's map, unpacked from those the scene carries packed (docs/long-day-cities.md, "How the
-// scene carries the cities"): for a drive along it, which holds it as long as it lives.
+// A road's map, unpacked from the world asset (worlddata.ts): for a drive along it, which holds it
+// as long as it lives.
 export function roadMapOf(r: WorldRoad): RoadMap {
-  const p = PACKED_ROADS[r.map ?? r.id];
-  if (!p) throw new Error(`road ${r.id}: no map in src/roads/`);
-  return JSON.parse(unpackText(p)) as RoadMap;
+  const M = unpackWorld("roads", r.map ?? r.id);
+  if (!M) throw new Error(`road ${r.id}: no map in src/roads/`);
+  return JSON.parse(M) as RoadMap;
 }
 
 // A set piece as country.ts has it, in the coordinates of the way it faces: `way` 1 for a driver

@@ -2,6 +2,8 @@
 // loading docks, swapping trucks at Ryder rental lots and moving on to a new city every ~30
 // minutes; the camera director films it, and the crew (the driver and a dock worker) does the
 // work at each stop.
+import { setWorldBytes } from "./worlddata.ts";
+import { WORLD_ASSET } from "./world-packed.ts";
 import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { SEA_REACH } from "./outline.ts";
@@ -72,6 +74,7 @@ const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH
 const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam" && DEBUG_VIEW !== "top" && !DEBUG_VIEW.startsWith("crew");   // test renders with a tour camera
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
+  setWorldBytes(assets[WORLD_ASSET].bytes);   // (every city and road, packed: worlddata.ts)
   const cfg = readConfig(env);
   let engine: Engine, streamer: ChunkStreamer, hud: Hud;
   let puffs: PuffSystem, kit: TruckKit, fleet: FleetBaker, truck: Truck, journey: Journey, mats: CityMaterials, director: Director, crew: Crew, dockFx: DockFx, frontDoor: FrontDoorFx;

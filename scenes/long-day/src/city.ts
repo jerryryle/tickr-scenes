@@ -11,8 +11,7 @@ import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
 import { Batch, BATCH, frameApply, PLACED, quadGeometry, toTile } from "./geom.ts";
 import { CONTENTS, DRAW, drawRecipe, place, recipeOf } from "./contents.ts";
-import { PACKED_CONTENTS, PACKED_LAYOUTS } from "./world-packed.ts";
-import { unpackText } from "./pack.ts";
+import { unpackWorld } from "./worlddata.ts";
 import type { Recipe } from "./contents.ts";
 import type { Frame2, Quad } from "./geom.ts";
 import type { ChunkBuild } from "./chunks.ts";
@@ -102,13 +101,13 @@ export function gateEndSlot(g: Gate): { x: number; z: number; h: number } {
   return { x: g.ix * BLOCK + STREET / 2 + [1, 0, -1, 0][g.dir] * d, z: g.iz * BLOCK + STREET / 2 + [0, -1, 0, 1][g.dir] * d, h: g.dir * Math.PI / 2 };
 }
 
-// A city's whole file: its head with its layout, as given or else unpacked from those the scene
-// carries packed (tools/pack.ts). (Not kept on the head: a long day would come to hold every city's.)
+// A city's whole file: its head with its layout, as given or else unpacked from the world asset
+// (worlddata.ts). (Not kept on the head: a long day would come to hold every city's.)
 export function fileOf(F: CityHead): CityFile {
   if (F.nodes && F.streets && F.blocks) return F as CityFile;
-  const packed = PACKED_LAYOUTS[F.id];
-  if (!packed) throw new Error(`city ${F.id}: no layout`);
-  return { ...F, ...(JSON.parse(unpackText(packed)) as CityLayout) };
+  const layout = unpackWorld("layouts", F.id);
+  if (!layout) throw new Error(`city ${F.id}: no layout`);
+  return { ...F, ...(JSON.parse(layout) as CityLayout) };
 }
 export class CityPlan {
   readonly name: string;
@@ -397,7 +396,7 @@ export class CityPlan {
     this.facilities = new Map();
     // (A city's contents as its contents file lists them, packed into the scene: unpacked here,
     // when the city is planned.)
-    const packed = PACKED_CONTENTS[F.id], listed = F.contents ? F.contents() : packed ? JSON.parse(unpackText(packed)) as CityFileContents : null;
+    const packed = F.contents ? null : unpackWorld("contents", F.id), listed = F.contents ? F.contents() : packed ? JSON.parse(packed) as CityFileContents : null;
     if (listed) {
       const C = this.contents = { blocks: new Map<number, Recipe[]>(), tiles: new Map<string, Recipe[]>(), streets: new Map(F.streets.map((st) => [st.id, (listed.streets[st.id] ?? []).map(recipeOf)])), outskirts: listed.outskirts.map(recipeOf) };
       for (const r of [...[...C.streets.values()].flat(), ...C.outskirts]) {

@@ -9,5 +9,6 @@ dist/
 
 .DS_Store
 
-# Packed city contents (scenes/long-day/tools/pack.ts)
+# Long Day's cities and roads, packed (scenes/long-day/tools/pack.ts)
 /scenes/long-day/src/world-packed.ts
+/scenes/long-day/assets-packed/

@@ -50,8 +50,8 @@ the city's builders put them (`PLACED` in `src/geom.ts`, `PAVEMENT` in `src/deco
 street furniture, signal poles, stop signs and facilities' front doors come from the city file,
 and so does everything else that stands on the layout, as recipes in the city's contents file
 beside it (`src/contents.ts`; docs/long-day-cities.md, "City contents"). The scene carries every city
-and road packed and unpacks one only while it uses it: `tools/pack.ts` packs them into
-`src/world-packed.ts` before every build (docs/long-day-cities.md, "How the scene carries the
+and road packed in one binary asset and unpacks one only while it uses it: `tools/pack.ts` packs
+them into `assets-packed/` before every build (docs/long-day-cities.md, "How the scene carries the
 cities"). The maps are build output, too big to commit, and nothing reads them back:
 
 ```bash

@@ -62,10 +62,14 @@ node-bundle = $(BIN)/esbuild $(1) --bundle --platform=node --format=esm --log-le
   $$(grep -oE '^import .* from "[^".][^"]*@[0-9][^"]*"' $(1) | sed -E 's/.*"(.+)@([^@"]+)"$$/--alias:\1@\2=\1/' | sort -u) \
   --outfile=$(2)
 
+# A build's scene.json: the scene's own, with any assets a build step packed listed too
+# (scripts/scenejson.ts). $(call scene-json,scenes/<scene>,dst)
+scene-json = node scripts/scenejson.ts $(1) $(2)
 # Copy a scene's assets for the toolkit, which finds each asset by its scene.json name with no
-# extension (assets/logo.png -> assets/logo). $(call copy-assets,src,dst)
+# extension (assets/logo.png -> assets/logo), and any a build step packed beside them
+# (<src>-packed/: long-day's world asset). $(call copy-assets,src,dst)
 copy-assets = rm -rf $(2) && mkdir -p $(2) && \
-  for f in $(1)/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); d="$(2)/$${n%.*}"; \
+  for f in $(1)/* $(1)-packed/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); case "$$n" in *.tmp) continue;; esac; d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
 .PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads maps FORCE $(SCENES) \
@@ -81,7 +85,7 @@ list:
 
 # A scene: its scene.ts, scene.json and assets.
 $(SCENES): %: build/%/scene.ts
-	@cp scenes/$*/scene.json build/$*/scene.json
+	@$(call scene-json,scenes/$*,build/$*)
 	@$(call copy-assets,scenes/$*/assets,build/$*/assets)
 	@echo "$* -> build/$*/"
 
@@ -164,7 +168,7 @@ $(addprefix scrub-,$(SCENES)): scrub-%: | $(DEPS)
 	    secs=$$(echo "$$line" | sed -nE 's/.*DEBUG_SCRUBTEST=([0-9]+).*/\1/p'); \
 	    if [ -z "$$secs" ]; then echo "scenes/$*/scrub.txt: no DEBUG_SCRUBTEST in: $$line"; echo "FAIL $*: scrub check $$cn"; \
 	    elif ! { $(FLATTEN) scenes/$*/src/main.ts --root scenes/$*/src $$defs > $$out/scene.ts && \
-	             cp scenes/$*/scene.json $$out/ && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/; }; then \
+	             $(call scene-json,scenes/$*,$$out) && mkdir -p $$out/assets && cp build/$*-scrub-assets/* $$out/assets/; }; then \
 	      echo "FAIL $*: scrub check $$cn, building $$line"; \
 	    elif ! $(TICKR) render $$out --seconds $$(( secs * 5 / 4 + 1 )) --every 1000 > $$out/log.txt 2>&1; then \
 	      tail -5 $$out/log.txt; echo "FAIL $*: scrub check $$cn, $$line (log: $$out/log.txt)"; \
@@ -183,7 +187,7 @@ debug: | $(DEPS)
 	@test -n "$(SCENE)" || { echo "usage: make debug SCENE=<scene> DEFINE='NAME=VALUE ...'" >&2; exit 2; }
 	@mkdir -p build/$(SCENE)-debug
 	$(FLATTEN) scenes/$(SCENE)/src/main.ts --root scenes/$(SCENE)/src $(DEFINES) > build/$(SCENE)-debug/scene.ts
-	@cp scenes/$(SCENE)/scene.json build/$(SCENE)-debug/
+	@$(call scene-json,scenes/$(SCENE),build/$(SCENE)-debug)
 	@$(call copy-assets,scenes/$(SCENE)/assets,build/$(SCENE)-debug/assets)
 	@echo "$(SCENE) debug build -> build/$(SCENE)-debug/"
 
@@ -241,7 +245,8 @@ tool: | $(DEPS)
 	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
 	@mkdir -p $(TOOL_OUT)
 	@$(FLATTEN) scenes/$(SCENE)/tools/$(TOOL).ts --root scenes/$(SCENE)/src $(DEFINES) > $(TOOL_OUT)/scene.ts
-	@cp scenes/$(SCENE)/scene.json $(TOOL_OUT)/
+	@$(call scene-json,scenes/$(SCENE),$(TOOL_OUT))
+	@$(call copy-assets,scenes/$(SCENE)/assets,$(TOOL_OUT)/assets)
 	@$(TICKR) render $(TOOL_OUT) --seconds $(SECS) --every 1000 | tail -1
 	@ffmpeg -loglevel error -y -i $(TOOL_OUT)/dist/frames/frame-%03d.png -frames:v 1 \
 	  -vf "scale=iw*2:ih*2:flags=neighbor,tile=2x$$(( ($(SECS) + 1) / 2 ))" $(TOOL_OUT)/$(TOOL).png
@@ -258,7 +263,7 @@ stage: | $(DEPS)
 	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
 	@mkdir -p build/long-day-stage
 	@$(FLATTEN) scenes/long-day/tools/stage.ts --root scenes/long-day/src --define 'STAGE_SPEC=$(STAGE)' --define STAGE_VIEW=$(VIEW) --define STAGE_FROM=$(FROM) --define STAGE_SPEED=$(SPEED) $(DEFINES) > build/long-day-stage/scene.ts
-	@cp scenes/long-day/scene.json build/long-day-stage/
+	@$(call scene-json,scenes/long-day,build/long-day-stage)
 	@$(call copy-assets,scenes/long-day/assets,build/long-day-stage/assets)
 	@rm -rf build/long-day-stage/dist
 	@$(TICKR) render build/long-day-stage --seconds $(SECS) --every 100 | tail -1

@@ -217,18 +217,32 @@ recipes. A city whose file lists its contents never runs them; the drafting tool
 
 ## How the scene carries the cities
 
-The scene holds a city's layout and contents only while it has the city planned, and a road's map
+The scene carries every city's layout and contents and every road's map packed in one binary
+asset, the **world asset**, and unpacks a city's only while it has the city planned and a road's
 only while it has a drive along it. Every other city is a small **head**: its city file without
 its nodes, streets and blocks (`CityHead` in `src/cityfile.ts`), which is all the visit planner
 and the country roads read of it. Every other road is its entry in `src/world-roads.ts` and its
 head, its length and its heading at gate b (`RoadHead` in `src/roadmap.ts`), which is all a
 city's time and the planner read of it.
 
+The world asset keeps the packed data out of the scene's source. tickr takes an editor draft of at
+most 6 MB, and with the data in the source it was 20.8 MB; with the data in the asset it is
+2.4 MB.
+
 The scene never imports the city files, the contents files or the road maps. Before every build of
 the scene, a test or a tool, `tools/pack.ts` reads every city's folder and every road map and
-writes `src/world-packed.ts`, which is build output and not committed. It holds each city's head
-and each road's head as they are, and each city's layout and contents and each road's map as JSON
-compressed by `src/pack.ts`, 49.9 MB in all packed to 17.6 MB.
+writes two files, both build output and not committed.
+
+1. `src/world-packed.ts` holds each city's and road's head, the world asset's name, and where each
+   packed item lies in it (`WORLD_INDEX`).
+2. `assets-packed/<name>` is the world asset: each city's layout and contents and each road's map
+   as JSON compressed by `src/pack.ts`, one after another, 49.9 MB packed to 13.2 MB. Its name is
+   `world_` and a hash of its bytes, so a new world asset is added beside an old one and never
+   replaces one that a published version reads.
+
+The Makefile copies the world asset in among each build's assets and lists it in the build's
+`scene.json` (`scripts/scenejson.ts`). `main.ts` hands its bytes to `src/worlddata.ts` when the
+scene starts; a test or a tool, run in Node without assets, reads the file the packer wrote.
 
 1. `fileOf` in `src/city.ts` unpacks a city's layout when its plan builds the city's graph, and
    the plan unpacks its contents at the same time. The journey keeps the plans of the last three
@@ -238,10 +252,15 @@ compressed by `src/pack.ts`, 49.9 MB in all packed to 17.6 MB.
 3. Nothing keeps an unpacked layout or map on its head, since a long day would then come to hold
    every city's and every road's.
 
-Measured by a 60 s render of the default build (2026-11-25), the scene is 20.8 MB, holds 137.0 MB
-of heap after the start and starts in 2.2 s. Before the layouts and road maps were packed, with
-only the contents packed, it was 38.1 MB, 334.8 MB and 2.6 s; with the layouts packed and the road
-maps not, 24.8 MB and 191.6 MB.
+To put a build in the editor or publish it, upload its world asset first (`asset_add` under its
+name), then the source. Adding an asset changes the scene's draft only: the published version keeps
+the assets it was published with. An old world asset can be deleted from the draft once its source
+no longer names it.
+
+Measured by a 60 s render of the default build (2026-11-25), the scene holds 36.3 MB of heap after
+the start, peaks at 598 MB resident and starts in 2.6 s. With everything packed into the source it
+held 136.0 MB and peaked at 833 MB; before the layouts and road maps were packed, with only the
+contents packed, it held 334.8 MB and peaked at 1716 MB.
 
 ## What varies between visits
 
