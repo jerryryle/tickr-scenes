@@ -444,7 +444,7 @@ tractor's jobs go only to blocks it can drive to and away from (`tractorReach` i
 
 The trailer is 10 m from kingpin to axles because at that length the grid cities need no bans at
 all and a tractor still reaches 99.8% of the catalogue's street directions, and 98.8% in the city
-that loses most. With its 12.9 m box the rig is 18.2 m overall, still the longest vehicle in town. The 26 ft box truck is 11.35 m (`truckExtents` in
+that loses most. With its 13.2 m box the rig is 18.2 m overall, still the longest vehicle in town. The 26 ft box truck is 11.35 m (`truckExtents` in
 `src/truck.ts`). The trailer was 13 m from kingpin to axles, a 53 ft trailer, and two things made
 that length unworkable. The sweep banned 1,119 to 2,063 right turns in every city, nearly all of
 them. Even then, a move clear on its own could hit a pole as part of a route, because a turn just

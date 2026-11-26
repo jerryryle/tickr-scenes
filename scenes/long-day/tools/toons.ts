@@ -36,7 +36,6 @@ export default function createScene({ sys }: SceneInputs): Scene {
         const kit = new TruckKit({} as Record<LiveryName, CanvasImageSource>);
         const white = new THREE.DataTexture(new Uint8Array([244, 244, 240, 255]), 1, 1); white.needsUpdate = true;
         for (const n of LIVERY_ASSETS) kit.livery[n].map = white;
-        kit.liveryRearDS.map = white;
         MODELS.forEach((m, i) => rows.push(LEVELS.map((k, j) => {
           const t = new Truck(kit, m); t.toon = k; t.setPose(j * gapOf(i), i * 60, 0); t.update(0); scene.add(t.root); return t;
         })));

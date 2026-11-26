@@ -28,7 +28,7 @@ const TC = {
   white: 0xf4f4f0, frame: 0x1c1c1f, chrome: 0xb9bdc3, black: 0x121214, grille: 0x2b2d31,
   tire: 0x1b1b1b, rim: 0xc8ccd2, hub: 0x6e7278, plywood: 0xa9845a, deck: 0x5e4f3e, alu: 0xa7acb2,
   seat: 0x2c2f36, dash: 0x25272b, cabin: 0x8c9097, reefer: 0xd9dadc, skirt: 0x8d9298, mud: 0x0e0e0e,
-  tank: 0xc2c6cc, step: 0x2a2a2a, wood: 0x7a5a3a, frost: 0xdcecff, mat: 0x1a1a1a,
+  tank: 0xc2c6cc, step: 0x2a2a2a, wood: 0x7a5a3a, frost: 0xdcecff, mat: 0x1a1a1a, doorIn: 0xc4c8cc,
   skin: 0xd8a47f, cup: 0xe8dcc0, lid: 0x3a2a20, tree: 0x2fbf4f, paper: 0xf2f2ea, red: 0xce1126,
 };
 // The roll-up door's pull strap: how far outside the door plane it hangs, and the height above
@@ -104,22 +104,29 @@ export const SPECS: Record<TruckModel, TruckSpec> = {
   },
 };
 
-// A dry van, its box 12.9 m long, in its own frame: origin at the kingpin, extending to -x. It is a
+// A dry van, its box 13.2 m long, in its own frame: origin at the kingpin, extending to -x. It is a
 // city trailer, shorter than a 53 ft one. Its axles are 10 m behind the kingpin, so it clears a square
 // corner on a wide right (docs/long-day-cities.md, "Tractor-trailers' turns").
-export const TRAILER = { front: 0.9, rear: -12.0, floor: 1.25, top: 4.1, hw: 1.3, axles: [-9.4, -10.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
+export const TRAILER = { front: 1.2, rear: -12.0, floor: 1.25, top: 4.1, hw: 1.3, axles: [-9.4, -10.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
 // How far a trailer's swing door turns from shut to lying back along the side (rad).
 export const LEAF_OPEN = 4.55;
 // The height of its lock rods' handles over the road (m).
 export const LEAF_HANDLE_Y = 1.42;
 // The top of a trailer's underride guard, under its back (the crew steps on it climbing in).
 export const UNDERRIDE_Y = 0.6;
+// The pieces each roll-up door slat is cut into across the door (layoutSlats).
+const SLAT_COLS = 12;
 
 // Shared across every truck: materials, livery textures, the unit wheel geometry.
 export class TruckKit {
   paint = new THREE.MeshLambertMaterial({ vertexColors: true });
   livery = {} as Record<LiveryName, THREE.MeshLambertMaterial>;
-  liveryRearDS: THREE.MeshLambertMaterial;
+  // The rear doors carry the livery outside and are plain inside. doorInside is the face turned
+  // into the box, which a trailer's swing doors also show lying open against its side. A roll-up
+  // door's inside, slatInside, takes neither the dome light nor the lamp pools, which lit it as
+  // bright as a lamp once it was rolled up under the roof.
+  doorInside: THREE.MeshLambertMaterial;
+  slatInside: THREE.MeshLambertMaterial;
   wheelGeo: THREE.BufferGeometry;
   constructor(images: Record<LiveryName, CanvasImageSource>) {
     for (const name of LIVERY_ASSETS) {
@@ -127,9 +134,10 @@ export class TruckKit {
       tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; tex.needsUpdate = true;
       this.livery[name] = new THREE.MeshLambertMaterial({ map: tex });
     }
-    // Roll-up slats and swing doors are seen from inside the box too.
-    this.liveryRearDS = new THREE.MeshLambertMaterial({ map: this.livery.liveryRear.map, side: THREE.DoubleSide });
-    for (const m of [this.paint, this.liveryRearDS, ...Object.values(this.livery)]) { applyDriverSpot(m); applyLampLight(m); }   // cutaway.ts, atmosphere.ts
+    this.doorInside = new THREE.MeshLambertMaterial({ color: TC.doorIn, side: THREE.BackSide });
+    this.slatInside = new THREE.MeshLambertMaterial({ color: TC.doorIn, side: THREE.BackSide });
+    for (const m of [this.paint, this.doorInside, ...Object.values(this.livery)]) { applyDriverSpot(m); applyLampLight(m); }   // cutaway.ts, atmosphere.ts
+    applyDriverSpot(this.slatInside);
     // Unit wheel (radius 1, real width), axis along z; scaled per truck by the instance matrix.
     const w = new Batch();
     w.cyl(0, 0, 0, 1, 0.28, TC.tire, 14, Math.PI / 2);
@@ -144,6 +152,7 @@ export class TruckKit {
   }
 }
 
+const HEAD_TOON_OFF = new THREE.Color();
 class LightSet {
   readonly mats = {
     head: new THREE.MeshBasicMaterial({ color: 0x77776a }),
@@ -155,9 +164,10 @@ class LightSet {
     clrR: new THREE.MeshBasicMaterial({ color: 0x3a0505 }),
     gauge: new THREE.MeshBasicMaterial({ color: 0x9fb4c8 }),
   };
-  set(head: boolean, brake: boolean, reverse: boolean, sigL: boolean, sigR: boolean) {
+  // `toon` says how cartoonish the truck is. Its big round headlamps are cream when off.
+  set(head: boolean, brake: boolean, reverse: boolean, sigL: boolean, sigR: boolean, toon: number) {
     const m = this.mats;
-    m.head.color.setHex(head ? 0xfffff0 : 0x77776a);
+    if (head) m.head.color.setHex(0xfffff0); else m.head.color.setHex(0x77776a).lerp(HEAD_TOON_OFF.setHex(0xfff3c8), toon);
     m.tail.color.setHex(brake ? 0xff2020 : head ? 0xa01010 : 0x4a0606);
     m.reverse.color.setHex(reverse ? 0xffffff : 0x5a5a5a);
     m.sigL.color.setHex(sigL ? 0xffaa00 : 0x5a3a00);
@@ -171,6 +181,9 @@ type LightKey = Exclude<keyof LightSet["mats"], "gauge">;
 const LIGHT_KEYS: LightKey[] = ["head", "tail", "reverse", "sigL", "sigR", "clrA", "clrR"];
 
 interface WheelSlot { x: number; z: number; steer: boolean; trailer: boolean; r: number }
+// A part of a mesh the cartoon grows from nothing or shrinks to nothing (makeToon): its vertices
+// from `start`, `count` of them, and its middle.
+interface ToonPart { start: number; count: number; c: THREE.Vector3 }
 
 // Length extents of a model along x from the rear axle (no instance needed): the nose, and the
 // middle of the whole vehicle including a straight trailer (used to centre it on a kerb stop).
@@ -222,16 +235,20 @@ export function keepStrapsWarm(scene: THREE.Object3D) { const b = new Batch(), m
 // (0..1): soft and chunky, its cab, hood, box or trailer rounded off at their edges and puffed
 // out (toontruck.ts), its hood shorter, big round headlamps on its nose, its tyres fat on pink
 // rims, its trim in the storybook's colours (frame and grille plum, chrome gold, tank mint), its
-// ride bouncier and its puffs big and lilac. The box's back and doors, its floor, the wheels and
-// the crew's places stay where they are, so it docks, loads and swaps the same. It is built as morph
+// ride bouncier and its puffs little pastel clouds. The box's back is rounded at its edges like
+// the rest, its doors and lamps with it, but the middle of the back, the floor, the wheels and the
+// crew's places stay where they are, so it docks, loads and swaps the same. It is built as morph
 // targets (makeToon), so it fades in and out continuously.
 const TOON_TRIM: [number, number][] = [
   [TC.frame, 0x5a2a7a], [TC.mud, 0x3a1a5a], [TC.chrome, 0xffc94a], [TC.tank, 0x6fe0e8], [TC.grille, 0x6a3a8a],
   [TC.step, 0x5a2a7a], [TC.black, 0x3a1a5a], [TC.skirt, 0xff7fb5], [TC.alu, 0xf3e07a],
 ];
-const TOON_RIM = 0xff7fb5, TOON_PUFF = 0xd9b8ff;
+const TOON_RIM = 0xff7fb5, TOON_PUFFS = [0xffb8de, 0xd9b8ff, 0xb8f0e0, 0xfff0a8];
 const TOON_HOOD = 0.7, TOON_CAB = 1.2;   // (These are the hood's length and the cab's height, as a cartoon's.)
 // toonRegions gives the shells a model's cartoon rounds off, in the truck's frame (x forward from the rear axle).
+// The rear frame, its lamps and a trailer's doors stand up to REAR_REACH behind a box's end, and
+// they round with the box's profile.
+const REAR_REACH = 0.15;
 function toonRegions(s: TruckSpec): ToonRegion[] {
   const R: ToonRegion[] = [];
   const conv = s.cab !== "cabover";
@@ -239,10 +256,10 @@ function toonRegions(s: TruckSpec): ToonRegion[] {
     frontFrom: conv ? s.hoodTop : undefined, pillow: 0.09 });
   if (conv) R.push({ x0: s.cabFront, x1: s.noseFront + 0.12, y0: 0.3, y1: s.hoodTop, hw: s.cabHW + 0.08, top: 0.72, bottom: 0.18, front: 0.72, back: 0, side: 0.55, pillow: 0.09 });
   const c = s.cargo;
-  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0, side: 0.8, pillow: 0.08 });
+  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0, side: 0.8, pillow: 0.08, reach: REAR_REACH });
   return R;
 }
-const TRAILER_REGION: ToonRegion[] = [{ x0: TRAILER.rear, x1: TRAILER.front, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08 }];
+const TRAILER_REGION: ToonRegion[] = [{ x0: TRAILER.rear, x1: TRAILER.front, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08, reach: REAR_REACH }];
 
 export class Truck {
   readonly spec: TruckSpec;
@@ -280,6 +297,7 @@ export class Truck {
   private toonMeshes: THREE.Mesh[] = [];
   private toonAnchors: [THREE.Object3D, THREE.Vector3, THREE.Vector3][] = [];
   private toonCol = new THREE.Color();
+  private toonR: ToonRegion[];   // (the shells the cartoon rounds off: toonRegions)
   private wheelSlots: WheelSlot[] = [];
   private driverDoor = new THREE.Group();
   private rampGroup: THREE.Group | null = null;
@@ -289,7 +307,7 @@ export class Truck {
   private trailerBody: THREE.Group | null = null;
   private trailerLeaves: THREE.Group[] = [];
   private slats: { geo: THREE.BufferGeometry; n: number; x: number; floor: number; track: number; open: number; halfW: number; last: number;
-    strap: THREE.Mesh; strapLen: number } | null = null;
+    lastToon: number; strap: THREE.Mesh; strapLen: number; region: ToonRegion | null } | null = null;
   private wheelPivot = new THREE.Group();
   private steeringWheel: THREE.Mesh | null = null;
   private needle = new THREE.Group();
@@ -309,6 +327,7 @@ export class Truck {
   constructor(private kit: TruckKit, readonly model: TruckModel, private puffs: PuffSystem | null = null) {
     this.spec = SPECS[model];
     const s = this.spec;
+    this.toonR = toonRegions(s);
     this.root.add(this.body);
     const paint = new Batch();
     const lights = this.lightBatches();
@@ -424,7 +443,7 @@ export class Truck {
     const brake = this.engineOn && (this.accel < -0.4 || Math.abs(this.speed) < 0.05);
     this.strapMat.emissive.setHex(this.head ? STRAP_GLOW : 0x000000);
     this.lights.set(this.head, brake, this.speed < -0.05,
-      (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink);
+      (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink, this.toon);
   }
 
   // The moving parts' state (main.ts: preview snapshots and part-ticks); the meshes follow from it.
@@ -549,7 +568,7 @@ export class Truck {
     for (const sz of [-1, 1]) for (let k = 0; k < 3; k++) {
       this.v3.set(0.6 + k * 0.4, 0.45, sz * 1.0).applyMatrix4(this.root.matrixWorld);
       const vel = new THREE.Vector3(0, 0.4, sz * 1.2).applyQuaternion(this.root.quaternion);
-      this.puffs.emit(this.v3, vel, 0xf0f0f0, 0.22, 0.9);
+      this.puffs.emit(this.v3, vel, 0xf0f0f0, 0.22, 0.9, this.toon >= 0.5);
     }
   }
 
@@ -622,7 +641,7 @@ export class Truck {
 
     // Moving parts.
     this.driverDoor.rotation.y = -1.25 * ease(this.cabDoor);
-    if (this.slats && Math.abs(this.slats.last - this.rearDoor) > 1e-4) this.layoutSlats(this.rearDoor);
+    if (this.slats && (Math.abs(this.slats.last - this.rearDoor) > 1e-4 || this.slats.lastToon !== K)) this.layoutSlats(this.rearDoor);
     if (this.rampGroup && s.cargo) {
       const a = THREE.MathUtils.clamp(this.ramp / 0.65, 0, 1), b = THREE.MathUtils.clamp((this.ramp - 0.65) / 0.35, 0, 1);
       const len = this.rampGroup.userData.len as number, pivotY = s.cargo.floor - 0.16;
@@ -672,8 +691,9 @@ export class Truck {
         for (const p of this.exhaust) {
           this.v3.copy(p).applyMatrix4(this.body.matrixWorld);
           const vel = this.puffVel.fromArray(PUFF_VEL[s.exhaust]).applyQuaternion(this.root.quaternion), k = hard ? PUFF_HARD : PUFF_IDLE;
-          const col = K > 0 ? this.toonCol.setHex(k.color).lerp(this.puffVel2.setHex(TOON_PUFF), K).getHex() : k.color;
-          this.puffs.emit(this.v3, vel, col, k.size * (1 + 0.6 * K), k.life);
+          // (The cartoon's puffs are pastel clouds, their colours by turns.)
+          const col = K > 0 ? this.toonCol.setHex(k.color).lerp(this.puffVel2.setHex(TOON_PUFFS[Math.floor(this.time * 5) % TOON_PUFFS.length]), K).getHex() : k.color;
+          this.puffs.emit(this.v3, vel, col, k.size * (1 + 0.6 * K), k.life, K >= 0.5);
         }
       }
     }
@@ -697,7 +717,7 @@ export class Truck {
     if (this.trailer) this.trailer.rotation.y = 0;
     for (const l of this.trailerLeaves) l.rotation.y = 0;
     this.root.updateMatrixWorld(true);
-    const s = this.spec, bodyRegions = toonRegions(s);
+    const s = this.spec, bodyRegions = this.toonR;
     const invB = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), invT = this.trailer ? new THREE.Matrix4().copy(this.trailer.matrixWorld).invert() : null;
     const M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), v = new THREE.Vector3(), w = new THREE.Vector3();
     const trim = TOON_TRIM.map(([a, b]) => [new THREE.Color(a), new THREE.Color(b)] as const);
@@ -722,9 +742,9 @@ export class Truck {
       if (!o.isMesh || o.isInstancedMesh || o.geometry.userData?.shared || o.geometry === this.slats?.geo || o === this.slats?.strap) return;
       const regions = trailer ? TRAILER_REGION : bodyRegions;
       M.multiplyMatrices(trailer ? invT! : invB, o.matrixWorld); Mi.copy(M).invert();
-      const grow: { start: number; count: number; c: THREE.Vector3 }[] | undefined = o.userData.toonGrow;
+      const grow: ToonPart[] | undefined = o.userData.toonGrow, shrink: ToonPart[] | undefined = o.userData.toonShrink;
       // (The parts are cut across each region's curving bands, axis by axis.)
-      if (!grow) for (const R of regions) {
+      if (!grow && !shrink) for (const R of regions) {
         const cuts = toonCuts(R);
         for (const axis of [0, 1, 2] as const) {
           const P0 = o.geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -755,6 +775,12 @@ export class Truck {
           P.setXYZ(i, e.c.x, e.c.y, e.c.z);
         }
         P.needsUpdate = true; moved = true;
+      }
+      // (The truck's own headlamps shrink away to their middles.)
+      if (shrink) for (const e of shrink) {
+        w.copy(e.c).applyMatrix4(M); toon(w, regions, trailer); w.applyMatrix4(Mi);
+        for (let i = e.start; i < e.start + e.count; i++) { full[i * 3] = w.x; full[i * 3 + 1] = w.y; full[i * 3 + 2] = w.z; }
+        moved = true;
       }
       const pos = new Float32Array(P.count * 3);
       for (let i = 0; i < P.count; i++) { pos[i * 3] = full[i * 3] - P.getX(i); pos[i * 3 + 1] = full[i * 3 + 1] - P.getY(i); pos[i * 3 + 2] = full[i * 3 + 2] - P.getZ(i); }
@@ -792,11 +818,11 @@ export class Truck {
     this.wheels.setColorAt(0, this.toonCol.setHex(0xffffff));   // (the instance colours stay white until a cartoon)
     for (let j = 1; j < this.wheelSlots.length; j++) this.wheels.setColorAt(j, this.toonCol);
   }
-  // toonEyes builds the cartoon's big round headlamps, a gold rim round a cream lens either side of its
-  // nose (its own lamps still light the way after dark), whole, and then shrinks them to their middles:
-  // the cartoon grows them.
+  // toonEyes builds the cartoon's big round headlamps, a gold rim round a lens either side of its
+  // nose, whole, and then shrinks them to their middles: the cartoon grows them. The lenses are the
+  // headlamps' own (lit with them, cream when off: LightSet), and the truck's own lamps shrink away.
   private toonEyes() {
-    const s = this.spec, P = new Batch(), grow: { start: number; count: number; c: THREE.Vector3 }[] = [];
+    const s = this.spec, P = new Batch(), Ln = new Batch(), grow: ToonPart[] = [], lens: ToonPart[] = [];
     const conv = s.cab !== "cabover";
     // (On a hood they stand proud on its front corners; on a cab-over's face they sit low in its corners.)
     const x = conv ? s.noseFront - 0.3 : s.cabFront + 0.05, y = conv ? s.hoodTop - 0.02 : s.cabFloor + 0.34, r = conv ? 0.4 : 0.34;
@@ -804,12 +830,12 @@ export class Truck {
       const zc = z * (s.cabHW - (conv ? 0.42 : 0.38));
       const p0 = P.view().count; P.cyl(x, y, zc, r, 0.12, TC.chrome, 14, 0, Math.PI / 2);
       grow.push({ start: p0, count: P.view().count - p0, c: new THREE.Vector3(x, y, zc) });
-      const l0 = P.view().count; P.cyl(x + 0.03, y, zc, r * 0.78, 0.12, 0xfff3c8, 14, 0, Math.PI / 2);   // (this is a cream lens)
-      grow.push({ start: l0, count: P.view().count - l0, c: new THREE.Vector3(x + 0.03, y, zc) });
+      const l0 = Ln.view().count; Ln.cyl(x + 0.03, y, zc, r * 0.78, 0.12, 0xffffff, 14, 0, Math.PI / 2);
+      lens.push({ start: l0, count: Ln.view().count - l0, c: new THREE.Vector3(x + 0.03, y, zc) });
     }
-    const pm = P.build(this.kit.paint)!;
-    pm.userData.toonGrow = grow;
-    this.body.add(pm);
+    const pm = P.build(this.kit.paint)!, lm = Ln.build(this.lights.mats.head)!;
+    pm.userData.toonGrow = grow; lm.userData.toonGrow = lens;
+    this.body.add(pm, lm);
   }
 
   // ---- construction --------------------------------------------------------------------------
@@ -820,7 +846,20 @@ export class Truck {
     return r;
   }
   private addLights(parent: THREE.Object3D, lights: Record<LightKey, Batch>) {
-    for (const k of LIGHT_KEYS) { const m = lights[k].build(this.lights.mats[k]); if (m) parent.add(m); }
+    for (const k of LIGHT_KEYS) {
+      const m = lights[k].build(this.lights.mats[k]);
+      if (!m) continue;
+      if (k === "head") m.userData.toonShrink = this.headLamps;
+      parent.add(m);
+    }
+  }
+  // A headlamp, a box from (x0, y0, z0) to (x1, y1, z1); the cartoon shrinks it away to its middle
+  // (its own big round lamps light up in its place: toonEyes).
+  private headLamps: ToonPart[] = [];
+  private headLamp(B: Batch, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) {
+    const start = B.view().count;
+    B.span(x0, y0, z0, x1, y1, z1);
+    this.headLamps.push({ start, count: B.view().count - start, c: new THREE.Vector3((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2) });
   }
 
   private buildChassis(P: Batch, L: Record<LightKey, Batch>) {
@@ -852,22 +891,36 @@ export class Truck {
   }
 
   // The dome lights inside the cargo box and the cab (atmosphere.ts INTERIOR_LIGHT): for each, the
-  // inside of the box in world space as (centre, yaw) and (half sizes, on). Only the faces inside
-  // a box catch its light, so the outside of the truck stays as it is.
+  // inside of the box in world space as (centre, yaw) and (half sizes, on), then the cartoon's
+  // shape of it (domeShape). Only the faces inside a box catch its light, so the outside of the
+  // truck stays as it is.
   interiorLight(out: THREE.Vector4[], cargoOn: boolean, cabOn: boolean) {
-    const box = (i: number, parent: THREE.Object3D, x0: number, x1: number, y0: number, y1: number, hw: number, on: boolean) => {
+    const box = (i: number, parent: THREE.Object3D, x0: number, x1: number, y0: number, y1: number, hw: number, on: boolean, R: ToonRegion | null, stretch: number) => {
       parent.updateWorldMatrix(true, false);
       const c = this.ivTmp.set((x0 + x1) / 2, (y0 + y1) / 2, 0).applyMatrix4(parent.matrixWorld);
       const f = this.ivTmp2.set(1, 0, 0).transformDirection(parent.matrixWorld);
       out[i].set(c.x, c.y, c.z, Math.atan2(-f.z, f.x));
       // (w: off 0, on 2 + the body's pitch, so the box tilts with it up a ramp: atmosphere.ts.)
       out[i + 1].set((x1 - x0) / 2, (y1 - y0) / 2, hw, on ? 2 + Math.atan2(f.y, Math.hypot(f.x, f.z)) : 0);
+      this.domeShape(out, i + 2, (x0 + x1) / 2, (y0 + y1) / 2, R, stretch);
     };
-    const c = this.boxSpec;
-    if (c && this.boxParent) box(0, this.boxParent, c.x0 + 0.12, c.x1 - 0.07,   // starts behind the closed rear door (x0 + 0.09), which is one double-sided sheet
-       c.floor - 0.01, c.top - 0.07, c.hw - 0.06, cargoOn); else out[1].w = 0;
-    const s = this.spec;
-    box(2, this.body, s.cabBack + 0.06, s.cabFront - 0.03, s.cabFloor - 0.01, s.cabTop - 0.06, s.cabHW - 0.06, cabOn);
+    const c = this.boxSpec, s = this.spec, K = this.toon;
+    if (c && this.boxParent) box(0, this.boxParent, c.x0 + 0.12, c.x1 - 0.07,   // starts behind the closed rear door (x0 + 0.09), which is one sheet
+       c.floor - 0.01, c.top - 0.07, c.hw - 0.06, cargoOn, this.trailer ? TRAILER_REGION[0] : this.toonR.find((R) => R.x0 === c.x0) ?? null, 1); else out[1].w = 0;
+    box(5, this.body, s.cabBack + 0.06, s.cabFront - 0.03, s.cabFloor - 0.01, s.cabTop - 0.06, s.cabHW - 0.06, cabOn, this.toonR[0], 1 + (TOON_CAB - 1) * K);
+  }
+  // domeShape writes a dome-lit box's cartoon shape, by `toon`, into out[i..i+2], measured from the
+  // box's middle (cx, cy): where each rounded band of its shell's region R starts (top, side, front,
+  // back), each band's radius, then the height above which the front is rounded, how far the cab
+  // is stretched up (stretch) and how much it is puffed out. The shader undoes the cartoon before it
+  // tests the box (atmosphere.ts), so what the rounding pulls in past the box's walls, the shell
+  // and the door's posts, stays out of the light.
+  private domeShape(out: THREE.Vector4[], i: number, cx: number, cy: number, R: ToonRegion | null, stretch: number) {
+    const k = R ? this.toon : 0;
+    if (!R || k <= 0) { out[i].set(0, 0, 0, 0); out[i + 1].set(0, 0, 0, 0); out[i + 2].set(-1e3, 1, 0, 0); return; }
+    out[i].set(R.y1 - R.top * k - cy, R.hw - R.side * k, R.x1 - R.front * k - cx, cx - R.x0 - R.back * k);
+    out[i + 1].set(R.top * k, R.side * k, R.front * k, R.back * k);
+    out[i + 2].set(R.frontFrom === undefined ? -1e3 : R.frontFrom - cy, stretch, R.pillow * k, 0);
   }
 
   private buildCab(P: Batch, L: Record<LightKey, Batch>, glass: Quad[], decals: Quad[]) {
@@ -947,7 +1000,7 @@ export class Truck {
         P.span(fa + 0.5, 0.7, zi, nose, R2 + 0.2, zo * 0.99, TC.white);
         P.span(nose - 0.3, R2 + 0.2, z * gz, nose - 0.04, yh - drop - 0.06, z * (hH - 0.02), TC.white);   // beside the grille
         P.span(fa - 0.7, R2 - 0.1, z * (hw - 0.45), fa + 0.5, R2 + 0.04, z * (hw - 0.05), TC.mud);
-        L.head.span(nose - 0.02, R2 - 0.08, z * (hH - 0.22), nose + 0.01, R2 + 0.1, z * (hH + 0.05));
+        this.headLamp(L.head, nose - 0.02, R2 - 0.08, z * (hH - 0.22), nose + 0.01, R2 + 0.1, z * (hH + 0.05));
         (z < 0 ? L.sigL : L.sigR).span(nose - 0.03, R2 - 0.08, z * (hH + 0.07), nose + 0.01, R2 + 0.1, z * (hw + 0.06));   // proud of the fender
       }
       // Bumper tight under the nose, a black valance below it.
@@ -959,7 +1012,7 @@ export class Truck {
       for (let k = 0; k < 3; k++) { const y = yf + 0.2 + k * ((belt - 0.4 - yf - 0.2) / 2); P.span(xf, y - 0.02, -0.74, xf + 0.035, y + 0.02, 0.74, TC.chrome); }
       for (const z of [-1, 1]) {
         P.span(xf - 0.02, yf + 0.12, z * 0.78, xf + 0.02, belt - 0.28, z * (hw - 0.02), TC.white);
-        L.head.span(xf, yf + 0.16, z * (hw - 0.36), xf + 0.04, yf + 0.36, z * (hw - 0.08));
+        this.headLamp(L.head, xf, yf + 0.16, z * (hw - 0.36), xf + 0.04, yf + 0.36, z * (hw - 0.08));
         (z < 0 ? L.sigL : L.sigR).span(xf - 0.2, yf + 0.16, z * (hw - 0.02), xf - 0.02, yf + 0.36, z * (hw + 0.01));
         // Wheel arch: a white flare over a black liner.
         P.span(fa - 0.62, R2 + 0.03, z * (hw - 0.3), fa + 0.62, R2 + 0.16, z * (hw + 0.03), TC.white);
@@ -1085,7 +1138,7 @@ export class Truck {
       L.tail.span(x0 - 0.07, yfl - 0.36, z * (hw - 0.32), x0, yfl - 0.16, z * (hw - 0.06));
       L.reverse.span(x0 - 0.07, yfl - 0.36, z * (hw - 0.46), x0, yfl - 0.16, z * (hw - 0.34));
       (z < 0 ? L.sigL : L.sigR).span(x0 - 0.07, yfl - 0.36, z * (hw - 0.62), x0, yfl - 0.16, z * (hw - 0.48));
-      L.clrA.box(x1 + 0.02, yt - 0.1, z * (hw - 0.05), 0.06, 0.08, 0.08);
+      L.clrA.box(x1 + 0.01, yt - 0.1, z * (hw - 0.05), 0.06, 0.08, 0.08);   // (all of it within toonNear of the box, which takes it round the corner whole)
       L.clrR.box(x0 - 0.06, yt - 0.12, z * (hw - 0.06), 0.06, 0.08, 0.08);
       L.clrA.box(x1 - 0.25, yfl + 0.02, z * (hw + 0.01), 0.12, 0.07, 0.03);
       L.clrR.box(x0 + 0.25, yfl + 0.02, z * (hw + 0.01), 0.12, 0.07, 0.03);
@@ -1108,7 +1161,7 @@ export class Truck {
         // In the leaf's own frame (origin at the hinge): x along the trailer, z across it.
         const geo = quadGeometry([{ x: -0.045, y: yfl + openH / 2, z: side > 0 ? -wl / 2 : wl / 2, w: wl, h: openH, rotY: -Math.PI / 2,
           u0: side > 0 ? 0.5 : 0, u1: side > 0 ? 1 : 0.5 }]);
-        leaf.add(new THREE.Mesh(geo, this.kit.liveryRearDS));
+        leaf.add(new THREE.Mesh(geo, this.kit.livery.liveryRear), new THREE.Mesh(geo, this.kit.doorInside));
         const frame = new Batch(); frame.span(-0.04, yfl, side > 0 ? -wl : 0, 0, yfl + openH, side > 0 ? 0 : wl, TC.white);
         // Two lock rods down its face, each with its handle low down, swung in towards the hinge
         // (the crew lifts them: chores.ts leafAt), and their keepers top and bottom.
@@ -1125,17 +1178,17 @@ export class Truck {
         this.trailerLeaves.push(leaf);
       }
     } else {
-      const n = 10, geo = new THREE.BufferGeometry();
-      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 18), 3));
-      const uv = new Float32Array(n * 12), nrm = new Float32Array(n * 18);
-      for (let i = 0; i < n; i++) {
-        const v0 = i / n, v1 = (i + 1) / n;
-        uv.set([0, v0, 1, v0, 1, v1, 0, v0, 1, v1, 0, v1], i * 12);
-        for (let k = 0; k < 6; k++) nrm.set([-1, 0, 0], i * 18 + k * 3);
+      // (Each slat is cut into SLAT_COLS pieces across, so the cartoon can bend it round the box's corners.)
+      const n = 10, m = SLAT_COLS, geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * m * 18), 3));
+      const uv = new Float32Array(n * m * 12);
+      for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) {
+        const v0 = i / n, v1 = (i + 1) / n, u0 = j / m, u1 = (j + 1) / m;
+        uv.set([u0, v0, u1, v0, u1, v1, u0, v0, u1, v1, u0, v1], (i * m + j) * 12);
       }
       geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-      geo.setAttribute("normal", new THREE.BufferAttribute(nrm, 3));
-      parent.add(new THREE.Mesh(geo, this.kit.liveryRearDS));
+      geo.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(n * m * 18), 3));
+      parent.add(new THREE.Mesh(geo, this.kit.livery.liveryRear), new THREE.Mesh(geo, this.kit.slatInside));
       // The pull strap: a webbing strip hanging from the middle of the door's bottom edge, just
       // outside it, long enough that its end is in reach from the street when the door is up.
       // Below the floor it is folded over the sill (hidden), so it is only seen once the door opens.
@@ -1146,7 +1199,8 @@ export class Truck {
       SB.span(-0.006, -1, -0.04, 0.006, 0, 0.04, 0xffffff);
       const strap = SB.build(this.strapMat)!;
       parent.add(strap);
-      this.slats = { geo, n, x: x0 + 0.09, floor: yfl, track: yt - 0.12, open: openH, halfW: hw - 0.12, last: NaN, strap, strapLen };
+      this.slats = { geo, n, x: x0 + 0.09, floor: yfl, track: yt - 0.12, open: openH, halfW: hw - 0.12, last: NaN, lastToon: NaN, strap, strapLen,
+        region: this.toonR.find((R) => R.x0 === x0) ?? null };
       this.layoutSlats(0);
     }
     this.anchors.rearGround.position.set(x0 - 0.9, 0, 0);
@@ -1162,18 +1216,32 @@ export class Truck {
     return S ? { x: S.x, floor: S.floor, open: S.open, lv: S.track - S.floor, strap: S.strapLen } : null;
   }
 
-  // Roll-up door: slats ride a track up the door opening, then forward under the roof.
+  // Roll-up door: slats ride a track up the door opening, then forward under the roof. In the
+  // cartoon (toon) each point goes as far towards where the rounded box has it (toonRound) as the
+  // rest of the truck's morph does. The box's back is not rounded, so the door stays flat and only
+  // its top corners come in to fit the rounded frame, and rolled up it follows the roof. Its normals
+  // are worked out from its faces: up under the roof they face down into the box.
   private layoutSlats(f: number) {
-    const S = this.slats!; S.last = f;
-    const pos = S.geo.attributes.position.array as Float32Array;
-    const h = S.open / S.n, lv = S.track - S.floor;
+    const S = this.slats!, K = this.toon, R = K > 0 ? S.region : null; S.last = f; S.lastToon = K;
+    const pos = S.geo.attributes.position.array as Float32Array, P = this.v3, Q = this.s3;
+    const h = S.open / S.n, lv = S.track - S.floor, m = SLAT_COLS;
     const pt = (s: number): [number, number] => (s <= lv ? [S.x, S.floor + s] : [S.x + (s - lv), S.track]);
+    let o = 0;
+    const put = (x: number, y: number, z: number) => {
+      P.set(x, y, z);
+      if (R && regionAt([R], P)) P.lerp(toonRound(R, Q.copy(P)), K);
+      pos[o++] = P.x; pos[o++] = P.y; pos[o++] = P.z;
+    };
     for (let i = 0; i < S.n; i++) {
       const [xa, ya] = pt(i * h + f * S.open), [xb, yb] = pt((i + 1) * h + f * S.open);
-      const z0 = -S.halfW, z1 = S.halfW;
-      pos.set([xa, ya, z0, xa, ya, z1, xb, yb, z1, xa, ya, z0, xb, yb, z1, xb, yb, z0], i * 18);
+      for (let j = 0; j < m; j++) {
+        const z0 = S.halfW * (2 * j / m - 1), z1 = S.halfW * (2 * (j + 1) / m - 1);
+        put(xa, ya, z0); put(xa, ya, z1); put(xb, yb, z1); put(xa, ya, z0); put(xb, yb, z1); put(xb, yb, z0);
+      }
     }
-    S.geo.attributes.position.needsUpdate = true;
+    const N = S.geo.attributes.normal as THREE.BufferAttribute;
+    faceNormals(pos, N.array, N.array as Float32Array);
+    S.geo.attributes.position.needsUpdate = true; N.needsUpdate = true;
     S.geo.computeBoundingSphere();
     // The strap hangs straight down from the bottom edge (the driver's hands hold it on that line).
     const edge = S.floor + Math.min(f * S.open, lv), hang = Math.min(S.strapLen, edge - S.floor);
@@ -1274,7 +1342,7 @@ export class Truck {
       P.span(-3.4, 0.48, z * (t.hw - 0.05), t.axles[0] + 1, t.floor - 0.12, z * (t.hw - 0.02), TC.skirt);   // (The skirt stops a metre short of the tandem.)
       P.span(t.axles[1] - 0.65, 0.62, z * 0.5, t.axles[0] + 0.6, t.floor - 0.12, z * 0.6, TC.frame);   // (The tandem's slider runs past its axles.)
     }
-    P.span(-0.58, t.floor - 0.18, -0.9, 0.9, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
+    P.span(-0.58, t.floor - 0.18, -0.9, t.front, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
     P.span(-0.05, t.floor - 0.3, -0.05, 0.05, t.floor - 0.18, 0.05, TC.chrome);   // kingpin
     // The underride guard under its back, a little out behind the doors: a bar across on two
     // struts down from the frame (the crew steps on it, its top UNDERRIDE_Y, climbing in).

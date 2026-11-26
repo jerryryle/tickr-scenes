@@ -14,6 +14,7 @@ import type { CityGraph, CNode } from "./citygraph.ts";
 import { inPoly, polyDist, sidewalkCorner } from "./citygraph.ts";
 import { STOP_BACK, Path, LANE_KERB, LANE_INNER } from "./route.ts";
 import { SPECS } from "./truck.ts";
+import { SB } from "./city-storybook/storybook-buildings-town.ts";
 
 const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_SLOT = 13;
 export const SIGNAL_CYCLE = 2 * SIG_SLOT;            // a two-phase intersection's cycle
@@ -198,6 +199,12 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
 
 const LAMP_COLORS = [0xff2a1a, 0xffb000, 0x22ff66];
 const POLE = 0x2b2f33, HOUSING = 0x15181a;
+// The storybook city's (`story`) are sweets: candy-striped poles with gumball tops, round housings
+// with round lamps, and stop signs like iced biscuits on peppermint posts.
+// (A candy pole's stripes are open tubes, `band` long: its top is capped by what stands on it.)
+const candyPole = (b: Batch, x: number, z: number, y0: number, y1: number, r: number, band: number, a: number, c: number) => {
+  for (let y = y0, k = 0; y < y1 - 1e-6; y += band, k++) { const h = Math.min(band, y1 - y); b.tubeSeg(x, y + h / 2, z, r, h, k % 2 ? a : c, 6); }
+};
 
 // An all-way stop's signs for node n (control "stop"), relative to (ox, oz): on each approach, a
 // stop sign on a post on the right-hand sidewalk, just short of the stop line, facing
@@ -206,7 +213,7 @@ const POLE = 0x2b2f33, HOUSING = 0x15181a;
 // plain grey back.
 const STOP_GLYPHS = [["###", "#..", "###", "..#", "###"], ["###", ".#.", ".#.", ".#.", ".#."], ["###", "#.#", "#.#", "#.#", "###"], ["###", "#.#", "###", "#..", "#.."]];
 // (Where its posts stand, world (x, z), one per approach: stopSignPosts.)
-export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number) {
+export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number, story = false) {
   if (n.control !== "stop") return;
   const y0 = 2.15, post = 0.04, posts = stopSignPosts(G, n);
   n.arms.forEach((arm, i) => {
@@ -216,17 +223,29 @@ export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number,
     // traffic's right is (rx, rz).
     const ux = Math.cos(arm.h), uz = -Math.sin(arm.h), rx = -uz, rz = ux;
     const px = at[0] - ox, pz = at[1] - oz;
-    solid.cyl(px, (y0 + 0.2) / 2, pz, post, y0 + 0.2, POLE, 6);
-    // An octagon of circumradius R, d in front of the post's axis, facing (fx, fz).
-    const octagon = (R: number, d: number, color: number, fx: number, fz: number) => {
+    if (story) { candyPole(solid, px, pz, 0, y0 + 0.45, post + 0.02, 0.6, SB.red, SB.cream); solid.ico(px, y0 + 0.5, pz, 0.08, SB.mustard); }
+    else solid.cyl(px, (y0 + 0.2) / 2, pz, post, y0 + 0.2, POLE, 6);
+    // A polygon of `sides` and circumradius R, d in front of the post's axis, facing (fx, fz). With
+    // `crinkle`, every other corner is that much further in, and the polygon is fanned from its
+    // middle because a fan from a corner would fill the notches beside that corner.
+    const polygon = (sides: number, R: number, d: number, color: number, fx: number, fz: number, crinkle = 0) => {
       const qx = px + ux * d, qz = pz + uz * d, pts: [number, number, number][] = [];
-      for (let k = 0; k < 8; k++) { const a = Math.PI / 8 + k * Math.PI / 4; pts.push([qx + rx * R * Math.cos(a), y0 + R * Math.sin(a), qz + rz * R * Math.cos(a)]); }
-      for (let k = 1; k + 1 < 8; k++) solid.tri(...pts[0], ...pts[k], ...pts[k + 1], color, [fx, 0, fz]);
+      for (let k = 0; k < sides; k++) { const a = Math.PI / sides + k * 2 * Math.PI / sides, r = R - (k % 2) * crinkle; pts.push([qx + rx * r * Math.cos(a), y0 + r * Math.sin(a), qz + rz * r * Math.cos(a)]); }
+      if (crinkle > 0) for (let k = 0; k < sides; k++) solid.tri(qx, y0, qz, ...pts[k], ...pts[(k + 1) % sides], color, [fx, 0, fz]);
+      else for (let k = 1; k + 1 < sides; k++) solid.tri(...pts[0], ...pts[k], ...pts[k + 1], color, [fx, 0, fz]);
     };
-    const R = 0.375 / Math.cos(Math.PI / 8);   // (75 cm across the flats)
-    octagon(R, post + 0.01, 0x8a8f94, -ux, -uz);          // the back
-    octagon(R, post + 0.02, 0xf2f2f2, ux, uz);            // the white rim
-    octagon(R * 0.88, post + 0.025, 0xc81e1e, ux, uz);    // the red face
+    if (story) {
+      // (A round biscuit with a crinkled white rim of icing, all within STOP_PLATE of the post.)
+      const R = STOP_PLATE;
+      polygon(24, R, post + 0.01, SB.cream, -ux, -uz, 0.035);
+      polygon(24, R, post + 0.02, SB.white, ux, uz, 0.035);
+      polygon(16, 0.29, post + 0.025, SB.red, ux, uz);
+    } else {
+      const R = 0.375 / Math.cos(Math.PI / 8);   // (75 cm across the flats)
+      polygon(8, R, post + 0.01, 0x8a8f94, -ux, -uz);          // the back
+      polygon(8, R, post + 0.02, 0xf2f2f2, ux, uz);            // the white rim
+      polygon(8, R * 0.88, post + 0.025, 0xc81e1e, ux, uz);    // the red face
+    }
     // STOP in white, a 3 x 5 block letter each, reading left to right for the traffic facing it
     // (whose right is (-rx, -rz)).
     const cell = 0.035, yaw = Math.atan2(-rz, rx);
@@ -459,19 +478,27 @@ export function signalPoleOk(G: CityGraph, near: Iterable<number>, x: number, z:
 
 // Mast-arm signals for node n, drawn relative to (ox, oz) (its tile's origin). Each approach gets
 // a pole on the far right corner of the intersection and an arm reaching over its two lanes, with
-// a head per lane. Poles and heads go in `solid`; lamps (boxes that protrude, so their tops read
-// from the overhead camera) go in `lamps`. `plates`: for the name plates on the mast arms, each
+// a head per lane. Poles and heads go in `solid`, and lamps go in `lamps`. Each lamp stands out of
+// its head's face, a box or in the storybook (`story`) a ball, so its top reads from the overhead
+// camera. `plates`: for the name plates on the mast arms, each
 // naming the cross street to the traffic coming up to it.
-export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null) {
+export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false) {
   if (n.control !== "signal") return;
   const offset = signalOffset(n, seed), armY = 6.2;
   for (const { i, px: wx, pz: wz, h, toCentre } of signalPoles(G, n)) {
     const arm = n.arms[i], px = wx - ox, pz = wz - oz;
     const fx = Math.cos(h), fz = -Math.sin(h), reach = toCentre + 0.4;
-    solid.cyl(px, armY / 2, pz, 0.16, armY, POLE, 6);
     // The arm reaches back over the lanes (to the traffic's left).
     const ax = -Math.sin(h), az = -Math.cos(h), armH = Math.atan2(-az, ax);
-    solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, POLE, armH);
+    if (story) {
+      candyPole(solid, px, pz, 0, armY + 0.1, 0.16, 1.0, SB.pink, SB.cream);
+      solid.ico(px, armY + 0.3, pz, 0.26, SB.mustard);
+      solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, SB.plum, armH);
+      solid.ico(px + ax * (reach + 0.12), armY - 0.01, pz + az * (reach + 0.12), 0.16, SB.mustard);
+    } else {
+      solid.cyl(px, armY / 2, pz, 0.16, armY, POLE, 6);
+      solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, POLE, armH);
+    }
     if (plates) {
       // The cross street's name on a plate over the arm, near the pole, facing the traffic: the
       // street of the arm nearest square to this one in another phase.
@@ -488,10 +515,15 @@ export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode,
     // approaching traffic: red on top, then yellow, then green.
     for (const lane of [1.5, 4.5]) {
       const hx = px + ax * (toCentre - lane), hz = pz + az * (toCentre - lane);
-      solid.box(hx, armY - 0.75, hz, 0.36, 1.25, 0.44, HOUSING, h);
+      if (story) {
+        // (A round teal body with a cream face its round lamps stand out of.)
+        solid.cyl(hx, armY - 0.75, hz, 0.25, 1.2, SB.teal, 8);
+        solid.box(hx - fx * 0.27, armY - 0.74, hz - fz * 0.27, 0.04, 1.14, 0.38, SB.cream, h);
+      } else solid.box(hx, armY - 0.75, hz, 0.36, 1.25, 0.44, HOUSING, h);
       for (const k of [0, 1, 2] as const) {
         lamps.aux.set(lampTag(k, offset), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2));
-        lamps.box(hx - fx * 0.22, armY - 0.36 - k * 0.38, hz - fz * 0.22, 0.16, 0.3, 0.3, LAMP_COLORS[k], h);
+        if (story) lamps.ico(hx - fx * 0.3, armY - 0.36 - k * 0.38, hz - fz * 0.3, 0.15, LAMP_COLORS[k]);
+        else lamps.box(hx - fx * 0.22, armY - 0.36 - k * 0.38, hz - fz * 0.22, 0.16, 0.3, 0.3, LAMP_COLORS[k], h);
       }
     }
   }

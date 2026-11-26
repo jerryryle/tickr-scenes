@@ -7,7 +7,7 @@
 // pose they take, the crew's gear, every cargo model and carried load, the animals, pedestrians,
 // traffic, trains, and the ships and harbour at sea); and the country roads between the cities
 // (countryworld.ts), a stretch at a time. Instanced meshes count each instance as placed; a
-// two-sided material's faces count both ways. Every pair of triangles facing the same way is checked, neighbouring chunks included: if
+// two-sided material's faces count both ways, and a back-sided one's the other way. Every pair of triangles facing the same way is checked, neighbouring chunks included: if
 // they lie within GAP of one plane and overlap by more than AREA, and differ in colour or material
 // (two alike look the same whichever wins), that is a clash. Faces facing each other on one plane
 // don't count: the materials draw front faces only, so one of the two is always culled; nor do
@@ -127,6 +127,7 @@ function trianglesOf(root: THREE.Object3D, out: Tri[]) {
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     if (mats.some((m) => (m.transparent && !m.depthWrite) || !m.depthTest || !m.depthWrite)) return;   // (blended without depth: no z-fight)
     const both = mats.some((m) => m.side === THREE.DoubleSide);   // (seen from either side: each face both ways)
+    const back = !both && mats.every((m) => m.side === THREE.BackSide);   // (seen from behind only: each face turned round)
     // (Materials told apart by how they shade: the shared vertex-coloured Lambert ones look alike.)
     const mk = `${mats[0].type}:${(mats[0] as any).map ? (mats[0] as any).map.uuid : ""}`;
     const mat = matIds.get(mk) ?? (matIds.set(mk, matIds.size), matIds.size - 1);
@@ -150,7 +151,7 @@ function trianglesOf(root: THREE.Object3D, out: Tri[]) {
         nn.divideScalar(L);
         let c = col ? hex(col.getX(ia), col.getY(ia), col.getZ(ia)) : mc ? mc.getHex() : 0;
         if (tint) c = hex((col ? col.getX(ia) : 1) * tint.r, (col ? col.getY(ia) : 1) * tint.g, (col ? col.getZ(ia) : 1) * tint.b);
-        for (const sg of both ? [1, -1] : [1]) {
+        for (const sg of both ? [1, -1] : back ? [-1] : [1]) {
           const q = sg > 0 ? [v[0], v[1], v[2]] : [v[0], v[2], v[1]], nx = nn.x * sg, ny = nn.y * sg, nz = nn.z * sg;
           // (A face turned down near the ground is only seen from below it, where no camera goes:
           // the director keeps the camera 1.3 m up or more.)

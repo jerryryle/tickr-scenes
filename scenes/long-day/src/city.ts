@@ -623,8 +623,8 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
     for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt);
     g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
   }
-  buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates);
-  buildStopSigns(solid, G, n, ox, oz);
+  buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook);
+  buildStopSigns(solid, G, n, ox, oz, !!CS.storybook);
   // (Their poles and posts, for the driver's walks and the street life.)
   for (const p of signalPoles(G, n)) pavementObstacle(p.px - ox, p.pz - oz, 0.16);
   for (const [x, z] of stopSignPosts(G, n).values()) pavementObstacle(x - ox, z - oz, 0.05);

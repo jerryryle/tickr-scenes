@@ -16,6 +16,15 @@ published or sent as a draft. The source reads the asset by that name, so withou
 fails to start. A packed asset is named after its contents, so a new one is added beside the old
 one; adding it changes only the scene's draft.
 
+## Visual changes
+
+A visual change is made, rendered and shown, and then the work stops until the user says what is
+next. The render covers the change itself and refreshes the whole set of views the user last
+looked at, such as a sheet of every truck. A change to something that moves, such as a door, a
+crew chore or a puff of smoke, is shown as a video of it moving (`make stage` makes one of a
+stop), and stills are added only where they help. The user often iterates on a look several times before
+committing, so `make check-<scene>` runs only when they ask for it or the work moves to a commit.
+
 ## Correct, simple and fast enough is the bar
 
 Designs, code and reviews all aim at the same three things: a scene that behaves correctly in the
