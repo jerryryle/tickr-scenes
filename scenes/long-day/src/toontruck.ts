@@ -15,10 +15,11 @@ export interface ToonRegion {
   top: number; bottom: number; front: number; back: number; side: number;   // these are the rounding's radius on each side (0 is square)
   frontFrom?: number;    // the front is rounded only above this height (a cab's is rounded above its hood)
   pillow: number;        // this is how far its sides and top are puffed out at their middles (as a fraction)
+  reach?: number;        // this is how far behind x0 a part still moves with it (0.02 unless given)
 }
 // toonNear says whether a point is near enough a region to move with it (its own parts and what is on them).
 function toonNear(R: ToonRegion, x: number, y: number, z: number) {
-  return x >= R.x0 - 0.02 && x < R.x1 + 0.05 && y > R.y0 - 0.05 && y < R.y1 + 0.3 && Math.abs(z) < R.hw + 0.7;
+  return x >= R.x0 - (R.reach ?? 0.02) && x < R.x1 + 0.05 && y > R.y0 - 0.05 && y < R.y1 + 0.3 && Math.abs(z) < R.hw + 0.7;
 }
 export function regionAt(regions: readonly ToonRegion[], p: THREE.Vector3): ToonRegion | null {
   for (const R of regions) if (toonNear(R, p.x, p.y, p.z)) return R;

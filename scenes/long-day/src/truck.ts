@@ -104,10 +104,10 @@ export const SPECS: Record<TruckModel, TruckSpec> = {
   },
 };
 
-// A dry van, its box 12.9 m long, in its own frame: origin at the kingpin, extending to -x. It is a
+// A dry van, its box 13.2 m long, in its own frame: origin at the kingpin, extending to -x. It is a
 // city trailer, shorter than a 53 ft one. Its axles are 10 m behind the kingpin, so it clears a square
 // corner on a wide right (docs/long-day-cities.md, "Tractor-trailers' turns").
-export const TRAILER = { front: 0.9, rear: -12.0, floor: 1.25, top: 4.1, hw: 1.3, axles: [-9.4, -10.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
+export const TRAILER = { front: 1.2, rear: -12.0, floor: 1.25, top: 4.1, hw: 1.3, axles: [-9.4, -10.65], rearZ: 0.95, wheelR: 0.5, kingpinToAxles: KINGPIN_TO_AXLES };
 // How far a trailer's swing door turns from shut to lying back along the side (rad).
 export const LEAF_OPEN = 4.55;
 // The height of its lock rods' handles over the road (m).
@@ -246,6 +246,9 @@ const TOON_TRIM: [number, number][] = [
 const TOON_RIM = 0xff7fb5, TOON_PUFFS = [0xffb8de, 0xd9b8ff, 0xb8f0e0, 0xfff0a8];
 const TOON_HOOD = 0.7, TOON_CAB = 1.2;   // (These are the hood's length and the cab's height, as a cartoon's.)
 // toonRegions gives the shells a model's cartoon rounds off, in the truck's frame (x forward from the rear axle).
+// The rear frame, its lamps and a trailer's doors stand up to REAR_REACH behind a box's end, and
+// they round with the box's profile.
+const REAR_REACH = 0.15;
 function toonRegions(s: TruckSpec): ToonRegion[] {
   const R: ToonRegion[] = [];
   const conv = s.cab !== "cabover";
@@ -253,10 +256,10 @@ function toonRegions(s: TruckSpec): ToonRegion[] {
     frontFrom: conv ? s.hoodTop : undefined, pillow: 0.09 });
   if (conv) R.push({ x0: s.cabFront, x1: s.noseFront + 0.12, y0: 0.3, y1: s.hoodTop, hw: s.cabHW + 0.08, top: 0.72, bottom: 0.18, front: 0.72, back: 0, side: 0.55, pillow: 0.09 });
   const c = s.cargo;
-  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0.45, side: 0.8, pillow: 0.08 });
+  if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0, side: 0.8, pillow: 0.08, reach: REAR_REACH });
   return R;
 }
-const TRAILER_REGION: ToonRegion[] = [{ x0: TRAILER.rear, x1: TRAILER.front, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0.5, side: 0.85, pillow: 0.08 }];
+const TRAILER_REGION: ToonRegion[] = [{ x0: TRAILER.rear, x1: TRAILER.front, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08, reach: REAR_REACH }];
 
 export class Truck {
   readonly spec: TruckSpec;
@@ -1135,7 +1138,7 @@ export class Truck {
       L.tail.span(x0 - 0.07, yfl - 0.36, z * (hw - 0.32), x0, yfl - 0.16, z * (hw - 0.06));
       L.reverse.span(x0 - 0.07, yfl - 0.36, z * (hw - 0.46), x0, yfl - 0.16, z * (hw - 0.34));
       (z < 0 ? L.sigL : L.sigR).span(x0 - 0.07, yfl - 0.36, z * (hw - 0.62), x0, yfl - 0.16, z * (hw - 0.48));
-      L.clrA.box(x1 + 0.02, yt - 0.1, z * (hw - 0.05), 0.06, 0.08, 0.08);
+      L.clrA.box(x1 + 0.01, yt - 0.1, z * (hw - 0.05), 0.06, 0.08, 0.08);   // (all of it within toonNear of the box, which takes it round the corner whole)
       L.clrR.box(x0 - 0.06, yt - 0.12, z * (hw - 0.06), 0.06, 0.08, 0.08);
       L.clrA.box(x1 - 0.25, yfl + 0.02, z * (hw + 0.01), 0.12, 0.07, 0.03);
       L.clrR.box(x0 + 0.25, yfl + 0.02, z * (hw + 0.01), 0.12, 0.07, 0.03);
@@ -1215,8 +1218,9 @@ export class Truck {
 
   // Roll-up door: slats ride a track up the door opening, then forward under the roof. In the
   // cartoon (toon) each point goes as far towards where the rounded box has it (toonRound) as the
-  // rest of the truck's morph does, so the door curves with the box's back and, rolled up, with its
-  // roof. Its normals are worked out from its faces: up under the roof they face down into the box.
+  // rest of the truck's morph does. The box's back is not rounded, so the door stays flat and only
+  // its top corners come in to fit the rounded frame, and rolled up it follows the roof. Its normals
+  // are worked out from its faces: up under the roof they face down into the box.
   private layoutSlats(f: number) {
     const S = this.slats!, K = this.toon, R = K > 0 ? S.region : null; S.last = f; S.lastToon = K;
     const pos = S.geo.attributes.position.array as Float32Array, P = this.v3, Q = this.s3;
@@ -1338,7 +1342,7 @@ export class Truck {
       P.span(-3.4, 0.48, z * (t.hw - 0.05), t.axles[0] + 1, t.floor - 0.12, z * (t.hw - 0.02), TC.skirt);   // (The skirt stops a metre short of the tandem.)
       P.span(t.axles[1] - 0.65, 0.62, z * 0.5, t.axles[0] + 0.6, t.floor - 0.12, z * 0.6, TC.frame);   // (The tandem's slider runs past its axles.)
     }
-    P.span(-0.58, t.floor - 0.18, -0.9, 0.9, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
+    P.span(-0.58, t.floor - 0.18, -0.9, t.front, t.floor - 0.12, 0.9, TC.frame);   // (its front just behind the fifth wheel's)
     P.span(-0.05, t.floor - 0.3, -0.05, 0.05, t.floor - 0.18, 0.05, TC.chrome);   // kingpin
     // The underride guard under its back, a little out behind the doors: a bar across on two
     // struts down from the frame (the crew steps on it, its top UNDERRIDE_Y, climbing in).
