@@ -53,6 +53,9 @@ const soles = (ch: Character): [THREE.Vector3, THREE.Vector3] => {
   const a = ch as any;
   return [SOLE.clone().applyMatrix4(a.knL.matrixWorld), SOLE.clone().applyMatrix4(a.knR.matrixWorld)];
 };
+// (A sole within a stride of the kerb's edge: lifted onto its top there (crew.ts feetOnKerb), its
+// knee bent, so the straighter leg no longer tells which foot is planted: not judged.)
+let nearKerb = (_p: THREE.Vector3) => false;
 // One figure's feet over time: stretches where the planted foot is carried along with the body.
 class Feet {
   private prev: [THREE.Vector3, THREE.Vector3] | null = null; private knee = [0, 0]; private yaw = NaN; private root = new THREE.Vector3();
@@ -70,7 +73,7 @@ class Feet {
       // (Not turning quickly: a turn swings the feet round with the body.)
       const yaw = new THREE.Euler().setFromQuaternion(ch.root.getWorldQuaternion(new THREE.Quaternion()), "YXZ").y;
       const turn = Number.isNaN(this.yaw) ? Infinity : Math.abs(Math.atan2(Math.sin(yaw - this.yaw), Math.cos(yaw - this.yaw))) / SIM_DT;
-      if (b / SIM_DT > 0.3 && turn < 1 && k === kp && Math.abs(kn[0] - kn[1]) > 0.05 && Math.abs(this.knee[0] - this.knee[1]) > 0.05) {
+      if (b / SIM_DT > 0.3 && turn < 1 && !f.some(nearKerb) && k === kp && Math.abs(kn[0] - kn[1]) > 0.05 && Math.abs(this.knee[0] - this.knee[1]) > 0.05) {
         walked++;
         const slip = ((f[k].x - this.prev[k].x) * bx + (f[k].z - this.prev[k].z) * bz) / (b * b);
         this.run++; this.sum += slip;
@@ -127,6 +130,10 @@ for (const run of runs) {
     crew.update(SIM_DT, j, truck, other, cam);
     const stop = st.stops[0], ph = j.dwellPhase();
     const what = () => `seed ${seed} t${st.simTime.toFixed(1)} ${st.truck} ${stop?.kind ?? ""} ${stop?.cargo ?? ""} at ${stop?.site?.name ?? "?"} (${ph.chore ? ph.chore.kind + (ph.chore.item ? " " + ph.chore.item : "") + (ph.chore.tool ? " " + ph.chore.tool : "") : ph.phase})`;
+    {
+      const kb = C.kerb as { x: number; z: number; nx: number; nz: number } | null, inv = truck.root.matrixWorld.clone().invert();
+      nearKerb = (p) => { if (!kb) return false; const q = p.clone().applyMatrix4(inv); return Math.abs((q.x - kb.x) * kb.nx + (q.z - kb.z) * kb.nz) < 0.4; };
+    }
     feet[0].see(crew.driver, what);
     // Never from one place to another in a step faster than a run (not climbing in or out of the cab).
     {

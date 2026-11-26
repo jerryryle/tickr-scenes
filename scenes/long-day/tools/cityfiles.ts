@@ -149,6 +149,15 @@ function clearDoors(plan: CityPlan, furniture: Map<number, [string, "l" | "r", n
   return furniture;
 }
 
+// A facility block's doors as its city file lists them (kerbDoors: the file's own when it has
+// them, else worked out from its buildings), or undefined for a block that lists none.
+export function fileDoorsOf(plan: CityPlan, bx: number, bz: number): CityFileBlock["doors"] {
+  const ds = kerbDoors(plan, bx, bz).filter((d): d is KerbDoor => !!d);
+  if (!ds.length && siteLayout(plan, bx, bz).kind !== "kerb") return undefined;
+  return ds.map((d) => ({ side: d.side, a: cm(d.a), n: cm(d.n), frame: d.frame, panel: d.panel, half: cm(d.half), h: cm(d.h),
+    ...(d.plain ? { plain: true as const } : {}), ...(d.wide ? { wide: true as const } : {}), ...(d.y !== undefined ? { y: cm(d.y) } : {}) }));
+}
+
 export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFile {
   const G = plan.graph, O = plan.outline;
   const nodes: CityFileNode[] = G.nodes.map((N) => {
@@ -193,11 +202,7 @@ export function cityFileOfPlan(plan: CityPlan, id: string, name: string): CityFi
     if (lots) out.lots = lots;
     // (Its facility's doors, as the scene would find them on its buildings: kerbDoors, which reads
     // a file's own when it has them.)
-    if (out.facility) {
-      const ds = kerbDoors(plan, B.kx, B.kz).filter((d): d is KerbDoor => !!d), c2 = (v: number) => Math.round(v * 100) / 100;
-      if (ds.length || siteLayout(plan, B.kx, B.kz).kind === "kerb") out.doors = ds.map((d) => ({ side: d.side, a: c2(d.a), n: c2(d.n), frame: d.frame, panel: d.panel, half: c2(d.half), h: c2(d.h),
-        ...(d.plain ? { plain: true as const } : {}), ...(d.wide ? { wide: true as const } : {}), ...(d.y !== undefined ? { y: c2(d.y) } : {}) }));
-    }
+    if (out.facility) { const ds = fileDoorsOf(plan, B.kx, B.kz); if (ds) out.doors = ds; }
     return out;
   });
   // (Its sea as the outline holds it; its freeway's gate slot, whether the truck comes in on it and
@@ -274,8 +279,7 @@ export function cityTraits(plan: CityPlan) {
 // A city's contents file's text (src/city-<style>/<city>/<city>-contents.ts): one recipe's
 // row a line, each block's under its place in the city file's blocks and each street's under its id.
 export function contentsFileText(F: CityFile, C: CityFileContents): string {
-  const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
-    : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
+  const item = fileItem;
   const group = (name: string, R: Record<number, RecipeRow[]>) => [`  ${name}: {`, ...Object.entries(R).flatMap(([k, l]) => [`    ${k}: [`, ...l.map((r) => `      ${item(r)},`), `    ],`]), `  },`];
   return [
     `// ${F.name}'s contents (docs/long-day-cities.md, "City contents"): everything that stands on its`,
@@ -295,9 +299,11 @@ export const slugOf = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g
 export const constOf = (style: StyleId, name: string) => `CITY_${style.toUpperCase()}_${slugOf(name).toUpperCase().replace(/-/g, "_")}`;
 
 // A city file's text (its header comment lines given): one node, street, gate and block a line.
+// A value as a city file writes it: an object's keys bare, ", " between items.
+export const fileItem = (v: unknown): string => Array.isArray(v) ? `[${v.map(fileItem).join(", ")}]`
+  : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${fileItem(x)}`).join(", ")} }` : JSON.stringify(v);
 export function cityFileText(F: CityFile, header: string[]): string {
-  const item = (v: unknown): string => Array.isArray(v) ? `[${v.map(item).join(", ")}]`
-    : v && typeof v === "object" ? `{ ${Object.entries(v).map(([k, x]) => `${k}: ${item(x)}`).join(", ")} }` : JSON.stringify(v);
+  const item = fileItem;
   const list = (k: string, a: unknown[]) => `  ${k}: [\n${a.map((v) => `    ${item(v)},`).join("\n")}\n  ],`;
   return [
     ...header,

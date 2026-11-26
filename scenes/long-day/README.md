@@ -33,7 +33,11 @@ argument, `VisitSpec` in `src/visits.ts`), and a render its first one:
 ```bash
 make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=coastal-seacliff,truck=tractor,season=winter,weather=snow"
 make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=metro-midtown+city=brick-ironworks,arriveBy=r40"   # two visits: midtown, then along r40
-``` A city file holds
+make debug SCENE=long-day DEFINE="DEBUG_SCENARIO=mattress-drop DEBUG_VIEW=crewQ"   # a named scenario (src/scenarios.ts), from just before its stop
+```
+
+A spec can also fix the visit's stops, freight, snow and hour, and a visit captured from any seed
+replays from its spec alone (docs/long-day-cities.md, "Visits"). A city file holds
 the city's streets, gates and blocks, and its contents file beside it lists everything that
 stands on them. `tools/draftcities.ts` drafts new city files with the
 generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit

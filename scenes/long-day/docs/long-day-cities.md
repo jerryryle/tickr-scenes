@@ -269,7 +269,7 @@ contents packed, it held 334.8 MB and peaked at 1716 MB.
 A city's layout and contents are the same on every visit, in every season. What changes is
 chosen by the visit's seeds ("Visits" lists them): the traffic, parked cars, other vehicles,
 vignettes, crowd and boats, and the jobs. Season and weather vary as the visit sets them, and the
-time of day follows the journey's clock.
+time of day follows the board's clock unless the visit's spec pins it.
 
 ## The world graph
 
@@ -366,11 +366,40 @@ The scene picks the journey seed at random when it starts, unless the `seed` set
 planner derives every visit from the journey seed and the visit's number alone, so scrubbing
 replays the same visits.
 
-Any visit's parameters can be given directly as a `VisitSpec`: its city, the road it arrives by,
-the truck it starts in, its season and weather, and any of its seeds. A test builds the visit its
-scenario needs through `Journey`'s `visits` argument, and a render does the same through
-`DEBUG_VISIT`, so neither searches seeds for one that happens to produce it. A test of variety
-still runs the planner over many journey seeds.
+Any visit can be set up exactly by a **visit spec** (`VisitSpec` in `src/visits.ts`), and one that
+gives everything plays the same under any journey seed and at any place in a journey. A test builds
+the visit its scenario needs through `Journey`'s `visits` argument, and a render does the same
+through `DEBUG_VISIT` or `DEBUG_SCENARIO`, so neither searches seeds for one that happens to
+produce it. A test of variety still runs the planner over many journey seeds, and turns what it
+finds into a spec by capturing it.
+
+A spec may give each of these, and the journey draws whatever it leaves out:
+
+1. The city, the road it arrives by, and the truck it starts in.
+2. The season, the weather, and whether snow lies on the ground.
+3. The **freight** it arrives with, or `"none"`. The visit before it picks this up last.
+4. The hour of day it arrives at. The board's clock sets the hour otherwise.
+5. Its seeds: jobs, dressing, gags and drive.
+6. Its **stops**, as batches. The journey plans stops a batch at a time whenever its queue runs
+   dry (`planStops` in `src/journey.ts`), and a spec's batches are taken in turn before any are
+   drawn. Each stop names its site by name, or by block as `"bx,bz"` where a name is shared, and
+   the journey checks it against the city: a pickup's site must be one its cargo comes from.
+7. Its **index** and **clock**, which make the spec independent of where it is played. The job
+   draws are keyed by the jobs seed and the index, which is the visit's own number unless given.
+   The lights, the street life and the crew's idle motion run on the visit's clock, which starts
+   from the journey time the visit began unless given. Both defaults reproduce a seeded journey
+   exactly.
+
+`Journey.captureSpecs` writes out the spec of the visit being played, with the stops drawn so far,
+together with the next visit's city, road and freight, which set this visit's way out and last
+pickup. `test/visitspec.ts` plays a seeded visit with its street life and crew, captures it, plays
+the capture as the first visit of a journey with another seed, and requires every step to match.
+
+**Scenarios** (`src/scenarios.ts`) name a spec and the stop to watch. `test/scenarios.ts` plays
+each under two journey seeds to that stop, requires the two to agree with each other and with the
+stops written, and checks a team lift's load through the doorway. It also lists a city's sites for
+writing one (`ARGS="--sites <city id>"`). `Journey.stopTime` finds when a stop's dwell begins,
+which a render uses to start just before it (`DEBUG_STOP`, or a scenario's stop).
 
 ## The visit planner
 

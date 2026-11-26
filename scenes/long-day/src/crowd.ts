@@ -32,6 +32,7 @@ export interface Ped {
   crossN?: number;   // where across the crossing lands, in the side's frame (default -0.85)
   back?: boolean;    // giving the crossing up, held up out in the road: back to the kerb it set out from
   cid?: number;      // held where they stand for the clowns coming to carry them off: theirs (clowns.ts)
+  onTruck?: boolean; // whether the truck in their way stopped them this step (truckPace; journey.ts jam: a deadlock)
   shirt: number; pants: number; skin: number; hair: number;
   x: number; z: number; h: number; px: number; pz: number; ph: number; pphase: number;   // and one step ago
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
@@ -78,9 +79,12 @@ export class Crowd {
   clear() { this.peds.length = 0; this.flocks.length = 0; this.vendorCount = 0; this.obstacles.length = 0; this.vig.clear(); this.clowns.clear(); }
   // A new city: nobody about, and the random stream from the city's seed.
   reset(seed: number, vigSeed = (seed ^ 0x5bd1e995) >>> 0) { this.clear(); this.rng.s = seed >>> 0; this.vig.reset(vigSeed >>> 0); this.clowns.reset(); }
-  save() { return { rng: this.rng.s, peds: this.peds, flocks: this.flocks, vendors: this.vendorCount, vig: this.vig.save(), cl: this.clowns.save() }; }
+  // (Those crossing are kept too, each by their place in peds: the truck's next step reads them,
+  // life.ts truckStop, before the crowd steps again.)
+  save() { return { rng: this.rng.s, peds: this.peds, flocks: this.flocks, vendors: this.vendorCount, vig: this.vig.save(), cl: this.clowns.save(), cx: [...this.crossers], cp: this.crosserPeds.map((p) => this.peds.indexOf(p)) }; }
   load(o: ReturnType<Crowd["save"]>) {
     this.rng.s = o.rng; this.peds = o.peds; this.flocks = o.flocks; this.vendorCount = o.vendors;
+    this.crossers.length = 0; this.crossers.push(...o.cx); this.crosserPeds.length = 0; this.crosserPeds.push(...o.cp.map((i) => this.peds[i]));
     this.vig.load(o.vig); this.clowns.load(o.cl);
     this.obstacles.length = 0;
     for (const p of this.peds) this.obstacles.push(pedObstacle(p));
@@ -101,7 +105,10 @@ export class Crowd {
     if (i < 0) return null;
     const p = this.peds[i];
     if (p.kind === "vendor" || p.kind === "musician") this.vendorCount--;
+    // (Their circle goes from the obstacles too, which hold the peds first, in order: life.ts
+    // truckStop reads each one's flags by its place there before the crowd steps again.)
     this.peds.splice(i, 1);
+    if (i < this.clownAt) { this.obstacles.splice(i, 1); this.clownAt--; }
     return p;
   }
 
@@ -145,7 +152,7 @@ export class Crowd {
     this.obstacles.length = 0;
     this.truckPath = more.truckPath ?? null; this.truckYieldsAt = more.truckYieldsAt ?? -1;
     this.carsClear = more.carsClear ?? null; this.cars = more.cars;
-    this.crossers.length = 0; this.waiters.length = 0;
+    this.crossers.length = 0; this.crosserPeds.length = 0; this.waiters.length = 0;
     for (const p of this.peds) if (p.cid === undefined) this.walk(G, p, dt, plan, simTime, prs, truck);
     for (const p of this.peds) this.obstacles.push(pedObstacle(p));
     this.vig.step({ plan, simTime, prs, focus, truck, cars: more.cars, parked: more.parked, busy: more.busy, eye: more.eye, peds: this.peds.map((p) => ({ x: p.x, z: p.z, run: p.kind === "jog" || p.kind === "chase" })) });
@@ -204,6 +211,7 @@ export class Crowd {
   // Those crossing the road now, for traffic to give way to: where each is and where the crossing
   // ends, on the crosswalk line (x, z, x1, z1 each).
   readonly crossers: number[] = [];
+  readonly crosserPeds: Ped[] = [];   // (Each of these is the one crossing at the same place in crossers.)
   // Those waiting at the kerb of an all-way stop to cross, for the cars stopped there to let them go
   // first in turn: where each stands, where their crossing ends, and how long they have waited
   // (x, z, x1, z1, t each).
@@ -278,11 +286,13 @@ export class Crowd {
     pts[0] = q.x; pts[1] = q.z;
     // (Held up by the truck as it is by them, its trailer swung across the pavement before them, say:
     // they wait, and turn back after a while (walk); held so for good, the clowns come, clowns.ts.)
-    return this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.2) ? 0 : p.speed;
+    p.onTruck = this.truckSweeps(pts, 1, 2.5, 0, 1.25 + 1.2);
+    return p.onTruck ? 0 : p.speed;
   }
   private sweepPts: number[] = new Array(64).fill(0);
 
   private walk(G: CityGraph, p: Ped, dt: number, plan: CityPlan, simTime: number, prs: SignalPreempt[], truck: Obstacle[]) {
+    p.onTruck = false;
     if (p.kind === "vendor" || p.kind === "musician") {
       // (Set up where the truck is to come over the pavement, into a driveway or out of one: they
       // move their pitch along out of its way.)
@@ -382,7 +392,7 @@ export class Crowd {
       if ((p.a - p.crossA) * p.dir <= 0) { p.a = p.crossA; p.n = -0.85; p.state = "wait"; p.waitT = 0; p.crossN = undefined; p.back = undefined; }
       const t = (p.a - p.crossA) * p.dir;
       const L = p.crossLen, nE = p.crossN ?? -0.85;
-      if (t < L - 1.6) { const q = G.facePt(f, p.crossA + p.dir * (L - 1.6), 1.7, _pt); this.crossers.push(p.x, p.z, q.x, q.z); }
+      if (t < L - 1.6) { const q = G.facePt(f, p.crossA + p.dir * (L - 1.6), 1.7, _pt); this.crossers.push(p.x, p.z, q.x, q.z); this.crosserPeds.push(p); }
       p.n = t < 1.6 ? -0.85 + (1.7 + 0.85) * (t / 1.6) : t > L - 1.6 ? 1.7 - (1.7 - nE) * ((t - (L - 1.6)) / 1.6) : 1.7;
       if (t >= L) {
         // Over: on along the side across, from its corner's walkway (as far on as this step went).

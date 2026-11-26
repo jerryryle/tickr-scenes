@@ -32,6 +32,10 @@
 #   make draftroads SCENE=long-day [ARGS="<road id> ..."]
 #                              draft the roads' maps into scenes/long-day/src/roads/
 #                              (tools/draftroads.ts)
+#   make clearstops SCENE=long-day [ARGS="<city id> ..."] [DOORS=1]
+#                              move the pavements' furniture, trees and lamps out of every kerb
+#                              stop's work area in the catalogue cities' files (tools/clearstops.ts);
+#                              with DOORS=1, redraft the facilities' doors from their buildings instead
 #   make tractorturns SCENE=long-day [ARGS="<city id> ..."]
 #                              write the moves a tractor-trailer never takes into the catalogue
 #                              cities' files (tools/tractorturns.ts)
@@ -75,7 +79,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/* $(1)-packed/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); case "$$n" in *.tmp) continue;; esac; d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns maps FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns clearstops maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -228,6 +232,18 @@ draftroads: | $(DEPS)
 	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-draftroads/draftroads.mjs --list; fi; } | \
 	  xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-draftroads/draftroads.mjs
 	@node build/$(SCENE)-draftroads/draftroads.mjs --world
+
+# Every kerb stop's pavement kept clear (scenes/<scene>/tools/clearstops.ts): the furniture, street
+# trees and lamps in a stop's work area moved along their pavements, written into each catalogue
+# city's files; with DOORS=1, the facilities' doors redrafted from their buildings instead. Run the
+# two in turn until neither changes anything, then tractorturns.
+#   make clearstops SCENE=long-day [ARGS="<city id> ..."] [DOORS=1]
+clearstops: | $(DEPS)
+	@mkdir -p build/$(SCENE)-clearstops
+	@$(FLATTEN) scenes/$(SCENE)/tools/clearstops.ts --root scenes/$(SCENE)/src > build/$(SCENE)-clearstops/scene.ts
+	@$(call node-bundle,build/$(SCENE)-clearstops/scene.ts,build/$(SCENE)-clearstops/clearstops.mjs)
+	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-clearstops/clearstops.mjs --list; fi; } | \
+	  xargs -P $(TEST_JOBS) -I{} node build/$(SCENE)-clearstops/clearstops.mjs {} $(if $(DOORS),--doors)
 
 # The moves a tractor-trailer never takes (scenes/<scene>/tools/tractorturns.ts), written into each
 # catalogue city's file, each city in a process of its own, TEST_JOBS at a time; ARGS names the

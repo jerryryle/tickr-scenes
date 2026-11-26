@@ -71,14 +71,32 @@ export function waysFrom(F: CityHead): readonly RoadWay[] {
 // moored boats (life.ts, city.ts); `gags` the vignettes (crowd.ts); `drive` the events on the drive
 // out (country.ts: oncoming cars, cattle, the weather along the road). The rest of what sets a
 // visit up, its truck, season and weather, is the journey's (journey.ts), unless a spec gives it.
-export interface Visit { city: CityHead; arrive: RoadWay; jobs: number; dressing: number; gags: number; drive: number; spec: VisitSpec | null }
+// `index`: the visit number its draws are keyed by (its own, unless a spec gives the one it was
+// captured at); `clock`, the journey time its clock starts from (journey.ts JourneyState.clockBase).
+export interface Visit { city: CityHead; arrive: RoadWay; index: number; jobs: number; dressing: number; gags: number; drive: number; spec: VisitSpec | null }
 // What a test (or a debug define) gives for visit N, everything else coming from the journey seed
-// (docs/long-day-cities.md, "Visits"): the city by id, the road it arrives by (by id: one into that city), the truck
-// it starts in, its season and weather, and any of its seeds.
+// (docs/long-day-cities.md, "Visits"): the city by id, the road it arrives by (by id: one into that
+// city), the truck it starts in, its season, weather and snow on the ground, the freight it arrives
+// with, the hour it arrives at, any of its seeds, and its stops. A visit given all of these plays
+// the same whatever the journey's seed and wherever in the journey it comes (journey.ts
+// captureSpecs writes them out for a visit that was drawn).
 export interface VisitSpec {
   city?: string; arriveBy?: string; truck?: TruckModel; season?: Season; weather?: WeatherKind;
+  snow?: boolean;   // (Whether snow lies, in winter. The seed draws it otherwise.)
+  freight?: FreightSpec | "none";   // (It arrives with this, which the visit before picks up last.)
+  hour?: number;    // (It arrives at this hour of day, and the clock runs on from there. The board's clock sets it otherwise.)
   jobs?: number; dressing?: number; gags?: number; drive?: number;
+  index?: number;   // (Its draws are keyed by this visit number, which is its own otherwise.)
+  clock?: number;   // (Its clock, which the lights and street life run on, starts from this journey time, which is its arrival otherwise.)
+  stops?: StopBatch[];   // (The journey plans its stops from these batches in turn, and draws the rest once they run out.)
 }
+export interface FreightSpec { cargo: string; units: number; truck: TruckModel }
+// One planning of the journey's stops (journey.ts planStops): the stops it adds, and the job
+// counter and the two flags as it leaves them (a batch written by hand may leave these out).
+export interface StopBatch { stops: StopSpec[]; counter?: number; noSwap?: boolean; intercity?: boolean }
+// A stop: where (`at`: a site's name, or its block as "bx,bz"), and its cargo and units (a pickup
+// or a drop), or the truck (a swap). `job`: the job it belongs to (by default the batch's counter).
+export interface StopSpec { kind: "pickup" | "drop" | "swap" | "depart"; at?: string; cargo?: string; units?: number; truck?: TruckModel; job?: number }
 interface Plan { visits: Visit[]; count: Map<string, number>; last: Map<string, number>; lastStory: number; due: boolean; specs: Record<number, VisitSpec> }
 // The specs a journey with this seed was given (Journey's constructor sets them, before any visit
 // is planned): the journey's visits are a pure function of its seed and these.
@@ -93,10 +111,12 @@ const visitPlans = new Map<number, Plan>();
 const pickOf = (seed: number, n: number, salt: number, len: number) => Math.floor(hash2(seed, n, 0x715a, salt) * len);
 
 // A visit's seeds: as a spec gives them, else from the journey seed, the city's key and its number.
+// (What a visit draws is keyed by these and `index` alone, never by the journey seed or the visit's
+// number directly, so a spec giving them plays the visit the same anywhere.)
 function seeded(seed: number, n: number, city: CityHead, arrive: RoadWay, spec: VisitSpec | null): Visit {
   const dressing = spec?.dressing ?? Math.floor(hash2(city.key, n, seed, 0x11fe) * 2 ** 32);
   const gags = spec?.gags ?? ((Math.floor(hash2(dressing, 2, 0, 0xc40d) * 2 ** 32) ^ 0x5bd1e995) >>> 0);
-  return { city, arrive, jobs: spec?.jobs ?? seed, dressing, gags, drive: spec?.drive ?? seed, spec };
+  return { city, arrive, index: spec?.index ?? n, jobs: spec?.jobs ?? seed, dressing, gags, drive: spec?.drive ?? seed, spec };
 }
 // (A spec's city and road: the road it names, else the one from the city before if they are
 // neighbours, else any road into it, as for a first visit.)
@@ -187,12 +207,27 @@ export function visitOf(seed: number, N: number): Visit {
 }
 // City N's catalogue city.
 export const cityHeadOf = (seed: number, N: number): CityHead => visitOf(seed, N).city;
-// A visit spec written "key=value,..." (debug.ts DEBUG_VISIT): numbers for the seeds, text for the rest.
+// A visit spec written "key=value,..." (debug.ts DEBUG_VISIT): numbers for the seeds and the hour,
+// "snow" yes or no, text for the rest. (Stops and freight only in JSON: parseVisitSpecs.)
 export function parseVisitSpec(text: string): VisitSpec {
-  const out: Record<string, string | number> = {};
+  const out: Record<string, string | number | boolean> = {};
   for (const part of text.split(",")) {
     const [k, v] = part.split("=").map((x) => x.trim());
-    if (k && v !== undefined) out[k] = ["jobs", "dressing", "gags", "drive"].includes(k) ? Number(v) : v;
+    if (k === "snow" && v !== "yes" && v !== "no") throw new Error(`visit spec "${text}": snow is yes or no`);
+    if (k === "freight" && v !== "none") throw new Error(`visit spec "${text}": freight is "none" here (a cargo only in JSON: parseVisitSpecs)`);
+    if (k && v !== undefined) out[k] = ["jobs", "dressing", "gags", "drive", "hour"].includes(k) ? Number(v) : k === "snow" ? v === "yes" : v;
   }
   return out as VisitSpec;
+}
+// The first visits' specs (debug.ts DEBUG_VISIT): JSON, an array of them in turn (as captureSpecs
+// writes) or one for the first visit; or "key=value,..." each, the next visit's after a "+".
+export function parseVisitSpecs(text: string): Record<number, VisitSpec> {
+  const t = text.trim();
+  if (t.startsWith("[") || t.startsWith("{")) {
+    const v = JSON.parse(t) as VisitSpec | VisitSpec[] | Record<number, VisitSpec>;
+    // (An object keyed by visit numbers gives several; any other object is the first visit's spec.)
+    const numbered = !Array.isArray(v) && Object.keys(v).length > 0 && Object.keys(v).every((k) => /^\d+$/.test(k));
+    return Array.isArray(v) ? Object.fromEntries(v.map((x, i) => [i, x])) : numbered ? v as Record<number, VisitSpec> : { 0: v as VisitSpec };
+  }
+  return Object.fromEntries(t.split("+").map((x, i) => [i, parseVisitSpec(x)]));
 }

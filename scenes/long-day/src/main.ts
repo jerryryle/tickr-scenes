@@ -12,8 +12,9 @@ import { drain } from "./slices.ts";
 import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
 import { DEBUG_VISIT } from "./debug.ts";
-import { parseVisitSpec } from "./visits.ts";
-import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_VIEW } from "./debug.ts";
+import { parseVisitSpecs, visitOf } from "./visits.ts";
+import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCENARIO, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_STOP, DEBUG_STOP_LEAD, DEBUG_VIEW } from "./debug.ts";
+import { SCENARIOS } from "./scenarios.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
@@ -848,7 +849,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const inbound = roadShown && (roadShown === journey.previousExit || roadShown === journey.arrivalRoad) && roadShown.inp.toFreeway;
       freewayReach.cover(inbound ? (roadShown === journey.arrivalRoad ? ARRIVE_LEN : FW_TIP) : 0);
       const t = journey.st.simTime + journey.frac, cam = engine.camera.position;
-      cityCars.update(journey.plan.freewayFrame, t, cam, false);
+      cityCars.update(journey.plan.freewayFrame, journey.clockTime + journey.frac, cam, false);   // (the city's clock: as its visit plays wherever it comes)
       const ahead = roadShown && roadShown === journey.exitRoadAhead && roadShown.inp.toFreeway ? roadShown : null;
       if (ahead && roadFrame?.road !== ahead) roadFrame = { road: ahead, F: Frame.ofRoad(ahead) };
       roadCars.update(ahead ? roadFrame!.F : null, t, cam, true);
@@ -859,8 +860,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     else countryWorld.setBase(truck.root.position.x, truck.root.position.z, countryWorld.groundOf(BIOME_OF[journey.plan.style.id], journey.climate), journey.plan.lowWater ? -1.7 : -0.3);
     const inCountry = journey.st.mode === "country";
     syncTrucks();
-    setSignalTime(time);
-    setSignalPreempt(inCountry ? [] : journey.st.preempt ?? [], journey.st.simTime + journey.frac);
+    // (The lights run on the city's clock, as the journey and street life see them.)
+    setSignalTime(journey.clockTime + journey.frac);
+    setSignalPreempt(inCountry ? [] : journey.st.preempt ?? [], journey.clockTime + journey.frac);
     placeTruck(dt, fresh);
     stopAnimation();
     updateTablet();
@@ -951,10 +953,16 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const today = new Date();
       const daySeed = Math.floor(hash2(today.getFullYear() * 1000 + today.getMonth() * 40 + today.getDate(), 7, 0, 0x5eed) * 2 ** 31) || 1;
       if (random) cfg.seed = sys.isPreview ? daySeed : ((Math.floor(Math.random() * 2 ** 31) ^ Date.now()) >>> 0 || 1);
-      base = DEBUG_SKIP_MINUTES * 60;   // (from the start: the skip, test renders only)
       setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(parkedObstacles);
+      const scenario = DEBUG_SCENARIO ? SCENARIOS[DEBUG_SCENARIO] : null;
+      if (DEBUG_SCENARIO && !scenario) throw new Error(`no scenario ${DEBUG_SCENARIO} (scenarios.ts)`);
+      const visits = scenario ? scenario.visits : DEBUG_VISIT ? parseVisitSpecs(DEBUG_VISIT) : undefined, watch = scenario ? scenario.stop : DEBUG_STOP;
+      // (From the start: the skip, or a little before a stop; test renders only.)
+      const lifeFor = () => { const sc = new THREE.Scene(), m = new THREE.MeshBasicMaterial(); return new StreetLife(new Traffic(sc, m, null), new Crowd(sc, m), new Ambient(sc, m)); };
+      const stopAt = watch >= 0 ? Journey.stopTime(cfg, realSeason(), visits, watch, 0, lifeFor) : null;
+      base = stopAt !== null ? Math.max(0, stopAt - DEBUG_STOP_LEAD) : DEBUG_SKIP_MINUTES * 60;
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
-      journey = new Journey(cfg, base, realSeason(), DEBUG_VISIT ? Object.fromEntries(DEBUG_VISIT.split("+").map((t, i) => [i, parseVisitSpec(t)])) : undefined);
+      journey = new Journey(cfg, base, realSeason(), visits);
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
       // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
       // where it starts (journey time = this + scene time).
@@ -1011,7 +1019,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // The clock first: attaching street life replays the city so far, and its vignettes and
       // pedestrians keep the hours.
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
-      CLOCK.hourAt = (t) => atmosphere.hourAt(t - base);   // (the vignettes keep the hours: they pass journey time, the sky runs on scene time)
+      // (The vignettes keep the hours: they pass the city's clock, the sky runs on scene time. A
+      // visit's spec may pin the hour it arrives at, the clock running on from there.)
+      CLOCK.hourAt = (t) => atmosphere.hourAt(t - journey.st.clockBase + journey.cityStart(journey.st.city) - base);
+      atmosphere.hourPin = (t) => {
+        const jt = base + t, N = journey.cityAt(jt), h = visitOf(cfg.seed, N).spec?.hour;
+        return h === undefined ? null : (((h + (jt - journey.cityStart(N)) / 3600) % 24) + 24) % 24;
+      };
       const tl = performance.now();
       journey.attachLife(new StreetLife(traffic, crowd, ambient));
       seekMs = performance.now() - tl;
@@ -1027,7 +1041,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
       VIG_LOG.out = (line) => sys.log(line);
       atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
-      setSignalTime(base);
+      setSignalTime(journey.clockTime + journey.frac);
       streamer.fill(truck.root.position);
       if (TOUR_VIEW) { tourCamera(0); streamer.fill(focus); }
       crew.update(0, journey, truck, other, engine.camera); dockFx.update(journey); frontDoor.update(journey, crew.workerRoot, crew.forkDoor);

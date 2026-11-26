@@ -197,6 +197,8 @@ const HAZE_DAY = new THREE.Color(0xa8c2ec);
 
 export class Atmosphere {
   private wall0 = Date.now();
+  // The hour at scene time t where the visit being played pins it (main.ts: its spec's), else null.
+  hourPin: ((t: number) => number | null) | null = null;
   readonly sky = new THREE.Color(); readonly haze = new THREE.Color();
   elevation = 1; night = 0; weather: WeatherMix = weatherMix("clear");
   private tmp = new THREE.Color(); private tmp2 = new THREE.Color();
@@ -233,6 +235,8 @@ export class Atmosphere {
   // Hours (0..24) at scene time t.
   hourAt(t: number) {
     if (DEBUG_HOUR >= 0) return DEBUG_HOUR;
+    const pinned = this.hourPin?.(t);
+    if (pinned != null) return pinned;
     switch (this.cfg.timeOfDay) {
       case "day": return 12.5;
       case "dusk": return this.sunTimes().set - 0.1;
