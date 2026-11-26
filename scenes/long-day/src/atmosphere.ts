@@ -51,8 +51,8 @@ export const HEAD_LIGHTS = { value: Array.from({ length: HEAD_N }, () => new THR
 // The height of the surface each vehicle's lights fall on (the road it is on: up on a freeway,
 // a garage's roof, a hill), set with HEAD_LIGHTS.
 export const HEAD_Y = { value: Array.from({ length: HEAD_N }, () => 0) };
-// The truck's dome lights, cargo box and cab (Truck.interiorLight).
-export const INTERIOR_LIGHT = { value: Array.from({ length: 4 }, () => new THREE.Vector4()) };
+// The truck's dome lights, cargo box and cab, five a box (Truck.interiorLight).
+export const INTERIOR_LIGHT = { value: Array.from({ length: 10 }, () => new THREE.Vector4()) };
 const lampTmp = new THREE.Vector3();
 export function updateLampLights(at: THREE.Vector3) {
   const best: { d: number; x: number; y: number; z: number }[] = [];
@@ -92,7 +92,7 @@ export function applyLampLight(mat: THREE.Material) {
   #endif
     vLampWP = (modelMatrix * lw).xyz; vLampWN = normalize(mat3(modelMatrix) * ln); }`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\nvarying vec3 vLampWP;\nvarying vec3 vLampWN;\nuniform float uLampLightOn;\nuniform vec4 uLampPos[${LAMP_N}];\nuniform vec4 uHeadLights[${HEAD_N}];\nuniform float uHeadY[${HEAD_N}];\nuniform vec4 uInterior[4];`)
+      .replace("#include <common>", `#include <common>\nvarying vec3 vLampWP;\nvarying vec3 vLampWN;\nuniform float uLampLightOn;\nuniform vec4 uLampPos[${LAMP_N}];\nuniform vec4 uHeadLights[${HEAD_N}];\nuniform float uHeadY[${HEAD_N}];\nuniform vec4 uInterior[10];`)
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   if (uLampLightOn > 0.0) {
     float lit = 0.0;
@@ -119,8 +119,8 @@ export function applyLampLight(mat: THREE.Material) {
     head = min(head, 1.3) * smoothstep(-0.35, 0.05, vLampWN.y);
     // Dome lights: anything inside the cargo box or the cab.
     float dome = 0.0;
-    for (int b = 0; b < 4; b += 2) {
-      vec4 C = uInterior[b], H = uInterior[b + 1];
+    for (int b = 0; b < 10; b += 5) {
+      vec4 C = uInterior[b], H = uInterior[b + 1], S = uInterior[b + 2], R = uInterior[b + 3], X = uInterior[b + 4];
       vec3 q = vLampWP - C.xyz;
       float cy = cos(C.w), sy = sin(C.w);
       vec3 l = vec3(q.x * cy - q.z * sy, q.y, q.x * sy + q.z * cy);
@@ -128,6 +128,20 @@ export function applyLampLight(mat: THREE.Material) {
         // (Tilted with the body: H.w is 2 + its pitch.)
         float p = H.w - 2.0, cp = cos(p), sp = sin(p);
         vec3 m = vec3(l.x * cp + l.y * sp, -l.x * sp + l.y * cp, l.z);
+        // The storybook's cartoon (Truck.domeShape) undone, so the box is tested as it was built:
+        // its stretch and puffing, then its rounding (toontruck.ts toonRound scales a point's place
+        // in the rounded bands, d, by its largest part over its length, so d's direction keeps).
+        m.y = (m.y + H.y) / X.y - H.y;
+        vec3 bl = 1.0 - min(m * m / (H.xyz * H.xyz), vec3(1.0));
+        m.z /= 1.0 + X.z * bl.x * bl.y;
+        m.y = (m.y + H.y) / (1.0 + 0.6 * X.z * bl.x * bl.z) - H.y;
+        vec3 st = vec3(m.x > 0.0 ? S.z : S.w, S.x, S.y), rd = vec3(m.x > 0.0 ? R.z * smoothstep(X.x - 0.05, X.x + 0.25, m.y) : R.w, R.x, R.y);
+        vec3 am = vec3(abs(m.x), m.y, abs(m.z)), d = max(am - st, 0.0) / max(rd, 1e-3) * step(1e-3, rd);
+        float dm = max(max(d.x, d.y), d.z);
+        if (dm > 0.0) {
+          am = mix(am, st + d * (length(d) / dm) * rd, step(1e-6, d));
+          m = vec3(sign(m.x) * am.x, am.y, sign(m.z) * am.z);
+        }
         if (all(lessThan(abs(m), H.xyz))) dome = 1.0 - 0.35 * (H.y - m.y) / (2.0 * H.y);   // brightest up by the lamp
       }
     }
@@ -135,7 +149,7 @@ export function applyLampLight(mat: THREE.Material) {
     totalEmissiveRadiance += (diffuseColor.rgb * 1.2 + 0.045) * uLampLightOn * (vec3(1.0, 0.78, 0.5) * min(lit, 1.3) + vec3(1.0, 0.93, 0.8) * head + vec3(1.0, 0.95, 0.85) * dome);
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v8";
+  mat.customProgramCacheKey = () => prevKey() + "|lamplight-v9";
   mat.needsUpdate = true;
 }
 

@@ -1,7 +1,7 @@
 // The trucks' storybook cartoon shape (truck.ts makeToon) is soft, rounded and chunky. Each truck's
 // shells (cab, hood, box or trailer) are boxes; here each is a region whose edges are rounded off
 // (toonRound: a rounded box's, a radius of its own on each side, none where the box meets
-// something that stays square, its doors or the cab's cowl) and whose big faces are puffed out a
+// something that stays square, the floor or the cab's cowl) and whose big faces are puffed out a
 // little, and the cab is made taller and the hood shorter. The parts' long faces are first cut
 // into strips across the bands that curve (toonSlice), so they can bend; what is near a shell (a
 // lamp, a mirror, a handle) moves with it. The result is a morph target, its normals worked out
