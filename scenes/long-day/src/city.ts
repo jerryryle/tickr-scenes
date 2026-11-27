@@ -23,7 +23,7 @@ import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
 import { VIC_STREET, vicBackYard, vicGate, vicLot, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
-import { buildBreweryStatic } from "./city-victorian/victorian-landmark-steam-brewery.ts";
+import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
@@ -3445,7 +3445,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // to the void that glints at a distance.)
   if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, LOT_TOP, 0, L.edge + 0.02, pave);
   fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge + 0.02, 0x66655f);
-  for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
+  if (DC.fac !== "steamBrewery") for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
 
   // The dock building: a plinth up to platform height, a band of dock doors on the yard side,
   // then a building of its own (warehouseLook): wall colour and cladding, height, roof, an accent
@@ -3456,6 +3456,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   const top = DC.fac === "knittingWorks" ? buildWorksStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L)
     : DC.fac === "steamBrewery" ? buildBreweryStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L) : buildWarehouse(s, side, face, L, r, district, rnd);
   if (DC.fac === "ryderWarehouse" && uv) ryderRoofSign(s, r, top, face, uv);
+  if (DC.fac === "steamBrewery") { breweryDock(s, L, quads, uv); return; }
 
   // Platform and its edge, bumpers, a door at every bay (the site's own style), the leveller,
   // seal and dock light at the bays trucks use, wall packs, the steps, and some dressing.
@@ -3594,7 +3595,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
 
   // A shallow dock sits beside the store or tower that fronts the rest of the street (the knitting
   // works' yard is its process instead: storybook-landmark-knitting-works.ts).
-  if (!L.deep && DC.fac !== "knittingWorks" && DC.fac !== "steamBrewery") {
+  if (!L.deep && DC.fac !== "knittingWorks") {
     const sr = frontRect(side, L.a1, 48.5, 2, 39.5);
     if (district === "downtown") {
       const wall = pick(rnd, CS.walls.downtown);
@@ -3629,6 +3630,93 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
       fspan(s, side, 34.2, 43.8, y - 0.65, y + 0.65, 1.88, 1.995, C.dark);
       signQuad(quads, uv, side, 39, 1.87, y, 9.2, 1.15, ox, oz);
     }
+  }
+}
+
+// The steam brewery's dock is dressed for its period (victorian-landmark-steam-brewery.ts builds the
+// rest): a stone platform with a stone coping, timber double doors on iron strap hinges (folded back
+// open at the bays carriages use), gas lamps on brackets between the bays, stone steps with an iron
+// handrail, casks and a sack barrow on the platform, iron railings along the street, and the name
+// painted on a board over the doors and in big letters across the brewhouse.
+function breweryDock(s: Batch, L: DockLayout, quads: Quad[], uv: ReturnType<SignAtlas["uv"]> | null) {
+  const side = L.side, P = DOCK_PLATFORM, { stone, coping, timber, iron } = BREWERY_DOCK;
+  const bw = L.bays.length > 1 ? L.bays[1] - L.bays[0] : L.a1 - L.a0, dw = bw * 0.41, doorH = dockDoorH(L);
+  const used = dockUsedBays(L), usedA = used.map((i) => L.bays[i]);
+  const lr = (salt: number) => hash2(Math.floor(L.look * 1e6), salt, 0x77, 0);
+  fspan(s, side, L.a0, L.a1, 0, P - 0.12, L.edge, L.wall, stone);
+  fspan(s, side, L.a0, L.a1, P - 0.12, P, L.edge - 0.08, L.wall, coping);
+  for (let a = L.a0 + 1.2; a < L.a1 - 0.5; a += 1.2) fspan(s, side, a - 0.02, a + 0.02, 0.05, P - 0.14, L.edge - 0.02, L.edge + 0.02, 0x8a8274);   // the stones' joints
+  // Each bay has a stone surround and its timber doors: closed (planked, two strap hinges a leaf),
+  // or open, each leaf folded back flat over the next door where that is closed (else it opens in).
+  const opens = L.bays.map((_, i) => used.includes(i) || (lr(i) < 0.2 && !used.some((u) => Math.abs(u - i) <= 1)));
+  L.bays.forEach((b, i) => {
+    const open = opens[i];
+    fspan(s, side, b - dw - 0.3, b + dw + 0.3, P + doorH, P + doorH + 0.35, L.wall - 0.08, L.wall + 0.01, coping);   // the lintel
+    for (const k of [-1, 1]) fspan(s, side, b + k * (dw + 0.15) - 0.15, b + k * (dw + 0.15) + 0.15, P, P + doorH, L.wall - 0.06, L.wall + 0.01, coping);
+    if (open) {
+      fspan(s, side, b - dw, b + dw, P + 0.005, P + doorH, L.wall - 0.03, L.wall + 0.01, 0x121416);
+      for (const k of [-1, 1]) {
+        const a0 = k < 0 ? b - 2 * dw - 0.3 : b + dw + 0.3, a1 = a0 + dw;
+        if (opens[i + k] || a0 < L.a0 || a1 > L.a1) continue;
+        fspan(s, side, a0, a1, P + 0.05, P + doorH - 0.05, L.wall - 0.2, L.wall - 0.14, timber);
+        for (const y of [0.5, doorH - 0.6]) fspan(s, side, a0 + 0.1, a1 - 0.1, P + y, P + y + 0.1, L.wall - 0.23, L.wall - 0.2, iron);
+      }
+    } else {
+      fspan(s, side, b - dw, b + dw, P, P + doorH, L.wall - 0.09, L.wall - 0.03, timber);
+      for (let a = b - dw + 0.32; a < b + dw - 0.1; a += 0.32) fspan(s, side, a - 0.015, a + 0.015, P, P + doorH, L.wall - 0.1, L.wall - 0.09, 0x3e2a1a);
+      for (const y of [0.5, doorH - 0.6]) for (const k of [-1, 1]) fspan(s, side, k < 0 ? b - dw + 0.05 : b + 0.1, k < 0 ? b - 0.1 : b + dw - 0.05, P + y, P + y + 0.1, L.wall - 0.13, L.wall - 0.1, iron);
+      fspan(s, side, b - 0.03, b + 0.03, P, P + doorH, L.wall - 0.12, L.wall - 0.1, 0x2a1c12);
+    }
+  });
+  // A gas lamp on a bracket between each pair of bays and at the ends, lit at night
+  // (applyLampLight).
+  const lamps = [L.a0 + 0.9, ...L.bays.slice(1).map((b, i) => (b + L.bays[i]) / 2), L.a1 - 0.9];
+  for (const la of lamps) {
+    const y = P + doorH + 0.9, n = L.wall - 0.55;
+    fspan(s, side, la - 0.04, la + 0.04, y - 0.5, y - 0.05, L.wall - 0.06, L.wall - 0.01, iron);
+    fspan(s, side, la - 0.03, la + 0.03, y - 0.05, y + 0.02, n, L.wall - 0.01, iron);
+    const ax = s.aux.clone(); s.aux.set(0, 0, -2); fspan(s, side, la - 0.15, la + 0.15, y - 0.45, y - 0.08, n - 0.15, n + 0.15, BREWERY_DOCK.lamp); s.aux.copy(ax);
+    fspan(s, side, la - 0.2, la + 0.2, y - 0.08, y, n - 0.2, n + 0.2, iron);
+    const [lx, lz] = frontPt(side, la, n); DC.lampSites.push(lx, y - 0.3, lz);
+  }
+  // Stone steps and an iron handrail up to the platform for each used bay, where any dock has them.
+  const flights = new Set<number>();
+  for (const p of usedA) flights.add(Math.round((p + dockStair(L, p)) * 10) / 10);
+  for (const aS of flights) {
+    for (let k = 0; k < 5; k++) fspan(s, side, aS - 0.55, aS + 0.55, 0, (k + 1) * P / 5, L.edge - 2.6 + k * 0.52, L.edge, k === 4 ? coping : stone);
+    const ra = aS + (aS < (L.a0 + L.a1) / 2 ? -1 : 1) * 0.6;
+    fspan(s, side, ra - 0.03, ra + 0.03, 0, 1.0, L.edge - 2.53, L.edge - 2.47, iron);
+    fspan(s, side, ra - 0.035, ra + 0.035, 0, P + 1.0, L.edge - 0.13, L.edge - 0.07, iron);
+    const d = FRONT_NODE[side][2], [mx, mz] = frontPt(side, ra, L.edge - 1.3), [rx, rz] = RIGHT[d];
+    const run = 2.4, len = Math.hypot(run, P), th = Math.atan2(P, run);
+    if (rx === 0) s.boxR(mx, 1.0 + P / 2, mz, 0.05, 0.05, len, iron, -th * rz, 0, 0);
+    else s.boxR(mx, 1.0 + P / 2, mz, len, 0.05, 0.05, iron, 0, 0, th * rx);
+  }
+  // On the platform, away from the used bays and the steps, stand casks or a sack barrow.
+  L.bays.forEach((b, i) => {
+    if (used.some((u) => Math.abs(u - i) <= 1) || lr(300 + i) > 0.6) return;
+    const a = b + (lr(310 + i) < 0.5 ? -1 : 1) * 0.9;
+    if ([...flights].some((f) => Math.abs(f - a) < 1.6) || a < L.a0 + 0.6 || a > L.a1 - 0.6) return;
+    const n = L.edge + 0.9, [x, z] = frontPt(side, a, n);
+    if (lr(320 + i) < 0.7) {
+      for (const [da, dy] of [[-0.45, 0], [0.45, 0], [0, 0.85]] as const) { const [cx, cz] = frontPt(side, a + da, n); s.cyl(cx, P + 0.42 + dy, cz, 0.4, 0.84, 0x8c5c30, 8); s.cyl(cx, P + 0.42 + dy, cz, 0.43, 0.07, iron, 8); }
+    } else { fspan(s, side, a - 0.25, a + 0.25, P, P + 1.2, n - 0.05, n + 0.05, iron); s.cyl(x, P + 0.2, z, 0.2, 0.6, iron, 8, 0, Math.PI / 2); }
+  });
+  // Iron railings stand on a low wall along the street, open across the driveway.
+  const pLo = Math.min(...usedA);
+  if (pLo - 4.5 > 9.5) {
+    fspan(s, side, 9.2, pLo - 4.5, 0, 0.55, 0.3, 0.6, BREWERY_DOCK.brick);
+    fspan(s, side, 9.2, pLo - 4.5, 1.5, 1.55, 0.42, 0.48, iron);
+    for (let a = 9.3; a < pLo - 4.5; a += 0.32) fspan(s, side, a - 0.025, a + 0.025, 0.55, 1.65, 0.43, 0.47, iron);
+  }
+  // The name is painted on a board in a gilt frame over the doors, and in big letters on the
+  // brewhouse's name band.
+  if (uv) {
+    const d = FRONT_NODE[side][2], ox = -RIGHT[d][0], oz = -RIGHT[d][1], mid = (L.a0 + L.a1) / 2;
+    const y = P + doorH + 0.35 + 0.75;
+    fspan(s, side, mid - 4.1, mid + 4.1, y - 0.6, y + 0.6, L.wall - 0.1, L.wall - 0.02, BREWERY_DOCK.gilt);
+    signQuad(quads, uv, side, mid, L.wall - 0.11, y, 7.6, 0.95, ox, oz);
+    signQuad(quads, uv, side, mid, L.wall - 0.11, breweryNameY(), 14.4, 1.8, ox, oz);
   }
 }
 
