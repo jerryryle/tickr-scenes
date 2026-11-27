@@ -494,10 +494,10 @@ const faVictSash: FaKind = (p, v, rnd) => {
   if (v === 0) {   // a flat arch of gauged red brick over it
     p.rect(40, 14, 48, 10, "#a8523a", FA_TRIM); for (let x = 42; x < 88; x += 5) p.paint(x, 14, 1, 10, "rgba(0,0,0,0.2)");
     faVSash(p, 44, 24, 40, 74, { curt });
-  } else if (v === 1) {   // a segmental arch of brick in two colours, six panes over six
+  } else if (v === 1) {   // a segmental arch of brick in two colours
     for (let k = 0; k < 9; k++) { const w = 54 - Math.abs(k - 4) * 0; p.rect(37, 12 + k, w, 1, k % 3 === 0 ? "#e8dcc0" : "#9a4a34", FA_TRIM); }
     p.arch(37, 4, 54, 20, "#9a4a34", FA_TRIM); for (let x = 39; x < 90; x += 6) p.paint(x, 6, 3, 15, "rgba(232,220,192,0.7)");
-    faVSash(p, 44, 24, 40, 74, { six: true, curt, blind: rnd() < 0.5 ? 0.25 : 0 });
+    faVSash(p, 44, 24, 40, 74, { curt, blind: rnd() < 0.5 ? 0.25 : 0 });
   } else if (v === 2) {   // a moulded architrave and a cornice hood on brackets
     p.rect(36, 10, 56, 8, "#ffffff", FA_WALL); p.paint(36, 17, 56, 2, "rgba(0,0,0,0.25)"); p.paint(36, 10, 56, 2, "rgba(255,255,255,0.5)");
     for (const x of [36, 86]) { p.rect(x, 18, 6, 10, "#ffffff", FA_WALL); p.paint(x, 26, 6, 2, "rgba(0,0,0,0.2)"); }
@@ -518,25 +518,26 @@ const faVictDoor: FaKind = (p, v, rnd) => {
   // the surround: brick with a stone arch and its keystone, or stucco with a pilaster each side
   // and an entablature over (v 2, 3)
   if (v < 2) {
-    p.arch(38, 6, 52, 122, FA_VSTONE, FA_TRIM); p.paint(38, 30, 3, 98, "rgba(255,255,255,0.2)"); p.paint(87, 30, 3, 98, "rgba(0,0,0,0.2)");
+    p.arch(34, 6, 60, 122, FA_VSTONE, FA_TRIM); p.paint(34, 30, 3, 98, "rgba(255,255,255,0.2)"); p.paint(91, 30, 3, 98, "rgba(0,0,0,0.2)");
     p.rect(60, 4, 8, 10, FA_VSTONE_D, FA_TRIM);
-    p.archGlass(44, 12, 40, 26, 0.9);   // the fanlight
-    for (let i = 0; i < 5; i++) { const a = Math.PI * (0.1 + i * 0.2); p.rect(64 + Math.cos(a) * 12 - 1, 32 - Math.sin(a) * 14, 2, 2, FA_VSASH, FA_TRIM); }
-    p.rect(44, 34, 40, 3, FA_VSASH, FA_TRIM);
+    p.archGlass(40, 12, 48, 26, 0.9);   // the fanlight
+    for (let i = 0; i < 5; i++) { const a = Math.PI * (0.1 + i * 0.2); p.rect(64 + Math.cos(a) * 14 - 1, 32 - Math.sin(a) * 14, 2, 2, FA_VSASH, FA_TRIM); }
+    p.rect(40, 34, 48, 3, FA_VSASH, FA_TRIM);
   } else {
-    for (const x of [32, 86]) { p.rect(x, 14, 10, 114, "#ffffff", FA_WALL); p.paint(x + 8, 14, 2, 114, "rgba(0,0,0,0.18)"); p.rect(x - 1, 14, 12, 5, "#ffffff", FA_WALL); }
-    p.rect(28, 4, 72, 11, "#ffffff", FA_WALL); p.paint(28, 13, 72, 2, "rgba(0,0,0,0.25)");
-    p.rect(44, 18, 40, 18, FA_VSASH, FA_TRIM); p.pane(46, 20, 36, 14, { col: "#33465e", light: 0.9, streak: false });
-    for (let x = 52; x < 82; x += 8) p.rect(x, 20, 1, 14, FA_VSASH, FA_TRIM);
+    for (const x of [28, 90]) { p.rect(x, 14, 10, 114, "#ffffff", FA_WALL); p.paint(x + 8, 14, 2, 114, "rgba(0,0,0,0.18)"); p.rect(x - 1, 14, 12, 5, "#ffffff", FA_WALL); }
+    p.rect(24, 4, 80, 11, "#ffffff", FA_WALL); p.paint(24, 13, 80, 2, "rgba(0,0,0,0.25)");
+    p.rect(40, 18, 48, 18, FA_VSASH, FA_TRIM); p.pane(42, 20, 44, 14, { col: "#33465e", light: 0.9, streak: false });
+    for (let x = 51; x < 86; x += 9) p.rect(x, 20, 1, 14, FA_VSASH, FA_TRIM);
   }
-  // the door: four panels, its knocker, letter plate and knob in brass
-  p.rect(46, 38, 36, 90, dc, FA_TRIM);
-  for (const [x, y, h] of [[50, 44, 30], [66, 44, 30], [50, 82, 40], [66, 82, 40]]) { p.paint(x, y, 12, h, "rgba(255,255,255,0.08)"); p.paint(x, y, 12, 1, "rgba(0,0,0,0.35)"); p.paint(x, y, 1, h, "rgba(0,0,0,0.35)"); }
-  p.rect(62, 62, 4, 6, FA_VGILT, FA_TRIM); p.rect(58, 78, 12, 3, FA_VGILT, FA_TRIM); p.rect(75, 84, 3, 3, FA_VGILT, FA_TRIM);
-  p.paint(46, 38, 36, 2, "rgba(0,0,0,0.3)");
+  // the door: four panels, its knocker, letter plate and knob in brass (about 0.9 m wide in a
+  // terrace house's bay, vicTerrace)
+  p.rect(42, 38, 44, 90, dc, FA_TRIM);
+  for (const [x, y, h] of [[46, 44, 30], [66, 44, 30], [46, 82, 40], [66, 82, 40]]) { p.paint(x, y, 16, h, "rgba(255,255,255,0.08)"); p.paint(x, y, 16, 1, "rgba(0,0,0,0.35)"); p.paint(x, y, 1, h, "rgba(0,0,0,0.35)"); }
+  p.rect(62, 62, 4, 6, FA_VGILT, FA_TRIM); p.rect(58, 78, 12, 3, FA_VGILT, FA_TRIM); p.rect(79, 84, 3, 3, FA_VGILT, FA_TRIM);
+  p.paint(42, 38, 44, 2, "rgba(0,0,0,0.3)");
   // a boot scraper by the step on some, a little lamp on others
-  if (v === 1) p.rect(90, 118, 8, 6, "#1c1d20", FA_TRIM);
-  if (v === 2) { p.rect(104, 30, 2, 10, "#1c1d20", FA_TRIM); p.rect(100, 40, 10, 12, "#ffd27a", FA_GLASS(1)); p.rect(99, 38, 12, 3, "#1c1d20", FA_TRIM); }
+  if (v === 1) p.rect(96, 118, 8, 6, "#1c1d20", FA_TRIM);
+  if (v === 2) { p.rect(110, 30, 2, 10, "#1c1d20", FA_TRIM); p.rect(106, 40, 10, 12, "#ffd27a", FA_GLASS(1)); p.rect(105, 38, 12, 3, "#1c1d20", FA_TRIM); }
 };
 // The shopfront: pilasters in the wall's colour at the tile's edges under consoles, a painted
 // fascia across the top with gilt lettering, plate glass on a panelled stall riser, and the door at

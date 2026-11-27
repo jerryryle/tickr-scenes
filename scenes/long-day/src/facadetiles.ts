@@ -24,5 +24,5 @@ export const FACADE_KINDS = 32;
 export const PAINTED_DOORS: Partial<Record<number, readonly [number, number, number]>> = {
   [FACADE.STOREFRONT]: [96, 124, 34], [FACADE.DOOR]: [40, 88, 20], [FACADE.LOBBY]: [40, 88, 76],
   [FACADE.STORY_SHOP]: [98, 122, 37], [FACADE.STORY_DOOR]: [44, 84, 24],
-  [FACADE.VICT_SHOP]: [98, 122, 30], [FACADE.VICT_DOOR]: [46, 82, 38],
+  [FACADE.VICT_SHOP]: [98, 122, 30], [FACADE.VICT_DOOR]: [42, 86, 38],
 };
