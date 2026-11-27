@@ -42,9 +42,10 @@ import { boatAt, deckW, hull, wedge } from "./boats.ts";
 import type { Station } from "./boats.ts";
 
 const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
-// Near a Victorian city (periodAt over a half where the truck meets it) what comes the other way is
-// horse-drawn, one of these rigs (city-victorian/victorian-vehicles.ts) at its own pace, a repeat
-// in the list making it likelier.
+// Near a Victorian city (anywhere it has crept in, periodAt, where the truck meets it) what comes
+// the other way is horse-drawn, one of these rigs (city-victorian/victorian-vehicles.ts) at its own
+// pace, a repeat in the list making it likelier. A car met short of its reach runs no more than
+// 200 m into it while in sight, where the road still has its markings (PERIOD_MODERN).
 const ONCOMING_RIGS = ["growler", "hansom", "dray", "coster", "coalcart", "horseback", "growler", "traction"];
 
 // RoadRigs draws the rigs met on the road: a part of every rig of a kind is one instanced mesh,
@@ -554,7 +555,7 @@ export class CountryWorld {
       const tm = road.meetings[i];
       // (Horse-drawn where the meeting is in the Victorian city's reach, and slow: it still meets
       // the truck at tm.)
-      const rig = road.periodAt(road.sAt(tm)) > 0.5 ? vicRigs().find((r) => r.id === ONCOMING_RIGS[Math.floor(hash2(i, 0x0d, 0xa7, 0x52) * ONCOMING_RIGS.length)])! : null;
+      const rig = road.periodAt(road.sAt(tm)) > 0 ? vicRigs().find((r) => r.id === ONCOMING_RIGS[Math.floor(hash2(i, 0x0d, 0xa7, 0x52) * ONCOMING_RIGS.length)])! : null;
       const sp = rig ? rig.vmax * 0.9 : ONCOMING_SPEED;
       const s = road.sAt(tm) - sp * (u - tm);
       if (Math.abs(s - sTruck) > 330 || s < road.landFrom || s > road.landTo) continue;
