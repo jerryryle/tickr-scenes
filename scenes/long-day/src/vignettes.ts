@@ -6,7 +6,7 @@
 // falafel cart and a club's velvet rope after dark, a sled, a shoveller and a snowman in the
 // snow, an open hydrant on a hot afternoon, and in the parks chess, tai chi, a frisbee dog and a
 // kite. The Victorian city keeps out those that read modern (MODERN) and has its own: a
-// lamplighter at dusk and dawn, a chimney sweep and his boy, a newsboy, an organ grinder and his
+// lamplighter at dusk and dawn, a chimney sweep and his lad, a newsboy, an organ grinder and his
 // monkey, Punch and Judy in the park, a crossing sweeper, a flower seller and the muffin man.
 // Each is anchored to a block side's frontage (a face of the street graph, citygraph.ts: `a`
 // along it, `n` across, 0 at the building line and -3 at the kerb face on a 3 m sidewalk), chosen
@@ -29,6 +29,7 @@ import type { SignalPreempt } from "./signals.ts";
 import { weatherMix } from "./climate.ts";
 import type { WeatherMix } from "./climate.ts";
 import { OCCLUSION } from "./occlusion.ts";
+import { NIGHT_GLOW } from "./atmosphere.ts";
 import { SIM_DT } from "./journey.ts";
 import type { Obstacle } from "./traffic.ts";
 import { DEBUG_SKIP_MINUTES, DEBUG_VIGNETTE } from "./debug.ts";
@@ -194,6 +195,7 @@ const BLOOMS = [0xd8303a, 0xf0e8f0, 0xe8c030, 0x9a5ac8, 0xf08aa8, 0xe86a2a, 0xf4
 // Gas lamps (city-victorian/victorian-street.ts vicLamp): the lantern's bottom and its middle above the ground.
 const LAMP_Y = [3.6, 3.85];
 const LL_N = -1.75, LAMP_T = 5;   // the lamplighter's line along the pavement, and how long he takes at a lamp (s)
+const LL_LIT = 3, LL_GLASS = 0xe6dcb8;   // how many lamps he has seen to stay so, and a lantern's glass by day (victorian-street.ts VS_LAMP_GLASS)
 const NEWS_BUYERS = 5;
 const newsT = (i: number) => 6 + i * 17;   // when the newsboy's i-th buyer comes along (s)
 // The lamp ahead of `from` along vignette v's block side (a, n), or null.
@@ -1528,31 +1530,37 @@ const K: Record<VK, Kind> = {
   },
 
   // ---- the Victorian city ----------------------------------------------------------------------
-  // At dusk the lamplighter goes along the pavement from gas lamp to gas lamp with his long pole,
-  // its wick alight, and reaches it up into each lantern until it flares; at dawn he goes round
-  // again putting them out. He walks on round the block from side to side.
+  // As the street lamps come on at dusk the lamplighter goes along the pavement from gas lamp to
+  // gas lamp with his long pole, its wick alight, and reaches it up into each lantern until it
+  // flares; at dawn, as they go off, he goes round again putting them out. He walks on round the
+  // block from side to side. The lamps come on with the sun (atmosphere.ts NIGHT_GLOW), so he
+  // comes while they are part way on, and the last LL_LIT lamps he has seen to on his side stay
+  // lit (or out) whatever the rest show.
   lamplighter: {
-    w: (d, c) => (vic(c) && d !== "industrial" && ((c.hour >= 17.5 && c.hour < 21) || (c.hour >= 5.2 && c.hour < 7)) ? 3 : 0), trigger: 0,
+    w: (d, c) => (vic(c) && d !== "industrial" && (c.hour >= 12 ? NIGHT_GLOW.value > 0.02 && NIGHT_GLOW.value < 0.85 : NIGHT_GLOW.value > 0.15 && NIGHT_GLOW.value < 0.98) ? 3 : 0), trigger: 0,
     place(v, c, r) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
       const sp = spanOf(v.bx, v.bz, v.side);
       v.a = sp.a0 + 4 + r() * Math.max(0, sp.a1 - sp.a0 - 16); v.n = LL_N;
       v.c.push(pick(r, [0x3a3a30, 0x2e3440, 0x4a3e30]), pick(r, [0x2e2e2a, 0x3a3426]), pick(r, SKINS), pick(r, HAIRS), pick(r, [0x2a2a2a, 0x3a3428]));
       const l = nextLamp(c, v, v.a);
-      v.st = [0, v.a, 0, l ? l[0] : 1e9, l ? l[1] : -2.6]; v.pst = v.st.slice();
+      v.st = [0, v.a, 0, l ? l[0] : 1e9, l ? l[1] : -2.6, ...Array(2 * LL_LIT).fill(1e9)]; v.pst = v.st.slice();
       return true;
     },
-    // (st: walking (0) or at a lamp (1), how far along, when he reached it, and the lamp ahead's a and n.)
+    // (st: walking (0) or at a lamp (1), how far along, when he reached it, the lamp ahead's a and
+    // n, then the a and n of each lamp he has seen to on this side, the latest first.)
     step(v, c) {
       if (v.st[0] === 0) {
         v.st[1] += 1.1 * SIM_DT;
         if (v.st[1] >= v.st[3] - 0.5) { v.st[0] = 1; v.st[1] = v.st[3] - 0.5; v.st[2] = v.t; return; }
         const side = v.side;
         roundCorner(v);
-        if (v.side !== side) { const l = nextLamp(c, v, v.st[1]); v.st[3] = l ? l[0] : 1e9; v.st[4] = l ? l[1] : -2.6; v.pst = v.st.slice(); }
+        if (v.side !== side) { const l = nextLamp(c, v, v.st[1]); v.st[3] = l ? l[0] : 1e9; v.st[4] = l ? l[1] : -2.6; v.st.fill(1e9, 5); v.pst = v.st.slice(); }
       } else if (v.t - v.st[2] > LAMP_T) {
         const l = nextLamp(c, v, v.st[1] + 1);
+        v.st.splice(5, 0, v.st[3], v.st[4]); v.st.length = 5 + 2 * LL_LIT;
         v.st[0] = 0; v.st[3] = l ? l[0] : 1e9; v.st[4] = l ? l[1] : -2.6;
+        v.pst = v.st.slice();   // (the lamps move along the list, so they are never blended)
       }
     },
     draw(v, F, t, D) {
@@ -1570,14 +1578,25 @@ const K: Record<VK, Kind> = {
       F.box(tx, ty, tz, 0.06, 0.08, 0.06, yaw, 0, 0xb8963a);
       const dusk = D.hour >= 12;
       if (dusk) F.glow(tx, ty + 0.07, tz, 0.035, 0.06, 0.035, 0, 0xffc060);
-      // The lantern flaring up as the gas catches.
-      if (dusk && lt > 1.4) { const k = ramp(lt, 1.4, 2.0) * (1 - ramp(lt, LAMP_T - 0.6, LAMP_T)); if (k > 0) F.glow(lx, LAMP_Y[1], lz, 0.24 * k, 0.32 * k, 0.24 * k, h0, 0xffe2a0); }
+      // The lamp he is at, from when the gas catches (or goes out), and those he has seen to: lit
+      // at dusk (flaring as it catches) and out at dawn, whatever the street's lamps show. Each is
+      // two boxes over vicLamp's lantern (victorian-street.ts), its narrow foot and its wide top.
+      const lamp = (la: number, ln: number, k: number) => {
+        if (la > 1e8) return;
+        const [px, pz] = pathPt(v, la, ln), s = 1 + 0.25 * k, q = h0;
+        for (const [y, h, w] of [[3.42, 0.36, 0.27], [3.85, 0.56, 0.38]]) {
+          if (dusk) F.glow(px, Y0 + y, pz, w * s, h, w * s, q, 0xffe2a0); else F.box(px, Y0 + y, pz, w, h, w, q, 0, LL_GLASS);
+        }
+      };
+      if (lt > 1.4) lamp(S[3], S[4], dusk ? 1 - ramp(lt, 1.4, 2.4) : 0);
+      for (let i = 0; i < LL_LIT; i++) lamp(S[5 + 2 * i], S[6 + 2 * i], 0);
     },
     foot: (v) => [v.st[1] - 0.5, v.st[1] + 0.5, LL_N - 0.4, LL_N + 0.4],
   },
 
   // A master sweep in sooty black and a battered top hat goes round the block with his rods over
-  // his shoulder and the round brush on their end, his climbing boy at his heels with the soot sack.
+  // his shoulder and the round brush on their end, his lad at his heels with the soot sack. (The
+  // lad is fourteen or so: the Chimney Sweepers Act of 1875 put an end to climbing boys.)
   sweep: {
     w: (d, c) => (vic(c) && city(d, "residential", "commercial", "downtown") && day(c, 7, 16) && c.w.storm < 0.5 ? 1.6 : 0), trigger: 0,
     place(v, c, r) {
@@ -1597,11 +1616,11 @@ const K: Record<VK, Kind> = {
       const hd = F.handR, ex = hd[0] - fx * 1.3, ey = hd[1] + 0.75, ez = hd[2] - fz * 1.3;
       F.seg(hd[0] + fx * 0.15, hd[1] - 0.08, hd[2] + fz * 0.15, ex, ey, ez, 0.05, 0x3a2e22);
       F.box(ex, ey, ez, 0.06, 0.55, 0.55, yaw, -0.5, 0x141414); F.box(ex, ey, ez, 0.07, 0.55, 0.55, yaw, -0.5 + Math.PI / 4, 0x1e1e1e, 0);
-      // The boy, a step behind on the building side, the sack on his back.
-      const [bx, bz] = pathPt(v, a - 1.2, v.n + 0.55), by = sidePathYaw(v, a - 1.2), wb = walkSwing(a * 1.25 + 1);
-      F.person({ x: bx, z: bz, yaw: by, s: 0.62, y: Y0 + wb.bob, legs: wb.legs, arms: [wb.arms[0], 2.4], fore: [wb.arms[0], 3.0], dress: "boy", shirt: 0x2a2826, pants: 0x222020, hat: 0x1a1a1a, skin: soot(v.c[1]), hair: v.c[2] });
+      // The lad, a step behind on the building side, the sack over his shoulder on his back.
+      const LS = 0.8, [bx, bz] = pathPt(v, a - 1.3, v.n + 0.55), by = sidePathYaw(v, a - 1.3), wb = walkSwing(a * 1.12 + 1);
+      F.person({ x: bx, z: bz, yaw: by, s: LS, y: Y0 + wb.bob, legs: wb.legs, arms: [wb.arms[0], 2.4], fore: [wb.arms[0], 3.0], dress: "boy", shirt: 0x2a2826, pants: 0x222020, hat: 0x1a1a1a, skin: soot(v.c[1]), hair: v.c[2] });
       const bfx = Math.cos(by), bfz = -Math.sin(by);
-      F.box(bx - bfx * 0.16, Y0 + wb.bob + 0.82, bz - bfz * 0.16, 0.22, 0.36, 0.26, by, 0.2, 0x3a3834);
+      F.box(bx - bfx * 0.24 * LS, Y0 + wb.bob + 1.32 * LS, bz - bfz * 0.24 * LS, 0.22 * LS, 0.42 * LS, 0.28 * LS, by, 0.2, 0x3a3834);
     },
   },
 
@@ -1643,7 +1662,7 @@ const K: Record<VK, Kind> = {
         if (u < 0 || u >= 10.5 || (v.rel & (1 << i))) continue;
         const ab = u < 6 ? v.a + 8 - u * 1.2 : u < 8.5 ? v.a + 0.8 : v.a + 0.8 - (u - 8.5) * 1.2, nb = u < 4.5 ? -1.0 : u < 6 ? lerp(-1.0, -1.5, (u - 4.5) / 1.5) : u < 8.5 ? -1.5 : lerp(-1.5, -1.0, Math.min(1, (u - 8.5) / 1.5));
         const moving = u < 6 || u > 8.5, ws = walkSwing(u * 1.2), [bx, bz] = P(f, ab, nb);
-        F.person({ x: bx, z: bz, yaw: u > 4.8 && u < 8.5 ? toStreet(f) - 0.5 : along(f, -1), y: Y0 + (moving ? ws.bob : 0), legs: moving ? ws.legs : [0, 0], arms: moving ? ws.arms : [0.1, 1.1], fore: moving ? null : [0.1, 1.5], ...extra(v, i) });
+        F.person({ x: bx, z: bz, yaw: u > 4.8 && u < 8.5 ? toStreet(f) - 0.5 : along(f, -1), y: Y0 + (moving ? ws.bob : 0), legs: moving ? ws.legs : [0, 0], arms: moving ? ws.arms : [0.1, 0.7], fore: moving ? null : [0.1, 1.45], ...extra(v, i) });
       }
     },
     foot: (v) => [v.a - 0.9, v.a + 0.8, -2.8, -1.6],
@@ -1723,7 +1742,8 @@ const K: Record<VK, Kind> = {
   },
 
   // A crossing sweeper by the corner sweeps the gutter clear where people cross, stooped over his
-  // broom, straightening now and then to touch his cap to someone going by.
+  // birch broom with both hands on it, swinging it from side to side, and straightens now and then
+  // to touch his cap to someone going by, the broom in his other hand.
   crossingSweeper: {
     w: (d, c) => (vic(c) && city(d, "downtown", "commercial", "residential") && day(c, 7, 19) && !c.snow ? (wet(c) ? 2.4 : 1.2) : 0), trigger: 0,
     place(v, c, r, V) {
@@ -1737,11 +1757,17 @@ const K: Record<VK, Kind> = {
       const stroke = Math.sin(t * 2.6), [x, z] = P(f, v.a, v.n), yaw = toStreet(f);
       // A little heap of what he has swept, along the gutter.
       for (let i = 0; i < 3; i++) { const [mx, mz] = P(f, v.a - 0.9 - i * 0.18, -3.15); F.box(mx, 0.04, mz, 0.22, 0.06 + i * 0.02, 0.2, f.h0 + i, 0, 0x4a3a2a); }
-      F.person({ x, z, s: 0.74, yaw: yaw + stroke * 0.15 * (1 - tip), lean: lerp(0.4, 0.05, tip), arms: [lerp(0.9, 0.3, tip), lerp(0.7, 2.6, tip)], fore: [lerp(1.0, 0.4, tip), lerp(0.8, 3.0, tip)], armOut: [0.1, 0.1], nod: lerp(0.3, -0.1, tip), dress: "boy", ...cs, shirt: RAGS[(v.seed >> 5) % RAGS.length], pants: 0x3a3226, hat: 0x3a342a });
-      // The broom: from the left hand down to its head out in the gutter, swinging across.
-      const hl = F.handL, s = stroke * (1 - tip), [bx, bz] = P(f, v.a + s * 0.45, -3.2 + tip * 0.6), by = tip > 0.3 ? Y0 + 0.03 : 0.04;
-      F.seg(hl[0], hl[1], hl[2], bx, by + 0.08, bz, 0.035, 0x6a5030);
-      F.box(bx, by + 0.04, bz, 0.12, 0.08, 0.42, f.h0 + Math.PI / 2 + s * 0.5, 0, 0x4a3a24);
+      // He swings from the hips with the stroke: his left hand high on the handle by his chest, his
+      // right low on it and out in front, the broom across his body to its head in the gutter
+      // ahead and to his right. Touching his cap, he lets go with his right and straightens.
+      const sy = yaw + stroke * 0.32 * (1 - tip);
+      F.person({ x, z, s: 0.74, yaw: sy, lean: lerp(0.35, 0.05, tip), arms: [0.1, lerp(0.8, 1.7, tip)], fore: [2.3, lerp(0.8, 3.5, tip)], armOut: [-0.35, lerp(-0.2, 0.25, tip)], nod: lerp(0.35, -0.1, tip), dress: "boy", ...cs, shirt: RAGS[(v.seed >> 5) % RAGS.length], pants: 0x3a3226, hat: 0x3a342a });
+      // The broom: a bundle of birch twigs bound on a handle, its tips on the setts, the handle up
+      // through the left hand (and the right, which lies on its line while he sweeps).
+      const hl = F.handL, fx = Math.cos(sy), fz = -Math.sin(sy), hx = x + fx * 0.9 + Math.sin(sy) * 0.35, hz = z + fz * 0.9 + Math.cos(sy) * 0.35;
+      const dx = hl[0] - hx, dy = hl[1] - 0.02, dz = hl[2] - hz, L = Math.hypot(dx, dy, dz), ux = dx / L, uy = dy / L, uz = dz / L;
+      F.seg(hx, 0.02, hz, hx + ux * 0.45, 0.02 + uy * 0.45, hz + uz * 0.45, 0.15, 0x6a5a3a);
+      F.seg(hx + ux * 0.4, 0.02 + uy * 0.4, hz + uz * 0.4, hl[0] + ux * 0.12, hl[1] + uy * 0.12, hl[2] + uz * 0.12, 0.03, 0x8a6a40);
     },
     foot: (v) => [v.a - 0.7, v.a + 0.7, -3, -2.0],
   },
