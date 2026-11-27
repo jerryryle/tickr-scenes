@@ -437,10 +437,11 @@ const VIC_DOME: readonly (readonly [number, number])[] = [[1, 0], [1, 0.12], [0.
 const VIC_OGEE: readonly (readonly [number, number])[] = [[1, 0], [0.86, 0.14], [0.62, 0.32], [0.46, 0.54], [0.3, 0.8], [0.06, 1]];
 
 // A park's lot: a cast-iron bandstand's roof over a kiosk for refreshments (its door to the path),
-// or a pavilion with a veranda along its front and a clock in its gable.
+// or a pavilion with a veranda along its front and a clock in its gable. A park has a lot on each
+// side, so the bandstand is the rarer of the two, and a park seldom has more than one.
 function vicParkLot(s: Batch, b: VicRect, y0: number, rnd: VicRand, door: VicDoor) {
   const W = b.x1 - b.x0, D = b.z1 - b.z0, cx = (b.x0 + b.x1) / 2;
-  if (rnd() < 0.55) {
+  if (rnd() < 0.25) {
     const R = vClamp(Math.min(W, D) / 2 - 0.9, 1.9, 2.8), n = 8, step = Math.PI * 2 / n, rot = -Math.PI / 2 - step / 2, cz = b.z0 + 1.1 + R;
     const top = facadePrism(s, cx, cz, R, n, rot, y0 + 0.35, [{ tile: FACADE.VICT_SHOPWIN, floors: 1, floorH: 2.9 }], VIC.green, 0, FACADE.VICT_DOOR);
     s.cyl(cx, y0 + 0.17, cz, R + 1.15, 0.34, VIC.flag, 8, 0, 0, Math.PI / 2 - rot);
