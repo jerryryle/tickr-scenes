@@ -816,6 +816,11 @@ export class Traffic {
     const c = id === undefined ? undefined : this.byId.get(id);
     return !!c && c.waitFor === -2 && c.v < 0.5;
   }
+  // Whether car `id` stands holding at its junction's line for its turn to book (held).
+  holdsAtLine(id: number | undefined): boolean {
+    const c = id === undefined ? undefined : this.byId.get(id);
+    return !!c && !!c.held && c.v < 0.5;
+  }
   // Whether booking owner o is behind car c on the same approach (from), still short of the line:
   // it can't come to the junction before c, so c doesn't wait for it, as from the lane beside.
   private behindOnApproach(o: Car, c: Car, from: number): boolean {
@@ -1274,10 +1279,11 @@ export class Traffic {
       // (The truck about to turn, a car beside it on the side it turns to (into the inner lane for
       // a left, its rear across the kerb lane for a right), the truck's nose ahead of the car's
       // middle: it treats it as in its lane and drops back behind it. Further ahead than that, it
-      // goes on, and the truck waits for it: street life's truckStop.) (Both standing, the car beside
-      // it already: it goes on past, as the truck waits for it; neither would ever move first.)
-      const bothStill = c.v < 0.1 && Math.abs(this.truckPath?.v ?? 0) < 0.1;
-      if (isTruck && !o.still && !bothStill && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
+      // goes on, and the truck waits for it: street life's truckStop.) (The truck standing, the car
+      // beside it goes on past, as the truck waits for it. Held only while it stood too, it would edge
+      // on a few centimetres a step and stop again, a minute to get by.)
+      const truckStill = Math.abs(this.truckPath?.v ?? 0) < 0.1;
+      if (isTruck && !o.still && !truckStill && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (A parked truck alongside, not yet clear of it sideways: held there while it eases out.)
       if (o.still && Math.abs(along) <= half && Math.abs(side) < rLat + c.kind.width * 0.5) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (Something standing beside it, a parked truck or a car, that its body would swing into as
@@ -1293,8 +1299,9 @@ export class Traffic {
       let onWay = false;
       if (turningNow && !ped && along > half && along < look + o.r) { const q = p.peek(Math.min(c.s + along, p.length), this.gw1); onWay = Math.hypot(o.x - q.x, o.z - q.z) < rLat + c.kind.width * 0.5; }
       // (A car alongside, or the truck, level or ahead, in the lane this one's path is moving it
-      // into: it waits, so the other goes on by, and then moves over behind it.)
-      if (!ped && !o.sweep && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
+      // into: it waits, so the other goes on by, and then moves over behind it. Not the truck
+      // standing, which waits for this one in turn.)
+      if (!ped && !o.sweep && !(isTruck && truckStill) && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
       // (And the truck coming up close behind in that lane, moving: the car doesn't move over across
       // its nose, which can't stop in the room left (seed 2539665337's city 16: a van moving over to
       // turn, its tail swinging into the truck's nose). It waits, and moves over once the truck has
@@ -1357,7 +1364,9 @@ export class Traffic {
       // lane, until there is a gap.)
       if ((laneChanging || turning || (rightSoon && !passTruck)) && c.dodge < -1.5 && otherLaneBlocked && !turning) c.dodgeTarget = c.dodge;
       else if (laneChanging || turning || (rightSoon && !passTruck)) c.dodgeTarget = 0;
-      else if ((sameDir && truckBehind < 40 && this.truckTurn !== 1) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } }
+      // (The lane it is moving over into filled before it got half way: back into its own. Kept
+      // moving over, it would come up against what is there and stand half across both.)
+      else if ((sameDir && truckBehind < 40 && this.truckTurn !== 1) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } else c.dodgeTarget = 0; }
       else if ((c.holdT -= dt) <= 0 && (c.dodge > -1.5 || !otherLaneBlocked)) c.dodgeTarget = 0;
     }
     if ((globalThis as any).TRAFFIC_DEBUG && gap < 4 && gapOwner < 0 && !gapPed && c.stillT > 4 && Math.floor(c.stillT * 10) % 20 === 0) (globalThis as any).TRAFFIC_DEBUG({ id: c.id, stillT: c.stillT, stillAhead, rightSoon, laneChanging, turning, merging, otherLaneBlocked, dodge: c.dodge, dodgeTarget: c.dodgeTarget, cable: c.cable, signal: hardStop < (c.next ? Infinity : p.length - 0.5), gap, cx: c.x, cz: c.z, ch: c.h, v: c.v, s: c.s, plen: p.length });
