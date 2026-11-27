@@ -6,6 +6,7 @@
 import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { bedRearX, planChores } from "./chores.ts";
 import type { Chore } from "./chores.ts";
+import { CARGO_MODELS } from "./cargomodels.ts";
 import { KERB } from "./grid.ts";
 import { DWELL, Journey } from "./journey.ts";
 import type { Aboard, DwellNow, Stop } from "./journey.ts";
@@ -22,32 +23,29 @@ export interface StageSpec {
   doorAt?: number;             // the door's middle along the truck (truck x; default: 2 m behind its back)
   doorHalf?: number;           // half the doorway's width (default: wide enough for a pallet)
   wider?: number;              // metres more pavement between the kerb and the building (default 0)
-  trees?: [number, number][];  // street trees on the pavement: truck x, metres out from the kerb
 }
 export interface Stage {
   spec: StageSpec; stop: Stop; chores: Chore[]; kerbDoor: KerbDoor | null;
   kerbZ: number; wallZ: number;   // the kerb's edge and the building's front (world z)
-  obstacles: { x: number; z: number; r: number }[];   // what stands on the pavement (world)
   journey: Journey;               // the stand-in: set `time` (seconds into the dwell) and pass it to Crew.update
   length: number;                 // the dwell's length (s)
   setTime(t: number): void;
 }
 
 // A stage from its words: model cargo kind, then any of "nodoor", "door=x" (the door's middle
-// along the truck), "half=x" (half the doorway's width), "wider=x" (that much more pavement), "tree=x,out" (a street tree, along the truck and out from the kerb; any number).
+// along the truck), "half=x" (half the doorway's width) and "wider=x" (that much more pavement).
 export function stageSpec(words: string[]): StageSpec {
   const [model, cargo, kind, ...rest] = words as [TruckModel, string, "pickup" | "drop", ...string[]];
-  const bad = (why: string) => { throw new Error(`stage "${words.join(" ")}": ${why} (model cargo pickup|drop [nodoor | door=x] [half=x] [wider=x] [tree=x,out ...])`); };
+  const bad = (why: string) => { throw new Error(`stage "${words.join(" ")}": ${why} (model cargo pickup|drop [nodoor | door=x] [half=x] [wider=x])`); };
   if (!model || !cargo || (kind !== "pickup" && kind !== "drop")) bad("needs a model, a cargo and pickup or drop");
   if (!(model in TRUCK_SLOTS)) bad(`no truck model "${model}"`);
   if (!CARGO_BY_ID.has(cargo)) bad(`no cargo "${cargo}"`);
   for (const w of rest) {
-    const nums = w.startsWith("door=") || w.startsWith("half=") ? [w.slice(5)] : w.startsWith("wider=") ? [w.slice(6)] : w.startsWith("tree=") ? w.slice(5).split(",") : w === "nodoor" ? [] : null;
-    if (!nums || nums.some((n) => n === "" || !Number.isFinite(Number(n))) || (w.startsWith("tree=") && nums.length !== 2)) bad(`can't read "${w}"`);
+    const nums = w.startsWith("door=") || w.startsWith("half=") ? [w.slice(5)] : w.startsWith("wider=") ? [w.slice(6)] : w === "nodoor" ? [] : null;
+    if (!nums || nums.some((n) => n === "" || !Number.isFinite(Number(n)))) bad(`can't read "${w}"`);
   }
   const at = rest.find((w) => w.startsWith("door=")), half = rest.find((w) => w.startsWith("half=")), wider = rest.find((w) => w.startsWith("wider="));
-  return { model, cargo, kind, door: !rest.includes("nodoor"), doorAt: at ? Number(at.slice(5)) : undefined, doorHalf: half ? Number(half.slice(5)) : undefined, wider: wider ? Number(wider.slice(6)) : undefined,
-    trees: rest.filter((w) => w.startsWith("tree=")).map((w) => w.slice(5).split(",").map(Number) as [number, number]) };
+  return { model, cargo, kind, door: !rest.includes("nodoor"), doorAt: at ? Number(at.slice(5)) : undefined, doorHalf: half ? Number(half.slice(5)) : undefined, wider: wider ? Number(wider.slice(6)) : undefined };
 }
 export function makeStage(spec: StageSpec): Stage {
   const L = truckLayout(spec.model), c = CARGO_BY_ID.get(spec.cargo)!;
@@ -57,7 +55,10 @@ export function makeStage(spec: StageSpec): Stage {
   // in it facing the street (-z).
   // (With no door, an open lot: the building well back, the loads staged on the pavement.)
   const door = spec.door ?? true, kerbZ = L.hw + 0.45, wallZ = kerbZ + KERB + (spec.wider ?? 0) + (door ? 0 : 9);
-  const dx = spec.doorAt ?? L.bedRear - 2, half = spec.doorHalf ?? 0.8;
+  // (Wide enough for a pallet, and for one on the pallet jack to go through flat, as the journey's
+  // doors are: journey.ts doorTakes.)
+  const pallet = c.handling === "palletJack" ? CARGO_MODELS[c.id]?.size[2] ?? 0 : 0;
+  const dx = spec.doorAt ?? L.bedRear - 2, half = spec.doorHalf ?? Math.max(0.8, pallet / 2 + 0.1);
   const kerbDoor: KerbDoor | null = door ? { side: 0, a: 0, n: 0, x: dx, z: wallZ, nx: 0, nz: -1, frame: 0xf2efe8, panel: 0x23365e, half, h: 2.3, plain: false, wide: half > 0.7 } : null;
   // The bed: this stop's loads aboard for a drop, nothing else.
   const aboard: Aboard[] = spec.kind === "drop" ? [{ job: 1, cargo: c.id, units, slotsPerUnit: c.slots, dest: "0,0", slot: 0 }] : [];
@@ -65,15 +66,16 @@ export function makeStage(spec: StageSpec): Stage {
   const before = bedRearX(L, spec.model, spec.kind === "pickup" ? [] : own), after = bedRearX(L, spec.model, spec.kind === "pickup" ? own : []);
   // (In the truck's frame, half a metre out from the door, facing it: as the journey has it.)
   const doorFrame = kerbDoor ? { x: kerbDoor.x, z: kerbDoor.z - 0.5, yaw: -Math.PI / 2, half } : null;
-  const obstacles = (spec.trees ?? []).map(([x, out]) => ({ x, z: kerbZ + out, r: 0.35 }));
-  const chores = planChores(spec.model, stop, null, 0, before, after, doorFrame, obstacles, [], null, [], true, 0, null);
+  const chores = planChores(spec.model, stop, null, 0, before, after, doorFrame, [], null, [], true, 0, null);
   const choreStart: number[] = [];
   let s = 0;
   for (const q of chores) { choreStart.push(s); s += q.len; }
   const length = DWELL.park + s + DWELL.startup;
   const st: any = { mode: "dwell", modeTime: 0, simTime: 0, stops: [stop], aboard, truck: spec.model, city: 0, spare: null, parked: null, s: 0 };
   const j: any = {
-    st, frac: 0, country: null, countryU: -1, chores, choreStart, path: null, kerbDoor, stackMode: null,
+    // (The city's clock, for the crew's idle motion: the dwell's time.)
+    get clockTime() { return st.simTime; },
+    st, frac: 0, country: null, countryU: -1, chores, choreStart, path: null, kerbDoor, stackMode: null, kerbSide: kerbZ,
     isDockStop: () => false, dockPlan: () => null, doorlessAhead: () => null, stackAhead: () => null,
     // (The front door as the journey has it: FrontDoorFx.)
     get frontDoorOpen() { return Object.getOwnPropertyDescriptor(Journey.prototype, "frontDoorOpen")!.get!.call(this); },
@@ -91,5 +93,5 @@ export function makeStage(spec: StageSpec): Stage {
       return { phase: q.group, t: tc - choreStart[g0], len: choreStart[g1] + chores[g1].len - choreStart[g0], chore: q, ct: tc - choreStart[i] };
     },
   };
-  return { spec, stop, chores, kerbDoor, kerbZ, wallZ, obstacles, journey: j as Journey, length, setTime(t: number) { st.modeTime = t; st.simTime = t; } };
+  return { spec, stop, chores, kerbDoor, kerbZ, wallZ, journey: j as Journey, length, setTime(t: number) { st.modeTime = t; st.simTime = t; } };
 }

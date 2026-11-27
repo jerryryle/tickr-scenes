@@ -81,7 +81,7 @@ for (const kind of ["gas", "truckstop", "fruit", "attraction"] as const)
 {
   const proc = (globalThis as any).process;
   let n = 0;
-  for (const seed of proc.argv[2] ? [Number(proc.argv[2])] : [1, 2, 3, 7, 11]) {
+  for (const seed of proc.argv[2] ? [Number(proc.argv[2])] : [1, 2, 3, 5, 7, 11, 13]) {
     const seen = new Set<string>();
     for (const m of [26, 40, 55, 60, 70, 85, 90, 100, 115, 120, 135, 150]) {
       const road = new Journey(readConfig({ seed } as SceneEnv), m * 60, "autumn").country;

@@ -11,7 +11,7 @@
 //  - the driver's head in what they hold (a warning only: a tall glass cake case, a museum crate
 //    drawn on its jack, known);
 //  - a team lift's worker jumping, or in the building out of its doorway, or in sight past it.
-// Args (all optional): model:cargo:kind[:nodoor | :door=x][:tree=x,out ...] ... (src/stage.ts
+// Args (all optional): model:cargo:kind[:nodoor | :door=x] ... (src/stage.ts
 // stageSpec). With none, a set across the truck models, tools and loads.
 import * as THREE from "three@0.187.0";
 import { Crew } from "../src/crew.ts";
@@ -29,7 +29,6 @@ const CASES = proc.argv.length > 2 ? proc.argv.slice(2) : [
   "box26:bagged:pickup", "box26:bagged:drop", "box26:pumpkins:drop:nodoor",
   "box16:boxes:drop", "reefer:frozen:drop", "reefer:frozen:pickup", "reefer:penguin:pickup", "reefer:cake:pickup",
   "reefer:frozen:drop:door=0.2", "box26:boxes:drop:door=1", "box26:bagged:drop:door=1",
-  "reefer:frozen:drop:door=0.2:tree=-1.6,0.7",
   "box26:sofa:drop", "box26:sofa:pickup", "box26:mattresses:drop", "box26:mattresses:pickup:door=3", "box26:canoes:pickup", "box26:canoes:drop",
   "box26:hotTub:pickup", "box26:hotTub:drop", "box26:museumCrate:pickup",
 ];
@@ -78,8 +77,6 @@ for (const cs of CASES) {
     // its foot has begun.)
     const onRamp = L.loader === "ramp" && Math.abs(D.z) < RAMP_HW && D.x < L.bedRear && D.x > L.bedRear - 3.7;
     if (c.kind === "walk" && c.a && c.b && c.a[1] < 0.3 && c.b[1] < 0.3 && !c.linear && !c.over && D.y > 0.5 && !onRamp) bad("the driver pops up to the floor on a walk on the ground", D.y, `${at} at ${D.x.toFixed(2)}, ${D.z.toFixed(2)}`);
-    // Through a street tree's trunk.
-    for (const o of S.obstacles) if (Math.hypot(D.x - o.x, D.z - o.z) < o.r + 0.1 && c.kind === "walk") bad("the driver walks through a tree", o.r + 0.1 - Math.hypot(D.x - o.x, D.z - o.z), `${at} at ${D.x.toFixed(2)}, ${D.z.toFixed(2)}, walking ${c.a?.map((v) => v.toFixed(2))} to ${c.b?.map((v) => v.toFixed(2))}`);
     // In the building: past its front, bar its doorway.
     if (D.z > S.wallZ + 0.05 && !(S.kerbDoor && Math.abs(D.x - S.kerbDoor.x) < S.kerbDoor.half - 0.15)) bad("the driver goes through the building's wall", D.z - S.wallZ, at);
     // Nor through its front door while it's shut (or no more than half open).

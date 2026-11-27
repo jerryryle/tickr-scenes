@@ -51,6 +51,9 @@ function byDriver(m: NonNullable<Chore["jack"]>, u: number): number {
 // one, carried on without a stop at the threshold (crew.ts flipDepth).
 export function jackIntoDoor(c?: Chore): boolean { return !!c && c.kind === "walk" && !!c.jack && jackMotion(c.jack) > 0; }
 const flipJack = (c?: Chore) => !!c && c.kind === "fetch" && !!c.flip && c.tool === "palletJack";
+// (And a hand truck's: wheeled on into the doorway, or on out of it, not stopping on its threshold:
+// its walk either side not eased to or from a stand there, wheelAt, nor the fetch, crew.ts flowing.)
+export const flipHandTruck = (c?: Chore) => !!c && c.kind === "fetch" && !!c.flip && c.tool === "handTruck";
 export interface Hold { lead: number; pivot: number; omega: number; rate: number; tip?: number; wheels?: boolean }
 export const EMPTY_HOLD: Hold = { lead: 0, pivot: 0, omega: 9, rate: 7 };
 
@@ -66,6 +69,9 @@ export interface CrewPath { rate: number; x: Float32Array; z: Float32Array; yaw:
 
 const RATE = 30;              // samples a second
 const AVG = 8;                // samples either side over which a move's sideways share is judged (samplePath)
+// Turning on the spot takes steps as walking this far (m) a radian does: a quarter turn, about two
+// short steps, the feet shuffled round under the hips (shares: pivot).
+const PIVOT_STEP = 0.5;
 const LOOK = 0.9;             // walking, the driver heads for the path this far ahead (m)
 const PRE_TURN = 0.55;        // and turns to face the next chore's way over its last this many seconds
 const CATCH = 0.45, CATCH_EXACT = 0.12;   // the time constant of catching up with the path (s)
@@ -104,7 +110,8 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
   };
   let ci = 0, x = 0, z = 0, yaw = yaw0, v = 0, ex = 0, ez = 0, steps = 0, first = true, back = false, entered = -1, travel = 0, dir = 1;
   let jack = false, rx = 0, rz = 0, jth = 0;   // a pallet jack where its last planned move left it: its middle, its heading
-  let snapAt: { i: number; ex: number; ez: number; ey: number; jdx: number; jdz: number; jh: number } | null = null;   // a snapped chore's start, as it really was
+  let snapAt: { i: number; ex: number; ez: number; ey: number; jdx: number; jdz: number; jh: number; going: boolean } | null = null;   // a snapped chore's start, as it really was
+  let lastMoved = 0, lastDx = 0, lastDz = 0;   // (how far, and which way, the driver moved over the sample before)
   let wheel: WheelWalk | null = null, wheelTo = -1, wheelT0 = 0, wheelT1 = 0;   // walks with a hand truck, as rolled and turned (wheelWalk): to chore wheelTo, from time wheelT0 to wheelT1
   for (let s = 0; s < n; s++) {
     const t = Math.min(s * dt, total - 1e-6);
@@ -126,10 +133,14 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
         const next = plan[j + 1];
         // (Round it next: facing its wheels. Drawn back next, the driver backing: facing back the way that goes.)
         const fy = next && (!isWalk(next) || next.round) ? nominal(next, 0).yaw : next?.backward && next.a && next.b ? Math.atan2(-(next.b[2] - next.a[2]), next.b[0] - next.a[0]) + Math.PI : NaN;
-        wheel = wheelWalk(x, z, yaw, plan.slice(ci, j + 1).map((q) => q.b!), h.lead, fy, !!c.forward, clear, c.a![1]);
+        // (Run on from a doorway, already going: from where the driver had got to as it starts,
+        // carried on from the sample before, so its first frame isn't held still.)
+        const fIn = flipHandTruck(plan[ci - 1]) && lastMoved > 0.2 * dt ? Math.min(1, (starts[ci] - (t - dt)) / dt) : 0;
+        wheel = wheelWalk(x + lastDx * fIn, z + lastDz * fIn, yaw, plan.slice(ci, j + 1).map((q) => q.b!), h.lead, fy, !!c.forward, clear, c.a![1]);
         wheelTo = j; wheelT0 = starts[ci]; wheelT1 = starts[j] + plan[j].len; wheel.dur = wheelT1 - wheelT0;
+        wheel.flowIn = flipHandTruck(plan[ci - 1]); wheel.flowOut = flipHandTruck(next);
       }
-      if (isWalk(c) && h.pivot > 0 && !c.round) {
+      if (isWalk(c) && (h.pivot > 0 || (c.noTurn && !!c.item && !c.helper)) && !c.round) {   // (noTurn: backing, whatever the driver holds alone)
         const dx = c.b![0] - c.a![0], dz = c.b![2] - c.a![2], len = Math.hypot(dx, dz);
         const off = Math.abs(wrap(Math.atan2(-dz, dx) - yaw));
         back = len > 0.05 && !c.forward && (c.noTurn ? off > Math.PI / 2 : len <= BACK_LEN && off > BACK_TURN);
@@ -158,10 +169,16 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
       // they hold really were as it began (the end of a pallet jack's planned moves, say), closing
       // on it over the walk in; turned round out of sight, what's held straight out ahead.
       if (!snapAt) {
-        const [jx0, jz0] = jack ? [rx, rz] : [NaN, NaN];
-        snapAt = { i: ci, ex: x - nm.x, ez: z - nm.z, ey: wrap(yaw - nm.yaw), jdx: jx0 - x, jdz: jz0 - z, jh: jth };
+        // (From where the chore starts, not where it has got to by this first sample; and the
+        // driver as they were then, walking straight on into it, carried on from the sample before
+        // by how far they were going: kept going, not held still a frame.)
+        const going = lastMoved > 0.2 * dt, f = going ? Math.min(1, (starts[ci] - (t - dt)) / dt) : 0;
+        const [jx0, jz0] = jack ? [rx, rz] : [NaN, NaN], n0 = nominal(c, 0), x0 = x + lastDx * f, z0 = z + lastDz * f;
+        snapAt = { i: ci, ex: x0 - n0.x, ez: z0 - n0.z, ey: wrap(yaw - nm.yaw), jdx: jx0 - x, jdz: jz0 - z, jh: jth, going };
       }
-      const k = u < 0.5 ? 1 - jackEase(Math.min(1, u / 0.35)) : 0;
+      // (Closing on it eased from a stand; or, walked on into it already going, evenly over its
+      // first moment, so the step that's left of the walk before is taken at a walk.)
+      const k = u >= 0.5 ? 0 : snapAt.going ? Math.max(0, 1 - u * c.len / SNAP_CLOSE) : 1 - jackEase(Math.min(1, u / 0.35));
       nx = nm.x + snapAt.ex * k; nz = nm.z + snapAt.ez * k;
       const y1 = nm.yaw + snapAt.ey * k;
       dy = wrap(y1 - yaw); yaw = y1; v = 0; ex = ez = 0;
@@ -241,8 +258,9 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
     // the way the driver goes along their facing, or as they were going when that's unclear
     // (sideways, turning on the spot, which takes steps too).
     const moved = Math.hypot(nx - x, nz - z), fwd = (nx - x) * Math.cos(yaw) - (nz - z) * Math.sin(yaw);
+    lastMoved = moved; lastDx = nx - x; lastDz = nz - z;
     if (Math.abs(fwd) > 0.3 * moved && moved > 1e-5) dir = fwd > 0 ? 1 : -1;
-    steps += dir * (moved + Math.abs(dy) * 0.22);
+    steps += dir * (moved + Math.abs(dy) * PIVOT_STEP);
     travel += dir * moved;   // (the ground covered alone: what rolls a drum)
     x = nx; z = nz;
     P.x[s] = x; P.z[s] = z; P.yaw[s] = yaw; P.steps[s] = steps; P.travel[s] = travel;
@@ -272,14 +290,18 @@ export function buildCrewPath(plan: Chore[], nominal: (c: Chore, u: number) => N
 // (arc: the wheels about (cx, cz) from angle a0 by h1 - h0, radius rr.)
 interface WheelPart { kind: "turn" | "roll" | "arc"; wx0: number; wz0: number; wx1: number; wz1: number; h0: number; h1: number; w: number; near: number; back?: boolean; cx?: number; cz?: number; a0?: number; rr?: number }
 // (seg: the parts' runs, each eased as one: its first part, its last, and its share of the time.)
-interface WheelWalk { lead: number; parts: WheelPart[]; total: number; segs: { i0: number; i1: number; w: number }[]; dur: number }
+// (flowIn, flowOut: run on from a doorway, or on into one, not from or to a stand there: flipHandTruck.)
+interface WheelWalk { lead: number; parts: WheelPart[]; total: number; segs: { i0: number; i1: number; w: number }[]; dur: number; flowIn?: boolean; flowOut?: boolean }
 // The radii a corner is rounded on, the widest that fits first (m, the wheels' path).
 const ARC_R = [1.4, 1.0, 0.7, 0.45];
 // Coming to a spot to face a given way, the wheels roll straight that way for the last this far
 // (m), where there is room.
 const SQUARE_RUN = 2.0;
 // A movement eases in and out over this long at each end (s), at most a third of it.
-const EASE_T = 0.45;
+export const EASE_T = 0.45;
+// A fetch turned round inside a doorway, walked on into already going, takes up what's left of the
+// way to its start over this long (s).
+const SNAP_CLOSE = 0.15;
 // (Turning it on its wheels where walking round them at arm's length would take the driver into
 // something, the truck: held more upright, nearer, the nearest this, through the middle of the turn.)
 const WHEEL_NEAR = [0.9, 0.75, 0.6];
@@ -443,7 +465,8 @@ function wheelAt(m: WheelWalk, u: number): [number, number, number, number] {
   for (const q of m.segs) { sg = q; if (at <= q.w) break; at -= q.w; }
   // (Through the movement, by its time: eased in over EASE_T, at an even pace, eased out.)
   const f = sg.w > 1e-6 ? Math.min(1, Math.max(0, at / sg.w)) : 1;
-  let s = sg.i0 === sg.i1 && m.parts[sg.i0].kind === "turn" ? sg.w * jackEase(f) : sg.w * evenPace(f, Math.min(1 / 3, EASE_T / Math.max(1e-3, m.dur * sg.w / m.total)));
+  const ease = Math.min(1 / 3, EASE_T / Math.max(1e-3, m.dur * sg.w / m.total));
+  let s = sg.i0 === sg.i1 && m.parts[sg.i0].kind === "turn" ? sg.w * jackEase(f) : sg.w * evenPace(f, m.flowIn && sg === m.segs[0] ? 0 : ease, m.flowOut && sg === m.segs[m.segs.length - 1] ? 0 : ease);
   let p = m.parts[sg.i0];
   for (let i = sg.i0; i <= sg.i1; i++) { p = m.parts[i]; if (s <= p.w || i === sg.i1) break; s -= p.w; }
   const v = p.w > 1e-6 ? Math.min(1, Math.max(0, s / p.w)) : 1, k = v;
@@ -455,30 +478,33 @@ function wheelAt(m: WheelWalk, u: number): [number, number, number, number] {
   return [wx - Math.cos(h) * r, wz + Math.sin(h) * r, h, r];
 }
 // How far through a movement at f of its time (both 0..1): its pace eased up from a stand over the
-// first `a` of the time and back down over the last, smoothly, and even between.
-function evenPace(f: number, a: number) {
+// first `a` of the time and back down over the last `b`, smoothly, and even between.
+function evenPace(f: number, a: number, b = a) {
   const I = (x: number) => x * x * x - x * x * x * x / 2;   // (the smoothstep's integral)
-  const total = 1 - a;
-  if (a <= 0) return f;
+  const total = 1 - (a + b) / 2;
   if (f < a) return a * I(f / a) / total;
-  if (f > 1 - a) return 1 - a * I((1 - f) / a) / total;
+  if (f > 1 - b) return 1 - b * I((1 - f) / b) / total;
   return (a / 2 + (f - a)) / total;
 }
 
 // How much of the way about sample i goes along the facing (along, 0..1: side-stepping, the rest),
-// and across it (lat, signed: to the right, +). Over a quarter second either side, by the ground
-// each sample covers: from one sample alone, the drift as a walk comes to a stop read as
-// side-stepping, and the stride narrowed at a stroke, the planted foot sliding.
-function shares(P: CrewPath, i: number, out: { along: number; lat?: number }) {
+// and across it (lat, signed: to the right, +), and how much of the stepping is turning on the
+// spot (pivot, 0..1), which counts as along, the feet kept under the hips. Over a quarter second
+// either side, by the steps each sample takes: from one sample alone, the drift as a walk comes to
+// a stop read as side-stepping, and the stride narrowed at a stroke, the planted foot sliding.
+function shares(P: CrewPath, i: number, out: { along: number; lat?: number; pivot?: number }) {
   const n = P.x.length;
-  let fw = 0, mm = 0, lt = 0;
+  let fw = 0, mm = 0, lt = 0, tr = 0;
   for (let j = Math.max(0, i - AVG), e = Math.min(n - 1, i + 1 + AVG); j < e; j++) {
     const mx = P.x[j + 1] - P.x[j], mz = P.z[j + 1] - P.z[j];
     fw += Math.abs(mx * Math.cos(P.yaw[j]) - mz * Math.sin(P.yaw[j])); mm += Math.hypot(mx, mz);
     lt += mx * Math.sin(P.yaw[j]) + mz * Math.cos(P.yaw[j]);
+    tr += Math.abs(wrap(P.yaw[j + 1] - P.yaw[j])) * PIVOT_STEP;
   }
-  out.along = mm > 1e-5 ? Math.min(1, fw / mm) : 1;
-  out.lat = mm > 1e-5 ? Math.max(-1, Math.min(1, lt / mm)) : 0;
+  const all = mm + tr;
+  out.along = all > 1e-5 ? Math.min(1, (fw + tr) / all) : 1;
+  out.lat = all > 1e-5 ? Math.max(-1, Math.min(1, lt / all)) : 0;
+  out.pivot = all > 1e-5 ? tr / all : 0;
   return out;
 }
 
@@ -486,7 +512,7 @@ function shares(P: CrewPath, i: number, out: { along: number; lat?: number }) {
 // counting back when walking backwards), speed (m/s), how much of the move is along the facing
 // (along, 0..1), and a pallet jack's steering wheel and
 // heading (jx, jz, jyaw; NaN with none in hand).
-export function samplePath(P: CrewPath, t: number, out: { x: number; z: number; yaw: number; steps: number; gait?: number; travel: number; lat?: number; speed: number; along: number; jx: number; jz: number; jyaw: number; lead?: number }) {
+export function samplePath(P: CrewPath, t: number, out: { x: number; z: number; yaw: number; steps: number; gait?: number; travel: number; lat?: number; pivot?: number; speed: number; along: number; jx: number; jz: number; jyaw: number; lead?: number }) {
   const f = Math.max(0, t * P.rate), n = P.x.length, i = Math.min(n - 2, Math.floor(f)), k = Math.min(1, f - i);
   out.x = P.x[i] + (P.x[i + 1] - P.x[i]) * k;
   out.z = P.z[i] + (P.z[i + 1] - P.z[i]) * k;

@@ -105,9 +105,10 @@ export class Batch {
   cyl(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotZ = 0, rotY = 0) {
     this.emit(batchTemplate("cyl" + seg, () => new THREE.CylinderGeometry(1, 1, 1, seg)), x, y, z, color, rotY, rotX, rotZ, r, h, r);
   }
-  // Points up; rotX = Math.PI turns it point down. rotY turns it about its axis.
-  cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotY = 0) {
-    this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, rotY, rotX, 0, r, h, r);
+  // Points up; rotX = Math.PI turns it point down. rotY turns it about its axis; rotZ = -Math.PI / 2 lays it
+  // down pointing along x.
+  cone(x: number, y: number, z: number, r: number, h: number, color: number, seg = 8, rotX = 0, rotY = 0, rotZ = 0) {
+    this.emit(batchTemplate("cone" + seg, () => new THREE.ConeGeometry(1, 1, seg)), x, y, z, color, rotY, rotX, rotZ, r, h, r);
   }
   // An open cylinder (it has no end caps) is for a piece of a chain whose ends are inside its neighbours or
   // under something (storybook-buildings-town.ts sbTube), and has half the triangles of a capped one.

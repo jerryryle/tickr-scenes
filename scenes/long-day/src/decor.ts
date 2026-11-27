@@ -29,12 +29,6 @@ export function pavementObstacle(x: number, z: number, r: number, kind = 0) { PA
 export function keepClear(x: number, z: number, r: number) { PAVEMENT.keep?.push(x, z, r); }
 // What a pavement obstacle is, for the street life that uses it (vignettes.ts): 0 anything else.
 export const PK = { hydrant: 1, trash: 2, bench: 3, mailbox: 4, news: 5, meter: 6, shelter: 7, rack: 8, lamp: 9, tree: 10 } as const;
-// How far out what stands on the pavement reaches at hand height (what two carry between them,
-// chores.ts): a street tree only its trunk, over its pit; the rest as for the feet. Carried at the
-// shoulder (`high`, chores.ts HIGH_CARRY): over what is lower, a bin, a bench, nothing.
-export const TRUNK_R = 0.2;
-const LOW = new Set<number>([PK.hydrant, PK.trash, PK.bench, PK.news, PK.rack]);
-export const handR = (r: number, kind?: number, high = false) => kind === PK.tree ? TRUNK_R : high && kind !== undefined && LOW.has(kind) ? NaN : r;   // (NaN: passed over)
 // A vehicle parked off the street (in a dock's yard), axis-aligned from (x0, z0) to (x1, z1).
 export function parkedObstacle(x0: number, z0: number, x1: number, z1: number) { PAVEMENT.boxes?.push(x0, z0, x1, z1); }
 export const DC = {

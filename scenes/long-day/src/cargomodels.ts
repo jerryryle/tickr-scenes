@@ -75,7 +75,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     }
   } },
   // Giant lollipops are three swirled discs on sticks standing in a striped tub.
-  lollipops: { size: [0.5, 0.95, 0.36], build: (b, x, y, z, i) => {
+  lollipops: { size: [0.5, 0.95, 0.7], build: (b, x, y, z, i) => {
     b.cyl(x, y + 0.13, z, 0.2, 0.26, vpick([0xff7fb5, 0x6fe0e8, 0xf2c230], i), 10);
     b.cyl(x, y + 0.24, z, 0.21, 0.05, CK.white, 10);
     const cols = [[0xff5a4e, CK.white], [0x9a6cf0, 0xfbe58a], [0x5fd3a0, 0xff7fb5]];
@@ -147,7 +147,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   } },
   paper: { size: [0.45, 0.3, 0.3], build: (b, x, y, z) => { b.box(x, y + 0.15, z, 0.45, 0.3, 0.3, CK.white); b.box(x, y + 0.2, z, 0.455, 0.06, 0.305, 0x2a5fb0); } },
   appliances: { size: [0.75, 1.7, 0.75], build: (b, x, y, z) => { carton(b, x, y, z, 0.75, 1.7, 0.75); b.box(x + 0.376, y + 1.0, z, 0.01, 0.8, 0.5, CK.white); } },
-  mattresses: { size: [1.05, 0.3, 1.95], build: (b, x, y, z) => { b.box(x, y + 0.15, z, 1.05, 0.3, 1.95, 0xdfe8f0); b.box(x, y + 0.15, z, 1.06, 0.04, 1.96, 0xb8c8d8); } },   // carried and stowed across
+  mattresses: { size: [1.95, 1.05, 0.3], build: (b, x, y, z) => { b.box(x, y + 0.525, z, 1.95, 1.05, 0.3, 0xdfe8f0); b.box(x, y + 0.525, z, 1.96, 1.06, 0.04, 0xb8c8d8); } },   // stood on its long edge: carried and stowed so, as movers do
   restaurantSupply: { size: [0.45, 0.36, 0.4], build: (b, x, y, z) => { carton(b, x, y, z, 0.45, 0.36, 0.4); b.box(x + 0.226, y + 0.2, z, 0.01, 0.1, 0.3, CK.red); } },
   // ---- uncommon ----
   motorcycles: { size: [1.9, 1.15, 0.7], build: (b, x, y, z, i) => {
@@ -202,9 +202,18 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     }
   } },
   bicycles: { size: [1.3, 0.75, 0.25], build: (b, x, y, z) => { carton(b, x, y, z, 1.3, 0.75, 0.25); b.box(x, y + 0.4, z + 0.126, 0.6, 0.3, 0.01, 0x2a7fd4); } },
+  // (A base on short legs, two seat cushions between the arms, the back along +z with two back
+  // cushions leaning on it: the seat towards the street, set out on the pavement.)
   sofa: { size: [2.1, 0.85, 0.9], build: (b, x, y, z) => {
-    b.box(x, y + 0.42, z, 2.1, 0.85, 0.9, 0x3d5a8a);
-    for (const xx of [-0.6, 0, 0.6]) b.box(x + xx, y + 0.42, z, 0.04, 0.86, 0.91, 0x2c4470);
+    for (const lx of [-0.95, 0.95]) for (const lz of [-0.36, 0.36]) b.box(x + lx, y + 0.04, z + lz, 0.06, 0.08, 0.06, 0x2a1d14);
+    b.box(x, y + 0.24, z, 2.1, 0.32, 0.9, 0x2c4470);
+    // (The back a cm in from the base's ends and the arms a cm out past them: shared planes flicker.)
+    b.box(x, y + 0.6, z + 0.33, 2.08, 0.5, 0.24, 0x2c4470);
+    for (const ax of [-0.96, 0.96]) b.box(x + ax, y + 0.53, z - 0.06, 0.2, 0.26, 0.78, 0x3d5a8a);
+    for (const cx of [-0.42, 0.42]) {
+      b.box(x + cx, y + 0.47, z - 0.1, 0.82, 0.14, 0.62, 0x4a6aa0);
+      b.box(x + cx, y + 0.66, z + 0.15, 0.82, 0.36, 0.14, 0x4a6aa0);
+    }
   } },
   tvs: { size: [1.3, 0.8, 0.18], build: (b, x, y, z) => { carton(b, x, y, z, 1.3, 0.8, 0.18); b.box(x, y + 0.42, z + 0.091, 1.0, 0.5, 0.01, 0x111111); } },
   lumber: { size: [3.6, 0.65, 1.0], dunnage: DUNNAGE, build: (b, x, y, z, i) => {
@@ -224,8 +233,9 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     for (let k = 0; k < 6; k++) b.box(x + 0.326, y + 0.3 + k * 0.28, z - 0.3, 0.01, 0.04, 0.04, 0x2ef06a);
   } },
   xmasTrees: { size: [1.9, 0.6, 0.6], build: (b, x, y, z) => {
+    // A netted tree lying down along x, its trunk at the back and its tip at the front.
     b.cyl(x - 0.85, y + 0.3, z, 0.06, 0.25, 0x5a3a24, 6, 0, Math.PI / 2);
-    b.cone(x + 0.1, y + 0.3, z, 0.3, 1.7, 0x1f6b3a, 7);   // a netted tree lying down (cone tip points up; reads at LED scale)
+    b.cone(x + 0.1, y + 0.3, z, 0.3, 1.7, 0x1f6b3a, 7, 0, 0, -Math.PI / 2);
   } },
   pumpkins: { size: [1.0, 0.95, 1.0], palletized: true, build: (b, x, y, z) => {
     b.box(x, y + 0.35, z, 1.0, 0.7, 1.0, 0x9a7444);

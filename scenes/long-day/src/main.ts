@@ -37,7 +37,7 @@ import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
 import type { CityMaterials, CityPlan } from "./city.ts";
 import { SEA_COLOR, SEA_Y, shoreMoorings } from "./city.ts";
-import { facilityAt, facilityName, siteLayout } from "./facilities.ts";
+import { DOCK_DEPTH, DOCK_PLATFORM, facilityAt, facilityName, siteLayout } from "./facilities.ts";
 import { ATLAS_UPLOAD, marquee, plateAtlas, signAtlas } from "./signs.ts";
 import { CARGO_BY_ID, TRUCK_SLOTS } from "./cargo.ts";
 import { smooth } from "./route.ts";
@@ -74,7 +74,7 @@ const FORK_SPOT_RADIUS = 1.8;   // the spotlight on the forklift in a docked tra
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
 const PREFETCH_STEP = 20, PREFETCH_MAX = 320, PREFETCH_STOPS = 3, ENTRY_PREFETCH = 3;   // ENTRY_PREFETCH: blocks on in from the gate built coming in to town
-const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam" && DEBUG_VIEW !== "top" && !DEBUG_VIEW.startsWith("crew");   // test renders with a tour camera
+const TOUR_VIEW = DEBUG_VIEW !== "" && DEBUG_VIEW !== "scrub" && DEBUG_VIEW !== "countryTop" && DEBUG_VIEW !== "rear" && DEBUG_VIEW !== "door" && DEBUG_VIEW !== "yard" && DEBUG_VIEW !== "dock" && DEBUG_VIEW !== "dockIn" && DEBUG_VIEW !== "dockSide" && DEBUG_VIEW !== "siteEdge" && DEBUG_VIEW !== "jam" && DEBUG_VIEW !== "top" && !DEBUG_VIEW.startsWith("crew");   // test renders with a tour camera
 
 export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   setWorldBytes(assets[WORLD_ASSET].bytes);   // (every city and road, packed: worlddata.ts)
@@ -610,6 +610,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       }
       if (jamShot) { engine.camera.position.set(jamShot.x, jamShot.y, jamShot.z); engine.camera.lookAt(jamShot.lx, 1.8, jamShot.lz); }
       else { const h = truck.heading; engine.camera.position.set(p.x + Math.cos(h) * 30, 7, p.z - Math.sin(h) * 30); engine.camera.lookAt(p.x, 1.5, p.z); }
+      focus.copy(p); updateDriverSpot(engine.camera, null); return;
+    }
+    if (DEBUG_VIEW === "dockIn" || DEBUG_VIEW === "dockSide") {   // test renders, at a dock: from the platform's back by the building's wall, out into the truck; or on the platform beside the bay, the street side
+      const L = truckLayout(truck.model), h = truck.heading, p = truck.root.position, P = DOCK_PLATFORM;
+      const at = (x: number, y: number, z: number) => new THREE.Vector3(p.x + Math.cos(h) * x + Math.sin(h) * z, y, p.z - Math.sin(h) * x + Math.cos(h) * z);
+      engine.camera.fov = 50; engine.camera.updateProjectionMatrix();
+      if (DEBUG_VIEW === "dockIn") { engine.camera.position.copy(at(L.rear - DOCK_DEPTH + 0.3, P + 2.3, 0.6)); engine.camera.lookAt(at(L.rear + 4, P + 0.5, 0)); }
+      else { engine.camera.position.copy(at(L.rear - 1.4, P + 2.4, -4.0)); engine.camera.lookAt(at(L.rear + 1.0, P + 0.5, 0)); }
       focus.copy(p); updateDriverSpot(engine.camera, null); return;
     }
     if (DEBUG_VIEW === "top") {   // test renders: straight down over the back of the truck and the pavement beside it, the truck along the frame, the pavement below it

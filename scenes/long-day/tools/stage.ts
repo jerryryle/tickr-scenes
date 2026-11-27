@@ -3,7 +3,7 @@
 // them. Build and render it (and a clip of it) with
 //   make stage [STAGE="box26 boxes drop"] [VIEW=quarter] [FROM=0] [SECS=12] [SPEED=1]
 //     -> build/long-day-stage/stage.mp4
-// STAGE: model cargo kind [nodoor | door=x (the door's middle along the truck)] [tree=x,out ...]; VIEW: quarter (from behind, by the street), side (along the
+// STAGE: model cargo kind [nodoor | door=x (the door's middle along the truck)]; VIEW: quarter (from behind, by the street), side (along the
 // truck's kerb side), rear (straight behind), top (straight down), corner (fixed on its back from the street side), into (fixed, in through its back), climb (fixed, side on to its back, close); FROM: seconds into the stop.
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
@@ -44,13 +44,12 @@ export default function createScene({ sys, assets }: SceneInputs): Scene {
         b.box((dx1 + x1) / 2, H / 2, W + T / 2, x1 - dx1, H, T, 0x7a5040);
         b.box(d.x, (d.h + H) / 2, W + 0.15, 2 * d.half, H - d.h, 0.3, 0x7a5040);
         // (The room: a floor at the pavement's height, its walls and ceiling dark.)
-        b.box(d.x, d.h + 0.05, W + 3, 2 * d.half + 6, 0.1, 6, 0x111111);
-        b.box(d.x, CURB_H, W + 3, 2 * d.half + 6, 0.02, 6, 0x222222);
-        for (const s of [-1, 1]) b.box(d.x + s * (d.half + 3), H / 2, W + 3, 0.1, H, 6, 0x111111);
-        b.box(d.x, H / 2, W + 5.95, 2 * d.half + 6, H, 0.1, 0x111111);
+        // (Deep enough for a line of goats led in behind the driver: chores.ts flipIn.)
+        b.box(d.x, d.h + 0.05, W + 4.5, 2 * d.half + 6, 0.1, 9, 0x111111);
+        b.box(d.x, CURB_H, W + 4.5, 2 * d.half + 6, 0.02, 9, 0x222222);
+        for (const s of [-1, 1]) b.box(d.x + s * (d.half + 3), H / 2, W + 4.5, 0.1, H, 9, 0x111111);
+        b.box(d.x, H / 2, W + 8.95, 2 * d.half + 6, H, 0.1, 0x111111);
       } else b.box(0, H / 2, W + T / 2, 80, H, T, 0x7a5040);
-      // (Street trees: a trunk and a crown.)
-      for (const o of S.obstacles) { b.box(o.x, 1.4, o.z, 0.3, 2.8, 0.3, 0x5a3c22); b.box(o.x, 3.6, o.z, 2.2, 1.8, 2.2, 0x3f7a3a); }
       scene.add(b.build(mat)!);
       const images = {} as Record<LiveryName, CanvasImageSource>;
       const imgs = await Promise.all(LIVERY_ASSETS.map((n) => (assets as any)[n].loadImage()));

@@ -45,7 +45,8 @@ export class DockFx {
   }
 
   update(j: Journey) {
-    const st = j.st, dock = st.mode === "reverse" || st.mode === "dwell" ? j.dock : null;
+    // (A tractor-trailer's door dwell, journey.ts doorDwell, is out in front of the bay: as driving.)
+    const st = j.st, doors = st.mode === "dwell" && !!st.doors, dock = st.mode === "reverse" || (st.mode === "dwell" && !doors) ? j.dock : null;
     let door: DockDoor | undefined, H = 0, open = 0, lip = 0;
     // Along the bay path, as the truck is drawn (between steps); its leading axle, a tractor's
     // trailer's, is `trail` short of it, docked at 0.
@@ -59,7 +60,7 @@ export class DockFx {
         const ph = j.dwellPhase();
         lip = ph.phase === "park" ? ease(ph.t / ph.len) : ph.phase === "enter" ? 1 - ease(ph.t / ph.len) : ph.phase === "startup" ? 0 : 1;
       }
-    } else if (st.mode === "drive") {
+    } else if (st.mode === "drive" || doors) {
       // Waiting in the bay for the route out (dockExit), the door stays up; pulling out, it comes
       // down behind the truck, from where the route starts in the bay (a tractor's trail along).
       const k = st.dockExit?.geom ?? st.route?.dock;
@@ -75,7 +76,7 @@ export class DockFx {
     // comes and goes away from the truck, never beside it.
     let lipDoor = dock ? door : undefined, lipH = H;
     if (!lipDoor) {
-      const last = st.lastDock?.door ? st.lastDock : null, next = st.mode === "drive" && !st.dockExit && j.path ? j.dock : null;
+      const last = st.lastDock?.door ? st.lastDock : null, next = (st.mode === "drive" || doors) && !st.dockExit && j.path ? j.dock : null;
       if (next?.geom.door && s >= this.lipSwitch(j.path!, last?.door ?? null, next.geom.door)) { lipDoor = next.geom.door; lipH = next.H; }
       else if (last) { lipDoor = last.door; lipH = last.H; }
     }
