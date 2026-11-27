@@ -25,7 +25,7 @@ export default function createScene({ sys, assets }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera, crew: Crew, truck: Truck;
   let door: FrontDoorFx | null = null, shut: THREE.Mesh | null = null;
   const words = STAGE_SPEC.split(/\s+/), vic = words.includes("vic");
-  const spec = stageSpec(words.filter((w) => w !== "vic")), S = makeStage(spec), model = spec.model;
+  const spec = { ...stageSpec(words.filter((w) => w !== "vic")), victorian: vic }, S = makeStage(spec), model = spec.model;
   // (The street's, the pavement's and the building's colours: the Victorian city's setts, flags and brick.)
   const STREET = vic ? 0x5c5852 : 0x34363a, PAVE = vic ? 0x8f897c : 0x9a9890, WALL = vic ? 0x8a4632 : 0x7a5040;
   let last = -1;
