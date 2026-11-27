@@ -224,6 +224,10 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
 
   // ---- the teacup ---------------------------------------------------------------------------------
   const CUP: readonly (readonly [number, number])[] = [[0, 0], [0.55, 0.02], [0.72, 0.12], [0.9, 0.45], [1, 0.9], [0.96, 1]];
+  // CUP_IN is the cup's inside wall, from the rim down to below the tea. It runs downward, so its faces
+  // point in toward the middle: the outside wall is one-sided, and from above its far side shows only
+  // these.
+  const CUP_IN: readonly (readonly [number, number])[] = [[0.96, 1], [0.93, 1], [0.91, 0.9], [0.87, 0.72]];
   const teacup: StoryRig = {
     id: "teacup", len: 2.8, width: 2.8, vmax: 6,
     parts: [
@@ -233,6 +237,7 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
       },
       (b) => {   // this draws the cup, its handle, a band of dots and two riders' heads over its rim
         b.lathe("cup", CUP, 0, 0, 0, 1.15, 1.25, SB.cream, 16);
+        b.lathe("cupin", CUP_IN, 0, 0, 0, 1.15, 1.25, SB.cream, 16);
         b.cyl(0, 0.85, 0, 1.08, 0.18, SB.violet, 16);
         for (let k = 0; k < 10; k++) { const a = k / 10 * TAU; b.ico(Math.cos(a) * 1.07, 0.55, Math.sin(a) * 1.07, 0.09, SB.pink); }
         sbTube(b, sbCurve(8, (t): SbP3 => [1.05 + Math.sin(t * Math.PI) * 0.45, 1.0 - t * 0.6, 0]), () => 0.08, () => SB.cream, 6, 0, true);

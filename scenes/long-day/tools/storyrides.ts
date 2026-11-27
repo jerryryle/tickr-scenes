@@ -12,8 +12,8 @@ import type { StoryRig } from "../src/storyvehicles.ts";
 
 const RIDES_CLIP = 0;
 const ROW = 14, COPIES = 3, SPEED = 4;
-// STRIDE holds a stride's length (m) for each, so the copies show three points in it.
-const STRIDE: Record<string, number> = { hamster: 3.0, strider: 2.4, caterpillar: 2.2, pogo: 2.6, unicycle: 2.5, balloon: 3, teacup: 3, snail: 1.2 };
+// RIDE_STRIDE holds a stride's length (m) for each, so the copies show three points in it.
+const RIDE_STRIDE: Record<string, number> = { hamster: 3.0, strider: 2.4, caterpillar: 2.2, pogo: 2.6, unicycle: 2.5, balloon: 3, teacup: 3, snail: 1.2 };
 
 export default function createScene({ sys }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera;
@@ -54,7 +54,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
       const n = storyRigs().length, i = RIDES_CLIP ? Math.floor(f.t / 3) % n : Math.floor(f.t) % n, z = i * ROW;
       rigs.forEach((row, ri) => row.forEach((o, c) => {
         const clip = !!RIDES_CLIP && ri === i, show = RIDES_CLIP ? clip && c === 0 : ri === i && (Math.floor(f.t) < n || c === 0);
-        const odo = clip ? (f.t % 3) * SPEED : (c * STRIDE[o.rig.id]) / COPIES, x = clip ? -6 + odo : c * (o.rig.len + 3.5);
+        const odo = clip ? (f.t % 3) * SPEED : (c * RIDE_STRIDE[o.rig.id]) / COPIES, x = clip ? -6 + odo : c * (o.rig.len + 3.5);
         const t = clip ? f.t : 1.3 + c * 0.7;
         o.rig.pose({ odo, v: SPEED, t, seed: c * 1.7 + ri }, tmp);
         const base = new THREE.Matrix4().makeTranslation(x, 0, z);
