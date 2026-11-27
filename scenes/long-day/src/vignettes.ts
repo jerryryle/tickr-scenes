@@ -5,7 +5,9 @@
 // a utility hatch, a crossing guard, the morning coffee queue, a couple under a streetlight, a
 // falafel cart and a club's velvet rope after dark, a sled, a shoveller and a snowman in the
 // snow, an open hydrant on a hot afternoon, and in the parks chess, tai chi, a frisbee dog and a
-// kite.
+// kite. The Victorian city keeps out those that read modern (MODERN) and has its own: a
+// lamplighter at dusk and dawn, a chimney sweep and his boy, a newsboy, an organ grinder and his
+// monkey, Punch and Judy in the park, a crossing sweeper, a flower seller and the muffin man.
 // Each is anchored to a block side's frontage (a face of the street graph, citygraph.ts: `a`
 // along it, `n` across, 0 at the building line and -3 at the kerb face on a 3 m sidewalk), chosen
 // for its district, the hour, the weather and the season, and placed on the furniture it needs (decor.ts PK) or a free stretch of pavement.
@@ -13,9 +15,9 @@
 // so stepping only advances the clock and drawing is the pose at a moment: seeking replays them
 // exactly. People who are done walk off as ordinary pedestrians (Crowd.adopt).
 import { Rng, hash2, mulberry32 } from "./rng.ts";
-import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, walkSwing } from "./figure.ts";
+import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, VIC_UMBRELLAS, walkSwing } from "./figure.ts";
 import type { Body, V3 } from "./figure.ts";
-import { CityPlan, kerbDoors, pavementObstacles, pick } from "./city.ts";
+import { CityPlan, kerbDoors, pavementObstacles, pick, shade } from "./city.ts";
 import type { District } from "./city.ts";
 import { CURB_H } from "./grid.ts";
 import { TILE, angleDiff, outOfSight } from "./citygraph.ts";
@@ -37,7 +39,8 @@ export const VIG_LOG: { out: ((line: string) => void) | null } = { out: null }; 
 
 export type VK = "peeSign" | "dogPack" | "wetPaint" | "pigeons" | "umbrella" | "iceCream" | "ticket" | "chalk" |
   "washers" | "foodTruck" | "courier" | "couch" | "hatch" | "guard" | "coffee" | "couple" | "falafel" | "bouncer" |
-  "sled" | "shovel" | "snowman" | "hydrant" | "chess" | "taichi" | "frisbee" | "kite" | "knitter";
+  "sled" | "shovel" | "snowman" | "hydrant" | "chess" | "taichi" | "frisbee" | "kite" | "knitter" |
+  "lamplighter" | "sweep" | "newsboy" | "organ" | "punch" | "crossingSweeper" | "flowers" | "muffin";
 
 export interface Vig {
   k: VK; bx: number; bz: number; side: number; a: number; n: number;
@@ -185,6 +188,42 @@ const CONE = 0xd9a45a, SCOOPS = [0xff9ec0, 0xb8f0c8, 0x6a3a1e, 0xfff2c0];
 const HIVIS = 0xff7a1a, HARDHAT = 0xf2c200, CONE_ORANGE = 0xff5a1a;
 const CHALK = [0xff8fb0, 0x8fd0ff, 0xfff08a, 0xa8f0a0, 0xd8a8ff, 0xffffff];
 const PAINT = 0x2e9b5a;
+const RAGS = [0x5a4a3a, 0x4a4a42, 0x6a5a40, 0x3a3a44, 0x5a3a2a, 0x4a3a30];   // (worn coats: the newsboy, the organ grinder, the crossing sweeper)
+const VIC_CHALK = [0xf4f0e8, 0xece4d4, 0xf0dcd8];
+const BLOOMS = [0xd8303a, 0xf0e8f0, 0xe8c030, 0x9a5ac8, 0xf08aa8, 0xe86a2a, 0xf4f0d8];
+// Gas lamps (city-victorian/victorian-street.ts vicLamp): the lantern's bottom and its middle above the ground.
+const LAMP_Y = [3.6, 3.85];
+const LL_N = -1.75, LAMP_T = 5;   // the lamplighter's line along the pavement, and how long he takes at a lamp (s)
+const NEWS_BUYERS = 5;
+const newsT = (i: number) => 6 + i * 17;   // when the newsboy's i-th buyer comes along (s)
+// The lamp ahead of `from` along vignette v's block side (a, n), or null.
+function nextLamp(c: Ctx, v: Vig, from: number): [number, number] | null {
+  const G = c.plan.graph, f = sideFace(G, v.bx, v.bz, v.side);
+  if (f < 0) return null;
+  const k = kerbOf(f), end = faceCorner(G, f, v.n)[0];
+  let best: [number, number] | null = null;
+  for (const o of pavementObstacles(c.plan, v.bx, v.bz)) {
+    if (o.kind !== PK.lamp) continue;
+    const [a, n] = G.toFace(f, o.x, o.z);
+    if (a > from && a < end - 1 && n < -1.5 && n > -k - 0.5 && (!best || a < best[0])) best = [a, nk(n, k)];
+  }
+  return best;
+}
+// The organ grinder's monkey at (x, y, z) facing yaw, in its red jacket and fez; `cup` holds its tin cup up.
+function monkey(F: Figures, x: number, y: number, z: number, yaw: number, t: number, cup: boolean) {
+  const fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw), FUR = 0x6a4a2e;
+  for (const k of [-1, 1]) F.box(x + rx * k * 0.05, y + 0.06, z + rz * k * 0.05, 0.05, 0.12, 0.05, yaw, 0, FUR);
+  F.box(x, y + 0.2, z, 0.11, 0.16, 0.14, yaw, -0.1, 0xb82a2a);
+  F.box(x + fx * 0.02, y + 0.33, z + fz * 0.02, 0.1, 0.1, 0.1, yaw, 0, FUR);
+  F.box(x + fx * 0.07, y + 0.32, z + fz * 0.07, 0.03, 0.05, 0.06, yaw, 0, 0xc89a7a);
+  F.box(x, y + 0.41, z, 0.06, 0.06, 0.06, yaw, 0, 0xb82a2a);
+  const ra = cup ? 2.6 : 0.4 + Math.sin(t * 3) * 0.2;
+  for (const k of [-1, 1]) {
+    const e = F.limb(x + rx * k * 0.08, y + 0.26, z + rz * k * 0.08, yaw, k > 0 ? ra : 0.3, 0.14, 0.035, FUR, 0.2, k);
+    if (k > 0 && cup) F.box(e[0], e[1] + 0.03, e[2], 0.05, 0.06, 0.05, 0, 0, 0xb8bcc0);
+  }
+  F.seg(x - fx * 0.06, y + 0.14, z - fz * 0.06, x - fx * 0.2, y + 0.28 + Math.sin(t * 2) * 0.05, z - fz * 0.2, 0.025, FUR);
+}
 interface Cast { shirt: number; pants: number; skin: number; hair: number }
 function cast(r: () => number, c: number[]) { c.push(pick(r, SHIRTS), pick(r, PANTS), pick(r, SKINS), pick(r, HAIRS)); }
 const castAt = (v: Vig, i: number): Cast => ({ shirt: v.c[i * 4], pants: v.c[i * 4 + 1], skin: v.c[i * 4 + 2], hair: v.c[i * 4 + 3] });
@@ -212,6 +251,11 @@ const day = (c: Ctx, h0 = 8, h1 = 18) => c.hour >= h0 && c.hour < h1;
 const night = (h: number) => h >= 20 || h < 5;
 const wet = (c: Ctx) => c.w.rain > 0.3 || c.w.snow > 0.3;
 const city = (d: District, ...ok: District[]) => ok.includes(d);
+// The Victorian city (styles.ts `victorian`): its own vignettes come there, and those that read
+// modern (MODERN) do not.
+const vic = (c: Ctx) => !!c.plan.style.victorian;
+const MODERN = new Set<VK>(["peeSign", "dogPack", "wetPaint", "iceCream", "washers", "foodTruck", "courier", "couch", "hatch", "guard", "coffee", "falafel", "bouncer", "hydrant", "chess", "taichi", "frisbee", "ticket"]);
+const weightOf = (k: VK, d: District, c: Ctx) => (vic(c) && MODERN.has(k) ? 0 : K[k].w(d, c));
 
 // A free stretch of pavement on a block side: a in [a0, a1] (searched), the rect (len along,
 // n0..n1 across) clear of furniture, other vignettes, crowd fixtures and anything the site uses.
@@ -632,7 +676,7 @@ const K: Record<VK, Kind> = {
     place(v, c, r) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
       const sp = spanOf(v.bx, v.bz, v.side);
-      v.a = sp.mid - 10 + r() * 12; v.n = -0.95; cast(r, v.c); v.c.push(pick(r, UMBRELLAS));
+      v.a = sp.mid - 10 + r() * 12; v.n = -0.95; cast(r, v.c); v.c.push(pick(r, vic(c) ? VIC_UMBRELLAS : UMBRELLAS));
       return true;
     },
     step(v, c, V) { if (v.t > 16) release(v, 0, V, { a: v.a - 10 + umbU(16), n: v.n, dir: 1, ...castAt(v, 0), umbrella: v.c[4] }); },
@@ -755,7 +799,7 @@ const K: Record<VK, Kind> = {
       const a = freeSpot(V, c, v.bx, v.bz, v.side, 6, -2.0, -0.2, r);
       if (a === null) return false;
       v.a = a; v.n = -1.05; cast(r, v.c); cast(r, v.c);
-      for (let i = 0; i < 6; i++) v.c.push(pick(r, CHALK));
+      for (let i = 0; i < 6; i++) v.c.push(pick(r, vic(c) ? VIC_CHALK : CHALK));
       return true;
     },
     draw(v, F, t) {
@@ -1252,7 +1296,7 @@ const K: Record<VK, Kind> = {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
       const sp = spanOf(v.bx, v.bz, v.side);
       v.a = sp.a0 + 5 + r() * Math.max(0, sp.a1 - sp.a0 - 22); v.n = -1.1; cast(r, v.c); cast(r, v.c);
-      v.c[4] = pick(r, [0xd0202a, 0x2e86c1, 0xff7a1a, 0x8e44ad]);
+      v.c[4] = pick(r, vic(c) ? [0x6a4a2c, 0x8a2a22] : [0xd0202a, 0x2e86c1, 0xff7a1a, 0x8e44ad]);   // (in the Victorian city, a timber sled)
       v.st = [0, v.a]; v.pst = [0, v.a];
       return true;
     },
@@ -1482,6 +1526,275 @@ const K: Record<VK, Kind> = {
       for (let i = 1; i <= 5; i++) { const [tx, tz] = P(f, ka - Math.sin(roll) * i * 0.3 + Math.sin(t * 3 + i) * 0.25, kn + i * 0.08); F.box(tx, ky - 0.6 - i * 0.45, tz, 0.16, 0.08, 0.04, toStreet(f), Math.sin(t * 4 + i) * 0.6, i % 2 ? v.c[5] : v.c[4]); }
     },
   },
+
+  // ---- the Victorian city ----------------------------------------------------------------------
+  // At dusk the lamplighter goes along the pavement from gas lamp to gas lamp with his long pole,
+  // its wick alight, and reaches it up into each lantern until it flares; at dawn he goes round
+  // again putting them out. He walks on round the block from side to side.
+  lamplighter: {
+    w: (d, c) => (vic(c) && d !== "industrial" && ((c.hour >= 17.5 && c.hour < 21) || (c.hour >= 5.2 && c.hour < 7)) ? 3 : 0), trigger: 0,
+    place(v, c, r) {
+      if (!sideOk(c, v.bx, v.bz, v.side)) return false;
+      const sp = spanOf(v.bx, v.bz, v.side);
+      v.a = sp.a0 + 4 + r() * Math.max(0, sp.a1 - sp.a0 - 16); v.n = LL_N;
+      v.c.push(pick(r, [0x3a3a30, 0x2e3440, 0x4a3e30]), pick(r, [0x2e2e2a, 0x3a3426]), pick(r, SKINS), pick(r, HAIRS), pick(r, [0x2a2a2a, 0x3a3428]));
+      const l = nextLamp(c, v, v.a);
+      v.st = [0, v.a, 0, l ? l[0] : 1e9, l ? l[1] : -2.6]; v.pst = v.st.slice();
+      return true;
+    },
+    // (st: walking (0) or at a lamp (1), how far along, when he reached it, and the lamp ahead's a and n.)
+    step(v, c) {
+      if (v.st[0] === 0) {
+        v.st[1] += 1.1 * SIM_DT;
+        if (v.st[1] >= v.st[3] - 0.5) { v.st[0] = 1; v.st[1] = v.st[3] - 0.5; v.st[2] = v.t; return; }
+        const side = v.side;
+        roundCorner(v);
+        if (v.side !== side) { const l = nextLamp(c, v, v.st[1]); v.st[3] = l ? l[0] : 1e9; v.st[4] = l ? l[1] : -2.6; v.pst = v.st.slice(); }
+      } else if (v.t - v.st[2] > LAMP_T) {
+        const l = nextLamp(c, v, v.st[1] + 1);
+        v.st[0] = 0; v.st[3] = l ? l[0] : 1e9; v.st[4] = l ? l[1] : -2.6;
+      }
+    },
+    draw(v, F, t, D) {
+      const S = D.st, a = S[1], lt = S[0] === 1 ? t - S[2] : -1, [x, z] = pathPt(v, a, v.n), h0 = sidePathYaw(v, a);
+      const up = lt < 0 ? 0 : vEase(ramp(lt, 0.4, 1.4)) * (1 - vEase(ramp(lt, LAMP_T - 1.2, LAMP_T - 0.2)));
+      const [lx, lz] = pathPt(v, S[3], S[4]), yaw = h0 + angleDiff(yawTo(lx - x, lz - z) - h0) * up, w = walkSwing(a), moving = lt < 0;
+      const sw = moving ? w.arms[0] : 0.05;
+      F.person({ x, z, yaw, y: Y0 + (moving ? w.bob : 0), legs: moving ? w.legs : [0, 0], arms: [lerp(sw, 2.35, up), lerp(0.75, 2.55, up)], fore: [lerp(sw, 2.6, up), lerp(1.5, 2.85, up)], nod: -0.45 * up,
+        dress: "cap", shirt: v.c[0], pants: v.c[1], skin: v.c[2], hair: v.c[3], hat: v.c[4] });
+      // The pole: carried upright, leaning forward; raised, its tip in the lantern.
+      const hx = (F.handL[0] + F.handR[0]) / 2, hy = (F.handL[1] + F.handR[1]) / 2, hz = (F.handL[2] + F.handR[2]) / 2;
+      const tx = lerp(hx + Math.cos(yaw) * 0.35, lx, up), ty = lerp(hy + 1.9, LAMP_Y[0] + 0.05, up), tz = lerp(hz - Math.sin(yaw) * 0.35, lz, up);
+      const dx = tx - hx, dy = ty - hy, dz = tz - hz, L = Math.hypot(dx, dy, dz) || 1;
+      F.seg(hx - dx / L * 0.5, hy - dy / L * 0.5, hz - dz / L * 0.5, tx, ty, tz, 0.035, 0x5a4026);
+      F.box(tx, ty, tz, 0.06, 0.08, 0.06, yaw, 0, 0xb8963a);
+      const dusk = D.hour >= 12;
+      if (dusk) F.glow(tx, ty + 0.07, tz, 0.035, 0.06, 0.035, 0, 0xffc060);
+      // The lantern flaring up as the gas catches.
+      if (dusk && lt > 1.4) { const k = ramp(lt, 1.4, 2.0) * (1 - ramp(lt, LAMP_T - 0.6, LAMP_T)); if (k > 0) F.glow(lx, LAMP_Y[1], lz, 0.24 * k, 0.32 * k, 0.24 * k, h0, 0xffe2a0); }
+    },
+    foot: (v) => [v.st[1] - 0.5, v.st[1] + 0.5, LL_N - 0.4, LL_N + 0.4],
+  },
+
+  // A master sweep in sooty black and a battered top hat goes round the block with his rods over
+  // his shoulder and the round brush on their end, his climbing boy at his heels with the soot sack.
+  sweep: {
+    w: (d, c) => (vic(c) && city(d, "residential", "commercial", "downtown") && day(c, 7, 16) && c.w.storm < 0.5 ? 1.6 : 0), trigger: 0,
+    place(v, c, r) {
+      if (!sideOk(c, v.bx, v.bz, v.side)) return false;
+      const sp = spanOf(v.bx, v.bz, v.side);
+      v.a = sp.a0 + 6 + r() * Math.max(0, sp.a1 - sp.a0 - 22); v.n = -1.2;
+      v.c.push(pick(r, SKINS), pick(r, SKINS), pick(r, HAIRS));
+      v.st = [0, v.a]; v.pst = [0, v.a];
+      return true;
+    },
+    step(v) { v.st[1] += 0.95 * SIM_DT; roundCorner(v); },
+    draw(v, F, t, D) {
+      const a = D.st[1], [x, z] = pathPt(v, a, v.n), yaw = sidePathYaw(v, a), w = walkSwing(a), soot = (c: number) => shade(c, 0.55);
+      const fx = Math.cos(yaw), fz = -Math.sin(yaw);
+      F.person({ x, z, yaw, y: Y0 + w.bob, legs: w.legs, arms: [w.arms[0], 1.25], fore: [w.arms[0], 2.7], dress: "frock", vicHat: "top", shirt: 0x1e1e1e, pants: 0x262422, coat: 0x2a2826, hat: 0x1a1a1a, skin: soot(v.c[0]), hair: 0x111111 });
+      // The rods: from the hand at the shoulder, back and up, the brush head on their far end.
+      const hd = F.handR, ex = hd[0] - fx * 1.3, ey = hd[1] + 0.75, ez = hd[2] - fz * 1.3;
+      F.seg(hd[0] + fx * 0.15, hd[1] - 0.08, hd[2] + fz * 0.15, ex, ey, ez, 0.05, 0x3a2e22);
+      F.box(ex, ey, ez, 0.06, 0.55, 0.55, yaw, -0.5, 0x141414); F.box(ex, ey, ez, 0.07, 0.55, 0.55, yaw, -0.5 + Math.PI / 4, 0x1e1e1e, 0);
+      // The boy, a step behind on the building side, the sack on his back.
+      const [bx, bz] = pathPt(v, a - 1.2, v.n + 0.55), by = sidePathYaw(v, a - 1.2), wb = walkSwing(a * 1.25 + 1);
+      F.person({ x: bx, z: bz, yaw: by, s: 0.62, y: Y0 + wb.bob, legs: wb.legs, arms: [wb.arms[0], 2.4], fore: [wb.arms[0], 3.0], dress: "boy", shirt: 0x2a2826, pants: 0x222020, hat: 0x1a1a1a, skin: soot(v.c[1]), hair: v.c[2] });
+      const bfx = Math.cos(by), bfz = -Math.sin(by);
+      F.box(bx - bfx * 0.16, Y0 + wb.bob + 0.82, bz - bfz * 0.16, 0.22, 0.36, 0.26, by, 0.2, 0x3a3834);
+    },
+  },
+
+  // A newsboy at the kerb cries the paper, a copy waved over his head and the bill board propped
+  // beside him; now and then someone stops, buys one and walks on.
+  newsboy: {
+    w: (d, c) => (vic(c) && city(d, "downtown", "commercial") && c.hour >= 6 && c.hour < 19 ? 2 : 0), trigger: 0,
+    place(v, c, r, V) {
+      const a = freeSpot(V, c, v.bx, v.bz, v.side, 1.6, -2.8, -1.6, r);
+      if (a === null) return false;
+      v.a = a; v.n = -2.2; cast(r, v.c);
+      return true;
+    },
+    step(v, c, V) {
+      for (let i = 0; i < NEWS_BUYERS; i++) { const t0 = newsT(i); if (v.t > t0 + 10.5) release(v, i, V, { a: v.a + 0.8 - 2.4, n: -1.0, dir: -1, ...extra(v, i) }); }
+    },
+    draw(v, F, t) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0);
+      // The bill on its board, and the bundle of papers at his feet.
+      // (The board is an A-frame, a bill on each face, one to the street and one to the buildings.)
+      for (const k of [-1, 1]) {
+        const [x, z] = P(f, v.a - 0.75, v.n + k * 0.12), yaw = k < 0 ? toStreet(f) : toBldg(f);
+        F.box(x, Y0 + 0.42, z, 0.04, 0.84, 0.52, yaw, 0.15, 0x3a2a1c); F.box(x, Y0 + 0.47, z, 0.05, 0.64, 0.44, yaw, 0.15, 0xece4d0);
+        for (const y of [0.64, 0.52, 0.4]) F.box(x + Math.cos(yaw) * (0.43 - y) * 0.15, Y0 + y, z - Math.sin(yaw) * (0.43 - y) * 0.15, 0.06, y > 0.6 ? 0.08 : 0.04, 0.34, yaw, 0.15, 0x1a1a1a);
+      }
+      { const [x, z] = P(f, v.a + 0.45, v.n - 0.15); F.box(x, Y0 + 0.08, z, 0.32, 0.16, 0.42, f.h0, 0, 0xdcd4c0); F.box(x, Y0 + 0.08, z, 0.33, 0.03, 0.43, f.h0, 0, 0x8a6a3a); }
+      // The boy: a paper up over his head as he cries it, turning to look along the street; handing
+      // one over to a buyer.
+      const cyc = t % 3.4, cry = cyc < 1.8 ? Math.sin(cyc / 1.8 * Math.PI) : 0;
+      let sell = 0;
+      for (let i = 0; i < NEWS_BUYERS; i++) { const u = t - newsT(i) - 6; if (u > 0 && u < 2.5 && !(v.rel & (1 << i))) sell = Math.sin(u / 2.5 * Math.PI); }
+      const [x, z] = P(f, v.a, v.n), look = Math.sin(t * 0.45) * 0.7 * (1 - sell);
+      F.person({ x, z, s: 0.64, yaw: toBldg(f) + (sell ? 0.6 * sell : 0), arms: [0.2, lerp(lerp(0.15, 2.8, cry), 1.3, sell)], fore: [0.9, lerp(lerp(0.15, 3.0, cry), 1.4, sell)], turn: look, nod: -0.25 * cry, dress: "boy", ...cs, shirt: RAGS[v.seed % RAGS.length], pants: 0x3a3430, hat: 0x4a4238 });
+      const hd = F.handR; F.box(hd[0], hd[1] + 0.08, hd[2], 0.04, 0.24, 0.17, toBldg(f), 0.3, 0xece4d0);
+      const hl = F.handL; F.box(hl[0], hl[1] - 0.02, hl[2], 0.12, 0.26, 0.3, toBldg(f), 0, 0xb8a888);   // the bag
+      // The buyers: along from up the street, a stop at the boy, on again.
+      for (let i = 0; i < NEWS_BUYERS; i++) {
+        const u = t - newsT(i);
+        if (u < 0 || u >= 10.5 || (v.rel & (1 << i))) continue;
+        const ab = u < 6 ? v.a + 8 - u * 1.2 : u < 8.5 ? v.a + 0.8 : v.a + 0.8 - (u - 8.5) * 1.2, nb = u < 4.5 ? -1.0 : u < 6 ? lerp(-1.0, -1.5, (u - 4.5) / 1.5) : u < 8.5 ? -1.5 : lerp(-1.5, -1.0, Math.min(1, (u - 8.5) / 1.5));
+        const moving = u < 6 || u > 8.5, ws = walkSwing(u * 1.2), [bx, bz] = P(f, ab, nb);
+        F.person({ x: bx, z: bz, yaw: u > 4.8 && u < 8.5 ? toStreet(f) - 0.5 : along(f, -1), y: Y0 + (moving ? ws.bob : 0), legs: moving ? ws.legs : [0, 0], arms: moving ? ws.arms : [0.1, 1.1], fore: moving ? null : [0.1, 1.5], ...extra(v, i) });
+      }
+    },
+    foot: (v) => [v.a - 0.9, v.a + 0.8, -2.8, -1.6],
+  },
+
+  // An organ grinder at the kerb turns the crank of his barrel organ; his monkey in its red
+  // jacket and fez sits on top, and now and then hops down holding out its tin cup.
+  organ: {
+    w: (d, c) => (vic(c) && city(d, "commercial", "downtown", "residential", "park") && !wet(c) && day(c, 10, 19) ? 1.6 : 0), trigger: 0,
+    place(v, c, r, V) {
+      const a = freeSpot(V, c, v.bx, v.bz, v.side, 1.8, -2.9, -1.7, r);
+      if (a === null) return false;
+      v.a = a; v.n = -1.9; cast(r, v.c);
+      return true;
+    },
+    draw(v, F, t) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), yaw = toStreet(f), fx = Math.cos(yaw), fz = -Math.sin(yaw), ON = -2.5;
+      // The organ on its pole, its front to the street: a mahogany case, its gilt front panel, the crank.
+      const [ox, oz] = P(f, v.a, ON), OY = Y0 + 0.98;
+      F.box(ox, Y0 + 0.36, oz, 0.07, 0.72, 0.07, yaw, 0, 0x2a1e14);
+      F.box(ox, OY, oz, 0.38, 0.5, 0.62, yaw, 0, 0x5a2a1a);
+      F.box(ox + fx * 0.195, OY + 0.02, oz + fz * 0.195, 0.01, 0.34, 0.48, yaw, 0, 0xc89a40);
+      for (let i = 0; i < 5; i++) { const [px, pz] = P(f, v.a - 0.18 + i * 0.09, ON - 0.205); F.box(px, OY + 0.02, pz, 0.012, 0.26 - Math.abs(i - 2) * 0.05, 0.03, yaw, 0, 0x8a6a2a); }
+      const ang = t * 5, [cx, cz] = P(f, v.a + 0.36, ON), crX = cx - fx * Math.cos(ang) * 0.11, crY = OY + Math.sin(ang) * 0.11, crZ = cz - fz * Math.cos(ang) * 0.11;
+      F.seg(cx, OY, cz, crX, crY, crZ, 0.03, 0x3a3a3a);
+      // The grinder behind it, turning the crank.
+      const [gx, gz] = P(f, v.a + 0.2, v.n);
+      F.person({ x: gx, z: gz, yaw, arms: [0.35, 0.95 + Math.sin(ang) * 0.25], fore: [0.9, 1.45 + Math.cos(ang) * 0.3], foreOut: [0, -0.15], turn: Math.sin(t * 0.3) * 0.4, dress: "sack", vicHat: "bowler", ...cs, shirt: RAGS[(v.seed >> 3) % RAGS.length], pants: 0x3a3430, hat: 0x2a2622 });
+      // The monkey: on the organ, then down beside it with its cup held up, and back.
+      const k = t % 14, hop = (u: number) => Math.sin(Math.min(1, Math.max(0, u)) * Math.PI) * 0.5;
+      const top: [number, number, number] = [ox, OY + 0.25, oz], [sx, sz] = P(f, v.a - 0.75, ON + 0.1), ground: [number, number, number] = [sx, Y0, sz];
+      const u = k < 6 ? 0 : k < 7 ? k - 6 : k < 10 ? 1 : k < 11 ? 11 - k : 0, e = vEase(u), arc = k >= 6 && k < 7 ? hop(k - 6) : k >= 10 && k < 11 ? hop(k - 10) : 0;
+      const mx = lerp(top[0], ground[0], e), my = lerp(top[1], ground[1], e) + arc, mz = lerp(top[2], ground[2], e), cup = k > 7.2 && k < 9.8;
+      monkey(F, mx, my, mz, k < 6 ? yaw + Math.sin(t) * 0.5 : yaw - 0.6, t, cup);
+    },
+    foot: (v) => [v.a - 1.0, v.a + 0.9, -2.9, -1.5],
+  },
+
+  // Punch and Judy in the park: a striped booth on the grass by the pavement, Punch and Judy up on
+  // its playboard, Punch's slapstick swinging, and children in front laughing at every whack.
+  punch: {
+    w: (d, c) => (vic(c) && d === "park" && !wet(c) && !c.snow && day(c, 11, 18) && c.season !== "winter" ? 1.8 : 0), trigger: 0,
+    place(v, c, r, V) {
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 3.4, 0.8, 5.2, r, sp.a0 + 4, sp.a1 - 4);
+      if (a === null) return false;
+      v.a = a; v.n = 3.9;
+      for (let i = 0; i < 6; i++) cast(r, v.c);
+      for (let i = 0; i < 6; i++) v.c.push((r() - 0.5) * 2.4, 1.2 + r() * 0.9, r() * 6);
+      return true;
+    },
+    draw(v, F, t) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), yaw = toStreet(f);
+      // The booth: striped cloth round a frame, the opening and its playboard, the name board on top.
+      for (let i = 0; i < 6; i++) { const [x, z] = P(f, v.a - 0.55 + 0.1 + i * 0.18, v.n - 0.4); F.box(x, Y0 + 1.2, z, 0.04, 2.4, 0.18, yaw, 0, i % 2 ? 0xf2ece0 : 0xb82a2a); }
+      for (const k of [-1, 1]) { const [x, z] = P(f, v.a + k * 0.55, v.n); F.box(x, Y0 + 1.2, z, 0.8, 2.4, 0.04, yaw, 0, k > 0 ? 0xb82a2a : 0xf2ece0); }
+      { let [x, z] = P(f, v.a, v.n + 0.4); F.box(x, Y0 + 1.2, z, 0.04, 2.4, 1.14, yaw, 0, 0xb82a2a);
+        [x, z] = P(f, v.a, v.n - 0.43); F.box(x, Y0 + 1.78, z, 0.03, 0.5, 0.82, yaw, 0, 0x1a1418);
+        [x, z] = P(f, v.a, v.n - 0.47); F.box(x, Y0 + 1.53, z, 0.12, 0.05, 0.96, yaw, 0, 0x2a5a3a);
+        [x, z] = P(f, v.a, v.n - 0.43); F.box(x, Y0 + 2.6, z, 0.06, 0.32, 1.0, yaw, 0, 0xd8a838); F.box(x, Y0 + 2.6, z, 0.07, 0.08, 0.7, yaw, 0, 0x8a2a1a);
+        [x, z] = P(f, v.a, v.n); F.box(x, Y0 + 2.43, z, 0.84, 0.06, 1.16, yaw, 0, 0x8a2a1a); }
+      // The puppets: Punch on the left with his slapstick, Judy on the right ducking it.
+      const cyc = t % 5, whack = cyc > 3.6 && cyc < 4.2 ? Math.sin((cyc - 3.6) / 0.6 * Math.PI) : 0, bob = Math.sin(t * 5) * 0.04;
+      { const [x, z] = P(f, v.a - 0.2 + whack * 0.1, v.n - 0.48), y = Y0 + 1.66 + bob;
+        F.box(x, y, z, 0.14, 0.22, 0.2, yaw, 0, 0xc0302a); F.box(x, y + 0.2, z, 0.14, 0.15, 0.14, yaw + 0.4, 0, 0xf0c0a0);
+        F.box(x - Math.cos(yaw) * 0.09, y + 0.18, z + Math.sin(yaw) * 0.09, 0.08, 0.05, 0.05, yaw, 0.3, 0xe0907a);
+        F.box(x, y + 0.31, z, 0.12, 0.14, 0.12, yaw, 0.5, 0xd8a838);
+        const [sx, sz] = P(f, v.a + 0.05 + whack * 0.25, v.n - 0.52); F.seg(x, y + 0.08, z, sx, y + 0.1 + (1 - whack) * 0.35, sz, 0.04, 0x8a6a3a); }
+      { const [x, z] = P(f, v.a + 0.22, v.n - 0.48), y = Y0 + 1.66 - whack * 0.12 + Math.sin(t * 4 + 1) * 0.03;
+        F.box(x, y, z, 0.14, 0.22, 0.2, yaw, 0, 0x3a5a9a); F.box(x, y + 0.2, z, 0.13, 0.14, 0.13, yaw, 0, 0xf0c8a8); F.box(x, y + 0.29, z, 0.15, 0.07, 0.15, yaw, 0, 0xf4f0e8); }
+      // The audience, laughing at the whack.
+      for (let i = 0; i < 6; i++) {
+        const o = 24 + i * 3, da = v.c[o], dn = v.c[o + 1], ph = v.c[o + 2], laugh = whack > 0 ? whack * 0.12 : 0, [x, z] = P(f, v.a + da, v.n - dn - 0.4);
+        const adult = i === 5;
+        F.person({ x, z, s: adult ? 1 : 0.6, yaw: toBldg(f) + Math.sin(t * 0.4 + ph) * 0.15, y: Y0 + laugh * (1 + (i % 2)), arms: whack > 0.3 && !adult ? [2.4, 2.6] : [0.1, 0.1], armOut: [0.2, 0.2], nod: -0.35 + (adult ? 0.3 : 0), ...castAt(v, i) });
+      }
+    },
+  },
+
+  // A crossing sweeper by the corner sweeps the gutter clear where people cross, stooped over his
+  // broom, straightening now and then to touch his cap to someone going by.
+  crossingSweeper: {
+    w: (d, c) => (vic(c) && city(d, "downtown", "commercial", "residential") && day(c, 7, 19) && !c.snow ? (wet(c) ? 2.4 : 1.2) : 0), trigger: 0,
+    place(v, c, r, V) {
+      const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 1.4, -3, -2.0, r, sp.a1 - 3.6, sp.a1 - 1.6);
+      if (a === null) return false;
+      v.a = a; v.n = -2.55; cast(r, v.c);
+      return true;
+    },
+    draw(v, F, t) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), k = t % 12, tip = k > 9 ? Math.sin(Math.min(1, (k - 9) / 2.5) * Math.PI) : 0;
+      const stroke = Math.sin(t * 2.6), [x, z] = P(f, v.a, v.n), yaw = toStreet(f);
+      // A little heap of what he has swept, along the gutter.
+      for (let i = 0; i < 3; i++) { const [mx, mz] = P(f, v.a - 0.9 - i * 0.18, -3.15); F.box(mx, 0.04, mz, 0.22, 0.06 + i * 0.02, 0.2, f.h0 + i, 0, 0x4a3a2a); }
+      F.person({ x, z, s: 0.74, yaw: yaw + stroke * 0.15 * (1 - tip), lean: lerp(0.4, 0.05, tip), arms: [lerp(0.9, 0.3, tip), lerp(0.7, 2.6, tip)], fore: [lerp(1.0, 0.4, tip), lerp(0.8, 3.0, tip)], armOut: [0.1, 0.1], nod: lerp(0.3, -0.1, tip), dress: "boy", ...cs, shirt: RAGS[(v.seed >> 5) % RAGS.length], pants: 0x3a3226, hat: 0x3a342a });
+      // The broom: from the left hand down to its head out in the gutter, swinging across.
+      const hl = F.handL, s = stroke * (1 - tip), [bx, bz] = P(f, v.a + s * 0.45, -3.2 + tip * 0.6), by = tip > 0.3 ? Y0 + 0.03 : 0.04;
+      F.seg(hl[0], hl[1], hl[2], bx, by + 0.08, bz, 0.035, 0x6a5030);
+      F.box(bx, by + 0.04, bz, 0.12, 0.08, 0.42, f.h0 + Math.PI / 2 + s * 0.5, 0, 0x4a3a24);
+    },
+    foot: (v) => [v.a - 0.7, v.a + 0.7, -3, -2.0],
+  },
+
+  // A flower seller by a shop front, her baskets of posies at her feet and one on her arm, holds a
+  // bunch out to whoever passes.
+  flowers: {
+    w: (d, c) => (vic(c) && city(d, "commercial", "downtown") && !wet(c) && day(c, 8, 18) && c.season !== "winter" ? 1.6 : 0), trigger: 0,
+    place(v, c, r, V) {
+      const a = freeSpot(V, c, v.bx, v.bz, v.side, 1.8, -1.7, 0, r);
+      if (a === null) return false;
+      v.a = a; v.n = -0.45; cast(r, v.c);
+      for (let i = 0; i < 14; i++) v.c.push(pick(r, BLOOMS));
+      return true;
+    },
+    draw(v, F, t) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), yaw = toStreet(f);
+      // Two flat baskets, heaped with bunches.
+      for (const [da, dn, i0] of [[-0.5, -1.0, 0], [0.45, -1.05, 7]] as const) {
+        const [bx, bz] = P(f, v.a + da, dn); F.box(bx, Y0 + 0.08, bz, 0.62, 0.16, 0.62, f.h0, 0, 0xa0804a);
+        for (let i = 0; i < 6; i++) { const [px, pz] = P(f, v.a + da + ((i % 3) - 1) * 0.18, dn + (Math.floor(i / 3) - 0.5) * 0.24); F.box(px, Y0 + 0.2, pz, 0.15, 0.09, 0.15, f.h0 + i, 0, v.c[4 + i0 + i]); }
+        F.box(bx, Y0 + 0.24, bz, 0.08, 0.05, 0.08, 0, 0, 0x4a7a3a);
+      }
+      // Her: a posy held out, turning to the passers-by; a basket on her other arm.
+      const offer = 0.5 + 0.5 * Math.sin(t * 0.9), look = Math.sin(t * 0.5) * 0.8, [x, z] = P(f, v.a, v.n);
+      F.person({ x, z, yaw: yaw + look * 0.4, arms: [0.55, lerp(0.6, 1.4, offer)], fore: [1.5, lerp(0.9, 1.5, offer)], foreOut: [-0.2, 0], turn: look * 0.6, dress: "woman", vicHat: (v.seed & 1) ? "wide" : "bonnet", ...cs, shirt: shade(cs.shirt, 0.6), pants: shade(cs.pants, 0.7), coat: [0x8a3a3a, 0x6a5a3a, 0x3a4a6a][v.seed % 3], hat: 0xc8a870 });
+      const hr = F.handR; F.box(hr[0], hr[1] + 0.08, hr[2], 0.12, 0.12, 0.12, 0, 0, v.c[4 + 13]); F.box(hr[0], hr[1] - 0.02, hr[2], 0.03, 0.1, 0.03, 0, 0, 0x4a7a3a);
+      const hl = F.handL; F.box(hl[0], hl[1] - 0.06, hl[2], 0.3, 0.14, 0.2, yaw, 0, 0xa0804a); F.box(hl[0], hl[1] + 0.03, hl[2], 0.24, 0.06, 0.16, yaw, 0, v.c[4 + 3]);
+    },
+    foot: (v) => [v.a - 0.9, v.a + 0.9, -1.4, 0],
+  },
+
+  // The muffin man goes round the block with his tray on his head, a hand up to steady it, ringing
+  // his handbell.
+  muffin: {
+    w: (d, c) => (vic(c) && city(d, "residential", "commercial") && ((c.hour >= 8 && c.hour < 11) || (c.hour >= 15 && c.hour < 18)) && c.w.rain < 0.6 ? 1.6 : 0), trigger: 0,
+    place(v, c, r) {
+      if (!sideOk(c, v.bx, v.bz, v.side)) return false;
+      const sp = spanOf(v.bx, v.bz, v.side);
+      v.a = sp.a0 + 6 + r() * Math.max(0, sp.a1 - sp.a0 - 22); v.n = -1.1; cast(r, v.c);
+      v.st = [0, v.a]; v.pst = [0, v.a];
+      return true;
+    },
+    step(v) { v.st[1] += 0.9 * SIM_DT; roundCorner(v); },
+    draw(v, F, t, D) {
+      const a = D.st[1], [x, z] = pathPt(v, a, v.n), yaw = sidePathYaw(v, a), w = walkSwing(a), cs = castAt(v, 0), ring = Math.max(0, Math.sin(t * 9));
+      F.person({ x, z, yaw, y: Y0 + w.bob * 0.6, legs: w.legs, arms: [2.75, 0.9 + ring * 0.35], fore: [3.05, 1.5 + ring * 0.4], armOut: [0.25, 0], dress: "sleeves", vicHat: "none", ...cs, shirt: 0xece6da, pants: shade(cs.pants, 0.6), coat: 0xe2dccc });
+      // The tray on his head under its cloth, and the bell.
+      const hd = F.head, ty = hd[1] + 0.17;
+      F.box(hd[0], ty, hd[2], 0.5, 0.05, 0.75, yaw, 0, 0x7a5a3a); F.box(hd[0], ty + 0.07, hd[2], 0.44, 0.09, 0.68, yaw, 0, 0xf0ece0);
+      const hr = F.handR; F.box(hr[0], hr[1] - 0.06, hr[2], 0.09, 0.1, 0.09, yaw, ring * 0.6, 0xc8a040); F.box(hr[0], hr[1] + 0.03, hr[2], 0.03, 0.08, 0.03, yaw, 0, 0x2a1e14);
+    },
+  },
 };
 
 // Moving along a block side (the pack, the sled): a point `a` along it, round the next corner
@@ -1597,7 +1910,7 @@ export class Vignettes {
       if (v.on) { v.t += SIM_DT; kd.step?.(v, c, this); }
     }
     // The truck parked at the kerb: a ticket, once a stop.
-    if (inp.parked) {
+    if (inp.parked && !vic(c)) {   // (no parking officers in the Victorian city)
       const key = `${Math.round(inp.parked.cabX)},${Math.round(inp.parked.cabZ)}`;
       if (key !== this.ticketed && !this.list.some((v) => v.k === "ticket") && (DEBUG_VIGNETTE === "ticket" || this.rnd() < SIM_DT / 9)) { this.ticketed = key; this.spawnTicket(c, inp.parked); }
     }
@@ -1619,7 +1932,7 @@ export class Vignettes {
   }
   private where(v: Vig): [number, number] {
     if (v.k === "courier") return [v.st[1], v.st[2]];
-    const a = v.k === "dogPack" || v.k === "sled" ? v.st[1] : v.k === "umbrella" ? v.a - 10 + umbU(v.t) : v.a;
+    const a = v.k === "dogPack" || v.k === "sled" || v.k === "lamplighter" || v.k === "sweep" || v.k === "muffin" ? v.st[1] : v.k === "umbrella" ? v.a - 10 + umbU(v.t) : v.a;
     return P(frameOf(v.bx, v.bz, v.side, v.a), a, v.n);
   }
 
@@ -1632,7 +1945,7 @@ export class Vignettes {
     if (!B) return;
     const bx = B.kx, bz = B.kz, d = c.plan.district(bx, bz);
     // A kind for here and now, not one already about.
-    const ws = KINDS.map((k) => (dbg ? (k === dbg && K[k].w(d, c) > 0 ? 1 : 0) : this.list.some((v) => v.k === k) ? 0 : K[k].w(d, c)));
+    const ws = KINDS.map((k) => (dbg ? (k === dbg && weightOf(k, d, c) > 0 ? 1 : 0) : this.list.some((v) => v.k === k) ? 0 : weightOf(k, d, c)));
     let tot = ws.reduce((s, w) => s + w, 0);
     if (tot <= 0) return;
     let x = r() * tot, k: VK = KINDS[0];
@@ -1712,7 +2025,7 @@ export class Vignettes {
     if (!v || !this.G) return null;
     VG = this.G;
     const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = this.where(v);
-    const far: Partial<Record<VK, [number, number, number]>> = { washers: [13, 4, 9], kite: [24, 3, 6], taichi: [16, 4, 1], frisbee: [18, 4, 1], foodTruck: [14, 3, 1.4], courier: [9, 2.5, 1], dogPack: [9, 2.5, 0.6] };
+    const far: Partial<Record<VK, [number, number, number]>> = { punch: [9, 2.2, 1.4], lamplighter: [7, 2.6, 2.2], washers: [13, 4, 9], kite: [24, 3, 6], taichi: [16, 4, 1], frisbee: [18, 4, 1], foodTruck: [14, 3, 1.4], courier: [9, 2.5, 1], dogPack: [9, 2.5, 0.6] };
     const [back, y, look] = far[v.k] ?? [5, 2.0, 0.8];
     if (v.k === "washers" && washPt[0] !== 0) { const [wx, wz] = washPt; return { x: wx, z: wz, fx: washF[0], fz: washF[1], ox: washF[2], oz: washF[3], back: back + washSeen[0], y, look: washSeen[1] }; }
     if (v.k === "ticket") return { x, z, fx: f.fx * v.c[4], fz: f.fz * v.c[4], ox: f.rx * 0.08, oz: f.rz * 0.08, back: 16, y: 2.2, look: 1.4 };   // (along the pavement, behind the officer)
@@ -1736,7 +2049,7 @@ export function placeVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: V
 export function vignetteWeight(k: VK, d: District, c: Partial<Ctx> & { plan: CityPlan }) {
   VG = c.plan.graph;
   const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
-  return K[k].w(d, full);
+  return weightOf(k, d, full);
 }
 export function stepVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: Vignettes) {
   VG = c.plan.graph;

@@ -24,7 +24,7 @@ import type { Aboard, DwellNow, Stop } from "./journey.ts";
 import { swapClear, swapWalkPace, swapWalkPoint, swapWalkU } from "./director.ts";
 import { BedLoad, buildCarried, Herd } from "./loads.ts";
 import type { CarriedLoad } from "./loads.ts";
-import { ARM_F, ARM_U, blendPose, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
+import { ARM_F, ARM_U, blendPose, CARTER_DRIVER, CARTER_MATE, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
 import type { BodyPose } from "./character.ts";
 
 
@@ -75,8 +75,8 @@ export class Crew {
   private v3 = new THREE.Vector3(); private v4 = new THREE.Vector3(); private v5 = new THREE.Vector3(); private v6 = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
-    this.driver = new Character(material, DRIVER_LOOK);
-    this.helper = new Character(material, WORKER_LOOK, true);
+    this.driver = new Character(material, DRIVER_LOOK, false, CARTER_DRIVER);
+    this.helper = new Character(material, WORKER_LOOK, true, CARTER_MATE);
     this.helper.root.visible = false;
     scene.add(this.driver.root, this.helper.root);
     this.scene = scene; this.material = material;
@@ -201,6 +201,10 @@ export class Crew {
     this.forkDoor = 0; this.forkSpot = null; this.mateSpot = null;
     this.gagPoint = null;
     d.root.visible = true;
+    // In carter's dress in the Victorian city, and on the road while more than half of it has crept
+    // in (CountryRoad.periodAt), as the trucks turn toons by storyAt (main.ts setToon).
+    const road0 = st.mode === "country" ? j.country : null;
+    d.period = this.helper.period = road0 ? road0.periodAt(j.countryS) > 0.5 : !!j.plan.style.victorian;
     d.vestOn = false;   // (on for a dock stop, below: set on every update, so a scrub back takes it off)
     // (A tractor-trailer's door dwell before or after a dock stop, journey.ts doorDwell: the driver
     // at its doors only, the stop's loads and the dock's worker not in it.)

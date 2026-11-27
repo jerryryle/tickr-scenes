@@ -169,7 +169,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     streamer?.clear();
     buildSea();
     seaLife.build(journey.plan);
-    FIG_STYLE.storybook = !!journey.plan.style.storybook;
+    FIG_STYLE.storybook = !!journey.plan.style.storybook; FIG_STYLE.victorian = !!journey.plan.style.victorian;
     if (traffic) traffic.ryderToon = journey.plan.style.storybook ? 1 : 0;
     const dockOf = (bx: number, bz: number) => { const L = siteLayout(journey.plan, bx, bz); return L.kind === "dock" ? L : null; };
     if (journey.plan.style.storybook) worksFx.build(journey.plan, dockOf); else worksFx.clear();
