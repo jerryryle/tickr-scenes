@@ -236,6 +236,9 @@ const VIC_NAMES: Partial<Record<FacilityId, string[]>> = {
 };
 const VIC_PLACES = ["Kingsgate", "Holborn", "Cheapside", "Ludgate", "Aldgate", "Smithfield", "Clerkenwell", "Blackfriars", "Shoreditch", "Mortlake", "Eastcheap", "Moorfields"];
 const VIC_PEOPLE = ["Hobbs & Sons", "Pickering's", "Mrs. Fairweather's", "Thackeray's", "Brindle & Co.", "Ashworth's", "Plumtree's", "Gubbins'", "Wetherby's", "Marchbanks'"];
+// The public bodies, markets and grand buildings, which are named for their place and never for a proprietor.
+const VIC_PUBLIC = new Set<FacilityId>(["hospital", "courthouse", "school", "museum", "stadium", "theater", "concertHall", "officeTower", "hotel",
+  "weddingVenue", "countyFair", "pettingZoo", "aquarium", "sanitationDepot", "dataCenter", "farmCoop", "fishMarket", "dc", "parcelHub"]);
 const VIC_STREETS = ["High St", "Mill Lane", "Church St", "Market St", "King St", "Queen St", "Station Rd", "Canal St", "Victoria Rd", "Albert St", "Gas St", "Brewery Lane"];
 export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: number): string {
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
@@ -244,8 +247,10 @@ export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: num
     const own = VIC_NAMES[id];
     if (own && h(7) < 0.6) return own[Math.floor(h(8) * own.length)];
     if (id === "residence" || id === "apartment") return `${2 + Math.floor(h(3) * 60)} ${VIC_STREETS[Math.floor(h(9) * VIC_STREETS.length)]}`;
+    // (Ryder's own premises go by the firm's name alone; a public body or a market takes its place's.)
     const label = VIC_LABEL[id];
-    return h(4) < 0.5 ? `${VIC_PEOPLE[Math.floor(h(5) * VIC_PEOPLE.length)]} ${label}` : `${VIC_PLACES[Math.floor(h(6) * VIC_PLACES.length)]} ${label}`;
+    if (isRyderFacility(id)) return label;
+    return h(4) < 0.5 && !VIC_PUBLIC.has(id) ?`${VIC_PEOPLE[Math.floor(h(5) * VIC_PEOPLE.length)]} ${label}` : `${VIC_PLACES[Math.floor(h(6) * VIC_PLACES.length)]} ${label}`;
   }
   if (plan.style.storybook) {
     if (id === "knittingWorks") return `${plan.name} Knitting Works`;
