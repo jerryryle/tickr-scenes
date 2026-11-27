@@ -4,7 +4,7 @@
 // shows one view a second: first its facade tiles (three frames of colour, one of masks), then each
 // kind from the pavement and from above, then a few of them after dark with their windows and lamps
 // lit, and last the "spires" backdrop round the horizon, two ways. Build and render it with
-//   make tool SCENE=long-day TOOL=vicbuildings SECS=32   -> build/long-day-vicbuildings/vicbuildings.png
+//   make tool SCENE=long-day TOOL=vicbuildings SECS=40   -> build/long-day-vicbuildings/vicbuildings.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { mulberry32 } from "../src/rng.ts";
@@ -15,7 +15,7 @@ import { FACADE, FACADE_KINDS } from "../src/facadetiles.ts";
 import { NIGHT_GLOW } from "../src/atmosphere.ts";
 import { Backdrop } from "../src/backdrop.ts";
 import { STYLE_VICTORIAN } from "../src/city-victorian/victorian-style.ts";
-import { VIC, VIC_STREET, vicBackYard, vicGate, vicLot, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "../src/city-victorian/victorian-buildings-town.ts";
+import { VIC, VIC_STREET, vicBackYard, vicCorner, vicGate, vicLot, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "../src/city-victorian/victorian-buildings-town.ts";
 import type { VicDistrict, VicRect } from "../src/city-victorian/victorian-buildings-town.ts";
 
 const Y0 = 0.15;
@@ -74,6 +74,20 @@ export default function createScene({ sys }: SceneInputs): Scene {
       for (let i = 0; i < 3; i++) { const n0 = s.mark(); vicPlanter(s, Y0); s.transformFrom(n0, { ox: 430 + i * 4, oz: 40, rot: 0 }); }
       g.box(480, 0.0, 45, 60, 0.04, 18, VIC_STREET.asphalt);
       vicGate(s, 480, 45, 1, 0, 9 + 1.6, 0);
+      // Corner buildings (vicCorner) at z = 120, each 40 m on from the last: a street along x at
+      // z < 0 and one along z at x > 0 meeting at its corner, a lot of the row on the street
+      // along x beside it. Where people live, an end house beside its terrace, a corner shop and a
+      // pub; on a shopping street, a pub and a shop; downtown, two banks.
+      const corners: ["residential" | "commercial" | "downtown", number, number][] = [["residential", 0.4, 1], ["residential", 0, 0.2], ["residential", 0.2, 0.32], ["commercial", 0, 0.4], ["commercial", 0.4, 0.85], ["downtown", 0, 0.45], ["downtown", 0, 0.45]];
+      corners.forEach(([district, lo, hi], i) => {
+        const n0 = s.mark(), m0 = g.mark(), row = 700 + i, D = district === "downtown" ? 15 : district === "commercial" ? 13 : 11, walls = STYLE_VICTORIAN.walls[district];
+        g.box(-15, 0.0, -12, 42, 0.04, 12, VIC_STREET.asphalt); g.box(12, 0.0, 4, 12, 0.04, 44, VIC_STREET.asphalt);
+        g.box(-15, 0.075, -3, 42, 0.15, 6, VIC_STREET.sidewalk); g.box(3, 0.075, 10, 6, 0.15, 32, VIC_STREET.sidewalk);
+        g.box(-15, Y0 - 0.01, 13, 42, 0.02, 26, district === "residential" ? STYLE_VICTORIAN.grass : VIC_STREET.pavers);
+        vicCorner(s, [[-D + 0.04, D], [-0.4, D - 0.04], [-0.4, 0.4], [-D + 0.04, 0.4]], Y0, district, 0.8, walls, mulberry32(seedFor(lo, hi, 50 + i * 37)), door, row);
+        vicLot(s, { x0: -D - 10 + 0.3, z0: 0.4, x1: -D - 0.3, z1: D - 0.3 }, Y0, district, 0.8, walls, mulberry32(row * 3), door, row);
+        s.transformFrom(n0, { ox: 40 * i, oz: 120, rot: 0 }); g.transformFrom(m0, { ox: 40 * i, oz: 120, rot: 0 });
+      });
       scene.add(g.build(ground)!, s.build(facadeMat)!);
       backdrop = new Backdrop(); backdrop.build(STYLE_VICTORIAN, 7);
       // The shots: each run from the pavement opposite and from above, the middles, then night.
@@ -86,7 +100,9 @@ export default function createScene({ sys }: SceneInputs): Scene {
         { pos: [150, 4, 16], at: [180, 10, 45] }, above(270, 45, 26), { pos: [300, 7, 30], at: [313, 1, 43] },
         above(380, 45, 34), { pos: [462, 5, 38], at: [482, 2, 54] }, { pos: [452, 2.0, 44], at: [485, 3, 52] },
         { ...street(30), night: true }, { ...street(130), night: true }, { ...street(220), night: true }, { ...above(30, 6), night: true },
-        { pos: [200, 2, -60], at: [200, 12, -900], fov: 40 }, { pos: [200, 2, -60], at: [900, 12, -60], fov: 40 });
+        { pos: [200, 2, -60], at: [200, 12, -900], fov: 40 }, { pos: [200, 2, -60], at: [900, 12, -60], fov: 40 },
+        ...corners.map((_, i): Shot => ({ pos: [40 * i + 16, 2.2, 120 - 20], at: [40 * i - 6, 6, 126] })),
+        { pos: [-30, 34, 70], at: [40, 0, 125] }, { pos: [140, 34, 70], at: [200, 0, 125] });
       void xr; void xc; void xd; void xi;
     },
     render(ctx, f) {

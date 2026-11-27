@@ -220,7 +220,10 @@ names (`VIC_LABEL` in `src/facilities.ts`, the city file).
    rows and pubs, banks, a department store and Gothic chambers downtown, churches and a town hall
    in the big blocks, warehouses with hoists, mills with chimneys, back yards, garden squares and
    a toll lodge on every road out. Its facade tiles are the `VICT_` ones in `src/facadeart.ts`,
-   and its skyline is the `spires` backdrop.
+   and its skyline is the `spires` backdrop. Its streets are built up to their corners
+   (`buildLots` in `src/city.ts`): a corner holds one building fronting both streets
+   (`vicCorner`), a pub, shop or bank with its door in a canted corner, or where people live
+   mostly an end house of the row turned to face both streets.
 2. `victorian-street.ts` draws its street pieces: gas lamps, the signalled junctions' Westminster
    semaphore columns and point-duty constables (`src/signals.ts`), and the period street furniture
    (`src/decor.ts`). Its roads are granite setts and its pavements York stone. Its gas lamps glow
@@ -253,7 +256,7 @@ lift, and the city after it gets the brewery's barrels. To look at it:
 
 ```bash
 make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=victorian-ravensgate DEBUG_VIEW=street"
-make tool SCENE=long-day TOOL=vicbuildings SECS=31   # also vicstreets, vicrides, vicpeople, vicwonders, carriages
+make tool SCENE=long-day TOOL=vicbuildings SECS=40   # also vicstreets, vicrides, vicpeople, vicwonders, carriages
 ```
 
 `src/vignettes.ts` holds the street vignettes (a dog at a "no dogs" sign, a dog walker towed by a
