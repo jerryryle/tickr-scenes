@@ -71,6 +71,7 @@ const STREAM_RADIUS = 3;
 // slots, so the cache sheds its oldest when either atlas runs low.
 const CHUNK_CACHE_BYTES = 512e6;
 const SIGN_RESERVE = 64, PLATE_RESERVE = 48;
+const CARRIAGE_BAND = [0.45, 0.55];   // the road's period over which a truck becomes a carriage (setToon)
 const FORK_SPOT_RADIUS = 1.8;   // the spotlight on the forklift in a docked trailer (m): it and its load, from the side
 // Prefetch: the cells within STREAM_RADIUS of the route ahead (sampled every PREFETCH_STEP m) and
 // round the next stops, at most PREFETCH_MAX of them.
@@ -282,10 +283,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   // The trucks turn cartoonish (truck.ts toonWarp) wholly in the storybook city, and on the
   // drive to or from it as the land does (CountryRoad.storyAt); and into carriages (truck.ts
   // makeCarriage) in the Victorian city and on the road as it creeps in (CountryRoad.periodAt).
+  // The carriage comes in over the short stretch where the period passes CARRIAGE_BAND, about 40 m
+  // of road where the crew change into carters (crew.ts) and the oncoming traffic turns horse-drawn:
+  // half a truck with its team half grown is a muddle of floating parts to watch for long.
   function setToon() {
     const road = journey.st.mode === "country" ? journey.country : null;
     const k = road ? road.storyAt(journey.countryS) : journey.plan.style.storybook ? 1 : 0;
-    const c = road ? road.periodAt(journey.countryS) : journey.plan.style.victorian ? 1 : 0;
+    const c = road ? THREE.MathUtils.smoothstep(road.periodAt(journey.countryS), CARRIAGE_BAND[0], CARRIAGE_BAND[1]) : journey.plan.style.victorian ? 1 : 0;
     truck.toon = k; truck.carriage = c; if (other) { other.toon = k; other.carriage = c; }
   }
   function newTruck(model: TruckModel) {
@@ -1133,8 +1137,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       updateLampLights(truck.root.position);
       // The headlights' light on the road ahead (applyLampLight).
       {
-        const h = truck.heading, ahead = truck.frontX + 7.5, on = truck.headlights && atmosphere.night > 0.15;
-        HEAD_LIGHTS.value[0].set(truck.root.position.x + Math.cos(h) * ahead, truck.root.position.z - Math.sin(h) * ahead, h, on ? 1 : 0);
+        // (A carriage's oil lamps throw only a faint, short glow round its team.)
+        const h = truck.heading, ahead = truck.frontX + 7.5 - 5 * truck.carriage, on = truck.headlights && atmosphere.night > 0.15;
+        HEAD_LIGHTS.value[0].set(truck.root.position.x + Math.cos(h) * ahead, truck.root.position.z - Math.sin(h) * ahead, h, on ? 1 - 0.85 * truck.carriage : 0);
         HEAD_Y.value[0] = truck.root.position.y;   // (up on a freeway, a garage roof, a hill)
         if (!on) for (let k = 1; k < HEAD_LIGHTS.value.length; k++) HEAD_LIGHTS.value[k].w = 0;   // the other vehicles' too
         else {
