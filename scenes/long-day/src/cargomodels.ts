@@ -26,7 +26,10 @@ const CK = {
 const VC = { tin: 0x8a8a84, stencil: 0x2a2018, iron: 0x2a2a2a, cream: 0xece2c8, brass: 0xc9a040, enamel: 0xf4f4f0, japan: 0x141414, gilt: 0xd4af37 };
 const BARREL = [[0.78, 0], [0.9, 0.12], [0.98, 0.3], [1, 0.5], [0.98, 0.7], [0.9, 0.88], [0.78, 1]] as const;
 const CHURN = [[0.92, 0], [1, 0.03], [1, 0.6], [0.96, 0.68], [0.7, 0.82], [0.56, 0.9], [0.56, 1]] as const;
-const HORN = [[0.08, 0], [0.1, 0.3], [0.18, 0.6], [0.4, 0.82], [1, 1]] as const;
+// (A sack: slumped wide at the foot and drawn in under its rolled-down mouth, which SACK_LIP draws.)
+const SACK = [[0.86, 0], [1, 0.12], [0.98, 0.4], [0.86, 0.75], [0.8, 1]] as const;
+const SACK_LIP = [[0.86, 0], [1, 0.5], [0.94, 1]] as const;
+const HORN =[[0.08, 0], [0.1, 0.3], [0.18, 0.6], [0.4, 0.82], [1, 1]] as const;
 const TRAILER_SAILER = { scale: 0.5, mastDown: true }, JETSKI = { scale: 0.8 };
 const vpick = <T,>(a: T[], i: number) => a[((i % a.length) + a.length) % a.length];
 
@@ -158,17 +161,20 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   // A sack of flour lies plump on its side, the miller's blue mark on its flank and its ends tied.
   flourSacks: { size: [0.52, 0.28, 0.38], build: (b, x, y, z, i) => {
     const cloth = vpick([0xe8e0c8, 0xded4b8, 0xece6d4], i);
-    b.box(x, y + 0.075, z, 0.48, 0.15, 0.38, cloth);
-    b.cyl(x, y + 0.14, z, 0.14, 0.48, cloth, 10, 0, Math.PI / 2);
+    // (Round all over, as a sack is: two rolls side by side, filled between, with no flat flank.)
+    b.box(x, y + 0.12, z, 0.44, 0.2, 0.14, cloth);
     for (const s of [-1, 1]) {
-      b.box(x + s * 0.255, y + 0.12, z, 0.03, 0.1, 0.12, cloth);
-      b.box(x, y + 0.09, z + s * 0.193, 0.28, 0.08, 0.006, vpick([0x2a4a7a, 0x8a2a24], i));
+      b.cyl(x, y + 0.125, z + s * 0.065, 0.125, 0.46, cloth, 10, 0, Math.PI / 2);
+      b.box(x + s * 0.245, y + 0.11, z, 0.05, 0.08, 0.1, cloth);
+      b.box(x + s * 0.272, y + 0.11, z, 0.02, 0.05, 0.06, 0xb8a888);
+      b.boxR(x, y + 0.12, z + s * 0.188, 0.26, 0.07, 0.006, vpick([0x2a4a7a, 0x8a2a24], i), 0, 0, 0);
     }
   } },
-  // A coal sack is dark sacking with its mouth open on a heap of black lumps.
+  // A coal sack is round, sagging sacking, bellied low, with its mouth rolled down on a heap of
+  // black lumps.
   coalSacks: { size: [0.5, 0.42, 0.4], build: (b, x, y, z, i) => {
-    b.box(x, y + 0.17, z, 0.46, 0.34, 0.38, 0x443a2e);
-    b.box(x, y + 0.335, z, 0.48, 0.04, 0.4, 0x564a3a);
+    b.lathe("sack", SACK, x, y, z, 0.2, 0.34, vpick([0x4a4034, 0x3e362c, 0x52463a], i), 9);
+    b.lathe("sackLip", SACK_LIP, x, y + 0.3, z, 0.185, 0.06, 0x5e5242, 9);
     ([[-0.1, -0.06, 0.1], [0.08, 0.07, 0.09], [0.1, -0.09, 0.08], [-0.08, 0.1, 0.08], [0, 0, 0.1]] as const).forEach(([dx, dz, r], k) => b.ico(x + dx, y + 0.35, z + dz, r, (i + k) % 2 ? 0x16161a : 0x24262c, 0.7));
   } },
   // A milk churn is a tall tin can with a shoulder and neck, a mushroom lid, handles and a brass plate.
