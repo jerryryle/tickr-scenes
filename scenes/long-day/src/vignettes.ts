@@ -845,7 +845,7 @@ const K: Record<VK, Kind> = {
   // A food truck parked just inside a park, its hatch open; a queue on the pavement, longer
   // at lunch, shuffling up as each customer gets their food and goes.
   foodTruck: {
-    w: (d, c) => (d === "park" && !c.snow && !c.plan.style.storybook && day(c, 10, 20) && c.w.storm < 0.5 ? 2.2 : 0), trigger: 0,   // (it is not in the storybook city, which has its own vehicles only)
+    w: (d, c) => (d === "park" && !c.snow && !c.plan.style.storybook && !c.plan.style.victorian && day(c, 10, 20) && c.w.storm < 0.5 ? 2.2 : 0), trigger: 0,   // (it is not in the storybook city nor the Victorian, which have their own vehicles only)
     place(v, c, r, V) {
       const sp = spanOf(v.bx, v.bz, v.side), a = freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, sp.a0 + 3, sp.mid - 4) ?? freeSpot(V, c, v.bx, v.bz, v.side, 7, -1.2, 3.4, r, sp.mid + 4, sp.a1 - 3);
       if (a === null) return false;
@@ -901,7 +901,7 @@ const K: Record<VK, Kind> = {
   // A bike courier with a big insulated bag, splitting the lanes, braking for whatever's in the
   // way, and through on the amber (and the first blink of red).
   courier: {
-    w: (d, c) => (d !== "industrial" && c.hour >= 7 && c.hour < 23 && !c.snow ? 1.3 : 0), trigger: 0,
+    w: (d, c) => (d !== "industrial" && !c.plan.style.victorian && c.hour >= 7 && c.hour < 23 && !c.snow ? 1.3 : 0), trigger: 0,   // (not in the Victorian city: the courier's bike is modern)
     place(v, c, r) {
       // A street heading past the truck: from the node nearest it, two or three streets back along
       // one of its arms (straight on through the nodes between), pointed its way. (Any nearer, it
