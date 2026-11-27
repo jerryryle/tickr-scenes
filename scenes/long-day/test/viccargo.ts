@@ -34,7 +34,7 @@ for (const seed of SEEDS) {
   }
   j.seekTo(j.nominalStart(R - 1));
   // (The pickup whose dwell is under way, and what was loaded when it began: it loads part way through.)
-  let begun: { stop: unknown; loaded: number } | null = null;
+  let begun = null as { stop: unknown; loaded: number } | null;
   for (let guard = 400000; guard-- > 0 && j.st.city <= R + 1;) {
     const s0 = j.st.stops[0], dwell = j.st.mode === "dwell";
     if (dwell && s0?.kind === "pickup" && begun?.stop !== s0) begun = { stop: s0, loaded: j.st.loaded };
