@@ -76,7 +76,7 @@ export const WORKER_LOOK: Look = { jacket: 0x6b6f75, trousers: 0x34383e, boots: 
 // jacket open over the waistcoat, as carriers' vanmen did. The mate works in shirtsleeves rolled
 // to the elbow and a leather apron.
 interface PeriodLook { shirt: number; waistcoat: number; neck: number; trousers: number; boots: number; hat: number; bowler: boolean; apron?: number; jacket?: number }
-export const CARTER_DRIVER: PeriodLook = { shirt: 0xe6e0d0, waistcoat: 0x3a3026, neck: 0xa82a2a, trousers: 0x3a3630, boots: 0x2a201a, hat: 0x1e1c1a, bowler: true, jacket: 0x6a5638 };
+export const CARTER_DRIVER: PeriodLook = { shirt: 0xe6e0d0, waistcoat: 0x3a3026, neck: 0xa82a2a, trousers: 0x3a3630, boots: 0x2a201a, hat: 0x1e1c1a, bowler: true, jacket: 0x8c7a56 };
 export const CARTER_MATE: PeriodLook = { shirt: 0xd4cebe, waistcoat: 0x4a4a42, neck: 0x2a4a7a, trousers: 0x3a3a36, boots: 0x2a201a, hat: 0x4a4238, bowler: false, apron: 0x7a5434 };
 
 export class Character {
