@@ -4,10 +4,11 @@
 // seat, its trim recoloured) and grows these parts.
 //
 // What each model becomes: a box truck a panelled van, lettered on its sides, with a roof rail and a
-// canopy over the coachman; the flatbed a dray with stakes; the tractor and its trailer a pair on a
-// pole, the driver on a forecarriage box and the trailer a pantechnicon. Each has a dashboard, a
-// footboard and a bench where the truck's seats were, carriage lamps by the seat and a red lamp
-// behind, spoked wheels with iron tyres at the truck's axles, and its team in shafts or on a pole.
+// canopy over the coachman; the flatbed a dray with stakes; the tractor and its trailer a
+// forecarriage with the driver's box and a pantechnicon behind. Each has a dashboard, a footboard and
+// a bench where the truck's seats were, carriage lamps by the seat and a red lamp behind, and spoked
+// wheels with iron tyres at the truck's axles. The 16 ft van has one horse in shafts; every bigger
+// body has a pair on a pole.
 //
 // The team (TeamLayout) stands ahead of the dashboard, turning with the front wheels about the front
 // axle like a forecarriage. Where the horses reach more than TEAM_SLACK past the truck's nose, the
@@ -34,7 +35,7 @@ export const TEAM_SLACK = 0.3;
 // the front axle the team turns about, each horse's withers (x, z) in the truck's frame and its
 // scale, whether it is a pair on a pole, the tips of its shafts or pole in the team's frame (x from
 // the front axle), how far the team reaches past the nose (0 within TEAM_SLACK), and the spoked
-// wheels' radii as shares of the truck's.
+// wheels' radii as shares of the truck's (a trailer's are sized in truck.ts poseSpokes).
 export interface TeamLayout {
   dash: number; pivot: number; horses: [number, number][]; scale: number; pole: boolean;
   rear: [number, number]; tip: [number, number]; reach: number; front: number; back: number;
@@ -43,7 +44,12 @@ const TEAM_LAYOUTS = new Map<TruckSpec, TeamLayout>();
 export function teamLayout(s: TruckSpec): TeamLayout {
   let L = TEAM_LAYOUTS.get(s);
   if (L) return L;
-  const pole = s.cab === "daycab", scale = 0.9, front = 0.82, back = 1.0;
+  // (One horse draws the small van; a body over 6 m long, as a 26 ft box or deck is, or a
+  // pantechnicon, takes a pair, as a carrier worked a load of more than about two tons.)
+  const pole = !s.cargo || s.cargo.x1 - s.cargo.x0 > 6, scale = 0.9, front = 0.82;
+  // (A van's or dray's hind wheels stand as high as its floor allows: 3 ft 7 in under a 26 ft van,
+  // 4 ft under the dray.)
+  const back = s.cargo ? Math.max(1, (s.cargo.floor - 0.05) / (2 * s.wheelR)) : 1;
   // (The dashboard stands far enough ahead of the seat for the coachman's feet and the climb's
   // footholds (crew.ts cabSpots), behind the door's front, so the climb's grab handles stay.)
   const dash = s.cabFront - 0.5;

@@ -1095,7 +1095,7 @@ export class Truck {
     for (const w of this.wheelSlots) {
       const base = w.trailer ? TRAILER.rearZ : s.rearZ;
       const unused = (!w.steer && Math.abs(w.z) < base) || (w.trailer ? w.x !== Math.min(...TRAILER.axles) : !w.steer && w.x !== Math.max(...s.rearAxles));
-      const r = w.r * (w.steer ? T.front : T.back), z = w.steer ? w.z : Math.sign(w.z) * base;
+      const r = w.steer ? w.r * T.front : w.trailer ? TRAILER.floor / 2 - 0.025 : w.r * T.back, z = w.steer ? w.z : Math.sign(w.z) * base;
       this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
       this.q.setFromEuler(this.e);
       this.m4.compose(this.v3.set(w.x, r, z), this.q, unused ? this.s3.set(0, 0, 0) : this.s3.set(r, r, KC));
