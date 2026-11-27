@@ -57,9 +57,10 @@ interface VicBand { tile: number; v: number; floors: number; floorH: number; col
 interface VicSpecial { k: number; tile: number; v: number; all?: boolean }
 // vbox walls a box footprint with bands stacked from y0, as facade.ts facadeBox does, but with its
 // variants and its front's special bays chosen by the caller. Its front and back round to bays of
-// about `bay`. With `flank` its two sides are blank wall, as a terrace house's end walls are. It
-// returns the top's height.
-function vicBox(s: Batch, x0: number, z0: number, x1: number, z1: number, y0: number, bands: VicBand[], color: number, special: VicSpecial[] = [], bay = BAY, flank = false): number {
+// about `bay`. With `flank` its two sides are blank wall, as a terrace house's end walls are. With
+// `flank` "x0" or "x1" only that side is drawn blank, and the other is left out because it is the
+// party wall hidden inside the house it pairs with. It returns the top's height.
+function vicBox(s: Batch, x0: number, z0: number, x1: number, z1: number, y0: number, bands: VicBand[], color: number, special: VicSpecial[] = [], bay = BAY, flank: boolean | "x0" | "x1" = false): number {
   for (const [x, z] of [[x0, z1], [x1, z1], [x1, z0], [x0, z0]]) PLACED.foot.push(...toTile(x, z));
   const corners = [[x0, z1], [x1, z1], [x1, z0], [x0, z0]];
   let y = y0;
@@ -68,6 +69,7 @@ function vicBox(s: Batch, x0: number, z0: number, x1: number, z1: number, y0: nu
     for (let sd = 0; sd < 4; sd++) {
       const [ax, az] = corners[sd], [bx, bz] = corners[(sd + 1) % 4], L = Math.hypot(bx - ax, bz - az);
       if (flank && sd % 2 === 1) {
+        if (flank === (sd === 1 ? "x0" : "x1")) continue;
         // (A blank side is the tile's plain strip left of its window, 28 px of 128, laid in pieces
         // about as wide as that strip is on a front.)
         const m = Math.max(1, Math.round(L / 0.8));
@@ -167,18 +169,22 @@ function vicBayWindow(s: Batch, x0: number, x1: number, z: number, y: number, fl
 }
 // Railings: a top and a bottom rail and a comb of thin bars (each a flat quad facing out), from
 // (ax, az) to (bx, bz), h high, with gaps (distances along it) left open; facing (-dz, dx), the
-// side a wall drawn the same way faces.
+// side a wall drawn the same way faces. Each rail is drawn as its front, back and top, which are
+// the faces a camera above it sees; its ends and underside are left out.
 function vicRailings(s: Batch, ax: number, az: number, bx: number, bz: number, y: number, h: number, col: number, gaps: [number, number][] = [], step = 0.42) {
   const L = Math.hypot(bx - ax, bz - az); if (L < 0.2) return;
-  const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx, rot = Math.atan2(-tz, tx);
+  const tx = (bx - ax) / L, tz = (bz - az) / L, nx = -tz, nz = tx;
   const open = (t: number) => gaps.some(([g0, g1]) => t > g0 && t < g1);
   // (The rails run between the gaps.)
   const cuts = [0, ...gaps.flat().map((v) => vClamp(v, 0, L)), L].sort((p, q) => p - q);
   for (let i = 0; i + 1 < cuts.length; i += 2) {
     const t0 = cuts[i], t1 = cuts[i + 1]; if (t1 - t0 < 0.1) continue;
-    const m = (t0 + t1) / 2;
-    s.box(ax + tx * m, y + h - 0.04, az + tz * m, t1 - t0, 0.06, 0.06, col, rot);
-    s.box(ax + tx * m, y + 0.12, az + tz * m, t1 - t0, 0.05, 0.05, col, rot);
+    for (const [ry, rh, rd] of [[y + h - 0.04, 0.06, 0.03], [y + 0.12, 0.05, 0.025]]) {
+      const at = (t: number, n: number, dy: number): VicP3 => [ax + tx * t + nx * n, ry + dy, az + tz * t + nz * n];
+      vicQuad(s, at(t0, rd, -rh / 2), at(t1, rd, -rh / 2), at(t1, rd, rh / 2), at(t0, rd, rh / 2), col, [nx, 0, nz]);
+      vicQuad(s, at(t0, -rd, -rh / 2), at(t1, -rd, -rh / 2), at(t1, -rd, rh / 2), at(t0, -rd, rh / 2), col, [-nx, 0, -nz]);
+      vicQuad(s, at(t0, rd, rh / 2), at(t1, rd, rh / 2), at(t1, -rd, rh / 2), at(t0, -rd, rh / 2), col, [0, 1, 0]);
+    }
   }
   for (let t = step / 2; t < L; t += step) {
     if (open(t)) continue;
@@ -248,7 +254,7 @@ function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
     // (Each storey a little lower than the one under it, the top one's windows the shortest.)
     const bands: VicBand[] = [{ tile: FACADE.VICT_SASH, v: vGround, floors: 1, floorH: fh + 0.25, color: groundCol }, { tile: FACADE.VICT_SASH, v: vUp, floors: 1, floorH: fh }];
     if (storeys === 3) bands.push({ tile: FACADE.VICT_SASH, v: vUp, floors: 1, floorH: fh - 0.45 });
-    top = vicBox(s, hx0, zf, hx1, zb, y0, bands, brick, [{ k: dk, tile: FACADE.VICT_DOOR, v: vGround }], bw, true);
+    top = vicBox(s, hx0, zf, hx1, zb, y0, bands, brick, [{ k: dk, tile: FACADE.VICT_DOOR, v: vGround }], bw, n === 1 || (i === 0 ? "x0" : "x1"));
     const [d0, d1] = vicBayX(hx0, hx1, dk, bw), dm = (d0 + d1) / 2;
     doors.push(dm);
     if (i === rec) door(d0, d1, zf);
