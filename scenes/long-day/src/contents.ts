@@ -83,6 +83,7 @@ export const FIELDS: Record<string, string[]> = {
   vicWorks: ["rect", "wall", "floorH"],
   vicYard: ["w", "d"],
   vicSquare: ["w", "d", "big"],
+  vicPark: ["pts"],
   lotBuilding: ["use", "side", "rect", "wall", "floors", "ground", "tile", "awning", "floorH"],
   garden: ["rect", "fence", "patio", "shed"],
   storyGarden: ["w", "d", "fountain"],

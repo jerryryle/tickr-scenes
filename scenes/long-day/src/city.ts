@@ -21,7 +21,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
-import { VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
+import { VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
@@ -754,6 +754,8 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   // A park: trees scattered clear of the edges, and (when a facility has its door here) a
   // pavilion on each side.
   const pavilions = district === "park" && hasSign(DC.fac);
+  // (A Victorian park is laid out, railed and walked: victorian-buildings-town.ts vicPark.)
+  if (district === "park" && CS.victorian && !keep) place("vicPark", { pts: cmPts(pullIn(poly, 0.3)) }, g, s, rnd);
   if (district === "park") {
     for (let k = 0; k < Math.floor(blk.area / 90); k++) {
       const x = blk.cx - ox + range(rnd, -25, 25), z = blk.cz - oz + range(rnd, -25, 25);
@@ -777,8 +779,9 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   const faces = blk.faces.slice().sort((p, q) => (G.faceA1(q) - G.faceA0(q)) - (G.faceA1(p) - G.faceA0(p)) || p - q);
   // A cul-de-sac (a close) into a big block where people live, in about half of those with room:
   // off the middle of its longest side, a lane in to a turning circle, and houses round it facing
-  // in. Its lane's span of that side has no lot.
-  const close = district === "residential" && !keep ? closeOf(G, blk, poly, ox, oz, faces[0], plan.seed) : null;
+  // in. Its lane's span of that side has no lot. (The Victorian city has none: a turning circle
+  // is a suburb's.)
+  const close = district === "residential" && !keep && !CS.victorian ? closeOf(G, blk, poly, ox, oz, faces[0], plan.seed) : null;
   // (A lot that won't fit is tried shallower, then narrower; a park's pavilion goes mid-side.)
   const tryLot = (f: number, a0: number, a1: number, d: number) => {
     for (const k of [1, 0.65, 0.4]) {
@@ -953,6 +956,8 @@ DRAW.vicTower = (R, _g, s, rnd) => { const [x0, z0, x1, z1] = R.rect as number[]
 DRAW.vicWorks = (R, _g, s, rnd) => { const [x0, z0, x1, z1] = R.rect as number[]; vicWorks(s, { x0, z0, x1, z1 }, CURB_H, R.floorH as number, R.wall as number, rnd); };
 DRAW.vicYard = (R, _g, s, rnd) => { vicYard(s, R.w as number, R.d as number, CURB_H, rnd); };
 DRAW.vicSquare = (R, g, s, rnd) => { vicSquare(s, g, R.w as number, R.d as number, CURB_H, !!R.big, CS.grass, rnd); };
+// A Victorian park's railings, walks and flower bed round its outline (tile-local): vicPark.
+DRAW.vicPark = (R, g, s, rnd) => { vicPark(s, g, R.pts as [number, number][], CURB_H, rnd); };
 // A block's ground (`pts`, its top at `top`): grass or paving, as the season colours it.
 DRAW.ground = (R, g) => { slab(g, R.pts as [number, number][], 0, R.top as number, R.c === "grass" ? CS.grass : CS.pavers); };
 // The town's plaza over its block `pts` (buildPlaza).
