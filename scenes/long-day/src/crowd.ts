@@ -188,7 +188,10 @@ export class Crowd {
     // A dog walker's dog: often Belle (small, fluffy and cream, with tan floppy ears and a collar).
     if (kind === "dog") p.dog = { x: 0, z: 0, h: 0, phase: 0, color: r() < 0.45 ? BELLE : pick(r, [0x8a5a3a, 0x222222, 0xc8a060, 0xeeeeee]) };
     if (kind === "chase") p.balloon = { x: 0, y: 2.2, z: 0, free: false, t: 0, py: 2.2 };
-    if (kind === "vendor") { p.shirt = 0xffffff; p.pants = 0x2c3e50; }
+    // (In the Victorian city the seller is a costermonger in corduroy and a cap, and the fiddler
+    // wears a dark jacket: drawPed dresses them in these colours.)
+    if (kind === "vendor") { p.shirt = vic ? 0x5a4a34 : 0xffffff; p.pants = vic ? 0x4a4032 : 0x2c3e50; }
+    if (kind === "musician" && vic) p.shirt = pick(r, [0x2a2a30, 0x3a3226, 0x4a4236]);
     // In the rain, umbrellas; first thing in the morning, coffee. In the Victorian city, dark
     // umbrellas, parasols in the sun, and children about.
     const wm = weatherMix(plan.climate?.weather ?? "clear");
@@ -495,6 +498,7 @@ export class Crowd {
       x: p.x, z: p.z, yaw: h, s, y: (inRoad ? 0.02 : CURB_H) + (moving ? w.bob : 0),
       legs: moving ? w.legs : [0, 0], arms: moving ? w.arms : [0, 0], lean: run ? 0.15 : 0,
       shirt: p.shirt, pants: p.pants, skin: p.skin, hair: p.hair, hat: p.hat, parasol: p.parasol,
+      dress: !FIG_STYLE.victorian ? undefined : p.kind === "vendor" ? "cap" : p.kind === "musician" ? "sack" : undefined,
     };
     if (p.kind === "musician") { const m = 0.9 + 0.25 * Math.sin(p.phase * 7); b.arms = [-m, m]; }
     if (p.kind === "vendor") { const m = 0.3 + 0.2 * Math.sin(p.phase * 1.3); b.arms = [-m, m]; }

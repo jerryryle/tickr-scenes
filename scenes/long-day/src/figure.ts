@@ -243,8 +243,9 @@ export class Figures {
     let parasol = false;
     if (woman) {
       q.shirt = bodice; q.pants = V_BOOT; q.legs = [legs[0] * 0.45, legs[1] * 0.45];
-      // (A parasol up in the right hand, unless the hands are busy.)
-      if (b.parasol !== undefined && b.fore === undefined) { const a = b.arms ?? [0, 0]; q.arms = [a[0], 0.55]; q.fore = [a[0], 2.2]; parasol = true; }
+      // (A parasol up in the right hand, unless the hands are busy or she wears a working woman's
+      // shawl.)
+      if (b.parasol !== undefined && b.fore === undefined && shawl < 0) { const a = b.arms ?? [0, 0]; q.arms = [a[0], 0.55]; q.fore = [a[0], 2.2]; parasol = true; }
     } else if (girl) { q.shirt = gown; q.pants = 0x34302e; }
     else if (dress === "bobby") { q.shirt = q.pants = V_BOBBY; q.bulk = (b.bulk ?? 1) * 1.06; }
     else { q.shirt = dress === "sleeves" ? pk(V_SHIRT, 4) : coat; q.pants = trous; }
