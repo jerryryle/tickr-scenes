@@ -12,8 +12,9 @@ export const SHIRTS = [0xc0392b, 0x2e86c1, 0x27ae60, 0xf1c40f, 0x8e44ad, 0xecf0f
 export const PANTS = [0x2c3e50, 0x1f2a44, 0x4a4a4a, 0x7a5a3a, 0x222222, 0x5a6a7a, 0xc8b89a];
 export const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0x6b4423];
 export const HAIRS = [0x2a1a10, 0x5a3a1a, 0x111111, 0xc8a050, 0x8a3a1a, 0xaaaaaa];
-// FIG_STYLE marks the storybook city (main.ts sets it as each city is built): people dress for it (Figures.person).
-export const FIG_STYLE = { storybook: false };
+// FIG_STYLE marks the storybook city and the Victorian one (main.ts sets it as each city is built):
+// people dress for it (Figures.person).
+export const FIG_STYLE = { storybook: false, victorian: false };
 const STORY_CLOTHES = [0xe8333a, 0x1fb5b0, 0x9a6cf0, 0xf2c230, 0xff7fb5, 0x5fd3a0, 0xff9a2e, 0x2b3f8a];
 export const UMBRELLAS = [0x1a1a1a, 0xc0392b, 0x2e86c1, 0xf1c40f, 0x16a085, 0x8e44ad, 0xff8fb0];
 
@@ -38,7 +39,31 @@ export interface Body {
   hat?: number; hatH?: number;      // a cap (or a tall hat with hatH)
   bulk?: number;                    // torso width factor (a bouncer)
   coat?: number;                    // a long coat over the shirt
+  // In Victorian dress (FIG_STYLE.victorian), what they wear: one of VicDress, chosen for them from
+  // their colours unless given here. Given, their own colours dress it (vicPerson). "own" keeps
+  // the body as drawn, for someone the caller costumes.
+  dress?: VicDress | "own";
+  vicHat?: VicHat;                  // their hat, in place of the one their dress gives them
+  parasol?: number;                 // a parasol of this colour, held up by a woman in Victorian dress
 }
+// The Victorian wardrobe (Figures.vicPerson): men in a frock coat, a sack coat, a jacket and flat
+// cap, or shirtsleeves with a waistcoat and apron; women in a long full skirt; children; a bobby.
+export type VicDress = "frock" | "sack" | "cap" | "sleeves" | "woman" | "boy" | "girl" | "bobby";
+export type VicHat = "top" | "bowler" | "cap" | "bonnet" | "wide" | "helmet" | "none";
+// Umbrellas and parasols in the Victorian city: black and dark umbrellas, pale parasols.
+export const VIC_UMBRELLAS = [0x1a1a1a, 0x1a1a1a, 0x24242c, 0x3a2626, 0x26302a];
+export const VIC_PARASOLS = [0xf4efe4, 0xead6de, 0xd6e2ea, 0xf0e0c0, 0xe0e8d0];
+const V_COAT = [0x1e1e24, 0x2a2a30, 0x3a3226, 0x283244, 0x4a4236, 0x2e3a2e, 0x52463a, 0x3a2a26];
+const V_TROUSER = [0x2a2a2c, 0x4a4844, 0x5e5646, 0x3a3a42, 0x6a6052, 0x34302a];
+const V_WAIST = [0x7a2a2a, 0x3a4a3a, 0x8a7a5a, 0x2a2a2a, 0x54446a, 0x7a5a2a, 0xa08a5a];
+const V_SHIRT = [0xece6da, 0xdcd6c6, 0xdcdfe2];
+const V_DRESS = [0x5a2a4a, 0x2a3a5a, 0x3a5a4a, 0x8a3a2a, 0x8a7a9a, 0x6a5a3a, 0x2a2a2a, 0xa89a7a, 0x7a2a32, 0x4a5a6a, 0x9a6a4a, 0x5a6a3a];
+const V_SHAWL = [0xc8b89a, 0x8a3a3a, 0x3a4a6a, 0xd8d0b8, 0x5a4a3a, 0x6a6a5a, 0x7a5a7a];
+const V_HAT = [0x1a1a1a, 0x1a1a1a, 0x2a2622, 0x4a3a2a];
+const V_CAP = [0x4a4238, 0x3a3a3a, 0x5a4e3e, 0x2e3440];
+const V_STRAW = [0xd8c08a, 0xc8a870, 0x2a2a2a, 0xe8e0d0, 0x4a2a3a];
+const V_TRIM = [0xc0303a, 0x3a5a9a, 0xe8d8a0, 0x6a2a6a, 0xf0e8e0, 0x2a6a4a];
+const V_BOOT = 0x2a221e, V_APRON = [0xe8e4d8, 0x7a5a3a, 0xd8d2c0], V_BOBBY = 0x1a2034, V_SILVER = 0xc8ccd0;
 
 export interface DogPose {
   x: number; z: number; yaw: number; y?: number;
@@ -157,6 +182,7 @@ export class Figures {
   costumes = true;
   // A person. Afterwards handL/handR, footL/footR, head and hipC hold where those ended up.
   person(b: Body) {
+    if (FIG_STYLE.victorian && this.costumes && b.dress !== "own") { this.vicPerson(b); return; }
     this.personBody(b);
     if (FIG_STYLE.storybook && this.costumes && b.hat === undefined) this.storyOutfit(b);
   }
@@ -192,6 +218,91 @@ export class Figures {
     if ((k >> 2) % 2) {   // this is a long striped scarf, trailing behind
       for (let i = 0; i < 5; i++) this.box(hx - fx * (0.12 + i * 0.07) * s + rx * 0.05 * s, hy - (0.2 + i * 0.09) * s, hz - fz * (0.12 + i * 0.07) * s + rz * 0.05 * s, 0.08 * s, 0.1 * s, 0.12 * s, b.yaw, 0.6, i % 2 ? 0xffffff : c2);
     } else this.box(hx + fx * 0.12 * s, hy - 0.2 * s, hz + fz * 0.12 * s, 0.05 * s, 0.1 * s, 0.3 * s, b.yaw, 0, c2);   // otherwise this is a big bow tie
+  }
+  // In the Victorian city (FIG_STYLE.victorian, main.ts sets it with the city) everyone is in
+  // period dress. Their dress, hat and colours are picked from their own colours, so they stay
+  // theirs frame to frame and on a scrub. When the caller gives `dress`, the caller's colours dress
+  // it: the shirt colours the coat or bodice, the pants the trousers or skirt, and the coat (if
+  // any) the waistcoat, apron or shawl; a hat colour given (hat) colours the hat. A long skirt
+  // hides the legs below the knee: under it they take half a stride, and its hem sways with them.
+  // Skirts and coat tails follow the thighs, so they lie over the lap of someone sitting.
+  private vicPerson(b: Body) {
+    const s = b.s ?? 1, k = ((b.shirt * 7 + b.pants * 13 + b.skin * 3 + b.hair) >>> 0) % 997, h = Math.imul(k + 1, 2654435761) >>> 0;
+    const pk = <T>(a: readonly T[], i: number) => a[(h >>> (i * 3)) % a.length];
+    const own = b.dress !== undefined;
+    const dress: VicDress = own ? b.dress as VicDress : s < 0.8 ? (k % 2 ? "boy" : "girl") : k % 29 === 0 ? "bobby" : k % 20 < 9 ? "woman" : (["frock", "sack", "sack", "cap", "cap", "sleeves"] as const)[(h >>> 7) % 6];
+    const woman = dress === "woman", girl = dress === "girl";
+    const coat = own ? b.shirt : pk(V_COAT, 1), trous = own ? b.pants : pk(V_TROUSER, 2), waist = own && b.coat !== undefined ? b.coat : pk(V_WAIST, 3);
+    const gown = own ? b.pants : pk(V_DRESS, 1), bodice = own ? b.shirt : (k >> 2) % 3 === 0 ? pk(V_DRESS, 5) : gown;
+    const shawl = own ? b.coat ?? -1 : (k >> 3) % 3 === 0 ? pk(V_SHAWL, 6) : -1, trim = pk(V_TRIM, 4);
+    const hat: VicHat = b.vicHat ?? (dress === "frock" ? "top" : dress === "sack" ? ((h >>> 11) % 4 ? "bowler" : "top") : dress === "sleeves" ? ((h >>> 11) % 2 ? "bowler" : "cap") :
+      dress === "cap" || dress === "boy" ? "cap" : dress === "bobby" ? "helmet" : girl ? "none" : (h >>> 12) % 20 < 9 ? "bonnet" : (h >>> 12) % 20 < 17 ? "wide" : "none");
+    const hatC = own && b.hat !== undefined ? b.hat : hat === "cap" ? pk(V_CAP, 5) : hat === "bonnet" || hat === "wide" ? pk(V_STRAW, 6) : hat === "helmet" ? V_BOBBY : pk(V_HAT, 7);
+    const q: Body = { ...b, hat: undefined, hatH: undefined, coat: undefined };
+    const legs = b.legs ?? [0, 0];
+    let parasol = false;
+    if (woman) {
+      q.shirt = bodice; q.pants = V_BOOT; q.legs = [legs[0] * 0.45, legs[1] * 0.45];
+      // (A parasol up in the right hand, unless the hands are busy.)
+      if (b.parasol !== undefined && b.fore === undefined) { const a = b.arms ?? [0, 0]; q.arms = [a[0], 0.55]; q.fore = [a[0], 2.2]; parasol = true; }
+    } else if (girl) { q.shirt = gown; q.pants = 0x34302e; }
+    else if (dress === "bobby") { q.shirt = q.pants = V_BOBBY; q.bulk = (b.bulk ?? 1) * 1.06; }
+    else { q.shirt = dress === "sleeves" ? pk(V_SHIRT, 4) : coat; q.pants = trous; }
+    this.personBody(q);
+    const yaw = b.yaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw), tilt = b.tilt ?? 0;
+    const lean = b.lean ?? 0, sl = Math.sin(lean), cl = Math.cos(lean), [px, py, pz] = this.hipC;
+    // T: a box on the torso, d up it from the hips and f forward of its middle (metres, for an adult).
+    const T = (d: number, f: number, sx: number, sy: number, sz: number, c: number) =>
+      this.box(px + fx * (sl * d + cl * f) * s, py + (cl * d - sl * f) * s, pz + fz * (sl * d + cl * f) * s, sx * s, sy * s, sz * s, yaw, -lean, c, -tilt);
+    // L: a box on the thighs, u down along their mean line from the hips and f forward of it.
+    const lq = q.legs ?? [0, 0], m = (lq[0] + lq[1]) / 2, sm = Math.sin(m), cm = Math.cos(m);
+    const L = (u: number, f: number, sx: number, sy: number, sz: number, c: number) =>
+      this.box(px + fx * (sm * u + cm * f) * s, py + (-cm * u + sm * f) * s, pz + fz * (sm * u + cm * f) * s, sx * s, sy * s, sz * s, yaw, m, c);
+    // Hd: a box on the head, d up from its middle, f forward of it and r to its right.
+    const hyaw = yaw + (b.turn ?? 0), hp = lean + (b.nod ?? 0), hs = Math.sin(hp), hc = Math.cos(hp), hfx = Math.cos(hyaw), hfz = -Math.sin(hyaw), [hx, hy, hz] = this.head;
+    const Hd = (d: number, f: number, sx: number, sy: number, sz: number, c: number, r = 0) =>
+      this.box(hx + (hfx * (hs * d + hc * f) + Math.sin(hyaw) * r) * s, hy + (hc * d - hs * f) * s, hz + (hfz * (hs * d + hc * f) + Math.cos(hyaw) * r) * s, sx * s, sy * s, sz * s, hyaw, -hp, c);
+    if (woman || girl) {
+      if (woman) {
+        // The skirt lies over the hips and thighs, then falls from the knees to just off the
+        // ground in two tiers, the lower swaying with the stride.
+        L(0.24, 0, 0.38, 0.52, 0.46, gown);
+        const kx = px + fx * sm * 0.48 * s, kz = pz + fz * sm * 0.48 * s, top = py - cm * 0.48 * s + 0.04 * s, bot = (b.y ?? CURB_H) + 0.03, H = top - bot;
+        if (H > 0.05) {
+          const d = lq[1] - lq[0], sw = d * 0.05 * s, kick = Math.abs(d) * 0.03 * s;
+          this.box(kx, top - H * 0.25, kz, 0.46 * s, H * 0.5, 0.52 * s, yaw, 0, gown);
+          this.box(kx + fx * kick + rx * sw, bot + H * 0.25, kz + fz * kick + rz * sw, 0.56 * s, H * 0.5 + 0.01, 0.62 * s, yaw, 0, gown, d * 0.1);
+        }
+        if (!own && k % 4 === 1) T(-0.04, -0.2, 0.24, 0.24, 0.36, gown);   // a bustle
+        if (bodice !== gown) T(-0.03, 0, 0.29, 0.12, 0.4, bodice);           // the jacket's peplum
+      } else {
+        L(0.17, 0, 0.36, 0.36, 0.44, gown);                                  // a short skirt, and a white pinafore over it all
+        T(0.3, 0.123, 0.01, 0.36, 0.24, 0xf2efe6); L(0.17, 0.185, 0.01, 0.34, 0.3, 0xf2efe6);
+        Hd(0.1, -0.11, 0.05, 0.06, 0.18, trim);                              // a ribbon in the hair
+      }
+      if (shawl >= 0) { T(0.47, -0.02, 0.3, 0.24, 0.44, shawl); T(0.26, -0.135, 0.03, 0.26, 0.26, shawl); }
+    } else if (dress === "bobby") {
+      L(0.06, 0, 0.28, 0.14, 0.4, V_BOBBY);                                  // the tunic's skirt, the belt and the buttons
+      T(0.04, 0, 0.27, 0.05, 0.4, 0x111111);
+      for (const d of [0.2, 0.33, 0.46]) T(d, 0.124, 0.01, 0.03, 0.03, V_SILVER);
+    } else if (dress === "sleeves") {
+      T(0.33, 0, 0.26, 0.4, 0.38, waist);                                    // the waistcoat, a neckerchief, and often an apron
+      T(0.57, 0.116, 0.04, 0.06, 0.16, trim);
+      if (own ? b.coat !== undefined : (h >>> 15) % 3 !== 0) L(0.24, 0.15, 0.02, 0.5, 0.3, own ? waist : pk(V_APRON, 8));
+    } else {
+      T(0.54, 0.122, 0.01, 0.13, 0.1, pk(V_SHIRT, 4));                       // the shirt front and tie, and the waistcoat between the lapels
+      T(0.52, 0.127, 0.01, 0.08, 0.035, 0x1a1a1e);
+      if (dress !== "boy") T(0.34, 0.122, 0.01, 0.26, 0.12, waist);
+      if (dress === "frock") L(0.22, 0, 0.3, 0.46, 0.4, coat);               // a frock coat's skirts reach the knee, a sack coat's the hips
+      else L(0.08, 0, 0.29, 0.18, 0.39, coat);
+    }
+    if (hat === "top") { Hd(0.13, 0, 0.32, 0.022, 0.3, hatC); Hd(0.27, -0.005, 0.2, 0.26, 0.19, hatC); Hd(0.165, -0.005, 0.205, 0.035, 0.195, 0x3a3030); }
+    else if (hat === "bowler") { Hd(0.125, 0, 0.3, 0.02, 0.28, hatC); Hd(0.185, -0.005, 0.22, 0.11, 0.21, hatC); Hd(0.25, -0.005, 0.16, 0.04, 0.15, hatC); }
+    else if (hat === "cap") { Hd(0.14, 0.01, 0.26, 0.06, 0.24, hatC); Hd(0.115, 0.15, 0.11, 0.02, 0.2, hatC); }
+    else if (hat === "helmet") { Hd(0.12, 0, 0.27, 0.02, 0.25, hatC); Hd(0.22, -0.005, 0.23, 0.2, 0.22, hatC); Hd(0.35, -0.005, 0.17, 0.08, 0.16, hatC); Hd(0.41, -0.005, 0.04, 0.05, 0.04, V_SILVER); Hd(0.21, 0.111, 0.01, 0.06, 0.05, V_SILVER); }
+    else if (hat === "bonnet") { Hd(0.03, -0.035, 0.19, 0.29, 0.26, hatC); Hd(0.14, 0.05, 0.12, 0.06, 0.29, hatC); Hd(-0.125, 0.01, 0.07, 0.025, 0.22, trim); }
+    else if (hat === "wide") { Hd(0.125, 0, 0.52, 0.02, 0.5, hatC); Hd(0.18, -0.005, 0.2, 0.1, 0.2, hatC); Hd(0.2, -0.04, 0.08, 0.07, 0.09, trim, 0.09); }
+    if (parasol) { const hd = this.handR; this.umbrella(hd[0] - fx * 0.05, this.head[1] + 0.45 * s, hd[2] - fz * 0.05, hd, b.parasol!, 0, yaw + Math.PI / 4, 0.4); }
   }
   private personBody(b: Body) {
     const s = b.s ?? 1, yaw = b.yaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw);
@@ -258,10 +369,10 @@ export class Figures {
     if (flap !== null) for (const k of [-1, 1]) this.box(x + rx * k * 0.15, y + 0.13 + Math.sin(flap) * 0.08, z + rz * k * 0.15, 0.14, 0.03, 0.3, yaw, 0, 0x5a5f68, k * Math.sin(flap) * 0.7);
   }
 
-  // An umbrella open over (x, y, z): its canopy a shallow dome of four panels, or blown inside
-  // out (flip 1: the panels cupped upwards), its shaft down to the hand.
-  umbrella(x: number, y: number, z: number, hand: V3, color: number, flip = 0, yaw = 0) {
-    const r = 0.52, droop = 0.32 - flip * 0.95;
+  // An umbrella open over (x, y, z): its canopy a shallow dome of four panels of radius r, or
+  // blown inside out (flip 1: the panels cupped upwards), its shaft down to the hand.
+  umbrella(x: number, y: number, z: number, hand: V3, color: number, flip = 0, yaw = 0, r = 0.52) {
+    const droop = 0.32 - flip * 0.95;
     for (let i = 0; i < 4; i++) {
       const ang = yaw + i * Math.PI / 2, cx = Math.cos(ang), cz = -Math.sin(ang);
       this.box(x + cx * r * 0.5, y - Math.sin(droop) * r * 0.5, z + cz * r * 0.5, r, 0.04, r * 1.35, ang, -droop, color);

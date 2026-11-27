@@ -70,6 +70,13 @@ interface Look { jacket: number; trousers: number; boots: number; gloves: number
 export const DRIVER_LOOK: Look = { jacket: 0x23365e, trousers: 0x3b3f46, boots: 0x2b241e, gloves: 0xb08a58, skin: 0xb5815f, hat: 0x23365e, hatPatch: 0xce1126, vest: 0xd8f22a, hardHat: false };
 export const WORKER_LOOK: Look = { jacket: 0x6b6f75, trousers: 0x34383e, boots: 0x3a2e22, gloves: 0x8a8f55, skin: 0x8a5a3c, hat: 0xf2c200, hatPatch: 0xf2c200, vest: 0xff7a1a, hardHat: true };
 
+// The crew's period dress (Character.period), worn in the Victorian city and on the road into it:
+// a carter's collarless shirt with its sleeves rolled to the elbow, a waistcoat, a neckerchief,
+// trousers and boots, under a bowler or a flat cap, and for the mate a leather apron.
+interface PeriodLook { shirt: number; waistcoat: number; neck: number; trousers: number; boots: number; hat: number; bowler: boolean; apron?: number }
+export const CARTER_DRIVER: PeriodLook = { shirt: 0xe6e0d0, waistcoat: 0x3e3428, neck: 0xa82a2a, trousers: 0x4a4436, boots: 0x2a201a, hat: 0x1e1c1a, bowler: true };
+export const CARTER_MATE: PeriodLook = { shirt: 0xd4cebe, waistcoat: 0x4a4a42, neck: 0x2a4a7a, trousers: 0x3a3a36, boots: 0x2a201a, hat: 0x4a4238, bowler: false, apron: 0x7a5434 };
+
 export class Character {
   readonly root = new THREE.Group();
   private hips = new THREE.Group(); private torso = new THREE.Group(); private head = new THREE.Group();
@@ -78,16 +85,24 @@ export class Character {
   readonly handL = new THREE.Object3D(); readonly handR = new THREE.Object3D();
   private vest: THREE.Mesh;
   readonly headMeshes: THREE.Object3D[] = [];
+  // Each part is built in both dresses when there is a period one, and `period` shows one set.
+  private dressed: [THREE.Mesh[], THREE.Mesh[]] = [[], []];
+  private headOf = new Set<THREE.Object3D>();
+  private shown = { period: false, head: true, vest: false };
 
-  constructor(material: THREE.Material, look: Look, vest = false) {
-    const part = (parent: THREE.Object3D, build: (b: Batch) => void) => {
+  constructor(material: THREE.Material, look: Look, vest = false, pl: PeriodLook | null = null) {
+    // A part in the modern dress, and in the period dress when there is one (its own builder, or
+    // the same one).
+    const part = (parent: THREE.Object3D, build: (b: Batch) => void, period: ((b: Batch, p: PeriodLook) => void) | null = null) => {
       const b = new Batch(); build(b);
-      const m = b.build(material)!; parent.add(m); return m;
+      const m = b.build(material)!; parent.add(m); this.dressed[0].push(m);
+      if (pl) { const c = new Batch(); (period ?? build)(c, pl); const n = c.build(material)!; n.visible = false; parent.add(n); this.dressed[1].push(n); if (parent === this.head) this.headOf.add(n); }
+      return m;
     };
     this.root.add(this.hips);
     this.hips.position.y = HIP_Y;
     // Pelvis and torso.
-    part(this.hips, (b) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, look.trousers));
+    part(this.hips, (b) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, look.trousers), (b, p) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, p.trousers));
     this.hips.add(this.torso);
     part(this.torso, (b) => {
       b.box(0, 0.3, 0, 0.24, 0.52, 0.4, look.jacket);
@@ -95,20 +110,33 @@ export class Character {
       b.box(0.121, 0.42, -0.1, 0.01, 0.06, 0.07, 0xce1126);            // chest patch, red and yellow
       b.box(0.121, 0.385, -0.1, 0.01, 0.02, 0.07, 0xf2c200);
       b.box(0.121, 0.3, 0, 0.01, 0.4, 0.02, 0x1b2a49);                 // zip
+    }, (b, p) => {
+      b.box(0, 0.3, 0, 0.24, 0.52, 0.4, p.shirt);
+      b.box(0, 0.28, 0, 0.26, 0.4, 0.42, p.waistcoat);                 // the waistcoat, its buttons and watch chain
+      for (const y of [0.18, 0.28, 0.38]) b.box(0.132, y, 0, 0.01, 0.025, 0.025, 0x1a1612);
+      b.box(0.132, 0.24, -0.08, 0.01, 0.015, 0.1, 0xc8a040);
+      b.box(0.01, 0.565, 0, 0.17, 0.07, 0.19, p.neck);                 // the neckerchief, knotted at the front
+      b.box(0.1, 0.52, 0, 0.05, 0.07, 0.06, p.neck);
+      if (p.apron !== undefined) b.box(0.14, 0.12, 0, 0.02, 0.66, 0.34, p.apron);   // a leather apron
     });
-    this.vest = part(this.torso, (b) => {
+    {
+      const b = new Batch();
       b.box(0, 0.33, 0, 0.26, 0.38, 0.42, look.vest);
       b.box(0, 0.24, 0, 0.265, 0.035, 0.425, 0xd8d8d8);                // reflective bands
       b.box(0, 0.4, 0, 0.265, 0.035, 0.425, 0xd8d8d8);
-    });
-    this.vest.visible = vest;
-    // Head: a plain face (two eyes) under a cap or hard hat.
+      this.vest = b.build(material)!; this.torso.add(this.vest);
+    }
+    this.vestOn = vest;
+    // Head: a plain face (two eyes) under a cap or hard hat, or in period dress a bowler or flat cap.
     this.torso.add(this.head);
     this.head.position.y = 0.56;
-    this.headMeshes.push(part(this.head, (b) => {
+    const face = (b: Batch) => {
       b.box(0, 0.06, 0, 0.1, 0.08, 0.1, look.skin);                   // neck
       b.box(0, 0.17, 0, 0.22, 0.24, 0.21, look.skin);
       for (const z of [-0.05, 0.05]) b.box(0.111, 0.18, z, 0.01, 0.03, 0.03, 0x1a1a1a);
+    };
+    this.headMeshes.push(part(this.head, (b) => {
+      face(b);
       if (look.hardHat) {
         b.box(0, 0.31, 0, 0.25, 0.08, 0.24, look.hat);
         b.box(0, 0.275, 0, 0.29, 0.02, 0.28, look.hat);
@@ -117,22 +145,41 @@ export class Character {
         b.box(0.15, 0.275, 0, 0.11, 0.02, 0.2, look.hat);              // brim
         b.box(0.114, 0.31, 0, 0.01, 0.04, 0.06, look.hatPatch);
       }
+    }, (b, p) => {
+      face(b);
+      if (p.bowler) { b.box(0, 0.286, 0, 0.3, 0.02, 0.29, p.hat); b.box(-0.005, 0.347, 0, 0.23, 0.11, 0.22, p.hat); b.box(-0.005, 0.412, 0, 0.17, 0.04, 0.16, p.hat); }
+      else { b.box(0.005, 0.316, 0, 0.25, 0.062, 0.24, p.hat); b.box(0.15, 0.289, 0, 0.11, 0.02, 0.21, p.hat); }
     }));
-    // Arms.
+    // Arms: in period dress the shirtsleeves are rolled to the elbow and the hands bare.
     for (const [sh, el, hand, z] of [[this.shL, this.elL, this.handL, -0.25], [this.shR, this.elR, this.handR, 0.25]] as const) {
       this.torso.add(sh); sh.position.set(0, 0.5, z);
-      part(sh, (b) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, look.jacket));
+      part(sh, (b) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, look.jacket), (b, p) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, p.shirt));
       sh.add(el); el.position.y = -0.29;
-      part(el, (b) => { b.box(0, -0.13, 0, 0.1, 0.27, 0.1, look.jacket); b.box(0, -0.31, 0, 0.11, 0.1, 0.12, look.gloves); });
+      part(el, (b) => { b.box(0, -0.13, 0, 0.1, 0.27, 0.1, look.jacket); b.box(0, -0.31, 0, 0.11, 0.1, 0.12, look.gloves); },
+        (b, p) => { b.box(0, -0.04, 0, 0.115, 0.08, 0.115, p.shirt); b.box(0, -0.155, 0, 0.09, 0.2, 0.09, look.skin); b.box(0, -0.31, 0, 0.1, 0.1, 0.11, look.skin); });
       el.add(hand); hand.position.y = -0.32;
     }
-    // Legs.
+    // Legs: in period dress, ankle boots.
     for (const [hp, kn, z] of [[this.hipL, this.knL, -0.1], [this.hipR, this.knR, 0.1]] as const) {
       this.hips.add(hp); hp.position.set(0, 0, z);
-      part(hp, (b) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, look.trousers));
+      part(hp, (b) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, look.trousers), (b, p) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, p.trousers));
       hp.add(kn); kn.position.y = -0.43;
-      part(kn, (b) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, look.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, look.boots); });
+      part(kn, (b) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, look.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, look.boots); },
+        (b, p) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, p.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, p.boots); b.box(0, -0.36, 0, 0.145, 0.12, 0.145, p.boots); });
     }
+  }
+
+  // The dress: the period one (when the character has it) or the modern one. Only what is drawn
+  // changes; the rig and its motion are the same in both.
+  set period(v: boolean) {
+    if (!this.dressed[1].length || v === this.shown.period) return;
+    this.shown.period = v; this.show();
+  }
+  get period() { return this.shown.period; }
+  private show() {
+    const { period, head, vest } = this.shown;
+    for (const [i, set] of this.dressed.entries()) for (const m of set) m.visible = (i === 1) === period && (head || !(this.headOf.has(m) || this.headMeshes.includes(m)));
+    this.vest.visible = vest && !period;   // (no hi-vis on a carter)
   }
 
   // ---- reaching (two-bone IK) -----------------------------------------------------------------
@@ -177,11 +224,15 @@ export class Character {
   }
 
   get headNode(): THREE.Object3D { return this.head; }
-  set vestOn(v: boolean) { this.vest.visible = v; }
+  set vestOn(v: boolean) { this.shown.vest = v; this.vest.visible = v && !this.shown.period; }
   // The legs spread apart (radians, each thigh out to its own side) and the shins turned back
   // under (knee): astride a horse. apply() leaves both.
   setLegSpread(r: number, knee = 0) { this.hipL.rotation.x = r; this.hipR.rotation.x = -r; this.knL.rotation.x = -knee; this.knR.rotation.x = knee; }
-  set headVisible(v: boolean) { for (const m of this.headMeshes) m.visible = v; }
+  set headVisible(v: boolean) {
+    if (v === this.shown.head) return;
+    this.shown.head = v;
+    if (this.dressed[1].length) this.show(); else for (const m of this.headMeshes) m.visible = v;
+  }
 
   apply(p: BodyPose) {
     this.hips.position.y = HIP_Y - p.drop;

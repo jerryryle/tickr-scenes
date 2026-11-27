@@ -8,7 +8,7 @@
 // converted to world each step.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
-import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, walkSwing } from "./figure.ts";
+import { FIG_STYLE, Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, VIC_PARASOLS, VIC_UMBRELLAS, walkSwing } from "./figure.ts";
 import type { Body } from "./figure.ts";
 import { CLOCK, Vignettes, blockNear, crossing, crossSignal, districtAt, faceCorner, faceRef, sideFace } from "./vignettes.ts";
 import type { Adopt, KerbParked } from "./vignettes.ts";
@@ -38,6 +38,7 @@ export interface Ped {
   dog: { x: number; z: number; h: number; phase: number; color: number } | null;
   balloon: { x: number; y: number; z: number; free: boolean; t: number; py: number } | null;
   s?: number; hat?: number; umbrella?: number; cup?: boolean;   // a child's scale; a cap; an umbrella's colour; a coffee
+  parasol?: number;  // a parasol's colour, up in the Victorian city's sun (a woman's: figure.ts vicPerson)
 }
 // What else street life needs from the journey this step (vignettes.ts).
 // truckPath: the truck driving its path (its s, speed, and its body's reach about s), or null.
@@ -69,7 +70,7 @@ export class Crowd {
   private G: CityGraph | null = null;   // the city's street graph (from the last step)
   // `props`: for boxes too big to be part of a person (the vignettes' food truck, couch and the
   // like), which the driver spotlight thins while the people stay solid (Figures.bigMesh).
-  constructor(scene: THREE.Scene, material: THREE.Material, props: THREE.Material | null = null, cap = 860) {   // (the cap leaves room for the storybook city's hats and scarves: figure.ts)
+  constructor(scene: THREE.Scene, material: THREE.Material, props: THREE.Material | null = null, cap = 1200) {   // (the cap leaves room for the storybook city's hats and scarves and the Victorian city's skirts and coats: figure.ts)
     this.F = new Figures(scene, material, cap, 0, props && { material: props, cap: 32 });
     this.vig = new Vignettes(new Figures(scene, material, 2400, 48, props && { material: props, cap: 64 }));
     this.vig.adopt = (a) => this.adopt(a);
@@ -170,7 +171,8 @@ export class Crowd {
     if (!B) return;
     const bx = B.kx, bz = B.kz, district = plan.district(bx, bz);
     if (district === "industrial" && r() < 0.6) return;
-    let kind: PedKind = r() < (district === "park" ? 0.4 : 0.14) ? "jog" : r() < 0.15 ? "dog" : "walk";
+    const vic = !!plan.style.victorian;   // (the Victorian city: nobody jogs, and no coffee in paper cups)
+    let kind: PedKind = r() < (district === "park" ? 0.4 : 0.14) ? (vic ? "walk" : "jog") : r() < 0.15 ? "dog" : "walk";
     const fixed = (district === "downtown" || district === "commercial") && this.vendorCount < 2 && r() < 0.08;
     if (fixed) kind = r() < 0.55 ? "vendor" : "musician";
     else if (!this.peds.some((p) => p.kind === "chase") && r() < 0.04) kind = "chase";
@@ -187,9 +189,15 @@ export class Crowd {
     if (kind === "dog") p.dog = { x: 0, z: 0, h: 0, phase: 0, color: r() < 0.45 ? BELLE : pick(r, [0x8a5a3a, 0x222222, 0xc8a060, 0xeeeeee]) };
     if (kind === "chase") p.balloon = { x: 0, y: 2.2, z: 0, free: false, t: 0, py: 2.2 };
     if (kind === "vendor") { p.shirt = 0xffffff; p.pants = 0x2c3e50; }
-    // In the rain, umbrellas; first thing in the morning, coffee.
-    if ((kind === "walk" || kind === "dog") && weatherMix(plan.climate?.weather ?? "clear").rain > 0.3 && r() < 0.65) p.umbrella = pick(r, UMBRELLAS);
-    else if (kind === "walk" && district !== "park" && district !== "residential") { const hr = CLOCK.hourAt(this.time0); if (hr >= 6.5 && hr < 10 && r() < 0.35) p.cup = true; }
+    // In the rain, umbrellas; first thing in the morning, coffee. In the Victorian city, dark
+    // umbrellas, parasols in the sun, and children about.
+    const wm = weatherMix(plan.climate?.weather ?? "clear");
+    if ((kind === "walk" || kind === "dog") && wm.rain > 0.3 && r() < 0.65) p.umbrella = pick(r, vic ? VIC_UMBRELLAS : UMBRELLAS);
+    else if (vic) {
+      const hr = CLOCK.hourAt(this.time0), season = plan.climate?.season ?? "summer";
+      if (kind === "walk" && wm.cloud < 0.6 && hr >= 10 && hr < 18 && season !== "winter" && r() < 0.5) p.parasol = pick(r, VIC_PARASOLS);
+      if (kind === "walk" && r() < 0.12) { p.s = 0.62; p.speed = 1.0 + r() * 0.3; }
+    } else if (kind === "walk" && district !== "park" && district !== "residential") { const hr = CLOCK.hourAt(this.time0); if (hr >= 6.5 && hr < 10 && r() < 0.35) p.cup = true; }
     this.place(G, p);
     p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
     if (Math.hypot(p.x - focus.x, p.z - focus.z) < PED_SPAWN[0] - 5) return;
@@ -458,7 +466,7 @@ export class Crowd {
     const F = this.F;
     F.begin();
     for (const p of this.peds) {
-      if (!F.room(16)) break;
+      if (!F.room(32)) break;
       // Drawn at the in-between pose: swap it in for the drawing, then put the step's pose back.
       const sx = p.x, sz = p.z, sh = p.h, sph = p.phase, d0 = p.dog, b0 = p.balloon;
       const dsx = d0?.x ?? 0, dsz = d0?.z ?? 0, dsh = d0?.h ?? 0, dsp = d0?.phase ?? 0, bsx = b0?.x ?? 0, bsy = b0?.y ?? 0, bsz = b0?.z ?? 0;
@@ -486,7 +494,7 @@ export class Crowd {
     const b: Body = {
       x: p.x, z: p.z, yaw: h, s, y: (inRoad ? 0.02 : CURB_H) + (moving ? w.bob : 0),
       legs: moving ? w.legs : [0, 0], arms: moving ? w.arms : [0, 0], lean: run ? 0.15 : 0,
-      shirt: p.shirt, pants: p.pants, skin: p.skin, hair: p.hair, hat: p.hat,
+      shirt: p.shirt, pants: p.pants, skin: p.skin, hair: p.hair, hat: p.hat, parasol: p.parasol,
     };
     if (p.kind === "musician") { const m = 0.9 + 0.25 * Math.sin(p.phase * 7); b.arms = [-m, m]; }
     if (p.kind === "vendor") { const m = 0.3 + 0.2 * Math.sin(p.phase * 1.3); b.arms = [-m, m]; }
@@ -497,8 +505,14 @@ export class Crowd {
     F.person(b);
     if (p.umbrella !== undefined) { const hd = F.handR; F.umbrella(hd[0] - fx * 0.05, F.head[1] + 0.42 * s, hd[2] - fz * 0.05, hd, p.umbrella, 0, h + Math.PI / 4); }
     else if (p.cup) { const hd = F.handR; F.box(hd[0], hd[1] + 0.06, hd[2], 0.07, 0.12, 0.07, 0, 0, 0xf4f0e8); F.box(hd[0], hd[1] + 0.13, hd[2], 0.075, 0.02, 0.075, 0, 0, 0x3a2a1e); }
-    if (p.kind === "musician") this.box(p.x + fx * 0.25, b.y! + 0.86 + 0.25, p.z + fz * 0.25, 0.12, 0.3, 0.8, h + 0.7, 0, 0x8a5a2a);   // guitar
-    if (p.kind === "vendor") {   // cart with an umbrella, between the vendor and the kerb
+    const vic = FIG_STYLE.victorian;
+    if (p.kind === "musician" && vic) {   // a fiddle under the chin, and its bow
+      const rx = Math.sin(h), rz = Math.cos(h), hd = F.head, bw = Math.sin(p.phase * 7) * 0.12;
+      F.box(hd[0] + fx * 0.18 - rx * 0.12, hd[1] - 0.2, hd[2] + fz * 0.18 - rz * 0.12, 0.34, 0.05, 0.12, h + 0.5, 0.25, 0x7a3a1a);
+      F.box(hd[0] + fx * 0.32 + rx * (0.05 + bw), hd[1] - 0.24, hd[2] + fz * 0.32 + rz * (0.05 + bw), 0.02, 0.02, 0.5, h, 0, 0xd8c8a0);
+    } else if (p.kind === "musician") this.box(p.x + fx * 0.25, b.y! + 0.86 + 0.25, p.z + fz * 0.25, 0.12, 0.3, 0.8, h + 0.7, 0, 0x8a5a2a);   // guitar
+    if (p.kind === "vendor" && vic) this.barrow(p.x + fx * 1.0, p.z + fz * 1.0, h);
+    else if (p.kind === "vendor") {   // cart with an umbrella, between the vendor and the kerb
       const cx = p.x + fx * 1.0, cz = p.z + fz * 1.0;
       this.box(cx, 0.6 + CURB_H, cz, 0.9, 0.8, 1.6, h, 0, 0xd8dadc);
       this.box(cx, 1.05 + CURB_H, cz, 0.92, 0.1, 1.62, h, 0, 0xc0392b);
@@ -511,6 +525,22 @@ export class Crowd {
       this.box(bl.x, bl.y, bl.z, 0.42, 0.5, 0.42, 0, 0, 0xe8202a);
       if (!bl.free) { const mx = (bl.x + p.x) / 2, mz = (bl.z + p.z) / 2; this.box(mx, (bl.y + 1.5) / 2, mz, 0.02, bl.y - 1.5, 0.02, 0, 0, 0xeeeeee); }
     }
+  }
+
+  // The Victorian city's street seller has a costermonger's barrow, centred on (x, z) with its
+  // length across the heading h: a timber tray heaped with fruit on two big spoked wheels, its
+  // shafts resting on a prop.
+  private barrow(x: number, z: number, h: number) {
+    const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h), y = CURB_H, WOOD = 0x6a4a2c;
+    const at = (f: number, r: number): [number, number] => [x + fx * f + rx * r, z + fz * f + rz * r];
+    let [px, pz] = at(0, 0);
+    this.box(px, y + 0.72, pz, 0.86, 0.08, 1.5, h, 0, WOOD);
+    for (const f of [-0.42, 0.42]) { [px, pz] = at(f, 0); this.box(px, y + 0.82, pz, 0.04, 0.16, 1.5, h, 0, 0x5a3c22); }
+    for (const f of [-0.47, 0.47]) { [px, pz] = at(f, 0.15); this.box(px, y + 0.36, pz, 0.05, 0.66, 0.66, h, 0, 0x3a2a1c); this.box(px, y + 0.36, pz, 0.06, 0.52, 0.08, h, 0, 0x8a6a44); this.box(px, y + 0.36, pz, 0.06, 0.08, 0.52, h, 0, 0x8a6a44); }
+    for (const f of [-0.3, 0.3]) { [px, pz] = at(f, -1.0); this.box(px, y + 0.62, pz, 0.05, 0.05, 0.6, h, 0, WOOD); }
+    [px, pz] = at(0, 0.62); this.box(px, y + 0.34, pz, 0.06, 0.68, 0.06, h, 0, WOOD);
+    const FRUIT = [0xc0302a, 0xe88a20, 0x6a9a2a, 0xd8c040, 0x8a2a4a, 0xc0302a];
+    for (let i = 0; i < 6; i++) { [px, pz] = at((i % 2) * 0.38 - 0.19, (Math.floor(i / 2) - 1) * 0.46); this.box(px, y + 0.84, pz, 0.34, 0.1, 0.4, h, 0, FRUIT[i]); }
   }
 
   private drawFlocks(alpha: number) {

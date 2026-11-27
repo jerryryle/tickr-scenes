@@ -12,6 +12,7 @@ import { Crowd } from "../src/crowd.ts";
 import { CLOCK, VIG_KINDS } from "../src/vignettes.ts";
 import type { KerbParked } from "../src/vignettes.ts";
 import { SIM_DT } from "../src/journey.ts";
+import { FIG_STYLE } from "../src/figure.ts";
 
 const proc = (globalThis as any).process;
 const runs: [StyleId, number, string, string, boolean][] = [
@@ -20,6 +21,7 @@ const runs: [StyleId, number, string, string, boolean][] = [
   ["brick", 12, "winter", "snow", true], ["mainstreet", 15, "summer", "clear", false], ["coastal", 7, "summer", "clear", false],
   ["metro", 8.5, "spring", "clear", false], ["coastal", 9, "autumn", "cloudy", false], ["port", 7.6, "summer", "clear", false],
   ["mainstreet", 10.5, "summer", "clear", false], ["desert", 16, "spring", "clear", false],
+  ["victorian", 12, "summer", "clear", false], ["victorian", 18.5, "autumn", "cloudy", false], ["victorian", 9, "winter", "rain", false], ["victorian", 16, "winter", "cloudy", false],
 ];
 const seen = new Map<string, number>();
 let failed = false;
@@ -29,6 +31,7 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
   const towns = citiesOfStyle(style), plan = new CityPlan(towns[i % towns.length].key, STYLES[style]);   // (the catalogue's cities of the style in turn)
   plan.climate = { season: season as any, weather: weather as any, snowCover: snow };
   CLOCK.hourAt = () => hour;
+  FIG_STYLE.victorian = style === "victorian";   // (dressed as main.ts dresses them)
   const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshLambertMaterial({ vertexColors: true }));   // (with the props material, as in the scene)
   crowd.reset(77 + i);
   // The focus: along a street's kerb lane, east, a row of blocks at a time; parked for 40 s of
