@@ -15,7 +15,6 @@ import { Truck, TruckKit } from "../src/truck.ts";
 import { Crew } from "../src/crew.ts";
 import { CARGO_BY_ID } from "../src/cargo.ts";
 import { CARGO_MODELS } from "../src/cargomodels.ts";
-import { ON_EDGE } from "../src/chores.ts";
 import { SCENARIOS } from "../src/scenarios.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
@@ -57,7 +56,7 @@ for (const name of argv.length ? argv : Object.keys(SCENARIOS)) {
     const scene = new THREE.Scene(), crew = new Crew(scene, new THREE.MeshLambertMaterial()), K = crew as any, cam = new THREE.PerspectiveCamera();
     const truck = new Truck(kit, j.st.truck, null); scene.add(truck.root);
     const spares = new Map<string, Truck>(), spare = (m: string) => { let t = spares.get(m); if (!t) { t = new Truck(kit, m as any, null); scene.add(t.root); spares.set(m, t); } return t; };
-    const size = CARGO_MODELS[stop.cargo].size, half = (ON_EDGE.has(stop.cargo) ? size[1] : size[2]) / 2, pose = {} as Pose;
+    const size = CARGO_MODELS[stop.cargo].size, half = size[2] / 2, pose = {} as Pose;
     const tx = -D.nz, tz = D.nx, rel = (v: THREE.Vector3) => [(v.x - D.x) * tx + (v.z - D.z) * tz, (v.x - D.x) * D.nx + (v.z - D.z) * D.nz];
     let worst = 0, at = 0;
     const done = j.st.stopsDone;

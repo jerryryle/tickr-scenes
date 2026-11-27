@@ -37,7 +37,7 @@ import { setVisitSpecs, visitOf } from "./visits.ts";
 import type { RoadWay, StopBatch, StopSpec, VisitSpec } from "./visits.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_CARGO } from "./debug.ts";
-import { GATE_LEN, SPECS, truckExtents, truckLayout } from "./truck.ts";
+import { SPECS, truckExtents, truckLayout } from "./truck.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import type { TruckModel } from "./truck.ts";
@@ -69,7 +69,7 @@ export const JOURNEY_LOG: { out: ((line: string) => void) | null } = { out: null
 const GARAGE_OUT_BEFORE = 36;
 import { ARRIVE_DUR, ARRIVE_LEN, citySeedOf, CountryRoad, roadMetres, V_GATE, V_JOIN } from "./country.ts";
 import { roadMapOf } from "./roadmap.ts";
-import { bedRearX, fetchSpots, RAMP_HOLD, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, STYLE, swapChores } from "./chores.ts";
+import { bedRearX, fetchSpots, handTrips, jackStays, jackTrial, maxHandUnits, PAVE_SPOTS, planChores, STYLE, swapChores } from "./chores.ts";
 import type { Chore, ChoreGroup, WalkBox } from "./chores.ts";
 
 // Street life is stepped and saved with the journey (keyframes), so the truck may answer to it and a
@@ -138,6 +138,10 @@ interface JourneyState {
   route: Route | null; s: number; v: number; at: { d: number; before: number; lane?: number };   // the dedge the truck is on, how far short of its end, and its lane (kerb unless said)
   stopS: number; backS: number;     // where the truck stops, and where it reverses to (dock stops)
   dockExit: { geom: DockGeom; s: number } | null;   // leaving a bay: the next route starts in it
+  leaves?: boolean;                                // a tractor-trailer's swing doors open: from before it backs into a bay until it has pulled out (doorDwell)
+  doors?: "open" | "close";                        // the dwell now is the driver opening them, or closing them (doorDwell)
+  doorsAt?: number;                                // pulling out of a bay with them open: where it stops to close them (-1: DOOR_PULL on from where it sets off)
+  doorsFor?: Stop;                                 // closing them: the dock stop just made
   lastDock?: DockGeom | null;                      // the bay last docked at in this city (dockfx.ts: its leveller's lip stays there till the next)
   garageExit?: GarageGeom | null;                  // up on a garage's roof: the next route starts down its ramp
   spare: TruckModel | null; parked: ParkedTruck | null;
@@ -157,6 +161,8 @@ const COUNTRY_MIN = 45;           // the drive from the gate to the hand-over is
 // A world road's key, driven one way or the other: each way is a road of its own, the same each time.
 // A rig pulling up at a kerb is lined up straight over this run in (m: hitchStep).
 const STRAIGHTEN = 18;
+// m: how far a tractor-trailer pulls out of a dock's bay before it stops to close its swing doors.
+const DOOR_PULL = 4.5;
 // m: how far short of a face's end a truck stopping at the kerb has its nose: short of the stop
 // line ahead (STOP_BACK short of the street's mouth), where a car stopped there would be.
 const NOSE_BACK = STOP_BACK + 0.5;
@@ -205,8 +211,10 @@ const stopSpec = (x: Stop): StopSpec => x.kind === "depart" ? { kind: "depart" }
 // leave it unset and the driver uses a spot on the pavement instead.
 let DOOR_PROBE: ((plan: CityPlan, bx: number, bz: number) => (KerbDoor | null)[]) | null = null;
 export function setDoorProbe(probe: ((plan: CityPlan, bx: number, bz: number) => (KerbDoor | null)[]) | null) { DOOR_PROBE = probe; }
-// What stands on the pavement round a block (city.ts pavementObstacles), for the driver's walks to
-// go round; set by the scene, absent in tests (where the walks go straight).
+// What stands on the pavement round a block (city.ts pavementObstacles), for a front door with
+// something big before it to be passed over (doorTakes); set by the scene, absent in tests. The
+// crew's walks take no notice of it: the city files keep each kerb stop's work area clear
+// (tools/clearstops.ts).
 let PAVEMENT_PROBE: ((plan: CityPlan, bx: number, bz: number) => { x: number; z: number; r: number; kind?: number }[]) | null = null;
 export function setPavementProbe(probe: typeof PAVEMENT_PROBE) { PAVEMENT_PROBE = probe; }
 // A front door is no use with something this big (radius, m) on the pavement within this of the
@@ -543,7 +551,7 @@ export class Journey {
     for (const s of stops) {
       if (!s.site) continue;
       const to = this.fromBlock(s.site.bx, s.site.bz);
-      t += (this.driveTo(from, to) + DRIVE_SLACK) / 6 + 50 + (this.isDockStop(s) ? 25 : 0) + (s.kind === "swap" ? 60 : 0);
+      t += (this.driveTo(from, to) + DRIVE_SLACK) / 6 + 50 + (this.isDockStop(s) ? 25 + (this.st.truck === "tractor" ? 70 : 0) : 0) + (s.kind === "swap" ? 60 : 0);   // (a trailer's doors opened before backing in and closed after: doorDwell)
       from = to;
     }
     return t;
@@ -721,9 +729,10 @@ export class Journey {
     if (!first) { this.log("no job found; cruising"); return; }
     // A mixed load now and then: a second pickup near the first, then all drops by nearest next.
     const pickA = first.find((s) => s.kind === "pickup")!;
-    // (Not with a load that rides on the pallet jack, jackStays: the jack is under it.)
+    // (Not with a load that rides on the pallet jack, jackStays: the jack is under it. Nor in a
+    // tractor-trailer, whose pallets fill it two wide: one job's would block the other's.)
     const stays = (ss: Stop[]) => ss.some((s) => s.kind !== "swap" && jackStays(truckLayout(st.truck), s.cargo));
-    if (this.rand(7) < 0.3 && !first.some((s) => s.kind === "swap") && !stays(first)) {
+    if (this.rand(7) < 0.3 && st.truck !== "tractor" && !first.some((s) => s.kind === "swap") && !stays(first)) {
       st.jobCounter++;
       const second = this.makeJob(pickA.site!.bx, pickA.site!.bz, false, true, this.slotsOf(first));
       if (second && !second.some((s) => s.kind === "swap") && !stays(second) && st.cityTime + this.estimate([...first, ...second], here) * 1.15 + reserve <= C) {
@@ -1056,6 +1065,14 @@ export class Journey {
   // The city's front doors (city.ts kerbDoors; set by the scene, absent in tests) and the one
   // the current kerb stop uses: on the truck's right, the nearest to its back.
   kerbDoor: KerbDoor | null = null;
+  // How far the kerb's edge is out to the truck's right, parked at a kerb stop (m): its lane's
+  // way in from the frontage, less the pavement's width.
+  get kerbSide(): number | null {
+    const a = this.st.at;
+    if (!a || !this.plan) return null;
+    const s = this.plan.graph.streets[a.d >> 1];
+    return s.half - s.kerb - (a.lane ?? LANE_KERB);
+  }
   // Where the current kerb stop's forklift stacks bundles (lumber, pipe: too wide to carry through
   // a door, crew.ts stackTrip): "yard", in the yard beside an industrial facility's end-on
   // container; "road", on the pavement behind the truck, unloading it from the road side (there's
@@ -1171,29 +1188,6 @@ export class Journey {
     // In the truck's frame: half a metre out from a door, facing it.
     const frame = (d: KerbDoor) => { const px = d.x + d.nx * 0.5 - pose.x, pz = d.z + d.nz * 0.5 - pose.z; return { x: px * fx + pz * fz, z: px * rx + pz * rz, yaw: Math.atan2(-(-d.nx * rx - d.nz * rz), -d.nx * fx - d.nz * fz), half: d.half }; };
     if (kd && !dp) door = frame(kd);
-    // At the kerb, what stands near the truck's back (trees, lights, furniture), in its frame.
-    const obstacles: { x: number; z: number; r: number; kind?: number }[] = [];
-    if (!dp && PAVEMENT_PROBE && stop.site) {
-      for (const o of PAVEMENT_PROBE(this.plan, stop.site.bx, stop.site.bz)) {
-        const px = o.x - pose.x, pz = o.z - pose.z, x = px * fx + pz * fz, z = px * rx + pz * rz;
-        if (Math.abs(x - L.bedRear) < 30 && Math.abs(z) < 25) obstacles.push({ x, z, r: o.r, kind: o.kind });
-      }
-      // (And vehicles parked at the kerb near its back: a row of discs along each, none where the
-      // truck itself stands.)
-      const foot = L.loader !== "liftgate" ? L.bedRear - L.rampRun - RAMP_HOLD : L.bedRear - GATE_LEN;   // (nor on its ramp or lift gate)
-      for (const o of PARKED_PROBE?.(this.plan, stop.site.bx, stop.site.bz) ?? []) {
-        // (Each a little wider than the box, its ends' centres in enough that its corners are inside.)
-        const long = Math.max(o.hx, o.hz), short = Math.min(o.hx, o.hz), alongX = o.hx >= o.hz, r = short * 1.25, end = Math.max(0, long - short * 0.9);
-        const n = Math.max(1, Math.ceil(2 * end / short) + 1);
-        for (let i = 0; i < n; i++) {
-          const t = n > 1 ? -end + (2 * end * i) / (n - 1) : 0;
-          const wx = o.x + (alongX ? t : 0), wz = o.z + (alongX ? 0 : t), px = wx - pose.x, pz = wz - pose.z, x = px * fx + pz * fz, z = px * rx + pz * rz;
-          if (Math.abs(x - L.bedRear) >= 30 || Math.abs(z) >= 25) continue;
-          if (x > foot - r - 0.5 && x < L.front + r + 0.5 && Math.abs(z) < L.hw + r + 0.5) continue;
-          obstacles.push({ x, z, r });
-        }
-      }
-    }
     // At a dock, the vehicles parked in the yard and the truck itself (walks round its nose
     // to steps on the far side), as boxes in its frame.
     const boxes: WalkBox[] = [];
@@ -1206,7 +1200,7 @@ export class Journey {
     }
     // (No door: the building's front from the nearest one there at all, whatever its use, all wall.)
     const fr = !kd && !dp ? this.frontDoor(stop, pose) : null;
-    const plan = () => planChores(st.truck, stop, dp ? dp.stair : null, slot, before, after, door, obstacles, boxes, kd && !dp ? this.stackKind(stop) : null, others, true, pave, fr ? frame(fr) : null, dp?.geom.door ? dp.geom.door.w / 2 : null);
+    const plan = () => planChores(st.truck, stop, dp ? dp.stair : null, slot, before, after, door, boxes, kd && !dp ? this.stackKind(stop) : null, others, true, pave, fr ? frame(fr) : null, dp?.geom.door ? dp.geom.door.w / 2 : null);
     return trial && !full ? jackTrial(plan) : plan();
   }
   // Whether a door can take a cargo at all: not one with something big stood just before it, a
@@ -1253,7 +1247,9 @@ export class Journey {
   private planDwell() {
     const st = this.st, stop = st.stops[0];
     this.kerbDoor = null; this.stackMode = null;
-    if (stop.kind === "swap") {
+    const ds = this.doorDwell;
+    if (ds) this.chores = planChores(st.truck, ds, null, 0, null, null, null, [], null, [], false, 0, null, null, st.doors);
+    else if (stop.kind === "swap") {
       // The walk: from the old cab door forward to the new one at a steady pace, with a moment to
       // get going and to slow to a stop at its door (director.ts swapWalkU). Its length from the two
       // trucks alone, the old one's nose SWAP_GAP short of the new one's tail (the swap's stopS): once
@@ -1485,6 +1481,12 @@ export class Journey {
       limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, dist)));
       hardStop = Math.min(hardStop, st.stopS);
     }
+    // Pulled out of a bay with its swing doors open: a stop DOOR_PULL on, to close them (doorDwell).
+    if (st.mode === "drive" && st.doorsAt !== undefined) {
+      if (st.doorsAt < 0) st.doorsAt = st.s + DOOR_PULL;
+      limit = Math.min(limit, Math.sqrt(2 * BRAKE * Math.max(0, st.doorsAt - st.s)));
+      hardStop = Math.min(hardStop, st.doorsAt);
+    }
     const v0 = st.v, a0 = st.acc ?? 0, l0 = st.lim ?? limit;
     // The acceleration it wants: following the limit as it moves (coming down toward a stop at about
     // BRAKE, say), and closing on it: from below, easing off as it closes in so that it arrives with
@@ -1504,6 +1506,7 @@ export class Journey {
     st.redWait = st.v < 0.05 ? st.redWait + dt : 0;
     if (st.stopS >= THROUGH && st.s >= p.length) { this.leave(st.s - p.length); return; }   // through the gate
     p.eval(st.s, this.pose);
+    if (st.mode === "drive" && st.doorsAt !== undefined && st.doorsAt >= 0 && st.s >= st.doorsAt - 0.02 && st.v < 0.05) { this.startDoors("close"); return; }
     if (st.mode === "drive" && st.s >= st.stopS - 0.02 && st.v < 0.05) this.arrive();
 
   }
@@ -1537,6 +1540,7 @@ export class Journey {
   private beginReverse() {
     const st = this.st, bay = this.bayPath(st.stops[0]);
     if (!bay) { this.startDwell(); return; }
+    if (st.truck === "tractor" && !st.leaves) { this.startDoors("open"); return; }   // (its swing doors opened first, standing here)
     st.route = bay.path.route;
     this.path = bay.path;
     st.s = st.stopS = this.path.length; st.backS = bay.backS;
@@ -1652,8 +1656,28 @@ export class Journey {
     this.planDwell();
   }
 
+  // A tractor-trailer's swing doors: opened by the driver standing in front of a dock's bay before
+  // it backs in, closed once it has pulled DOOR_PULL out of it afterwards. A dwell of its own, the
+  // driver out of the cab, a leaf at a time (chores.ts planChores `doors`), and back in; the ledger
+  // untouched. The stop it is for: the dock stop ahead, or (closing) the one just made.
+  get doorDwell(): Stop | null { const st = this.st; return st.mode === "dwell" && st.doors ? (st.doors === "open" ? st.stops[0] : st.doorsFor ?? null) : null; }
+  private startDoors(kind: "open" | "close") {
+    const st = this.st;
+    st.mode = "dwell"; st.modeTime = 0; st.dwellDone = true; st.doors = kind; st.v = 0; st.acc = 0; st.lim = undefined;
+    this.planDwell();
+  }
+
   private dwell() {
     const st = this.st, stop = st.stops[0];
+    if (st.doors) {
+      if (st.modeTime < st.dwellTotal) return;
+      const open = st.doors === "open";
+      st.doors = undefined; this.chores = [];
+      if (open) { st.leaves = true; this.beginReverse(); return; }
+      st.leaves = false; st.doorsAt = undefined; st.doorsFor = undefined;
+      st.mode = "drive"; st.modeTime = 0;
+      return;
+    }
     const ph = this.dwellPhase();
     if (!st.dwellDone && stop.kind !== "swap" && ph.phase === "load" && ph.t >= ph.len / 2) { this.doStop(stop); st.dwellDone = true; }
     if (!st.dwellDone && stop.kind === "swap" && (ph.phase === "startup")) { this.doStop(stop); st.dwellDone = true; }
@@ -1666,6 +1690,7 @@ export class Journey {
         st.at = { d: dock.face, before: this.plan.graph.faceLen(dock.face) - (dock.pa + dock.R) };
         st.dockExit = { geom: dock.geom, s: dock.trail };
         st.lastDock = dock.geom;
+        if (st.leaves) { st.doorsAt = -1; st.doorsFor = stop; }   // (its swing doors closed once it has pulled out: doorDwell)
       } else if (this.path?.route.garageIn) {
         // Down off the roof next: the route starts there and comes out across the street, in the
         // kerb lane back towards the node the truck came in past.
@@ -1699,10 +1724,11 @@ export class Journey {
     if (stop.kind === "pickup") {
       // Tag each unit with its drop; the job's drops are the queued stops with the same job id.
       const drops = st.stops.filter((s) => s.kind === "drop" && s.job === stop.job);
-      // In the order they were stowed, from the stop's slot back.
+      // In the order they were stowed, from the stop's slot back: the last drop's deepest, so each
+      // drop's are the rearmost when it comes.
       let slot = stop.slot ?? 0;
       const put = (units: number, dest: string) => { if (c.slots >= 1 && slot !== stop.slot) slot = slotAlign(c.slots, slot); st.aboard.push({ job: stop.job, cargo: c.id, units, slotsPerUnit: c.slots, dest, slot }); slot = slotEnd(c.slots, units, slot); };
-      if (drops.length) for (const d of drops) put(d.units, siteKey(d.site!));
+      if (drops.length) for (const d of [...drops].reverse()) put(d.units, siteKey(d.site!));
       else put(stop.units, "next");
       st.loaded += stop.units; st.jobsSinceSwap++;
       this.log(`load ${stop.units} ${c.name} at ${stop.site!.name}`);

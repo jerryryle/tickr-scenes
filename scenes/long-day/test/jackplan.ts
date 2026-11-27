@@ -15,7 +15,7 @@ const proc = (globalThis as any).process;
 const errs: string[] = [];
 const L = truckLayout("box26");
 const PUMPKINS = [1.0, 0.95, 1.0], HOT_TUB = [2.1, 0.9, 2.1];
-const world = (o: Partial<JackWorld>): JackWorld => ({ L, rampHW: RAMP_HW, free: L.bedFront, bed: [], obs: [], door: null, load: null, ...o });
+const world = (o: Partial<JackWorld>): JackWorld => ({ L, rampHW: RAMP_HW, free: L.bedFront, bed: [], door: null, load: null, ...o });
 const box = (x0: number, x1: number, z0: number, z1: number) => ({ x0, x1, z0, z1 });
 const near = (a: number, b: number, e = 1e-6) => Math.abs(a - b) < e;
 const same = (p: JPose, q: JPose) => near(p.x, q.x, 1e-3) && near(p.z, q.z, 1e-3) && near(Math.atan2(Math.sin(p.h - q.h), Math.cos(p.h - q.h)), 0, 1e-3);
@@ -67,19 +67,18 @@ function check(name: string, w: JackWorld, ms: JMove[] | null, a: JPose, b: JPos
   if (!ways.length) errs.push("hot tub: no way out of a wide door beside the truck");
   for (const [i, ms] of ways.entries()) check(`hot tub door way ${i}`, w, ms, a, ms[ms.length - 1].p1);
 }
-// A house door with a post in front of it: out and round it, then along the pavement to behind the
-// truck's ramp.
+// A house door beside the truck: out of it, then along the pavement to behind the truck's ramp.
 {
-  const w = world({ load: PUMPKINS, door: { x: 4.28, z: 4.9, nx: 0, nz: -1, half: 1.2 }, obs: [{ x: 4.08, z: 2.2, r: 0.45, hand: 0.45 }] });
+  const w = world({ load: PUMPKINS, door: { x: 4.28, z: 4.9, nx: 0, nz: -1, half: 1.2 } });
   const a = { x: 4.28, z: 6.08, h: -Math.PI / 2 }, ways = jackDoorWays(w, a, 4);
-  if (!ways.length) errs.push("post: no way out of the door");
+  if (!ways.length) errs.push("house door: no way out of it");
   const to = { x: L.bedRear - L.rampRun - 0.88 - 0.35, z: 0, h: Math.PI };
   let plan: JMove[] | null = null;
   for (const way of ways) {
     const rest = jackJoin(w, way[way.length - 1].p1, [[-9, 3.1]], to);
     if (rest) { plan = [...way, ...rest]; break; }
   }
-  check("post, out to the ramp", w, plan, a, to);
+  check("house door, out to the ramp", w, plan, a, to);
 }
 // Nothing goes through a wall: straight back from a door into the building's front beside it.
 {

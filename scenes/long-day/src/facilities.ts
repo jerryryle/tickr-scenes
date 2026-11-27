@@ -239,10 +239,14 @@ export interface DockLayout {
 }
 // Where the steps are for a truck at bay a, as an offset in a from the bay (negative: to the
 // truck's left as it stands in the bay, which is the driver's side).
+// (At the platform's end only where that is DOCK_STAIR or more from the bay, clear of the truck
+// standing in it; else beside the bay on the other side.)
 export function dockStair(L: DockLayout, a: number): number {
-  if (L.stair === "left") return a - DOCK_STAIR - 0.6 > L.a0 ? -DOCK_STAIR : DOCK_STAIR;   // the platform must reach them
-  if (L.stair === "right") return a + DOCK_STAIR + 0.6 < L.a1 ? DOCK_STAIR : -DOCK_STAIR;
-  return a - L.a0 < L.a1 - a ? L.a0 + 0.8 - a : L.a1 - 0.8 - a;   // the nearer end of the platform
+  const left = a - DOCK_STAIR - 0.6 > L.a0 ? -DOCK_STAIR : DOCK_STAIR, right = a + DOCK_STAIR + 0.6 < L.a1 ? DOCK_STAIR : -DOCK_STAIR;   // the platform must reach them
+  if (L.stair === "left") return left;
+  if (L.stair === "right") return right;
+  const end = a - L.a0 < L.a1 - a ? L.a0 + 0.8 - a : L.a1 - 0.8 - a;   // the nearer end of the platform
+  return Math.abs(end) >= DOCK_STAIR ? end : end < 0 ? right : left;
 }
 // The dock doors' size at a site (the same at every bay).
 export const dockDoorH = (L: DockLayout) => 3.0 + 0.5 * ((L.look * 7.31) % 1);

@@ -24,7 +24,7 @@ export const CARGO: CargoType[] = [
   // Common (about 70% of loads).
   cargoType("boxes", "Boxes", "common", "handTruck", ["dc"], ["retail", "office", "residence"], "box26", [6, 16], 0.5),
   cargoType("parcels", "Parcels", "common", "carry", ["parcelHub"], ["residence", "office", "apartment"], "box16", [4, 12], 0.25),
-  cargoType("pallets", "Pallets", "common", "palletJack", ["dc", "ryderWarehouse"], ["bigBox", "grocery"], "tractor", [8, 14], 1),
+  cargoType("pallets", "Pallets", "common", "palletJack", ["dc", "ryderWarehouse"], ["bigBox", "grocery"], "tractor", [4, 8], 1),
   cargoType("carTires", "Car tires", "common", "roll", ["tireDist"], ["autoShop", "dealership"], "box26", [8, 24], 0.25),
   cargoType("truckTires", "Truck tires", "common", "roll", ["tireDist"], ["ryderService"], "box26", [4, 10], 0.5),
   cargoType("drums", "Steel drums", "common", "roll", ["chemPlant"], ["factory", "autoShop"], "box26", [4, 10], 0.5),
@@ -34,7 +34,7 @@ export const CARGO: CargoType[] = [
   cargoType("bagged", "Bagged goods", "common", "palletJack", ["mill"], ["bakery", "hardware", "construction"], "box26", [2, 6], 1),
   cargoType("paper", "Paper & supplies", "common", "handTruck", ["paperMill"], ["officeTower", "office"], "box26", [6, 14], 0.5),
   cargoType("appliances", "Appliances", "common", "handTruck", ["applianceWh"], ["residence", "apartment"], "box26", [2, 5], 1),
-  cargoType("mattresses", "Mattresses", "common", "teamLift", ["furnitureWh"], ["residence", "hotel", "apartment"], "box26", [2, 6], 2),   // laid flat across the bed, one to a row
+  cargoType("mattresses", "Mattresses", "common", "teamLift", ["furnitureWh"], ["residence", "hotel", "apartment"], "box26", [2, 6], 2),   // stood on edge along the bed, against its walls
   cargoType("restaurantSupply", "Restaurant supply", "common", "handTruck", ["foodServiceWh"], ["restaurant", "diner"], "box16", [4, 10], 0.5),
   // Uncommon (20%).
   cargoType("motorcycles", "Motorcycles", "uncommon", "push", ["motoDepot"], ["dealership", "residence"], "box26", [1, 4], 1),

@@ -11,7 +11,7 @@
 // it never slides sideways faster than a slip (it is steered, turning about its middle, not
 // swung round), nor passes through the truck's sides. And the driver's head is never inside what
 // they carry or push, nor do they stand in it (a pallet on the jack: more than CLIP_FOOT in from its edge), and neither they nor it ever jump from place to place; nor does what two
-// carry between them go through what stands on the pavement, or out through the truck's sides.
+// carry between them go out through the truck's sides.
 // Args (all optional): seed:minutes ... With none, a few journeys with hand trucks, pallet jacks,
 // rolled tires, ramps and docks.
 import * as THREE from "three@0.187.0";
@@ -22,9 +22,7 @@ import { kerbDoors, parkedObstacles, pavementObstacles } from "../src/city.ts";
 import { Truck, TruckKit, truckLayout } from "../src/truck.ts";
 import type { TruckModel } from "../src/truck.ts";
 import { Crew, HEAD_POINTS } from "../src/crew.ts";
-import { HIGH_CARRY, ON_EDGE } from "../src/chores.ts";
 import { CARGO_BY_ID } from "../src/cargo.ts";
-import { handR } from "../src/decor.ts";
 import { Character } from "../src/character.ts";
 
 const proc = (globalThis as any).process;
@@ -33,11 +31,10 @@ setDoorProbe(kerbDoors); setPavementProbe(pavementObstacles); setParkedProbe(par
 // truck; 15: at docks; 0, 2, 7 and 12: hand trucks, kegs and tires.)
 const runs: string[] = proc.argv.length > 2 ? proc.argv.slice(2) : ["0:40", "2:40", "7:40", "12:45", "13:80", "6:80", "3:90", "4:30", "15:30"];
 const errs: string[] = [];
-let problems = 0, walked = 0, jackFrames = 0, worstJack = 0, worstWall = 0, worstSlip = 0, worstPave = 0, paveHits = 0;
+let problems = 0, walked = 0, jackFrames = 0, worstJack = 0, worstWall = 0, worstSlip = 0;
 const fail = (m: string) => { problems++; if (errs.length < 20) errs.push(m); };
 const JUMP = 6;   // m/s: faster than the driver ever goes on foot
 const W_DROP = 0.25;   // m up or down in a step: more than a kerb
-const PAVE_INTO = 0.1;   // m: a team lift's load brushing what's on the pavement (a tree's crown is above it)
 // How far a foot may brush into a pallet on the jack, and the pallet jack into a wall beside a
 // door, before it counts (m): the jack's moves are checked coarsely, and a little clipping is let
 // be. (Anything else carried: 5 cm.)
@@ -116,7 +113,7 @@ for (const run of runs) {
     return box;
   };
   let jackBad = false, wallBad = false, slipBad = false, sideBad = false, prevR: THREE.Vector3 | null = null;
-  let pave: { x: number; z: number; r: number; kind?: number }[] = [], obsOf: unknown = null, paveBad = false, sideOut = false;   // (the stop's pavement things, world space)
+  let sideOut = false;
   let lastAt: THREE.Vector3 | null = null, lastKind: string | undefined, lastLoad: THREE.Vector3 | null = null, lastW: THREE.Vector3 | null = null;   // (the driver last step, what they were doing, and the load)
   for (let i = 0, n = Math.round(minutes * 60 / SIM_DT); i < n; i++) {
     j.step();
@@ -177,24 +174,8 @@ for (const run of runs) {
       if (lastW && (Math.hypot(hp.x - lastW.x, hp.z - lastW.z) / SIM_DT > JUMP || Math.abs(hp.y - lastW.y) > W_DROP)) fail(`${what()}: the worker jumps ${Math.hypot(hp.x - lastW.x, hp.z - lastW.z).toFixed(2)} m, ${(hp.y - lastW.y).toFixed(2)} m up, in a step`);
       lastW = hp;
     } else lastW = null;
-    // Nor what two carry between them through what stands on the pavement (a tree, a bin, a light),
-    // more than a few centimetres (world space: along the load's length, its half width round it).
-    // (Not while it is over the bed: up there, stowed or taken down, it is over the pavement only
-    // where it pokes out of the truck.)
+    // (Over the bed: up there, stowed or taken down.)
     const overBed = (() => { if (!load) return false; const L = truckLayout(st.truck), q = load.group.getWorldPosition(new THREE.Vector3()).applyMatrix4(truck.root.matrixWorld.clone().invert()); return q.x >= L.bedRear && Math.abs(q.z) < L.hw; })();
-    if (C.mate.attached && load && load.group.visible && stop?.site && !j.isDockStop(stop) && !overBed) {
-      if (obsOf !== stop) { obsOf = stop; pave = pavementObstacles(j.plan, stop.site.bx, stop.site.bz); }
-      // (On edge, its thickness across the way: crew.ts teamLoad.)
-      const sz = (C.load.size as number[]), half = (ON_EDGE.has(stop.cargo) ? sz[1] : sz[2]) / 2;
-      let deep = 0;
-      for (let x = -sz[0] / 2; x <= sz[0] / 2 + 1e-6; x += 0.1) {
-        const q = new THREE.Vector3(x, sz[1] / 2, 0).applyMatrix4(load.group.matrixWorld);
-        for (const o of pave) { const r = handR(o.r, o.kind, HIGH_CARRY.has(stop.cargo)); if (!Number.isNaN(r)) deep = Math.max(deep, r + half - Math.hypot(q.x - o.x, q.z - o.z)); }   // (NaN: carried over it)
-      }
-      worstPave = Math.max(worstPave, deep);
-      if (deep > PAVE_INTO && !paveBad) { paveBad = true; paveHits++; fail(`${what()}: what two carry goes ${(deep * 100).toFixed(0)} cm into something on the pavement`); }
-      else if (deep <= PAVE_INTO) paveBad = false;
-    } else paveBad = false;
     // Nor, over the bed (stowed or taken down), out through the truck's sides.
     // (Carried by the two of them in a box truck: on a flatbed, with no sides, the forklift takes it.)
     if (load && load.group.visible && overBed && C.mate.attached && !truckLayout(st.truck).flatbed && CARGO_BY_ID.get(stop?.cargo ?? "")?.handling === "teamLift") {
@@ -266,5 +247,5 @@ for (const run of runs) {
     } else { jackBad = wallBad = slipBad = sideBad = false; prevR = null; }
   }
 }
-console.log(`crew motion: ${(walked * SIM_DT).toFixed(0)} s walking watched; pallet jack out ${(jackFrames * SIM_DT).toFixed(0)} s, at worst ${(worstJack * 100).toFixed(1)} cm into the ground, ${(worstWall * 100).toFixed(1)} cm into a wall, sliding sideways at ${worstSlip.toFixed(2)} m/s; a team lift's load ${paveHits} times into something on the pavement, at worst ${(worstPave * 100).toFixed(0)} cm`);
+console.log(`crew motion: ${(walked * SIM_DT).toFixed(0)} s walking watched; pallet jack out ${(jackFrames * SIM_DT).toFixed(0)} s, at worst ${(worstJack * 100).toFixed(1)} cm into the ground, ${(worstWall * 100).toFixed(1)} cm into a wall, sliding sideways at ${worstSlip.toFixed(2)} m/s`);
 if (errs.length) { for (const e of errs) console.error(e); console.error(`${problems} problems`); proc.exit(1); }

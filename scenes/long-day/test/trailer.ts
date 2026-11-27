@@ -1,6 +1,5 @@
 // Test: a tractor-trailer at the kerb. Its swing doors are worked one leaf at a time with the
-// driver never in the leaf's way or in the trailer (chores.ts leafAt), and the kerb side's only
-// pulled open part way past a street tree in its way round (leafBlocked); the load is handed over
+// driver never in the leaf's way or in the trailer (chores.ts leafAt); the load is handed over
 // with the forklift at the doors and moved in the trailer on the pallet jack (trailerJackPlan),
 // for a pickup or a drop of a full range of pallets, the driver never walking through a load lying
 // in it nor, on the road, through the truck; climbing in and out (crew.ts bedClimb) nothing of the
@@ -13,7 +12,7 @@ import { readConfig } from "../src/env.ts";
 import { Journey, setDoorProbe, setPavementProbe, setParkedProbe } from "../src/journey.ts";
 import { parseVisitSpec } from "../src/visits.ts";
 import { kerbDoors, parkedObstacles, pavementObstacles } from "../src/city.ts";
-import { bedRearX, leafAt, leafBlocked, toolStore, trailerJackPlan } from "../src/chores.ts";
+import { bedRearX, leafAt, toolStore, trailerJackPlan } from "../src/chores.ts";
 import { LEAF_OPEN, truckLayout } from "../src/truck.ts";
 import { makeStage, stageSpec } from "../src/stage.ts";
 import * as THREE from "three@0.187.0";
@@ -42,28 +41,15 @@ for (const side of [-1, 1]) for (const open of [true, false]) {
   if (inside) errs.push(`leaf ${side} ${open ? "opening" : "closing"}: the driver walks into the trailer`);
 }
 
-// A street tree by the trailer's kerb-side corner: that leaf only pulled open part way, the driver
-// and the leaf both clear of the trunk; none for the street side's, or with nothing there.
-{
-  const tree = { x: L.bedRear + 0.6, z: L.hw + 1.1, r: 0.35 };
-  if (!leafBlocked(L, 1, [tree]) || leafBlocked(L, -1, [tree]) || leafBlocked(L, 1, [])) errs.push("leafBlocked: wrong about a tree by the kerb-side corner");
-  const S = makeStage(stageSpec(["tractor", "pallets", "drop", `tree=${tree.x},${tree.z - (L.hw + 0.45)}`]));
-  const leaves = ((S as any).journey.chores as any[]).filter((c) => c.kind === "leafOpen" && c.leaf === 1);
-  if (!leaves.length || !leaves.every((c) => c.leafPart)) errs.push("a tree by the kerb-side corner: that leaf still walked all the way round");
-  for (let i = 0; i <= 100; i++) {
-    const q = leafAt(L, 1, true, i / 100, true), ex = L.bedRear - 0.02 - Math.sin(q.th) * (L.hw - 0.04), ez = L.hw - 0.02 - Math.cos(q.th) * (L.hw - 0.04);
-    if (Math.hypot(q.x - tree.x, q.z - tree.z) < tree.r + 0.3 || Math.hypot(ex - tree.x, ez - tree.z) < tree.r) { errs.push("a tree by the kerb-side corner: the part-way leaf or its driver goes into it"); break; }
-  }
-}
-
-// The jack: planned for every load a tractor carries at a kerb stop (the least, the most and one
+// The jack: planned pallet by pallet for every load a tractor carries at a kerb stop (the least, the most and one
 // between, as cargo.ts gives pallets), as staged, and the chores
 // walk in the trailer (on its floor) only, not through what lies in it.
 const [palletsLo, palletsHi] = CARGO_BY_ID.get("pallets")!.units;
 for (const kind of ["pickup", "drop"] as const) for (const units of [palletsLo, Math.round((palletsLo + palletsHi) / 2), palletsHi]) {
   const stop: any = { kind, cargo: "pallets", units, slot: 0 };
   const own = [{ slot: 0, slotsPerUnit: 1, units }];
-  const plan = trailerJackPlan(L, "tractor", stop, 0, [], toolStore(L, "palletJack", bedRearX(L, "tractor", kind === "pickup" ? [] : own)));
+  const rear = (aboard: typeof own) => toolStore(L, "palletJack", bedRearX(L, "tractor", aboard));
+  const plan = trailerJackPlan(L, "tractor", stop, 0, [], rear(kind === "pickup" ? [] : own), rear(kind === "pickup" ? own : []));
   if (!plan) { errs.push(`${kind} of ${units} pallets: no jack plan in an empty trailer`); continue; }
   const S = makeStage({ ...stageSpec(["tractor", "pallets", kind]), units });
   const ch = (S as any).journey.chores as any[];
@@ -160,6 +146,20 @@ for (const kind of ["pickup", "drop"]) {
     }
   }
   if (bad) errs.push(bad);
+}
+
+// A job split between drops: each drop's pallets the rearmost, the job's later ones deeper in
+// (journey.ts stows the last drop's first). Jack-planned for each, nothing else in the way.
+for (const split of [[3, 3, 2], [4, 4], [2, 2]]) {
+  let slot = split.reduce((a, b) => a + b, 0);
+  for (const units of split) {
+    slot -= units;
+    const stop: any = { kind: "drop", cargo: "pallets", units, slot };
+    const deeper = slot > 0 ? [{ cargo: "pallets", slot: 0, units: slot, slotsPerUnit: 1 }] : [];
+    const rear = (aboard: { slot: number; slotsPerUnit: number; units: number }[]) => toolStore(L, "palletJack", bedRearX(L, "tractor", aboard));
+    if (!trailerJackPlan(L, "tractor", stop, slot, deeper, rear([...deeper, { slot, slotsPerUnit: 1, units }]), rear(deeper)))
+      errs.push(`a drop of ${units} pallets of a job split ${split.join("/")}: no jack plan with ${slot} deeper in`);
+  }
 }
 
 // The journey: at each tractor kerb stop the trailer stands straight behind the tractor.

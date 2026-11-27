@@ -24,7 +24,7 @@ for (const cargo of CARGO.filter((c) => c.truck === "reefer").map((c) => c.id)) 
   const c = CARGO_BY_ID.get(cargo)!, units = Math.max(1, Math.min(8, c.units[1]));
   for (const kind of ["pickup", "drop"] as const) for (const door of doors) for (const pave of door ? [0] : [0, 1, 2]) {
     const what = `${kind} ${cargo}${door ? ` door at z ${door.z.toFixed(1)}` : ` (no door, pavement spot ${pave})`}`;
-    const plan: Chore[] = planChores("reefer", { kind, site: null, job: 0, cargo, units, slot: 0 }, null, 0, null, null, door, [], [], null, [], true, pave);
+    const plan: Chore[] = planChores("reefer", { kind, site: null, job: 0, cargo, units, slot: 0 }, null, 0, null, null, door, [], null, [], true, pave);
     plans++;
     let at: number[] | null = null;
     for (const q of plan) {

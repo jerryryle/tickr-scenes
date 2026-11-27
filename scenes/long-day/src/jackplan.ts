@@ -3,7 +3,7 @@
 // or drawn, its handle first), curves (steered as it rolls) and pivots on the spot about its
 // middle, each checked against what is there: the truck (solid but for its bed, open at the
 // back), the walk ramp (along it, not off its sides), the building's front (only through its
-// doorway), what stands on the pavement, the loads in the bed and one just set down. The driver,
+// doorway), the loads in the bed and one just set down. The driver,
 // on its handle, comes from the jack's pose: behind it rolling, the handle swung towards a curve,
 // walking round it pivoting (jackDriverAt). crewpath.ts plays the moves exactly.
 import type { TruckLayout } from "./truck.ts";
@@ -40,7 +40,6 @@ export interface JackWorld {
   rampHW: number;                                   // the walk ramp's half width (its run: L.rampRun behind the bed)
   free: number;                                     // the bed is clear up to this x (other stops' loads beyond)
   bed: { x0: number; x1: number; z0: number; z1: number }[];   // this stop's loads in the bed (their floor footprints)
-  obs: { x: number; z: number; r: number; hand: number }[];   // the pavement's things: r at the feet, hand where a load is carried (NaN: passed over)
   door: { x: number; z: number; nx: number; nz: number; half: number } | null;   // the building's door: its foot's middle and outward normal, its half width
   load: number[] | null;                            // what's on the forks: [length along, height, width]
   lead?: number;                                    // the driver this far behind its middle, on the handle (else jackLead)
@@ -153,11 +152,6 @@ function jackSolid(w: JackWorld, x: number, z: number, body: number, load: boole
     const [fx, fz] = jackFwd(g.h), ox = x - g.x, oz = z - g.z;
     if (Math.abs(ox * fx + oz * fz) < g.l / 2 + body + 0.02 && Math.abs(-ox * fz + oz * fx) < g.w / 2 + body + 0.02) return true;
   }
-  // What stands on the pavement.
-  for (const o of w.obs) {
-    const r = load ? o.hand : o.r;
-    if (!Number.isNaN(r) && Math.hypot(x - o.x, z - o.z) < r + body + 0.02) return true;
-  }
   return false;
 }
 // The building's front: only through its doorway.
@@ -173,20 +167,18 @@ function jackReach(w: JackWorld): number {
   return Math.max(Math.hypot(ext.front, half), Math.hypot(ext.back, half), Math.hypot(1.4 - JACK_MID, half), Math.hypot(JACK_MID + 0.1, half));
 }
 // Whether anything solid might be within r of (x, z): the truck and its ramp, the building's front,
-// what stands there. (False: certainly nothing; true: look closer.)
+// a load set down. (False: certainly nothing; true: look closer.)
 function jackNear(w: JackWorld, x: number, z: number, r: number): boolean {
   const L = w.L, foot = L.bedRear - L.rampRun;
   if (x > foot - r - 0.5 && x < L.front + r + 0.5 && Math.abs(z) < L.hw + r + 0.5) return true;
   const d = w.door;
   if (d && (x - d.x) * d.nx + (z - d.z) * d.nz < r + 0.4) return true;
-  for (const o of w.obs) if (Math.hypot(x - o.x, z - o.z) < r + Math.max(o.r, Number.isNaN(o.hand) ? 0 : o.hand) + 0.4) return true;
   for (const g of w.ground ?? []) if (Math.hypot(x - g.x, z - g.z) < r + Math.hypot(g.l, g.w) / 2 + 0.4) return true;
   return false;
 }
 // The world cut down to what is within r of (x, z).
 function jackLocal(w: JackWorld, x: number, z: number, r: number): JackWorld {
   return { ...w,
-    obs: w.obs.filter((o) => Math.hypot(x - o.x, z - o.z) < r + Math.max(o.r, Number.isNaN(o.hand) ? 0 : o.hand) + 0.4),
     bed: w.bed.filter((b) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.z0 - z, 0, z - b.z1)) < r + 0.4),
     ground: (w.ground ?? []).filter((g) => Math.hypot(x - g.x, z - g.z) < r + Math.hypot(g.l, g.w) / 2 + 0.4) };
 }
@@ -364,7 +356,7 @@ export function jackDoorWays(w: JackWorld, r: JPose, near: number, curves = true
 }
 // The way round that always works where any does, cheap to check: from `from` (out of its
 // doorway by one of `exits`, if it has one), turned to run along the pavement (along the truck)
-// and rolled on past what stands there, further the more there is, then straight down into the
+// and rolled on past the ramp's foot as far as it needs, then straight down into the
 // road behind the truck and round to `to` there, lined up on the ramp. Looked for along one line
 // only: the first spot along it with room. null if none.
 export function jackStreet(w: JackWorld, from: JPose, exits: JMove[][], to: JPose): JMove[] | null {

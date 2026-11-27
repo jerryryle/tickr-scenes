@@ -24,8 +24,8 @@ export interface CarriedLoad {
 
 const DOLLY_H = 0.12;
 
-// `n`: units on this trip, for loads carried as a stack (a flat pair of mattresses, two small
-// things in the arms); the hand truck and pallet jack keep their own arrangement.
+// `n`: units on this trip, for loads carried as a stack (two small things in the arms); the hand
+// truck and pallet jack keep their own arrangement.
 // `variant`: the first unit's colour variant (as the bed has it: BedLoad).
 export function buildCarried(id: string, material: THREE.Material, n = 1, variant = 0): CarriedLoad {
   const c = CARGO_BY_ID.get(id)!, m = CARGO_MODELS[id];
@@ -58,7 +58,7 @@ export function buildCarried(id: string, material: THREE.Material, n = 1, varian
       else m.build(b, 0, 0, 0, 0);
       break;
     default:
-      // One, or a stack (small things in twos, mattresses in a flat pair).
+      // One, or a stack (small things in twos).
       for (let k = 0; k < Math.max(1, n); k++) m.build(b, 0, k * h, 0, variant + k);
       size = [l, Math.max(1, n) * h, w];
   }
@@ -113,8 +113,9 @@ export class BedLoad {
 function truckSpecHasBed(m: TruckModel) { return m !== "tractor"; }
 
 // ---- animals ---------------------------------------------------------------------------------
-// Walk-on cargo: bodies with separately swinging legs. Goats come in a little line, and on the
-// way one escapes for a lap round the driver before rejoining.
+// Walk-on cargo: bodies with separately swinging legs. Goats come in a little line.
+// (A walking animal's legs swing this far either side of straight down, rad.)
+const HERD_SWING = 0.28;
 export class Herd {
   readonly animals: { root: THREE.Group; legs: THREE.Group[]; size: [number, number, number] }[] = [];
   readonly id: string;
@@ -134,13 +135,16 @@ export class Herd {
       this.animals.push({ root, legs, size: m.size });
     }
   }
-  // Place animal i at (x, y, z) facing yaw, legs at walk phase (cycles).
-  pose(i: number, x: number, y: number, z: number, yaw: number, phase: number, walking: boolean) {
-    const a = this.animals[i];
+  // Place animal i at (x, y, z) facing yaw, `went` (m) along the way it walks, its legs swinging
+  // by `pace` (0 stood, 1 walking). The legs walk in four beats (left hind, left fore, right hind,
+  // right fore), each a stride of HERD_SWING either side, as far a cycle as their feet go on the ground.
+  pose(i: number, x: number, y: number, z: number, yaw: number, went: number, pace: number) {
+    const a = this.animals[i], h = CARGO_MODELS[this.id].legs!.h, cyc = went / (4 * h * Math.sin(HERD_SWING)) + i * 0.3;
     a.root.visible = true;
-    a.root.position.set(x, y + (walking ? 0.03 * Math.abs(Math.sin(phase * Math.PI * 2)) : 0), z);
+    a.root.position.set(x, y + 0.02 * pace * Math.abs(Math.sin(cyc * Math.PI * 4)), z);
     a.root.rotation.set(0, yaw, 0);
-    a.legs.forEach((leg, k) => { leg.rotation.z = walking ? 0.5 * Math.sin((phase + (k === 0 || k === 3 ? 0 : 0.5)) * Math.PI * 2) : 0; });
+    // (Built hind left, hind right, fore left, fore right.)
+    a.legs.forEach((leg, k) => { leg.rotation.z = HERD_SWING * pace * Math.sin((cyc + [0, 0.5, 0.25, 0.75][k]) * Math.PI * 2); });
   }
   hide() { for (const a of this.animals) a.root.visible = false; }
   dispose() { for (const a of this.animals) { a.root.removeFromParent(); a.root.traverse((o: any) => o.geometry?.dispose()); } }
