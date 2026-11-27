@@ -170,7 +170,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     buildSea();
     seaLife.build(journey.plan);
     FIG_STYLE.storybook = !!journey.plan.style.storybook; FIG_STYLE.victorian = !!journey.plan.style.victorian;
-    if (traffic) traffic.ryderToon = journey.plan.style.storybook ? 1 : 0;
+    if (traffic) { traffic.ryderToon = journey.plan.style.storybook ? 1 : 0; traffic.ryderCarriage = journey.plan.style.victorian ? 1 : 0; }
     const dockOf = (bx: number, bz: number) => { const L = siteLayout(journey.plan, bx, bz); return L.kind === "dock" ? L : null; };
     if (journey.plan.style.storybook) worksFx.build(journey.plan, dockOf); else worksFx.clear();
     breweryFx.build(journey.plan, dockOf);
@@ -179,8 +179,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     // (Already up on the road in, as the town's skyline rose: backdropState.)
     if (backdrop.built !== `${journey.plan.style.id}/${journey.st.citySeed}`) backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
-    const toon = journey.plan.style.storybook ? 1 : 0;   // (the storybook's parked trucks are cartoons: truck.ts toonWarp)
-    const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(toon ? st.map((x) => ({ ...x, toon })) : st));
+    // (The storybook's parked trucks are cartoons, the Victorian city's carriages: truck.ts makeToon, makeCarriage.)
+    const toon = journey.plan.style.storybook ? 1 : 0, carriage = journey.plan.style.victorian ? 1 : 0;
+    const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(toon || carriage ? st.map((x) => ({ ...x, toon, carriage })) : st));
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
       const g = yield* build(cx, cz);
       // (The block holds its sign slots and lamp sites from here: dropped at this yield, as
@@ -279,11 +280,13 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   }
 
   // The trucks turn cartoonish (truck.ts toonWarp) wholly in the storybook city, and on the
-  // drive to or from it as the land does (CountryRoad.storyAt).
+  // drive to or from it as the land does (CountryRoad.storyAt); and into carriages (truck.ts
+  // makeCarriage) in the Victorian city and on the road as it creeps in (CountryRoad.periodAt).
   function setToon() {
     const road = journey.st.mode === "country" ? journey.country : null;
     const k = road ? road.storyAt(journey.countryS) : journey.plan.style.storybook ? 1 : 0;
-    truck.toon = k; if (other) other.toon = k;
+    const c = road ? road.periodAt(journey.countryS) : journey.plan.style.victorian ? 1 : 0;
+    truck.toon = k; truck.carriage = c; if (other) { other.toon = k; other.carriage = c; }
   }
   function newTruck(model: TruckModel) {
     const t = new Truck(kit, model, puffs);
@@ -1025,7 +1028,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // driver for a moment.
       const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers); applyPaintTint(movers);
       const people = engine.mats.ground.clone(); applyLampGlow(people); applyLampLight(people);
-      traffic = new Traffic(engine.scene, movers, (model, toon) => fleet.build([{ model, x: 0, z: 0, h: 0, toon }]));
+      traffic = new Traffic(engine.scene, movers, (model, toon, carriage) => fleet.vehicle(model, toon, carriage));
       crowd = new Crowd(engine.scene, people, movers);
       cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);

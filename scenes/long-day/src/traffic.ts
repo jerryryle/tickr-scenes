@@ -14,7 +14,7 @@ import { SB } from "./city-storybook/storybook-buildings-town.ts";
 import { Batch, keepWarm } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
-import { SPECS, TRAILER } from "./truck.ts";
+import { SPECS, TRAILER, truckExtents } from "./truck.ts";
 import { KINGPIN_TO_AXLES } from "./hitch.ts";
 import type { TruckModel } from "./truck.ts";
 import { signalsInStep, signalState } from "./signals.ts";
@@ -105,10 +105,12 @@ export class Traffic {
   private spare = new Map<string, THREE.Object3D[]>();   // these are models of Ryder trucks that left, kept for reuse (each is new GPU geometry)
   time = 0;   // render time (the police lights)
   ryderToon = 0;   // this is how cartoonish Ryder trucks in traffic are drawn (1 in the storybook city: truck.ts makeToon)
+  ryderCarriage = 0;   // and this how much they are carriages (1 in the Victorian city: truck.ts makeCarriage; their teams walk: draw)
+  private get ryderLook() { return `${this.ryderToon}/${this.ryderCarriage}`; }
   private drawn: number[] = [];   // per vehicle as last drawn: x, z, heading, half length
   readonly obstacles: Obstacle[] = [];      // this frame's vehicles, for pedestrians
 
-  constructor(private scene: THREE.Scene, material: THREE.Material, private ryder: ((model: TruckModel, toon: number) => THREE.Object3D | null) | null) {
+  constructor(private scene: THREE.Scene, material: THREE.Material, private ryder: ((model: TruckModel, toon: number, carriage: number) => THREE.Object3D | null) | null) {
     const kind = (id: string, len: number, width: number, vmax: number, weight: number, colors: number[] | null, cap: number, build: ((b: Batch) => void) | null) => {
       let mesh: THREE.InstancedMesh | null = null;
       if (build) {
@@ -154,7 +156,7 @@ export class Traffic {
 
   private release(g: THREE.Object3D) {
     g.removeFromParent();
-    const m = `${g.userData.model}/${g.userData.toon ?? 0}`;
+    const m = `${g.userData.model}/${g.userData.look}`;
     let list = this.spare.get(m);
     if (!list) this.spare.set(m, (list = []));
     list.push(g);
@@ -1522,10 +1524,11 @@ export class Traffic {
       if (c.model) {
         let g = this.groups.get(c.id);
         if (g && g.userData.model !== c.model) { this.release(g); this.groups.delete(c.id); g = undefined; }   // ids restart in each city
-        if (g && (g.userData.toon ?? 0) !== this.ryderToon) { this.release(g); this.groups.delete(c.id); g = undefined; }
-        if (!g) { g = this.spare.get(`${c.model}/${this.ryderToon}`)?.pop() ?? this.ryder?.(c.model, this.ryderToon) ?? undefined; if (!g) continue; g.userData.model = c.model; g.userData.toon = this.ryderToon; this.scene.add(g); this.groups.set(c.id, g); }
+        if (g && g.userData.look !== this.ryderLook) { this.release(g); this.groups.delete(c.id); g = undefined; }
+        if (!g) { g = this.spare.get(`${c.model}/${this.ryderLook}`)?.pop() ?? this.ryder?.(c.model, this.ryderToon, this.ryderCarriage) ?? undefined; if (!g) continue; g.userData.model = c.model; g.userData.look = this.ryderLook; this.scene.add(g); this.groups.set(c.id, g); }
         live.add(c.id);
         g.position.set(x, 0, z); g.rotation.set(0, h, 0); g.position.addScaledVector(this.v3.set(Math.cos(h), 0, -Math.sin(h)), -3.0);   // the model's origin is its rear axle
+        g.userData.team?.((c.podo ?? 0) + ((c.odo ?? 0) - (c.podo ?? 0)) * alpha, c.v, this.time, c.id * 0.37);   // (a carriage's horses: fleet.ts vehicle)
         continue;
       }
       if (c.kind.rig) {
@@ -1555,8 +1558,9 @@ export class Traffic {
         const key = -1 - L.car.id;
         let g = this.groups.get(key);
         if (g && g.userData.model !== L.car.model) { this.release(g); this.groups.delete(key); g = undefined; }
-        if (g && (g.userData.toon ?? 0) !== this.ryderToon) { this.release(g); this.groups.delete(key); g = undefined; }
-        if (!g) { g = this.spare.get(`${L.car.model}/${this.ryderToon}`)?.pop() ?? this.ryder?.(L.car.model, this.ryderToon) ?? undefined; if (!g) continue; g.userData.model = L.car.model; g.userData.toon = this.ryderToon; this.scene.add(g); this.groups.set(key, g); }
+        if (g && g.userData.look !== this.ryderLook) { this.release(g); this.groups.delete(key); g = undefined; }
+        if (!g) { g = this.spare.get(`${L.car.model}/${this.ryderLook}`)?.pop() ?? this.ryder?.(L.car.model, this.ryderToon, this.ryderCarriage) ?? undefined; if (!g) continue; g.userData.model = L.car.model; g.userData.look = this.ryderLook; this.scene.add(g); this.groups.set(key, g); }
+        g.userData.team?.(0, 0, this.time, L.car.id * 0.37);
         live.add(key);
         g.position.set(L.x, L.y, L.z); g.quaternion.copy(this.q); g.position.addScaledVector(this.v3.set(Math.cos(L.h), 0, -Math.sin(L.h)), -3.0);
         continue;
@@ -1660,10 +1664,11 @@ export function vehicleUnseen(G: CityGraph, eye: { x: number; z: number; h: numb
   for (const [u, v] of SIGHT_AT) { const a = u * len, b = v * width; if (!outOfSight(G, eye, x + fx * a + rx * b, z + fz * a + rz * b)) return false; }
   return true;
 }
-export function truckObstacles(model: TruckModel, x0: number, z0: number, h: number, trailerYaw: number, out: Obstacle[]) {
+// (`carriage`: in the Victorian city, its team's nose: truck.ts truckExtents.)
+export function truckObstacles(model: TruckModel, x0: number, z0: number, h: number, trailerYaw: number, out: Obstacle[], carriage = false) {
   const spec = SPECS[model], fx = Math.cos(h), fz = -Math.sin(h);
   const trailer = spec.fifthWheel !== undefined;
-  const front = spec.noseFront + 0.05, rear = trailer ? -1.5 : spec.cargo ? spec.cargo.x0 - 0.1 : -1.4;
+  const front = truckExtents(model, carriage).front, rear = trailer ? -1.5 : spec.cargo ? spec.cargo.x0 - 0.1 : -1.4;
   // (And one at the nose: the steps can end up to a step short of it, leaving its corners, which
   // swing out wide reversing into a bay, outside every circle.)
   let a = rear + 1.2;

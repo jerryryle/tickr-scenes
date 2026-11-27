@@ -199,8 +199,9 @@ export const siteKey = (s: Site) => `${s.bx},${s.bz}`;
 // takes to keep its nose short of the stop line ahead (NOSE_BACK): pulling away from past the line,
 // it would go on through the junction without its turn, red light and all. (Also
 // tools/clearstops.ts, which keeps its stops' pavements clear.)
-export function kerbStopAfter(G: CityGraph, d: number, model: TruckModel, pull = 0) {
-  const { front, center } = truckExtents(model);
+// (`carriage`: in the Victorian city, measured to its team's nose: truck.ts truckExtents.)
+export function kerbStopAfter(G: CityGraph, d: number, model: TruckModel, pull = 0, carriage = false) {
+  const { front, center } = truckExtents(model, carriage);
   return Math.min((G.faceA0(d) + G.faceA1(d)) / 2 - center + pull, G.faceA1(d) - NOSE_BACK - front);
 }
 // A stop as a visit spec writes it (visits.ts StopSpec): its site by block.
@@ -262,7 +263,7 @@ export class Journey {
     setVisitSpecs(cfg.seed, visits);
     this.startSeason = startSeason;
     this.st = this.entryState(this.cityAt(Math.max(0, t)));
-    ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
+    ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck, !!this.plan.style.victorian));
     this.placePose();
     this.advanceTo(Math.max(0, t));
   }
@@ -351,7 +352,7 @@ export class Journey {
         st.loaded = freight.units;   // carried in from the last city
       }
     }
-    ({ front: this.frontX, center: this.centerX } = truckExtents(st.truck));
+    ({ front: this.frontX, center: this.centerX } = truckExtents(st.truck, !!this.plan.style.victorian));
     if (this.life) { this.placePose(); this.life.reset(this); }
     return st;
   }
@@ -436,7 +437,7 @@ export class Journey {
   private restore(json: string) {
     const k = JSON.parse(json);
     this.st = k.st; this.accel = k.accel; this.lastStep = k.lastStep; this.lightAhead = k.lightAhead;
-    ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck));
+    ({ front: this.frontX, center: this.centerX } = truckExtents(this.st.truck, !!this.plan.style.victorian));
     this.path = this.st.route ? new Path(this.plan.graph, this.st.route) : null;
     this.dockCache = null; this.chores = [];
     this.placePose();   // (first: planDwell works in the truck's frame, from where it is parked)
@@ -889,7 +890,7 @@ export class Journey {
       if (dock) goals = [{ d: dock.face, after: dock.pa + dock.R + dock.pull + dock.trail }];
       else if (stop.kind === "swap") {
         // (Nose just short of the stop line ahead.)
-        const front = truckExtents(stop.truck!).front, L = siteLayout(this.plan, bx, bz);
+        const front = truckExtents(stop.truck!, !!this.plan.style.victorian).front, L = siteLayout(this.plan, bx, bz);
         const all = blk.sides.map((f) => ({ d: f, after: G.faceA1(f) - NOSE_BACK - front, straight: true }));
         // (A rental lot's frontage ends at a 51 past its square's start: on a block where the
         // square sits on an anchor, the face can run on past it, the truck must not.)
@@ -902,7 +903,7 @@ export class Journey {
         // (Centred on the side.)
         const L = siteLayout(this.plan, bx, bz);
         // (And a face that holds it so, its tail short of the junction behind, before one that doesn't.)
-        const all = blk.sides.map((f) => ({ d: f, after: kerbStopAfter(G, f, st.truck, this.isYardStand(stop) ? YARD_PULL : 0) }));
+        const all = blk.sides.map((f) => ({ d: f, after: kerbStopAfter(G, f, st.truck, this.isYardStand(stop) ? YARD_PULL : 0, !!this.plan.style.victorian) }));
         const rear = 2 * this.centerX - this.frontX, holds = all.filter((g) => g.after + rear >= G.faceA0(g.d));
         goals = L.kind === "stand" ? [all[L.side]] : this.garageStop(stop) ? [{ d: blk.sides[(L as GarageLayout).side], after: GARAGE_IN_A + this.plan.siteDelta(bx, bz), straight: true }] : fronted(G, holds.length ? holds : all);
       }
@@ -1269,7 +1270,7 @@ export class Journey {
       // the driver has changed trucks partway through (doStop), the old one is the one parked, and a
       // keyframe restored after then plans the same dwell. (Measured from where each truck stood, the
       // walk came out nil there, and the dwell 15 s short.)
-      const old = st.spare === null && st.parked ? st.parked.model : st.truck, spare = truckExtents(stop.truck!), cur = truckExtents(old);
+      const old = st.spare === null && st.parked ? st.parked.model : st.truck, spare = truckExtents(stop.truck!), cur = truckExtents(old, !!this.plan.style.victorian);
       const walk = cur.front + SWAP_GAP - spare.rear + spare.doorX - cur.doorX;
       this.chores = swapChores(Math.abs(walk) / WALK_SPEED + SWAP_RAMP);
     } else {
@@ -1726,7 +1727,7 @@ export class Journey {
       this.log(`swap ${st.truck} -> ${stop.truck} at ${stop.site!.name}`);
       st.parked = { model: st.truck, x: this.pose.x, z: this.pose.z, h: this.pose.h };
       st.truck = stop.truck!; st.spare = null; slotCompact(st.aboard); st.swapAt = st.simTime + 60 * (15 + 15 * this.rand(3)); st.jobsSinceSwap = 0;
-      ({ front: this.frontX, center: this.centerX } = truckExtents(st.truck));
+      ({ front: this.frontX, center: this.centerX } = truckExtents(st.truck, !!this.plan.style.victorian));
       st.s = this.path!.length; this.path!.eval(st.s, this.pose);
       // (Drawn there from now: not blended over a step from where the old truck stands, which
       // would slide the new one out of it.)

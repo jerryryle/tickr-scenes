@@ -17,6 +17,8 @@ import { PuffSystem } from "./puffs.ts";
 import { FIFTH_WHEEL, KINGPIN_TO_AXLES } from "./hitch.ts";
 import { faceNormals, regionAt, toonCuts, toonRound, toonSlice } from "./toontruck.ts";
 import type { ToonRegion } from "./toontruck.ts";
+import { CC, HorseTeam, drayParts, rearLamp, seatParts, spokedWheel, teamGear, teamLayout, vanTrim } from "./carriage.ts";
+import { HORSE_COATS } from "./horse.ts";
 
 
 export type TruckModel = "box16" | "box26" | "reefer" | "tractor" | "flatbed";
@@ -31,6 +33,35 @@ const TC = {
   tank: 0xc2c6cc, step: 0x2a2a2a, wood: 0x7a5a3a, frost: 0xdcecff, mat: 0x1a1a1a, doorIn: 0xc4c8cc,
   skin: 0xd8a47f, cup: 0xe8dcc0, lid: 0x3a2a20, tree: 0x2fbf4f, paper: 0xf2f2ea, red: 0xce1126,
 };
+// A Batch that notes where each primitive it emits starts, so the carriage can cut down or drop
+// each box of a merged mesh on its own (makeCarriage): built, its geometry's userData.prims holds
+// the starts (and a toon's slicing carries them on as the aPrim attribute: primIds).
+class PartBatch extends Batch {
+  private starts: number[] = [];
+  box(...a: Parameters<Batch["box"]>) { this.starts.push(this.vertexCount); super.box(...a); }
+  boxR(...a: Parameters<Batch["boxR"]>) { this.starts.push(this.vertexCount); super.boxR(...a); }
+  cyl(...a: Parameters<Batch["cyl"]>) { this.starts.push(this.vertexCount); super.cyl(...a); }
+  cone(...a: Parameters<Batch["cone"]>) { this.starts.push(this.vertexCount); super.cone(...a); }
+  build(material: THREE.Material) {
+    const starts = this.starts, m = super.build(material);
+    this.starts = [];
+    if (m) m.geometry.userData.prims = Int32Array.from(starts);
+    return m;
+  }
+}
+// Each vertex's primitive (0 for a geometry not built by a PartBatch: it counts as one).
+function primIds(g: THREE.BufferGeometry): ArrayLike<number> {
+  const a = g.getAttribute("aPrim") as THREE.BufferAttribute | undefined;
+  if (a) return a.array;
+  const n = g.getAttribute("position").count, out = new Float32Array(n), S = g.userData.prims as Int32Array | undefined;
+  if (S) for (let k = 0; k < S.length; k++) out.fill(k, S[k], k + 1 < S.length ? S[k + 1] : n);
+  return out;
+}
+// (Before a toon's slicing replaces a geometry: its primitives go with it as an attribute.)
+function keepPrims(g: THREE.BufferGeometry) {
+  if (g.userData.prims && !g.getAttribute("aPrim")) g.setAttribute("aPrim", new THREE.BufferAttribute(primIds(g) as Float32Array, 1));
+}
+
 // The roll-up door's pull strap: how far outside the door plane it hangs, and the height above
 // the street its end hangs at when the door is fully open.
 export const STRAP_X = 0.04, STRAP_END = 1.7;
@@ -150,6 +181,18 @@ export class TruckKit {
     this.wheelGeo = w.build(this.paint)!.geometry;
     this.wheelGeo.userData.shared = true;
   }
+  // The carriages' spoked wheel (carriage.ts spokedWheel) and the plain paint of a van's back doors,
+  // made the first time a truck is a carriage.
+  private spoke: THREE.BufferGeometry | null = null;
+  get spokeGeo() {
+    if (!this.spoke) { const b = new Batch(); spokedWheel(b); this.spoke = b.build(this.paint)!.geometry; this.spoke.userData.shared = true; }
+    return this.spoke;
+  }
+  private van: THREE.MeshLambertMaterial | null = null;
+  get vanPaint() {
+    if (!this.van) { this.van = new THREE.MeshLambertMaterial({ color: CC.van }); applyDriverSpot(this.van); applyLampLight(this.van); }
+    return this.van;
+  }
 }
 
 const HEAD_TOON_OFF = new THREE.Color();
@@ -164,10 +207,12 @@ class LightSet {
     clrR: new THREE.MeshBasicMaterial({ color: 0x3a0505 }),
     gauge: new THREE.MeshBasicMaterial({ color: 0x9fb4c8 }),
   };
-  // `toon` says how cartoonish the truck is. Its big round headlamps are cream when off.
-  set(head: boolean, brake: boolean, reverse: boolean, sigL: boolean, sigR: boolean, toon: number) {
+  // `toon` says how cartoonish the truck is. Its big round headlamps are cream when off. `carriage`
+  // says how much it is a carriage: its lamps burn a warm yellow, and are a dull brass when out.
+  set(head: boolean, brake: boolean, reverse: boolean, sigL: boolean, sigR: boolean, toon: number, carriage: number) {
     const m = this.mats;
-    if (head) m.head.color.setHex(0xfffff0); else m.head.color.setHex(0x77776a).lerp(HEAD_TOON_OFF.setHex(0xfff3c8), toon);
+    if (head) m.head.color.setHex(0xfffff0).lerp(HEAD_TOON_OFF.setHex(CC.lampOn), carriage);
+    else m.head.color.setHex(0x77776a).lerp(HEAD_TOON_OFF.setHex(0xfff3c8), toon).lerp(HEAD_TOON_OFF.setHex(CC.lampOff), carriage);
     m.tail.color.setHex(brake ? 0xff2020 : head ? 0xa01010 : 0x4a0606);
     m.reverse.color.setHex(reverse ? 0xffffff : 0x5a5a5a);
     m.sigL.color.setHex(sigL ? 0xffaa00 : 0x5a3a00);
@@ -187,9 +232,11 @@ interface ToonPart { start: number; count: number; c: THREE.Vector3 }
 
 // Length extents of a model along x from the rear axle (no instance needed): the nose, and the
 // middle of the whole vehicle including a straight trailer (used to centre it on a kerb stop).
-export function truckExtents(m: TruckModel) {
+// `carriage`: in the Victorian city, where the truck is a carriage, the nose is its team's
+// (carriage.ts TeamLayout reach).
+export function truckExtents(m: TruckModel, carriage = false) {
   const s = SPECS[m];
-  const front = s.noseFront + 0.05;
+  const front = s.noseFront + 0.05 + (carriage ? teamLayout(s).reach : 0);
   const rear = s.fifthWheel !== undefined ? s.fifthWheel + TRAILER.rear : s.cargo ? s.cargo.x0 - 0.1 : -1.4;
   // Where the driver stands to open the cab door and steps back to after shutting it: behind the
   // door's rear edge, clear of its swing (crew.ts climb); the cabDoorGround anchor.
@@ -259,6 +306,32 @@ function toonRegions(s: TruckSpec): ToonRegion[] {
   if (c?.kind === "box") R.push({ x0: c.x0, x1: c.x1, y0: c.floor - 0.12, y1: c.top, hw: c.hw, top: 0.9, bottom: 0, front: 1.0, back: 0, side: 0.8, pillow: 0.08, reach: REAR_REACH });
   return R;
 }
+// ---- The Victorian city's carriages ---------------------------------------------------------------
+// In and near the Victorian city (CountryRoad.periodAt) every truck becomes a horse-drawn carriage,
+// by `carriage` (0..1), built as morph targets the first time it is wanted (makeCarriage). Its cab is
+// cut down to an open seat: the roof, glass, hood and modern trim shrink away, and what stays (the
+// cab's sides to its belt line, the floor to the dashboard, the steps and grab handles the crew climb
+// by, the driver's door) takes the carriage's colours (CARRIAGE_RECOLOR). The box, its floor, back,
+// doors, ramp and lift gate stay where they are, so loading and the dome lights are untouched; its
+// livery shrinks away from a painted body. carriage.ts grows the rest: the seat, lamps, panelling,
+// wheels and the team.
+const CARRIAGE_RECOLOR: [number, number][] = [
+  [TC.white, CC.van], [TC.frame, CC.woodDark], [TC.alu, CC.wood], [TC.chrome, CC.brass], [TC.black, CC.woodDark], [TC.step, CC.woodDark], [TC.hub, CC.woodDark],
+];
+const TC_COLORS = Object.values(TC).map((h) => [new THREE.Color(h), h] as const);
+// The truck colour (TC) a vertex has, or -1.
+function tcOf(C: THREE.BufferAttribute | undefined, i: number) {
+  if (!C) return -1;
+  for (const [c, h] of TC_COLORS) if (Math.abs(c.r - C.getX(i)) + Math.abs(c.g - C.getY(i)) + Math.abs(c.b - C.getZ(i)) < 2e-3) return h;
+  return -1;
+}
+// A primitive's box in the truck's (or trailer's) frame.
+interface PrimBox { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }
+// What the carriage does to a primitive: keep it as it is (clipped to x <= X and y <= Y, Infinity
+// for neither) or drop it (null: it shrinks to its middle).
+type CarriageCut = [number, number] | null;
+const KEEP: CarriageCut = [Infinity, Infinity];
+
 const TRAILER_REGION: ToonRegion[] = [{ x0: TRAILER.rear, x1: TRAILER.front, y0: 1.25 - 0.12, y1: 4.1, hw: 1.3, top: 0.95, bottom: 0, front: 1.2, back: 0, side: 0.85, pillow: 0.08, reach: REAR_REACH }];
 
 export class Truck {
@@ -298,6 +371,17 @@ export class Truck {
   private toonAnchors: [THREE.Object3D, THREE.Vector3, THREE.Vector3][] = [];
   private toonCol = new THREE.Color();
   private toonR: ToonRegion[];   // (the shells the cartoon rounds off: toonRegions)
+  // carriage is how much the truck is a horse-drawn carriage (0..1; see makeCarriage), and the scene
+  // sets it each frame; carriageMeshes holds each mesh with a carriage to morph to and the index of
+  // that morph target. `hitched`: a parked fleet's carriage stands without its team, its shafts down.
+  carriage = 0;
+  hitched = true;
+  private carriageShown = 0;
+  private carriageMade = false;
+  private carriageMeshes: [THREE.Mesh, number][] = [];
+  private spokes: THREE.InstancedMesh | null = null;
+  private team: { root: THREE.Group; shafts: THREE.Group; harness: THREE.Object3D; horses: HorseTeam; base: THREE.Matrix4; tilt: number } | null = null;
+  private rearOuter: THREE.Mesh[] = [];   // (the back doors' outsides: liveried, or painted on a carriage)
   private wheelSlots: WheelSlot[] = [];
   private driverDoor = new THREE.Group();
   private rampGroup: THREE.Group | null = null;
@@ -329,7 +413,7 @@ export class Truck {
     const s = this.spec;
     this.toonR = toonRegions(s);
     this.root.add(this.body);
-    const paint = new Batch();
+    const paint = new PartBatch();
     const lights = this.lightBatches();
     const glass: Quad[] = [];
     const decals: Quad[] = [];
@@ -443,7 +527,7 @@ export class Truck {
     const brake = this.engineOn && (this.accel < -0.4 || Math.abs(this.speed) < 0.05);
     this.strapMat.emissive.setHex(this.head ? STRAP_GLOW : 0x000000);
     this.lights.set(this.head, brake, this.speed < -0.05,
-      (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink, this.toon);
+      (this.signal === -1 || this.hazards) && blink, (this.signal === 1 || this.hazards) && blink, this.toon, this.carriage);
   }
 
   // The moving parts' state (main.ts: preview snapshots and part-ticks); the meshes follow from it.
@@ -563,7 +647,7 @@ export class Truck {
 
   // Air-brake hiss when parking.
   hiss() {
-    if (!this.puffs) return;
+    if (!this.puffs || this.carriage >= 0.5) return;
     this.root.updateMatrixWorld();
     for (const sz of [-1, 1]) for (let k = 0; k < 3; k++) {
       this.v3.set(0.6 + k * 0.4, 0.45, sz * 1.0).applyMatrix4(this.root.matrixWorld);
@@ -606,12 +690,14 @@ export class Truck {
     const s = this.spec;
     // (The cartoon is made the first time it is wanted: most trucks never meet a storybook city.)
     if (this.toon > 0 && !this.toonMade) { this.toonMade = true; this.makeToon(); }
+    if (this.carriage > 0 && !this.carriageMade) { this.carriageMade = true; this.makeCarriage(); }
     // Wheels (trailer pose first, so its wheels use this frame's articulation).
     let i = 0;
     if (this.trailer) { this.trailer.rotation.y = this.trailerYaw; this.trailer.updateMatrix(); }
     const tmat = this.trailer ? this.trailer.matrix : null;
     // (Cartoon tyres are a little bigger and much fatter, and a dual pair spreads to fit.)
-    const K = this.toon, R = 1 + 0.08 * K, fat = 1 + 0.6 * K, spread = 0.08 * K;
+    // (A carriage's tyres thin away to nothing, and its spoked wheels show through.)
+    const K = this.toon, KC = this.carriage, R = 1 + 0.08 * K, fat = (1 + 0.6 * K) * (1 - KC), spread = 0.08 * K;
     for (const w of this.wheelSlots) {
       const r = w.r * R, dual = w.steer ? 0 : Math.sign(Math.abs(w.z) - (w.trailer ? TRAILER.rearZ : s.rearZ)) * Math.sign(w.z) * spread;
       this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
@@ -621,6 +707,15 @@ export class Truck {
       this.wheels.setMatrixAt(i++, this.m4);
     }
     this.wheels.instanceMatrix.needsUpdate = true;
+    this.wheels.visible = KC < 1;
+    if (this.spokes) this.poseSpokes(tmat);
+    if (KC !== this.carriageShown) {
+      this.carriageShown = KC;
+      for (const [m, i] of this.carriageMeshes) m.morphTargetInfluences![i] = KC;
+      for (const m of this.rearOuter) m.material = KC >= 0.5 ? this.kit.vanPaint : this.kit.livery.liveryRear;
+      this.strapMat.color.setHex(STRAP_COLOR).lerp(this.puffVel2.setHex(CC.leather), KC);
+    }
+    if (this.team) this.poseTeam();
     if (K !== this.toonShown) {
       this.toonShown = K;
       this.toonCol.setHex(0xffffff).lerp(new THREE.Color(TOON_RIM), K);
@@ -682,7 +777,7 @@ export class Truck {
     if (this.nearWall) this.nearWall.visible = !this.cutaway;
 
     // Exhaust: a light idle trickle, darker and faster under acceleration.
-    if (this.puffs && this.engineOn && dt > 0) {
+    if (this.puffs && this.engineOn && dt > 0 && KC < 0.98) {
       const hard = this.accel > 0.3;
       this.puffTimer -= dt * (hard ? 11 : 2.2);
       if (this.puffTimer <= 0) {
@@ -693,7 +788,7 @@ export class Truck {
           const vel = this.puffVel.fromArray(PUFF_VEL[s.exhaust]).applyQuaternion(this.root.quaternion), k = hard ? PUFF_HARD : PUFF_IDLE;
           // (The cartoon's puffs are pastel clouds, their colours by turns.)
           const col = K > 0 ? this.toonCol.setHex(k.color).lerp(this.puffVel2.setHex(TOON_PUFFS[Math.floor(this.time * 5) % TOON_PUFFS.length]), K).getHex() : k.color;
-          this.puffs.emit(this.v3, vel, col, k.size * (1 + 0.6 * K), k.life, K >= 0.5);
+          this.puffs.emit(this.v3, vel, col, k.size * (1 + 0.6 * K) * (1 - KC), k.life, K >= 0.5);   // (a carriage's fade away with it)
         }
       }
     }
@@ -744,6 +839,7 @@ export class Truck {
       M.multiplyMatrices(trailer ? invT! : invB, o.matrixWorld); Mi.copy(M).invert();
       const grow: ToonPart[] | undefined = o.userData.toonGrow, shrink: ToonPart[] | undefined = o.userData.toonShrink;
       // (The parts are cut across each region's curving bands, axis by axis.)
+      if (!grow && !shrink) keepPrims(o.geometry);
       if (!grow && !shrink) for (const R of regions) {
         const cuts = toonCuts(R);
         for (const axis of [0, 1, 2] as const) {
@@ -822,7 +918,7 @@ export class Truck {
   // nose, whole, and then shrinks them to their middles: the cartoon grows them. The lenses are the
   // headlamps' own (lit with them, cream when off: LightSet), and the truck's own lamps shrink away.
   private toonEyes() {
-    const s = this.spec, P = new Batch(), Ln = new Batch(), grow: ToonPart[] = [], lens: ToonPart[] = [];
+    const s = this.spec, P = new PartBatch(), Ln = new PartBatch(), grow: ToonPart[] = [], lens: ToonPart[] = [];
     const conv = s.cab !== "cabover";
     // (On a hood they stand proud on its front corners; on a cab-over's face they sit low in its corners.)
     const x = conv ? s.noseFront - 0.3 : s.cabFront + 0.05, y = conv ? s.hoodTop - 0.02 : s.cabFloor + 0.34, r = conv ? 0.4 : 0.34;
@@ -838,11 +934,194 @@ export class Truck {
     this.body.add(pm, lm);
   }
 
+  // makeCarriage puts the carriage as a morph target on every mesh of the truck that changes (after
+  // the toon's, which it makes first: the toon's slicing replaces geometry), cuts and recolours each
+  // primitive as carriageCut says, worked out in the frame of the truck (or its trailer) as it was
+  // built, and grows the carriage's own parts (carriage.ts), its spoked wheels and its team. (It
+  // leaves out the roll-up door's slats, rebuilt as they move, whose outside is repainted instead,
+  // and kit geometry shared between trucks.)
+  private makeCarriage() {
+    if (!this.toonMade) { this.toonMade = true; this.makeToon(); }
+    this.driverDoor.rotation.y = 0;
+    if (this.trailer) this.trailer.rotation.y = 0;
+    for (const l of this.trailerLeaves) l.rotation.y = 0;
+    this.root.updateMatrixWorld(true);
+    const s = this.spec, T = teamLayout(s), kit = this.kit;
+    const invB = new THREE.Matrix4().copy(this.body.matrixWorld).invert(), invT = this.trailer ? new THREE.Matrix4().copy(this.trailer.matrixWorld).invert() : null;
+    const M = new THREE.Matrix4(), Mi = new THREE.Matrix4(), v = new THREE.Vector3(), col = new THREE.Color();
+    const lit = new Set<THREE.Material>([...Object.values(this.lights.mats), this.glass, this.tabletMat, ...Object.values(kit.livery)]);
+    const recolor = CARRIAGE_RECOLOR.map(([a, b]) => [a, new THREE.Color(b)] as const);
+    const visit = (o: any, trailer: boolean) => {
+      if (!o.isMesh || o.isInstancedMesh || o.geometry.userData?.shared || o.geometry === this.slats?.geo || o === this.slats?.strap) return;
+      if (o.material === kit.livery.liveryRear || o.material === kit.doorInside) return;   // (a trailer's doors: repainted, update)
+      const kind = lit.has(o.material) ? "drop" : isUnder(o, this.driverDoor) ? "door"
+        : (this.rampGroup && isUnder(o, this.rampGroup)) || (this.liftGroup && isUnder(o, this.liftGroup)) ? "loader" : "paint";
+      M.multiplyMatrices(trailer ? invT! : invB, o.matrixWorld); Mi.copy(M).invert();
+      const g = o.geometry as THREE.BufferGeometry, P = g.getAttribute("position") as THREE.BufferAttribute, C = g.getAttribute("color") as THREE.BufferAttribute | undefined;
+      const ids = primIds(g), n = P.count;
+      let np = 0; for (let i = 0; i < n; i++) np = Math.max(np, ids[i] + 1);
+      const bb: PrimBox[] = Array.from({ length: np }, () => ({ x0: Infinity, y0: Infinity, z0: Infinity, x1: -Infinity, y1: -Infinity, z1: -Infinity }));
+      const first = new Int32Array(np).fill(-1);
+      for (let i = 0; i < n; i++) {
+        const k = ids[i], b = bb[k]; v.fromBufferAttribute(P, i).applyMatrix4(M);
+        b.x0 = Math.min(b.x0, v.x); b.y0 = Math.min(b.y0, v.y); b.z0 = Math.min(b.z0, v.z); b.x1 = Math.max(b.x1, v.x); b.y1 = Math.max(b.y1, v.y); b.z1 = Math.max(b.z1, v.z);
+        if (first[k] < 0) first[k] = i;
+      }
+      const cut = bb.map((b, k) => {
+        const c = kind === "drop" ? null : kind === "loader" ? KEEP : this.carriageCut(kind, trailer, b, tcOf(C, first[k]));
+        return c && (b.x0 > c[0] - 1e-3 || b.y0 > c[1] - 1e-3) ? null : c;   // (nothing left of it under its cut)
+      });
+      const pos = new Float32Array(n * 3), cd = C ? new Float32Array(n * 3) : null;
+      let changed = false;
+      for (let i = 0; i < n; i++) {
+        const k = ids[i], c = cut[k], b = bb[k];
+        if (c) { v.fromBufferAttribute(P, i).applyMatrix4(M); v.x = Math.min(v.x, c[0]); v.y = Math.min(v.y, c[1]); }
+        else v.set((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
+        v.applyMatrix4(Mi);
+        pos[i * 3] = v.x - P.getX(i); pos[i * 3 + 1] = v.y - P.getY(i); pos[i * 3 + 2] = v.z - P.getZ(i);
+        if (Math.abs(pos[i * 3]) + Math.abs(pos[i * 3 + 1]) + Math.abs(pos[i * 3 + 2]) > 1e-5) changed = true;
+        if (cd && c) {
+          const h = tcOf(C, i), to = recolor.find(([a]) => a === h);
+          if (to) { col.copy(to[1]); cd[i * 3] = col.r - C!.getX(i); cd[i * 3 + 1] = col.g - C!.getY(i); cd[i * 3 + 2] = col.b - C!.getZ(i); changed = true; }
+        }
+      }
+      if (changed) this.carriageMeshes.push([o, addMorph(o, pos, cd)]);
+    };
+    this.body.traverse((o) => visit(o, !!this.trailer && isUnder(o, this.trailer)));
+    if (this.trailer && !isUnder(this.trailer, this.body)) this.trailer.traverse((o) => visit(o, true));
+
+    // The grown parts: in the truck's frame the seat, lamps and a box's panelling (its street side
+    // with the wall the cutaway hides), and in the trailer's a pantechnicon's.
+    const belt = s.cabFloor + (s.cab === "cabover" ? 0.92 : 0.88);
+    const B = new PartBatch(), Bs = new PartBatch(), head = new PartBatch(), tail = new PartBatch();
+    seatParts(B, head, s, T, belt);
+    const c = s.cargo, canopy = c ? Math.max(0, s.cabFront - 1.0 - c.x1) : 0;
+    if (c?.kind === "box") { vanTrim(B, Bs, c, "RYDER & CO.", s.reefer ? "PURE ICE" : "CARRIERS", canopy); rearLamp(B, tail, c.x0 - 0.1, c.floor + 0.42, -(c.hw - 0.16)); }
+    if (c?.kind === "flatbed") { drayParts(B, c); rearLamp(B, tail, c.x0 - 0.08, c.floor + 0.05, -(c.hw - 0.16)); }
+    if (T.pivot > T.dash) for (const z of [-1, 1]) B.span(T.dash - 0.3, s.frameTop - 0.24, z * 0.36, T.pivot + 0.12, s.frameTop, z * 0.48, CC.woodDark);   // (the perch on to the forecarriage)
+    if (s.fifthWheel !== undefined) B.cyl(s.fifthWheel, s.frameTop + 0.08, 0, 0.62, 0.16, CC.woodDark, 12);   // (the trailer's turntable)
+    this.growMesh(B.build(kit.paint), this.body);
+    this.growMesh(Bs.build(kit.paint), this.nearWall && !this.trailer ? this.nearWall : this.body);
+    this.growMesh(head.build(this.lights.mats.head), this.body);
+    if (this.trailerBody) {
+      const t = TRAILER, tc = { x0: t.rear, x1: t.front, floor: t.floor, top: t.top, hw: t.hw }, Bt = new PartBatch(), Bts = new PartBatch(), tl = new PartBatch();
+      vanTrim(Bt, Bts, tc, "RYDER & CO.", "PANTECHNICON", 0);
+      rearLamp(Bt, tl, t.rear - 0.12, t.floor + 0.42, -(t.hw - 0.16));
+      this.growMesh(Bt.build(kit.paint), this.trailerBody);
+      this.growMesh(Bts.build(kit.paint), this.nearWall ?? this.trailerBody);
+      this.growMesh(tl.build(this.lights.mats.tail), this.trailerBody);
+    } else this.growMesh(tail.build(this.lights.mats.tail), this.body);
+
+    // The spoked wheels, in the truck's wheels' slots (poseSpokes).
+    this.spokes = new THREE.InstancedMesh(kit.spokeGeo, kit.paint, this.wheelSlots.length);
+    this.spokes.frustumCulled = false;
+    this.root.add(this.spokes);
+
+    // The team: its axle bed, shafts or pole and harness, and the horses, turning with the front
+    // wheels about the front axle (poseTeam).
+    const lay = truckLayout(this.model), A = new PartBatch(), Sh = new PartBatch(), H = new PartBatch();
+    teamGear(A, Sh, H, s, T, [lay.seat.x + 0.42 - T.pivot, lay.seat.y + 0.3, -0.42]);
+    const root = new THREE.Group(), shafts = new THREE.Group(), harness = H.build(kit.paint)!;
+    root.position.set(T.pivot, 0, 0);
+    const sm = Sh.build(kit.paint)!; sm.position.set(-T.rear[0], -T.rear[1], 0); shafts.position.set(T.rear[0], T.rear[1], 0); shafts.add(sm);
+    root.add(A.build(kit.paint)!, shafts, harness);
+    const horses = new HorseTeam(kit.paint, HORSE_COATS[[2, 0, 3, 0, 1][TRUCK_MODELS.indexOf(this.model)]], T.horses.length);
+    root.add(...horses.meshes);
+    this.root.add(root);
+    // (Unhitched, the shafts or pole tip forward about their back ends until their tips touch the ground.)
+    const len = Math.hypot(T.tip[0] - T.rear[0], T.tip[1] - T.rear[1]);
+    const tilt = Math.atan2(T.tip[1] - T.rear[1], T.tip[0] - T.rear[0]) + Math.asin(THREE.MathUtils.clamp((T.rear[1] - 0.04) / len, -1, 1));
+    this.team = { root, shafts, harness, horses, base: new THREE.Matrix4(), tilt };
+    this.carriageShown = -1;
+  }
+  // growMesh adds a grown part's mesh to `parent`, each primitive shrunk to its middle, to grow from
+  // nothing with the carriage (a morph target).
+  private growMesh(m: THREE.Mesh | null, parent: THREE.Object3D) {
+    if (!m) return;
+    const g = m.geometry, P = g.getAttribute("position") as THREE.BufferAttribute, ids = primIds(g), n = P.count;
+    let np = 0; for (let i = 0; i < n; i++) np = Math.max(np, ids[i] + 1);
+    const mid = new Float32Array(np * 3), cnt = new Float32Array(np);
+    for (let i = 0; i < n; i++) { const k = ids[i]; mid[k * 3] += P.getX(i); mid[k * 3 + 1] += P.getY(i); mid[k * 3 + 2] += P.getZ(i); cnt[k]++; }
+    const d = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const k = ids[i], x = mid[k * 3] / cnt[k], y = mid[k * 3 + 1] / cnt[k], z = mid[k * 3 + 2] / cnt[k];
+      d[i * 3] = P.getX(i) - x; d[i * 3 + 1] = P.getY(i) - y; d[i * 3 + 2] = P.getZ(i) - z;
+      P.setXYZ(i, x, y, z);
+    }
+    m.frustumCulled = false;
+    this.carriageMeshes.push([m, addMorph(m, d, null)]);
+    parent.add(m);
+  }
+  // carriageCut says what becomes of a primitive (its box b, its colour h, a TC colour or -1) of the
+  // truck's paint or its driver's door (kind), in the truck's frame or its trailer's.
+  private carriageCut(kind: "paint" | "door", trailer: boolean, b: PrimBox, h: number): CarriageCut {
+    const s = this.spec, T = teamLayout(s), c = s.cargo, belt = s.cabFloor + (s.cab === "cabover" ? 0.92 : 0.88);
+    const mid = b.z0 < -0.3 && b.z1 > 0.3;   // (it spans the middle: a floor, a front or back wall)
+    if (h === TC.step) return KEEP;
+    if (kind === "door") return h === TC.white ? (b.y0 > belt - 0.2 ? null : [Infinity, belt]) : h === TC.black ? KEEP : null;
+    if (trailer) {
+      // A trailer drops its skirts, landing gear and kingpin.
+      if (h === TC.skirt || (h === TC.chrome && b.x1 < 0.1 && b.x0 > -0.1)) return null;
+      if (h === TC.frame && !mid && b.x0 > -2.2 && b.x1 < -1.7) return null;
+      return KEEP;
+    }
+    if (c && b.x0 >= c.x0 - 0.3 && b.x1 <= c.x1 + 0.06 && b.y0 >= c.floor - 0.36) return KEEP;   // (the box or deck)
+    if (b.x0 >= s.cabBack - 0.35 && b.y0 >= s.cabFloor - 0.15) {
+      // The cab: its sides to the belt line, its floor and back wall to the dashboard, and the grab
+      // handles; the rest (roof, glass frames, hood, fenders, mirrors, the interior) goes.
+      if (h === TC.chrome) return b.x0 >= s.cabBack && b.x1 <= s.cabFront && b.y1 <= belt + 0.4 ? KEEP : null;
+      if (h !== TC.white && h !== TC.frame) return null;
+      if (h === TC.white && (b.x0 > s.cabFront - 0.05 || b.y0 > belt - 0.2 || Math.max(-b.z0, b.z1) > s.cabHW + 0.01)) return null;
+      return [mid ? T.dash : s.cabFront, belt];
+    }
+    // The chassis: its rails cut back to the dashboard, its cross members; no tank, battery box,
+    // mudflaps, exhaust, bumper, fenders or fifth wheel.
+    if (h === TC.frame) return b.z1 < -0.5 ? null : b.x1 - b.x0 > 2 ? [T.dash, Infinity] : KEEP;
+    if (h === TC.black) return b.y0 >= 2 * s.wheelR - 0.05 || b.x0 > T.dash ? null : KEEP;
+    if (h === TC.tank || h === TC.mud || h === TC.chrome || h === TC.alu || h === TC.white || h === TC.grille) return null;
+    return KEEP;
+  }
+  // The spoked wheels: one to a side at each axle (a dual pair's outer one, moved in to the pair's
+  // middle; the inner one left out), the front ones smaller, growing out of the tyres with the carriage.
+  private poseSpokes(tmat: THREE.Matrix4 | null) {
+    const s = this.spec, T = teamLayout(s), KC = this.carriage;
+    let i = 0;
+    for (const w of this.wheelSlots) {
+      const base = w.trailer ? TRAILER.rearZ : s.rearZ, inner = !w.steer && Math.abs(w.z) < base;
+      const r = w.r * (w.steer ? T.front : T.back), z = w.steer ? w.z : Math.sign(w.z) * base;
+      this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
+      this.q.setFromEuler(this.e);
+      this.m4.compose(this.v3.set(w.x, r, z), this.q, this.s3.set(r, r, inner ? 0 : KC));
+      if (w.trailer && tmat) this.m4.premultiply(tmat);
+      this.spokes!.setMatrixAt(i++, this.m4);
+    }
+    this.spokes!.instanceMatrix.needsUpdate = true;
+    this.spokes!.visible = KC > 0;
+  }
+  // The team turns with the front wheels and grows from the front axle with the carriage; the horses
+  // walk on as far as the truck has come (horse.ts poseHorse), at its speed, scaled to their size.
+  private poseTeam() {
+    const t = this.team!, T = teamLayout(this.spec), KC = this.carriage;
+    t.root.visible = KC > 0;
+    if (!t.root.visible) return;
+    t.root.rotation.y = this.steer;
+    t.root.scale.setScalar(Math.max(KC, 1e-3));
+    t.shafts.rotation.z = this.hitched ? 0 : -t.tilt;
+    t.harness.visible = this.hitched; t.horses.visible = this.hitched;
+    if (!this.hitched) return;
+    const sc = T.scale, seed0 = TRUCK_MODELS.indexOf(this.model) * 0.31;
+    T.horses.forEach(([x, z], j) => {
+      t.base.makeScale(sc, sc, sc).setPosition(x - T.pivot, 0, z);
+      t.horses.pose(j, t.base, this.distance / sc + j * 0.4, this.speed / sc, this.time, seed0 + j * 0.53);
+    });
+    t.horses.commit();
+  }
+
   // ---- construction --------------------------------------------------------------------------
 
   private lightBatches(): Record<LightKey, Batch> {
     const r = {} as Record<LightKey, Batch>;
-    for (const k of LIGHT_KEYS) r[k] = new Batch();
+    for (const k of LIGHT_KEYS) r[k] = new PartBatch();
     return r;
   }
   private addLights(parent: THREE.Object3D, lights: Record<LightKey, Batch>) {
@@ -907,7 +1186,7 @@ export class Truck {
     const c = this.boxSpec, s = this.spec, K = this.toon;
     if (c && this.boxParent) box(0, this.boxParent, c.x0 + 0.12, c.x1 - 0.07,   // starts behind the closed rear door (x0 + 0.09), which is one sheet
        c.floor - 0.01, c.top - 0.07, c.hw - 0.06, cargoOn, this.trailer ? TRAILER_REGION[0] : this.toonR.find((R) => R.x0 === c.x0) ?? null, 1); else out[1].w = 0;
-    box(5, this.body, s.cabBack + 0.06, s.cabFront - 0.03, s.cabFloor - 0.01, s.cabTop - 0.06, s.cabHW - 0.06, cabOn, this.toonR[0], 1 + (TOON_CAB - 1) * K);
+    box(5, this.body, s.cabBack + 0.06, s.cabFront - 0.03, s.cabFloor - 0.01, s.cabTop - 0.06, s.cabHW - 0.06, cabOn && this.carriage < 0.5, this.toonR[0], 1 + (TOON_CAB - 1) * K);   // (a carriage's seat is open)
   }
   // domeShape writes a dome-lit box's cartoon shape, by `toon`, into out[i..i+2], measured from the
   // box's middle (cx, cy): where each rounded band of its shell's region R starts (top, side, front,
@@ -961,7 +1240,7 @@ export class Truck {
     for (const z of [-0.3, 0, 0.3]) L.clrA.box(xf - 0.1, yt + 0.035, z, 0.08, 0.07, 0.12); // cab marker lights (taller than the roof cap)
 
     // Driver door (hinged at its front edge, swings out to -z).
-    const D = new Batch(), dl = s.doorLen;
+    const D = new PartBatch(), dl = s.doorLen;
     D.span(-dl, yf, 0, 0, belt, 0.07, TC.white);
     D.span(-dl, winTop, 0, 0, yt - 0.07, 0.07, TC.white);
     D.span(-0.06, belt, 0, 0, winTop, 0.07, TC.white);
@@ -1161,7 +1440,9 @@ export class Truck {
         // In the leaf's own frame (origin at the hinge): x along the trailer, z across it.
         const geo = quadGeometry([{ x: -0.045, y: yfl + openH / 2, z: side > 0 ? -wl / 2 : wl / 2, w: wl, h: openH, rotY: -Math.PI / 2,
           u0: side > 0 ? 0.5 : 0, u1: side > 0 ? 1 : 0.5 }]);
-        leaf.add(new THREE.Mesh(geo, this.kit.livery.liveryRear), new THREE.Mesh(geo, this.kit.doorInside));
+        const outer = new THREE.Mesh(geo, this.kit.livery.liveryRear);
+        leaf.add(outer, new THREE.Mesh(geo, this.kit.doorInside));
+        this.rearOuter.push(outer);
         const frame = new Batch(); frame.span(-0.04, yfl, side > 0 ? -wl : 0, 0, yfl + openH, side > 0 ? 0 : wl, TC.white);
         // Two lock rods down its face, each with its handle low down, swung in towards the hinge
         // (the crew lifts them: chores.ts leafAt), and their keepers top and bottom.
@@ -1188,7 +1469,9 @@ export class Truck {
       }
       geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
       geo.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(n * m * 18), 3));
-      parent.add(new THREE.Mesh(geo, this.kit.livery.liveryRear), new THREE.Mesh(geo, this.kit.slatInside));
+      const outer = new THREE.Mesh(geo, this.kit.livery.liveryRear);
+      parent.add(outer, new THREE.Mesh(geo, this.kit.slatInside));
+      this.rearOuter.push(outer);
       // The pull strap: a webbing strip hanging from the middle of the door's bottom edge, just
       // outside it, long enough that its end is in reach from the street when the door is up.
       // Below the floor it is folded over the sill (hidden), so it is only seen once the door opens.
@@ -1328,7 +1611,7 @@ export class Truck {
   }
 
   private buildTrailer(fifthWheel: number) {
-    const t = TRAILER, P = new Batch(), L = this.lightBatches();
+    const t = TRAILER, P = new PartBatch(), L = this.lightBatches();
     this.trailer = new THREE.Group();
     this.trailer.position.set(fifthWheel, 0, 0);
     this.trailerBody = new THREE.Group();
@@ -1369,5 +1652,23 @@ function fitText(g: CanvasRenderingContext2D, text: string, max: number) {
   let s = text;
   while (s.length > 1 && g.measureText(s).width > max) s = s.slice(0, -1);
   return s === text ? s : s.slice(0, -1) + "…";
+}
+// addMorph puts relative position (and colour) deltas on a mesh as one more morph target, after any
+// it has (zero normals and colours for it where the others have those), and gives its index.
+function addMorph(o: THREE.Mesh, pos: Float32Array, col: Float32Array | null) {
+  const g = o.geometry, M = g.morphAttributes, n = M.position?.length ?? 0, zero = () => new THREE.BufferAttribute(new Float32Array(pos.length), 3);
+  (M.position ??= []).push(new THREE.BufferAttribute(pos, 3));
+  if (M.normal) M.normal.push(zero());
+  if (col || M.color) {
+    if (!M.color) M.color = Array.from({ length: n }, zero);
+    M.color.push(col ? new THREE.BufferAttribute(col, 3) : zero());
+  }
+  g.morphTargetsRelative = true;
+  g.computeBoundingSphere(); if (g.boundingSphere) g.boundingSphere.radius += 1;
+  const was = o.morphTargetInfluences?.slice() ?? [];
+  o.updateMorphTargets();
+  was.forEach((w, i) => { o.morphTargetInfluences![i] = w; });
+  o.morphTargetInfluences![n] = 0;
+  return n;
 }
 function isUnder(o: THREE.Object3D, p: THREE.Object3D) { for (let q: THREE.Object3D | null = o; q; q = q.parent) if (q === p) return true; return false; }

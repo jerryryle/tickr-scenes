@@ -40,7 +40,14 @@ export class StreetLife implements LifeHook {
   private busy = new Set<string>();
   private truckPath = { path: null as unknown as Path, s: 0, v: 0, front: 0, rear: 0, yaw: 0, fw: undefined as number | undefined };
   private truckGate = { node: 0, street: 0 };
-  private extents = new Map<string, ReturnType<typeof truckExtents>>();   // (per model: truckExtents makes a new object each call)
+  private extents = new Map<string, ReturnType<typeof truckExtents>>();   // (per model and city style: truckExtents makes a new object each call)
+  // (In the Victorian city a truck's nose is its team's: truck.ts truckExtents.)
+  private ext(j: Journey, m: TruckModel) {
+    const vic = !!j.plan.style.victorian, k = vic ? m + "/v" : m;
+    let E = this.extents.get(k);
+    if (!E) this.extents.set(k, (E = truckExtents(m, vic)));
+    return E;
+  }
   private landing = { path: null as unknown as Path, s0: 0, s1: 0, at: 0 };
   // Where the truck pulling out of a dock bay is to wait for a gap in the traffic it joins (its rear
   // axle's s), or null: its nose 3 m short of the street (or where it stands, if that is past), as
@@ -58,8 +65,7 @@ export class StreetLife implements LifeHook {
     const st = j.st, out = st.mode === "drive" && j.path ? j.path.dockOut : 0;
     if (!(out > 0)) { this.outGo = false; return null; }
     if (this.outGo) return null;
-    let E = this.extents.get(st.truck);
-    if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck)));
+    const E = this.ext(j, st.truck);
     const at = this.outAt(j.path!, st.truck, E.front);
     // (Waited long enough: standing at its wait point, by its own count or the gridlock's (which
     // carries on from a hold just before, journey.ts jam, and would honk first), it noses out, for
@@ -128,7 +134,7 @@ export class StreetLife implements LifeHook {
     // The truck, and the second truck (the spare at a swap, or the old one left parked).
     const p = j.pose, obs = this.obs;
     obs.length = 0;
-    truckObstacles(st.truck, p.x, p.z, p.h, j.hitchYaw, obs);
+    truckObstacles(st.truck, p.x, p.z, p.h, j.hitchYaw, obs, !!j.plan.style.victorian);
     const truckN = obs.length;
     for (const o of obs) o.body = true;
     // Reversing into a bay: where it will be all the way in (every 2 m), as if parked there, so
@@ -145,7 +151,7 @@ export class StreetLife implements LifeHook {
         W.path = R; W.at.length = 0; W.obs.length = 0;
         for (let s = R.length; s > back - 1; s -= 2) {
           const n0 = W.obs.length, yaw = j.reverseSweepPose(Math.max(s, back), this.spare, R);
-          truckObstacles(st.truck, this.spare.x, this.spare.z, this.spare.h, yaw, W.obs);
+          truckObstacles(st.truck, this.spare.x, this.spare.z, this.spare.h, yaw, W.obs, !!j.plan.style.victorian);
           for (let k = n0; k < W.obs.length; k++) { W.obs[k].still = true; W.obs[k].sweep = true; W.at.push(s); }
         }
       }
@@ -185,7 +191,7 @@ export class StreetLife implements LifeHook {
     if (other) {
       const q = st.spare ? j.sparePose(this.spare) : st.parked ? { x: st.parked.x, z: st.parked.z, h: st.parked.h } : null;
       const n0 = obs.length;
-      if (q) truckObstacles(other, q.x, q.z, q.h, 0, obs);
+      if (q) truckObstacles(other, q.x, q.z, q.h, 0, obs, !!j.plan.style.victorian);
       for (let k = n0; k < obs.length; k++) obs[k].still = true;
       // (Set down where a car already stood, the spare at a lot, say: that car is gone, turned off
       // somewhere, rather than left standing inside it. Only as it is set down: one found inside it
@@ -222,7 +228,7 @@ export class StreetLife implements LifeHook {
     // its last 8 s before the gate, traffic gives way at the junction inside it: the truck's first.)
     // (The objects handed on are kept and refilled: no garbage on a step, as seeks replay thousands.)
     const tp = st.mode === "drive" && j.path ? this.truckPath : null;
-    if (tp) { let E = this.extents.get(st.truck); if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck))); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
+    if (tp) { const E = this.ext(j, st.truck); tp.path = j.path!; tp.s = st.s; tp.v = st.v; tp.front = E.front; tp.rear = E.rear; tp.yaw = j.hitchYaw; tp.fw = SPECS[st.truck].fifthWheel; }
     this.crowd.step(j.plan, j.clockTime, prs, cf, obs, { eye: p, cars: this.traffic.obstacles, parked: parkedAt, busy: this.busy, truckPath: tp, carsClear: this.carsClear, truckYieldsAt: this.traffic.truckYieldsAt });
     const g = st.mode === "inbound" && j.arrivalRoad.arriveDur - st.cityTime < 8 ? j.plan.graph.gates[j.entryGate] : null;
     const gate = g ? this.truckGate : null;
@@ -257,8 +263,7 @@ export class StreetLife implements LifeHook {
     // (Pulling out of a bay, where it waits for a gap in the traffic: and short of anything in its
     // way before that, all the same.)
     const ow = this.outWait(j);
-    let E = this.extents.get(st.truck);
-    if (!E) this.extents.set(st.truck, (E = truckExtents(st.truck)));
+    const E = this.ext(j, st.truck);
     const X = this.crowd.crossers, C = this.traffic.obstacles, reach = st.v * st.v / (2 * 2.2) + 10, pfx = Math.cos(j.pose.h), pfz = -Math.sin(j.pose.h);
     const fw = SPECS[st.truck].fifthWheel, peds = this.crowd.obstacles;
     // (Its trailer's axles, stepped on as the cab goes, dragged along the line to the kingpin: as
