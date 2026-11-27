@@ -458,13 +458,49 @@ function vicParkLot(s: Batch, b: VicRect, y0: number, rnd: VicRand, door: VicDoo
 }
 
 // ---- block middles ----------------------------------------------------------------------------
-// vicTower draws a downtown block's middle building, standing on its own on b (no door): a
-// grand civic building, a church with its spire or a department store with its corner dome.
+// vicTower draws a downtown block's middle building, standing on its own on b (no door). On a site
+// of 26 by 14 m or more it is a church with its spire, a town hall or a grand block. The sites
+// city.ts finds behind a downtown frontage are smaller (Ravensgate's are 8 to 11 m by 7 to 9 m, up
+// to five in a row), and on those it is what stood in the courts behind a town's streets: a
+// nonconformist chapel (two in five) or a merchant's warehouse in brick.
 export function vicTower(s: Batch, b: VicRect, y0: number, hs: number, walls: readonly number[], rnd: VicRand) {
+  const W = b.x1 - b.x0, D = b.z1 - b.z0;
+  if (Math.max(W, D) < 26 || Math.min(W, D) < 14) {
+    if (rnd() < 0.4) vicChapel(s, b, y0, walls, rnd);
+    else { const dw = walls.filter((c) => !vIsRender(c)); vicWorks(s, b, y0, vRange(rnd, 6, 7.5), vPick(rnd, dw.length ? dw : [VIC.red]), rnd); }
+    return;
+  }
   const r = rnd();
   if (r < 0.42) vicChurch(s, b, y0, rnd);
   else if (r < 0.7) vicTownHall(s, b, y0, hs, walls, rnd);
   else vicGrandBlock(s, b, y0, hs, walls, rnd);
+}
+// A chapel is a preaching box with its gable end to the front (-z), its doors in that end (a pair
+// where the front has an even number of bays), two tiers of windows down its sides for the
+// galleries, and a round window in the gable. Half are classical, in stucco or stone under a low
+// pediment with round-headed windows; half are Gothic, in brick under a steep roof with pointed
+// windows and a lead flèche on the ridge.
+function vicChapel(s: Batch, b: VicRect, y0: number, walls: readonly number[], rnd: VicRand) {
+  const x0 = b.x0 + 0.3, x1 = b.x1 - 0.3, z0 = b.z0 + 0.3, z1 = b.z1 - 0.3, w = x1 - x0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const bays = vicBays(x0, x1), doors = bays % 2 ? [(bays - 1) / 2] : [bays / 2 - 1, bays / 2], roof = vPick(rnd, VIC_SLATES);
+  const classical = rnd() < 0.5, lw = walls.filter(vIsRender), dw = walls.filter((c) => !vIsRender(c));
+  const wall = classical ? (lw.length ? vPick(rnd, lw) : VIC.stucco) : vPick(rnd, dw.length ? dw : [VIC.red]);
+  const dv = (classical ? 2 : 0) + (rnd() < 0.5 ? 1 : 0), tile = classical ? FACADE.VICT_GRAND : FACADE.VICT_GOTHIC, v = classical ? 2 : Math.floor(rnd() * 2);
+  const top = vicBox(s, x0, z0, x1, z1, y0, [{ tile, v, floors: 2, floorH: classical ? 4.2 : 3.6 }], wall, doors.map((k) => ({ k, tile: FACADE.VICT_DOOR, v: dv })));
+  const rh = w * (classical ? 0.24 : 0.55);
+  if (classical) s.box(cx, top - 0.2, cz, w + 0.3, 0.4, z1 - z0 + 0.3, vicShade(wall, 0.9));   // the cornice, the pediment's foot on the front
+  vicGable(s, x0, z0, x1, z1, top, rh, roof, wall, true, classical ? 0.3 : 0.2);
+  // the round window in the gable: a stone ring and its glass
+  const ry = top + rh * 0.38, rr = Math.min(classical ? 0.6 : 1.0, rh * 0.28);
+  s.cyl(cx, ry, z0 - 0.03, rr + 0.18, 0.05, vicShade(VIC.stone, 0.95), 12, Math.PI / 2);
+  s.cyl(cx, ry, z0 - 0.06, rr, 0.05, VIC.glass, 12, Math.PI / 2);
+  if (!classical) {
+    // the flèche: a louvred base astride the ridge, a slender lead spire and its cross
+    const ry1 = top + rh;
+    s.box(cx, ry1 + 0.3, cz, 0.9, 1.4, 0.9, VIC.lead);
+    s.cone(cx, ry1 + 1.0 + 1.7, cz, 0.62, 3.4, VIC.lead, 8, 0, Math.PI / 8);
+    s.box(cx, ry1 + 4.7, cz, 0.06, 0.7, 0.06, VIC.gilt); s.box(cx, ry1 + 4.8, cz, 0.36, 0.06, 0.06, VIC.gilt);
+  }
 }
 // A church: its nave under a steep slate roof, lower aisles either side, a chancel at the east end,
 // and at the west end its tower with a broach spire, pinnacles at the corners and a weathercock.
