@@ -14,7 +14,7 @@ import type { DoorGeom, TruckLayout, TruckModel } from "./truck.ts";
 import type { KerbDoor } from "./city.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
 import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
-import { CARGO_BY_ID } from "./cargo.ts";
+import { CARGO_BY_ID, WHEELED } from "./cargo.ts";
 import { mateTurn, herdBack, herdCount, fetchSpots, leafAngle, leafAt, pavementFetch, ROAD_PARK, FL_MID, LONG_TINES, fvec, stackGeom, stackTripLegs, TEAM_CLEAR, HIGH_CARRY, teamSpan, bedUnits, DOOR_OPEN, DOOR_REACH, DOOR_STAND, HT_LEAD, JACK_LEAD, JACK_PIVOT_AT, JACK_TURN, JACK_TURN_LOADED, pushGap, flipYawIn, flipYawOut, RAMP_HOLD, RAMP_HW, STRAP_PULL, strapPulls, STYLE, stageGap, STAGE_AHEAD, toolStore, tripCount, tripUnits, dockForkTrip, DOCK_FORK_FROM, DOCK_FORK_REACH } from "./chores.ts";
 import { buildCrewPath, EASE_T, EMPTY_HOLD, flipHandTruck, jackIntoDoor, samplePath } from "./crewpath.ts";
 import type { CrewPath, Hold, Nominal } from "./crewpath.ts";
@@ -1171,7 +1171,7 @@ export class Crew {
       if (t === "palletJack") return { lead: JACK_LEAD, tip: JACK_PIVOT_AT, pivot: 0.85, omega: 2.2, rate: item ? JACK_TURN_LOADED : JACK_TURN };
       if (!item) return EMPTY_HOLD;
       switch (cargo.handling) {
-        case "push": return stop.cargo === "motorcycles" ? { lead: 0.3, pivot: 0.5, omega: 2.2, rate: 1.4 } : { lead: pushGap(size[1]) + size[0] / 2, pivot: 0.85, omega: 2.0, rate: 1.2 };
+        case "push": return WHEELED.has(stop.cargo) ? { lead: 0.3, pivot: 0.5, omega: 2.2, rate: 1.4 } : { lead: pushGap(size[1]) + size[0] / 2, pivot: 0.85, omega: 2.0, rate: 1.2 };
         case "roll": return { lead: 0.35 + size[0] / 2, pivot: 0.75, omega: 2.4, rate: 1.6 };
         case "teamLift": return { lead: 0, pivot: 0, omega: 2.4, rate: 1.4 };
         case "walkOn": return { lead: 0, pivot: 0, omega: 5, rate: 3.5 };
@@ -1761,7 +1761,7 @@ export class Crew {
       load.group.visible = !ghost;
       switch (cargo.handling) {
         case "roll": this.rollLoad(L, truck, load, stowK); break;
-        case "push": this.pushLoad(L, truck, load, stop.cargo === "motorcycles", this.pushFlipped(c, u)); this.pushLean = -0.18; break;
+        case "push": this.pushLoad(L, truck, load, WHEELED.has(stop.cargo), this.pushFlipped(c, u)); this.pushLean = -0.18; break;
         case "teamLift":
           // (Between the two carriers' hands; on a drop, the other way round, as it lies in the bed with
           // the driver at its back end, so it isn't swung round as it is taken up.)
@@ -1930,7 +1930,8 @@ export class Crew {
     const yf = this.ground(L, fx, fz), yb = this.ground(L, bx, bz), pitch = Math.min(0, Math.atan2(yf - yb, 2 * half));
     this.setTF(load.group, truck, cx, yf > yb ? yf : (yf + yb) / 2, cz, yaw, pitch * f);
     load.animate?.(this.time);
-    if (bike) { this.gripsAt(load, 0.36, 1.07, -0.3, 1, 0); this.gripsAt(load, 0.18, 0.99, 0.0, 0, 1); return; }
+    // (A wheeled load: the left hand on the bars' near end, the right on the middle a little back and lower.)
+    if (bike) { const [gx, gy, gz] = load.bars ?? [0.36, 1.07, 0.3]; this.gripsAt(load, gx, gy, -gz, 1, 0); this.gripsAt(load, gx - 0.18, gy - 0.08, 0.0, 0, 1); return; }
     const gy = THREE.MathUtils.clamp(1.02 - ((yf > yb ? yf : (yf + yb) / 2) - this.drv[1]), 0.25, hh - 0.06);
     this.gripsAt(load, -f * (l / 2 + GLOVE), gy, Math.min(0.22, w / 2 - 0.04), 1, 1);   // (on its end nearer the driver)
   }

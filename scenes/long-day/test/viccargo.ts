@@ -10,13 +10,14 @@
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
 import { journeyStyle } from "../src/styles.ts";
-import { CARGO, CARGO_BY_ID, pickCargo, VIC_CARGO, VIC_FREIGHT, VIC_FREIGHT_IN } from "../src/cargo.ts";
+import { CARGO, CARGO_BY_ID, pickCargo, VIC_CARGO, VIC_FREIGHT, VIC_FREIGHT_IN, WHEELED } from "../src/cargo.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const vicAt = (seed: number) => { for (let N = 0; N < 12; N++) if (journeyStyle(seed, N).victorian) return N; return -1; };
 const SEEDS: number[] = argv[0] ? argv[0].split(",").map(Number) : [];
 for (let seed = 0; !argv[0] && SEEDS.length < 3 && seed < 400; seed++) if (vicAt(seed) >= 1 && vicAt(seed) <= 3) SEEDS.push(seed);
-const PERIOD = new Set(["carry", "handTruck", "roll", "teamLift"]);
+// The goods go by hand, on the sack truck, rolled, between two, or wheeled at the driver's side (only those on wheels of their own: WHEELED).
+const PERIOD = new Set(["carry", "handTruck", "roll", "teamLift", "push"]);
 const fails: string[] = [], kinds = new Set<string>();
 let pickups = 0, drops = 0, made = 0, steps = 0;
 for (const seed of SEEDS) {
@@ -59,7 +60,7 @@ for (const seed of SEEDS) {
         if (s.kind === "pickup") pickups++; else drops++;
         const fac = s.site!.fac;
         if (!(s.kind === "pickup" ? c.from : c.to).includes(fac)) fail(`${s.kind} of ${s.cargo} at ${s.site?.name}, a ${fac}`);
-        if (!PERIOD.has(c.handling)) fail(`${s.cargo} handled by ${c.handling}`);
+        if (!PERIOD.has(c.handling) || (c.handling === "push" && !WHEELED.has(c.id))) fail(`${s.cargo} handled by ${c.handling}`);
       } else if (vic) {
         // (Only the freight in, picked up last before, and the freight out, dropped first after.)
         const ok = s.kind === "pickup" ? st.city === R - 1 && s.cargo === fin : st.city === R + 1 && s.job === 0 && s.cargo === fout;

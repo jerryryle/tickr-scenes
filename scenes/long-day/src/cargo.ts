@@ -102,7 +102,7 @@ export const CARGO: CargoType[] = [
   cargoType("hatBoxes", "Hat boxes", "uncommon", "carry", ["retail", "outfitter"], ["residence", "apartment", "hotel"], "box16", [3, 8], 0.25),
   cargoType("steamerTrunk", "Steamer trunk", "uncommon", "teamLift", ["hotel", "furnitureWh"], ["residence", "hotel", "apartment"], "box26", [1, 2], 1),
   cargoType("carpets", "Rolled carpets", "uncommon", "teamLift", ["furnitureWh", "retail"], ["residence", "hotel", "apartment", "office"], "box26", [2, 4], 1),
-  cargoType("pennyFarthing", "Penny-farthing", "uncommon", "carry", ["bikeWh", "bikeShop"], ["bikeShop", "residence", "school"], "box26", [1, 3], 0.5),
+  cargoType("pennyFarthing", "Penny-farthing", "uncommon", "push", ["bikeWh", "bikeShop"], ["bikeShop", "residence", "school"], "box26", [1, 3], 0.5),
   cargoType("sewingMachine", "Sewing machines", "uncommon", "carry", ["hardware", "retail"], ["residence", "apartment", "laundromat", "outfitter"], "box16", [2, 5], 0.25),
   cargoType("grandfatherClock", "Grandfather clock", "rare", "teamLift", ["furnitureWh"], ["residence", "hotel", "office"], "box26", [1, 1], 1),
   cargoType("clawBath", "Cast-iron bath", "rare", "teamLift", ["hardware", "plumbingSupply"], ["residence", "hotel"], "box26", [1, 1], 2),
@@ -182,6 +182,9 @@ export const VIC_CARGO = new Set(["teaChests", "aleBarrels", "flourSacks", "coal
   "carpets", "pennyFarthing", "sewingMachine", "grandfatherClock", "clawBath", "birdcage", "gramophone", "celloCase", "stuffedBear"]);
 export const VIC_FREIGHT = ["aleBarrels", "stoutCasks"];
 export const VIC_FREIGHT_IN = ["teaChests", "flourSacks", "soapCrates"];
+// Of the pushed goods, those on wheels of their own are wheeled at the driver's side by the bars
+// (crew.ts pushLoad); the rest ride a dolly pushed ahead (loads.ts).
+export const WHEELED = new Set(["motorcycles", "pennyFarthing"]);
 // (Whatever `allow` says, a city's own goods (STORY_CARGO, VIC_CARGO) are drawn only when `own` names
 // that set, which only that city's own job picks pass.)
 export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean, own: Set<string> | null = null): CargoType | null {

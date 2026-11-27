@@ -10,7 +10,7 @@ import * as THREE from "three@0.187.0";
 import { Batch } from "./geom.ts";
 import { Truck, truckLayout } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
-import { CARGO_BY_ID } from "./cargo.ts";
+import { CARGO_BY_ID, WHEELED } from "./cargo.ts";
 import { bedUnits } from "./chores.ts";
 import type { Aboard } from "./journey.ts";
 import { CARGO_MODELS } from "./cargomodels.ts";
@@ -20,6 +20,7 @@ export interface CarriedLoad {
   size: [number, number, number];   // arrangement extents: length (x), height (y), width (z)
   round: boolean;                    // rolls about z (radius = height / 2)
   animate?: (t: number) => void;
+  bars?: [number, number, number];   // a wheeled load's handlebar end (cargomodels.ts)
 }
 
 const DOLLY_H = 0.12;
@@ -54,7 +55,7 @@ export function buildCarried(id: string, material: THREE.Material, n = 1, varian
       break;
     }
     case "push":
-      if (id !== "motorcycles") { b.box(0, DOLLY_H / 2, 0, l + 0.1, DOLLY_H, w + 0.05, 0x333333); m.build(b, 0, DOLLY_H, 0, 0); size = [l, h + DOLLY_H, w]; }
+      if (!WHEELED.has(id)) { b.box(0, DOLLY_H / 2, 0, l + 0.1, DOLLY_H, w + 0.05, 0x333333); m.build(b, 0, DOLLY_H, 0, 0); size = [l, h + DOLLY_H, w]; }
       else m.build(b, 0, 0, 0, 0);
       break;
     default:
@@ -63,7 +64,7 @@ export function buildCarried(id: string, material: THREE.Material, n = 1, varian
       size = [l, Math.max(1, n) * h, w];
   }
   group.add(b.build(material)!);
-  const load: CarriedLoad = { group, size, round: !!m.round };
+  const load: CarriedLoad = { group, size, round: !!m.round, bars: m.bars };
   if (id === "frog") load.animate = (t) => { group.rotation.x = 0.1 * Math.sin(t * 2.7); group.position.y += 0.03 * Math.sin(t * 5.1); };
   if (id === "gorilla") load.animate = (t) => { group.rotation.x = 0.12 * Math.sin(t * 3.1); group.rotation.z = 0.08 * Math.sin(t * 2.3 + 1); };
   if (id === "penguin") {

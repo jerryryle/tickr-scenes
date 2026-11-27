@@ -15,6 +15,7 @@ interface CargoModel {
   round?: boolean;                     // rolls (radius = height / 2)
   palletized?: boolean;                // already sits on its own pallet
   dunnage?: number;                    // rides on blocks this high, with room between them for forks
+  bars?: [number, number, number];     // a wheeled load's handlebar end: its x, its y and the bars' half width (cargo.ts WHEELED, crew.ts pushLoad)
 }
 
 const CK = {
@@ -222,7 +223,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   } },
   // A penny-farthing: a tall front wheel and a small one behind, joined by a curved backbone, with a
   // saddle over the big wheel and its handlebar across.
-  pennyFarthing: { size: [1.5, 1.32, 0.3], build: (b, x, y, z, i) => {
+  pennyFarthing: { size: [1.5, 1.32, 0.3], bars: [0.17, 1.29, 0.26], build: (b, x, y, z, i) => {
     const frame = vpick([0x1a1a1a, 0x5a1a1a, 0x1e3a2a], i);
     const wheel = (cx: number, cy: number, r: number, n: number) => {
       for (let k = 0; k < n; k++) { const a = (k / n) * Math.PI * 2; b.boxR(cx + r * Math.cos(a), cy + r * Math.sin(a), z, (2 * Math.PI * r / n) * 1.08, 0.035, 0.04, 0x2a2a2a, 0, 0, a + Math.PI / 2); }
@@ -369,7 +370,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   mattresses: { size: [1.95, 1.05, 0.3], build: (b, x, y, z) => { b.box(x, y + 0.525, z, 1.95, 1.05, 0.3, 0xdfe8f0); b.box(x, y + 0.525, z, 1.96, 1.06, 0.04, 0xb8c8d8); } },   // stood on its long edge: carried and stowed so, as movers do
   restaurantSupply: { size: [0.45, 0.36, 0.4], build: (b, x, y, z) => { carton(b, x, y, z, 0.45, 0.36, 0.4); b.box(x + 0.226, y + 0.2, z, 0.01, 0.1, 0.3, CK.red); } },
   // ---- uncommon ----
-  motorcycles: { size: [1.9, 1.15, 0.7], build: (b, x, y, z, i) => {
+  motorcycles: { size: [1.9, 1.15, 0.7], bars: [0.36, 1.07, 0.3], build: (b, x, y, z, i) => {
     // A standard bike: spoked-look wheels with silver rims, raked fork, V-twin with chrome, a
     // shaped tank in the unit's colour, stepped seat, fenders, exhaust, headlamp and bars.
     const paint = vpick([CK.red, CK.blue, 0x111111, 0x2e7d4f, 0xd8d4c8, 0xe0a020], i), chrome = 0xc8ccd0, dark = 0x2a2b2e;
