@@ -5,7 +5,7 @@
 //     -> build/long-day-stage/stage.mp4
 // STAGE: model cargo kind [nodoor | door=x (the door's middle along the truck)] [vic (in the
 // Victorian city: the truck a carriage, the street of setts and stone, truck.ts makeCarriage)]; VIEW: quarter (from behind, by the street), side (along the
-// truck's kerb side), rear (straight behind), top (straight down), corner (fixed on its back from the street side), into (fixed, in through its back), climb (fixed, side on to its back, close); FROM: seconds into the stop.
+// truck's kerb side), rear (straight behind), top (straight down), near (close on the driver), corner (fixed on its back from the street side), into (fixed, in through its back), climb (fixed, side on to its back, close); FROM: seconds into the stop.
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { Crew } from "../src/crew.ts";
@@ -86,6 +86,7 @@ export default function createScene({ sys, assets }: SceneInputs): Scene {
       else if (STAGE_VIEW === "cab") { const xf = SPECS[model].cabFront; cam.position.set(xf + 0.6, 2.4, -4.6); cam.lookAt(xf - 0.2, 1.4, -0.6); cam.fov = 40; }   // (fixed, on the cab and the team from the street side)
       else if (STAGE_VIEW === "climb") { cam.position.set(R - 0.2, 1.3, -6.0); cam.lookAt(R - 0.2, 1.1, -0.35); cam.fov = 22; }   // (fixed, side on to its back, close: climbing in)
       else if (STAGE_VIEW === "into") { cam.position.set(R - 3.6, 3.4, -0.6); cam.lookAt(R + 3.5, 1.2, 0.1); cam.fov = 58; }   // (fixed, in through its back)
+      else if (STAGE_VIEW === "near") { cam.position.set(p.x - 3.4, 2.0, p.z - 3.4); cam.lookAt(p.x, 0.9, p.z); cam.fov = 42; }   // (close on the driver, from a quarter in front on the street side)
       else if (STAGE_VIEW === "corner") { cam.position.set(R - 4.6, 3.0, -4.2); cam.lookAt(R + 0.4, 1.3, 0); cam.fov = 50; }   // (fixed, on the back of the truck from the street side)
       else { cam.position.set(fx - 7.5, 3.4, -5.5); cam.lookAt(fx, 1.0, fz); cam.fov = 40; }
       cam.updateProjectionMatrix();
