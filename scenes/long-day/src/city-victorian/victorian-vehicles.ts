@@ -160,7 +160,7 @@ function makeVicRigs(): VicRig[] {
   // high behind its roof, his reins running over it to the horse.
   const HS_L = 5.2, HS_HX = HS_L / 2 - 0.95, HS_AX = -1.05, HS_R = 0.86;
   const hansom: VicRig = {
-    id: "hansom", len: HS_L, width: 1.7, vmax: 5, cap: 8,
+    id: "hansom", len: HS_L, width: 1.7, vmax: 5, cap: 6,
     colors: [0x2a2a2e, 0x5a2228, 0x2e4a36, 0x2a3450, 0x6a4a2a],
     parts: [
       (b) => {
@@ -196,7 +196,7 @@ function makeVicRigs(): VicRig[] {
   // and a trunk on the roof.
   const GR_L = 5.6, GR_HX = GR_L / 2 - 0.95;
   const growler: VicRig = {
-    id: "growler", len: GR_L, width: 1.8, vmax: 4.5, cap: 6,
+    id: "growler", len: GR_L, width: 1.8, vmax: 4.5, cap: 7,
     colors: [0x3e3222, 0x2a3450, 0x5a2228, 0x8a7a3a, 0x2e4a36],
     parts: [
       (b) => {
@@ -316,7 +316,7 @@ function makeVicRigs(): VicRig[] {
     }
   };
   const dray: VicRig = {
-    id: "dray", len: DR_L, width: 2.0, vmax: 2.2, cap: 3,
+    id: "dray", len: DR_L, width: 2.0, vmax: 2.2, cap: 5,
     colors: [0x8a2222, 0x2a4a8a, 0x2e5a34, 0xc8a030],
     parts: [
       (b) => {
@@ -358,7 +358,7 @@ function makeVicRigs(): VicRig[] {
     }
   };
   const coster: VicRig = {
-    id: "coster", len: CO_L, width: 1.3, vmax: 2.6, cap: 4,
+    id: "coster", len: CO_L, width: 1.3, vmax: 2.6, cap: 5,
     colors: [0x2a6aa0, 0x2e7a3a, 0xa02a22, 0xd0a030],
     parts: [
       (b) => {
@@ -388,7 +388,7 @@ function makeVicRigs(): VicRig[] {
   // A heavy horse walks a cart of sacks of coal, the coalman in his fantail hat on its front.
   const CC_S = 1.08, CC_L = 5.2, CC_HX = CC_L / 2 - 0.95 * CC_S;
   const coalcart: VicRig = {
-    id: "coalcart", len: CC_L, width: 1.8, vmax: 2.2, cap: 3,
+    id: "coalcart", len: CC_L, width: 1.8, vmax: 2.2, cap: 5,
     colors: [0x5a3a2a, 0x3a4a30, 0x6a2a22, 0x2a3a4a],
     parts: [
       (b) => {
@@ -422,7 +422,7 @@ function makeVicRigs(): VicRig[] {
   // bridle and girth alone (horse.ts HorseLook `ridden`); its saddle is the last part, which rides on its body.
   const HB_L = 2.6, HB_HX = HB_L / 2 - 0.95, HB_SEAT: [number, number] = [-0.2, -0.06];
   const horseback: VicRig = {
-    id: "horseback", len: HB_L, width: 0.8, vmax: 4.5, cap: 4,
+    id: "horseback", len: HB_L, width: 0.8, vmax: 4.5, cap: 3,
     colors: [0x1c1c20, 0x222a3a, 0x3a2a1e, 0x4a4a48, 0x7a1a1a],
     parts: [
       (b) => {   // (built in the horse's frame from HB_SEAT: his legs either side of its back)
@@ -465,7 +465,7 @@ function makeVicRigs(): VicRig[] {
   const PF_R = 0.7, PF_HUB: [number, number] = [0.3, PF_R], PF_HIP: [number, number] = [0.19, 1.5], PF_CRANK = 0.13, PF_THIGH = 0.46, PF_SHIN = 0.5;
   const PF_TAIL: [number, number] = [-0.72, 0.19];   // (the little wheel's hub)
   const pennyfarthing: VicRig = {
-    id: "pennyfarthing", len: 2.0, width: 0.7, vmax: 4.5, cap: 4,
+    id: "pennyfarthing", len: 2.0, width: 0.7, vmax: 4.5, cap: 2,
     colors: [0x6a5e48, 0x2a3450, 0x7a2a22, 0x3a4a30],
     parts: [
       (b) => {

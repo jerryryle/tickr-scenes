@@ -36,8 +36,10 @@ export interface Obstacle { x: number; z: number; r: number; still?: boolean; ow
 // Ryder trucks, which are cartoonish there as the player's is (fleet.ts, `toon`).
 const STORY_TRAFFIC: Record<string, number> = { hamster: 1.4, strider: 1.4, caterpillar: 0.8, pogo: 1.2, unicycle: 1.0, balloon: 0.8, teacup: 1.2, snail: 0.7, ryder: 0.8 };
 // The Victorian city's traffic is horse-drawn and period (city-victorian/victorian-vehicles.ts),
-// with a steam traction engine now and then, and the Ryder trucks, which are carriages there.
-const VIC_TRAFFIC: Record<string, number> = { hansom: 1.6, growler: 1.2, omnibus: 0.7, dray: 0.6, coster: 0.7, coalcart: 0.6, horseback: 0.8, pennyfarthing: 0.4, traction: 0.12, ryder: 0.8 };
+// with a steam traction engine now and then, and the Ryder trucks, which are carriages there. Goods
+// carts and vans are about half of it, as in a working town's streets; cabs are most of the rest,
+// and the four-wheeler outnumbers the hansom, as it did outside London.
+const VIC_TRAFFIC: Record<string, number> = { hansom: 1.0, growler: 1.2, omnibus: 0.6, dray: 0.9, coster: 0.9, coalcart: 0.8, horseback: 0.5, pennyfarthing: 0.2, traction: 0.12, ryder: 0.8 };
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
   colors: number[] | null;             // body tints; null keeps the painted colours

@@ -45,8 +45,11 @@ const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8
 // Near a Victorian city (anywhere it has crept in, periodAt, where the truck meets it) what comes
 // the other way is horse-drawn, one of these rigs (city-victorian/victorian-vehicles.ts) at its own
 // pace, a repeat in the list making it likelier. A car met short of its reach runs no more than
-// 200 m into it while in sight, where the road still has its markings (PERIOD_MODERN).
-const ONCOMING_RIGS = ["growler", "hansom", "dray", "coster", "coalcart", "horseback", "growler", "traction"];
+// 200 m into it while in sight, where the road still has its markings (PERIOD_MODERN). Out of town
+// the carts (the coal cart standing for a farm cart, the dray for a carrier's wagon), riders and
+// four-wheelers to and from the station come most, the town's hansoms seldom; cyclists came out
+// on the country roads.
+const ONCOMING_RIGS = ["growler", "dray", "coalcart", "horseback", "coster", "growler", "coalcart", "dray", "horseback", "hansom", "pennyfarthing", "traction"];
 
 // RoadRigs draws the rigs met on the road: a part of every rig of a kind is one instanced mesh,
 // made the first time one is met, its pure white repainted per vehicle (cars.ts applyPaintTint).
