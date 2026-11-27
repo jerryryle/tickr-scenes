@@ -10,7 +10,7 @@
 import * as THREE from "three@0.187.0";
 import { hash2, mulberry32 } from "./rng.ts";
 import { Batch, BATCH, frameApply, PLACED, quadGeometry, toTile } from "./geom.ts";
-import { CONTENTS, DRAW, drawRecipe, place, recipeOf } from "./contents.ts";
+import { CONTENTS, DRAW, drawRecipe, place, recipeOf, seedOf } from "./contents.ts";
 import { unpackWorld } from "./worlddata.ts";
 import type { Recipe } from "./contents.ts";
 import type { Frame2, Quad } from "./geom.ts";
@@ -947,7 +947,7 @@ DRAW.vicLot = (R, _g, s, rnd) => {
   vicLot(s, { x0, z0, x1, z1 }, CURB_H, d, R.hs as number, walls, rnd, (dx0, dx1, n, painted = false) => {
     const bays = Math.max(1, Math.round((dx1 - dx0) / BAY));
     doorSpot(side, painted ? dx1 - (dx1 - dx0) * (Math.floor(bays / 2) + 0.5) / bays : bays > 1 ? dx0 + (dx1 - dx0) * Math.round(bays / 2) / bays : (dx0 + dx1) / 2, n);
-  });
+  }, R.at ? seedOf({ k: "row", at: R.at }) : undefined);   // (a row's lots share their frame, their side of the block)
 };
 // A Victorian block middle's buildings and yards (buildInfill): a grand building downtown
 // (vicTower), a warehouse or mill elsewhere (vicWorks), an industrial yard's stacks (vicYard) and
