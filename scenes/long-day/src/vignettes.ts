@@ -29,13 +29,13 @@ import type { SignalPreempt } from "./signals.ts";
 import { weatherMix } from "./climate.ts";
 import type { WeatherMix } from "./climate.ts";
 import { OCCLUSION } from "./occlusion.ts";
-import { NIGHT_GLOW } from "./atmosphere.ts";
 import { SIM_DT } from "./journey.ts";
 import type { Obstacle } from "./traffic.ts";
 import { DEBUG_SKIP_MINUTES, DEBUG_VIGNETTE } from "./debug.ts";
 
-// The hour of day (0..24) at journey time t: main.ts points this at the atmosphere's clock.
-export const CLOCK = { hourAt: (_t: number) => 12.5 };
+// The hour of day (0..24) at journey time t, and how far the lamps are on at hour h in a weather
+// (atmosphere.ts glowAt): main.ts points these at the atmosphere's clock.
+export const CLOCK = { hourAt: (_t: number) => 12.5, glowAt: (_h: number, _w: WeatherMix) => 0 };
 export const VIG_LOG: { out: ((line: string) => void) | null } = { out: null };   // test renders (DEBUG_VIGNETTE)
 
 export type VK = "peeSign" | "dogPack" | "wetPaint" | "pigeons" | "umbrella" | "iceCream" | "ticket" | "chalk" |
@@ -63,7 +63,7 @@ export interface VigInput {
   parked: KerbParked | null; busy: Set<string>;
   eye?: { x: number; z: number; h: number };   // the truck, for spawning out of its sight (citygraph.ts outOfSight)
 }
-interface Ctx extends VigInput { hour: number; w: WeatherMix; season: string; snow: boolean }
+interface Ctx extends VigInput { hour: number; glow: number; w: WeatherMix; season: string; snow: boolean }
 
 // ---- frontage frames ----------------------------------------------------------------------------
 // A block side is a face of the city graph (citygraph.ts): its frontage frame (a along the
@@ -1533,11 +1533,11 @@ const K: Record<VK, Kind> = {
   // As the street lamps come on at dusk the lamplighter goes along the pavement from gas lamp to
   // gas lamp with his long pole, its wick alight, and reaches it up into each lantern until it
   // flares; at dawn, as they go off, he goes round again putting them out. He walks on round the
-  // block from side to side. The lamps come on with the sun (atmosphere.ts NIGHT_GLOW), so he
+  // block from side to side. The lamps come on with the sun (atmosphere.ts glowAt), so he
   // comes while they are part way on, and the last LL_LIT lamps he has seen to on his side stay
   // lit (or out) whatever the rest show.
   lamplighter: {
-    w: (d, c) => (vic(c) && d !== "industrial" && (c.hour >= 12 ? NIGHT_GLOW.value > 0.02 && NIGHT_GLOW.value < 0.85 : NIGHT_GLOW.value > 0.15 && NIGHT_GLOW.value < 0.98) ? 3 : 0), trigger: 0,
+    w: (d, c) => (vic(c) && d !== "industrial" && (c.hour >= 12 ? c.glow > 0.02 && c.glow < 0.85 : c.glow > 0.15 && c.glow < 0.98) ? 3 : 0), trigger: 0,
     place(v, c, r) {
       if (!sideOk(c, v.bx, v.bz, v.side)) return false;
       const sp = spanOf(v.bx, v.bz, v.side);
@@ -1954,7 +1954,8 @@ export class Vignettes {
 
   private ctx(inp: VigInput, t: number): Ctx {
     const cl = inp.plan.climate;
-    return { ...inp, hour: CLOCK.hourAt(t), w: weatherMix(cl?.weather ?? "clear"), season: cl?.season ?? "summer", snow: !!cl?.snowCover };
+    const hour = CLOCK.hourAt(t), w = weatherMix(cl?.weather ?? "clear");
+    return { ...inp, hour, glow: CLOCK.glowAt(hour, w), w, season: cl?.season ?? "summer", snow: !!cl?.snowCover };
   }
   private where(v: Vig): [number, number] {
     if (v.k === "courier") return [v.st[1], v.st[2]];
@@ -2068,18 +2069,18 @@ export function drawVignette(F: Figures, v: Vig, t: number, D: Partial<DrawCtx> 
 }
 export function placeVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: Vignettes) {
   VG = c.plan.graph;
-  const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
+  const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, glow: 0, w: weatherMix("clear"), season: "summer", snow: false, ...c };
   return K[v.k].place(v, full, mulberry32(v.seed), V);
 }
 // How likely kind k is on a block of district d, here and now (Kind.w: 0, never there).
 export function vignetteWeight(k: VK, d: District, c: Partial<Ctx> & { plan: CityPlan }) {
   VG = c.plan.graph;
-  const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
+  const full: Ctx = { simTime: 0, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, glow: 0, w: weatherMix("clear"), season: "summer", snow: false, ...c };
   return weightOf(k, d, full);
 }
 export function stepVignette(v: Vig, c: Partial<Ctx> & { plan: CityPlan }, V: Vignettes) {
   VG = c.plan.graph;
-  const full: Ctx = { simTime: v.t, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, w: weatherMix("clear"), season: "summer", snow: false, ...c };
+  const full: Ctx = { simTime: v.t, prs: [], focus: { x: 0, z: 0 }, truck: [], cars: [], peds: [], parked: null, busy: new Set(), hour: 12, glow: 0, w: weatherMix("clear"), season: "summer", snow: false, ...c };
   for (let i = 0; i < v.st.length; i++) v.pst[i] = v.st[i];
   v.pt = v.t; v.t += SIM_DT; K[v.k].step?.(v, full, V);
 }

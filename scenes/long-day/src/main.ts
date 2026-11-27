@@ -1063,6 +1063,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // (The vignettes keep the hours: they pass the city's clock, the sky runs on scene time. A
       // visit's spec may pin the hour it arrives at, the clock running on from there.)
       CLOCK.hourAt = (t) => atmosphere.hourAt(t - journey.st.clockBase + journey.cityStart(journey.st.city) - base);
+      CLOCK.glowAt = (h, w) => atmosphere.glowAt(h, w);
       atmosphere.hourPin = (t) => {
         const jt = base + t, N = journey.cityAt(jt), h = visitOf(cfg.seed, N).spec?.hour;
         return h === undefined ? null : (((h + (jt - journey.cityStart(N)) / 3600) % 24) + 24) % 24;

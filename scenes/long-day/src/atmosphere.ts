@@ -256,13 +256,22 @@ export class Atmosphere {
     return { rise: noon - len / 2, set: noon + len / 2, max: 0.75 + 0.2 * k };
   }
 
+  // The sun's elevation at hour h, as a sine: up through the day, down through the night.
+  elevationAt(h: number) {
+    const { rise, set, max } = this.sunTimes();
+    return h >= rise && h <= set ? Math.sin(Math.PI * (h - rise) / (set - rise)) * max
+      : -Math.sin(Math.PI * (((h - set + 24) % 24) / (24 - (set - rise)))) * 0.6;
+  }
+  // NIGHT_GLOW at hour h in `weather`: the night, or a dark day of rain or fog. (The vignettes ask
+  // it of their own clock: vignettes.ts CLOCK.)
+  glowAt(h: number, weather: WeatherMix) {
+    const e = this.elevationAt(h), dayK = THREE.MathUtils.smoothstep(e, -0.06, 0.2), night = 1 - THREE.MathUtils.smoothstep(e, -0.08, 0.06);
+    return Math.max(night, 0.5 * weather.cloud * (1 - dayK * 0.6) * (weather.rain + weather.fog > 0.5 ? 1 : 0));
+  }
   // Work out the sky, light and haze for scene time t and the weather, and apply them.
   update(t: number, engine: Engine, backdrop: Backdrop, daySky: number, weather: WeatherMix) {
     this.weather = weather;
-    const h = this.hourAt(t), { rise, set, max } = this.sunTimes();
-    // Sun elevation as a sine: up through the day, down through the night.
-    const e = h >= rise && h <= set ? Math.sin(Math.PI * (h - rise) / (set - rise)) * max
-      : -Math.sin(Math.PI * (((h - set + 24) % 24) / (24 - (set - rise)))) * 0.6;
+    const h = this.hourAt(t), { rise, set } = this.sunTimes(), e = this.elevationAt(h);
     this.elevation = e;
     const dayK = THREE.MathUtils.smoothstep(e, -0.06, 0.2);
     this.night = 1 - THREE.MathUtils.smoothstep(e, -0.08, 0.06);
@@ -311,7 +320,7 @@ export class Atmosphere {
     engine.hemi.color.setHex(0x5a6ab0).lerp(this.tmp.setHex(0xcfe6ff), dayK);
     engine.hemi.groundColor.setHex(0x1a1a28).lerp(this.tmp.setHex(0x4a4030), dayK);
     poolMat.opacity = this.night; poolMat.visible = this.night > 0.03;
-    NIGHT_GLOW.value = Math.max(this.night, 0.5 * weather.cloud * (1 - dayK * 0.6) * (weather.rain + weather.fog > 0.5 ? 1 : 0));
+    NIGHT_GLOW.value = this.glowAt(h, weather);
     // Stars and the moon: clear nights only.
     const starK = this.night * (1 - weather.cloud);
     this.stars.visible = this.moon.visible = starK > 0.05;
