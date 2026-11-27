@@ -221,16 +221,26 @@ names (`VIC_LABEL` in `src/facilities.ts`, the city file).
    in the big blocks, warehouses with hoists, mills with chimneys, back yards, garden squares and
    a toll lodge on every road out. Its facade tiles are the `VICT_` ones in `src/facadeart.ts`,
    and its skyline is the `spires` backdrop.
-2. `victorian-street.ts` draws its street pieces: gas lamps, the Westminster semaphore signals
-   and halt posts that stand for signals and stop signs (`src/signals.ts`), and the period street
-   furniture (`src/decor.ts`). Its roads are granite setts and its pavements York stone. Its gas
-   lamps glow a dim orange (`VIC_GASLIGHT`) and light less of the street than electric ones
-   (`lampPool` in `src/atmosphere.ts`), and its blank walls carry painted advertisements.
+2. `victorian-street.ts` draws its street pieces: gas lamps, the signalled junctions' Westminster
+   semaphore columns and point-duty constables (`src/signals.ts`), and the period street furniture
+   (`src/decor.ts`). Its roads are granite setts and its pavements York stone. Its gas lamps glow
+   a dim orange (`VIC_GASLIGHT`) and light less of the street than electric ones (`lampPool` in
+   `src/atmosphere.ts`), and its blank walls carry painted advertisements.
 3. `victorian-vehicles.ts` holds its traffic, which is all horse-drawn but the odd penny-farthing
    and traction engine; `src/horse.ts` is the horse every one of them uses.
 4. `victorian-landmark-steam-brewery.ts` is its landmark, the steam brewery on
    `CityPlan.worksBlock`, with its beam engine, kiln cowl and rolling casks moved by
    `SteamBreweryFx`.
+
+Ravensgate's junctions are controlled as a town of about 1870's were. A few of the most central
+downtown crossroads keep a semaphore column for each approach, after the one-off signal at Westminster
+in 1868. The other busy junctions have a police constable on point duty in the middle: those at a
+gate, those with downtown on a corner, and crossroads on a street that runs out of town with shops
+on two corners. He works the same signal phases the columns do and is posed by the same lamp tags,
+facing the traffic he holds with his right arm raised and waving the rest on with his left. Every
+other junction is an all-way stop with nothing drawn, where traffic gives way in turn. The split is
+written into the city file by `tools/vicjunctions.ts` (`make vicjunctions SCENE=long-day`), which
+keeps a junction's poles only where it keeps its semaphores.
 
 The trucks become horse-drawn carriages there, and on the drive to or from it over the 40 m or so
 where the road's `period` passes a half (`CountryRoad.periodAt`, `CARRIAGE_BAND` in `src/main.ts`).

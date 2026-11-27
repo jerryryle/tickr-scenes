@@ -510,10 +510,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       cx = e.x; cz = e.z;
       cam.position.set(e.x + fx * d - fz * 3, 5, e.z + fz * d + fx * 3); cam.lookAt(e.x - fx * 20, 7, e.z - fz * 20);
     } else if (DEBUG_AT) {
-      // Circling low over a point ("at:x,z"), a junction's poles and its traffic.
-      cx = DEBUG_AT[0]; cz = DEBUG_AT[1];
+      // Circling low over a point ("at:x,z"), a junction's poles and its traffic; or, given a
+      // heading too ("at:x,z,h"), from a fixed spot in the street 16 m out that way and 5 m up. The
+      // point is in the journey's coordinates, moved to the world's as the jam shot's is.
+      const p = truck.root.position;
+      cx = DEBUG_AT[0] + p.x - journey.pose.x; cz = DEBUG_AT[1] + p.z - journey.pose.z;
       const a = tourT * 0.25;
-      cam.position.set(cx + Math.cos(a) * 30, 22, cz + Math.sin(a) * 30); cam.lookAt(cx, 0, cz);
+      if (DEBUG_AT.length > 2) { const h = DEBUG_AT[2]; cam.position.set(cx + Math.cos(h) * 16, 5, cz - Math.sin(h) * 16); cam.lookAt(cx, 1.2, cz); }
+      else { cam.position.set(cx + Math.cos(a) * 30, 22, cz + Math.sin(a) * 30); cam.lookAt(cx, 0, cz); }
     } else if (DEBUG_VIEW === "street") {
       cam.position.set(cx - 1.5, 3.2, cz + 150 - tourT * 3);
       cam.lookAt(cx - 1.5, 9, cz - 100);

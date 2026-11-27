@@ -1,12 +1,14 @@
 // This file draws the Victorian city's street pieces (styles.ts, `victorian`): its gas lamps, its
-// junction signals and halt posts (signals.ts), its street furniture (decor.ts) and the finger
-// posts on the country road into it (countryworld.ts). Each piece is cast iron, timber or granite,
-// after the kind a town of about 1870 had. A city chunk holds dozens of them, so each is drawn in
-// as few triangles as keep its shape: six-sided shafts, four-sided finials, flat panes for glass
-// and lettering.
-// The file imports only geometry, so city.ts and the others can import it at load.
-import { Batch } from "../geom.ts";
+// junction signals and point-duty constables (signals.ts), its street furniture (decor.ts) and the
+// finger posts on the country road into it (countryworld.ts). Each piece is cast iron, timber or
+// granite, after the kind a town of about 1870 had. A city chunk holds dozens of them, so each is
+// drawn in as few triangles as keep its shape: six-sided shafts, four-sided finials, flat panes for
+// glass and lettering.
+// The file imports only geometry and the figures, so city.ts and the others can import it at load.
+import * as THREE from "three@0.187.0";
+import { Batch, BATCH } from "../geom.ts";
 import { hash2 } from "../rng.ts";
+import { Figures, FIG_STYLE, HAIRS, SKINS } from "../figure.ts";
 import { VIC, VIC_GASLIGHT } from "./victorian-buildings-town.ts";
 
 // The street's iron is painted a dark green, a shade lighter than VIC.iron so that it reads against
@@ -89,28 +91,40 @@ export function vicSignal(solid: Batch, lamps: Batch, px: number, pz: number, fx
     arm(0, 0); arm(1, -Math.PI / 4); arm(2, -Math.PI / 2 + 0.08);
   });
 }
-// The strokes of HALT, as rectangles (column, row, columns across, rows down) in each letter's 3 by
-// 5 cells.
-const VS_HALT = [[[0, 0, 1, 5], [2, 0, 1, 5], [1, 2, 1, 1]], [[0, 0, 1, 5], [2, 0, 1, 5], [1, 0, 1, 1], [1, 2, 1, 1]], [[0, 0, 1, 5], [1, 4, 2, 1]], [[0, 0, 3, 1], [1, 1, 1, 4]]];
-const VS_BOARD = 0xece4cc, VS_BOARD_RED = 0xa82218;
-// vicHaltPost draws a stop-controlled junction's post for one approach at (px, pz), its board facing
-// (ux, uz) (out along the arm, towards the traffic coming in): a cast-iron post with a finial and
-// a painted board, cream in a red border with HALT in red, its middle at y0 and halfW across.
-export function vicHaltPost(solid: Batch, px: number, pz: number, ux: number, uz: number, y0: number, halfW: number) {
-  vsLocal(solid, px, pz, Math.atan2(ux, uz), () => {
-    solid.lathe("vicFoot", VS_FOOT, 0, 0, 0, 0.09, 0.4, VS_IRON, 6);
-    solid.cyl(0, (y0 + 0.5) / 2 + 0.25, 0, 0.04, y0, VS_IRON, 6);
-    solid.cone(0, y0 + 0.62, 0, 0.06, 0.2, VS_GILT, 4);
-    // (The board in front of the post: its iron back, the red border, the cream face.)
-    const hh = 0.24;
-    solid.box(0, y0, 0.05, halfW * 2, hh * 2, 0.03, VS_IRON_DARK);
-    vsPane(solid, 0, y0, 0.067, halfW * 2 - 0.02, hh * 2 - 0.02, VS_BOARD_RED, 0, 1);
-    vsPane(solid, 0, y0, 0.07, halfW * 2 - 0.09, hh * 2 - 0.09, VS_BOARD, 0, 1);
-    // HALT, read from in front (the reader's right is local +x).
-    const cell = 0.04;
-    VS_HALT.forEach((strokes, i) => { for (const [c, r, w, h] of strokes) vsPane(solid, -0.29 + i * 0.16 + (c + w / 2) * cell, y0 + 2.5 * cell - (r + h / 2) * cell, 0.073, w * cell, h * cell, VS_BOARD_RED, 0, 1); });
-  });
+// A constable on point duty stands in the middle of a junction that has no signal columns. He is
+// drawn once for each phase of its signal (signals.ts), each pose tagged to show only while its
+// phase has the junction. In each pose he faces out along an arm whose traffic he is holding, his
+// right arm raised straight up to stop it and his left arm out level towards the traffic he is
+// waving on. His limbs keep to the vertical and to the line of the traffic he lets through, so the
+// carriages passing him on either side clear him. He is the crowd's bobby (figure.ts, dress
+// "bobby"), posed once and kept as boxes in his own frame, facing +x, his feet on the roadway.
+let vsBobby: number[] | null = null;
+function bobbyBoxes(): number[] {
+  if (vsBobby) return vsBobby;
+  const F = new Figures(new THREE.Scene(), new THREE.MeshBasicMaterial(), 64), was = FIG_STYLE.victorian;
+  FIG_STYLE.victorian = true;
+  try { F.person({ x: 0, z: 0, yaw: 0, y: 0, arms: [0, 2.95], armOut: [Math.PI / 2 - 0.05, 0], shirt: 0, pants: 0, skin: SKINS[0], hair: HAIRS[0], dress: "bobby" }); }
+  finally { FIG_STYLE.victorian = was; }
+  // (Each box as its centre, its size, its colour and its turn, in Batch.boxR's terms.)
+  const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), e = new THREE.Euler(), c = new THREE.Color(), out: number[] = [];
+  for (let i = 0; i < F.n; i++) {
+    F.mesh.getMatrixAt(i, m); F.mesh.getColorAt(i, c); m.decompose(p, q, sc); e.setFromQuaternion(q, "XYZ");
+    out.push(p.x, p.y, p.z, sc.x, sc.y, sc.z, c.getHex(), e.x, e.y, e.z);
+  }
+  F.mesh.geometry.dispose();
+  return vsBobby = out;
 }
+// vicConstable draws him at (x, z), once for each of `poses`: the heading he faces (Frame2's sense)
+// and the tag that shows that pose.
+export function vicConstable(lamps: Batch, x: number, z: number, poses: { yaw: number; tag: () => void }[]) {
+  if (BATCH.dry) return;   // (a probe build, where every Batch drops what it is given and Figures cannot pose him)
+  const B = bobbyBoxes();
+  for (const { yaw, tag } of poses) {
+    tag();
+    vsLocal(lamps, x, z, yaw, () => { for (let i = 0; i < B.length; i += 10) lamps.boxR(B[i], B[i + 1], B[i + 2], B[i + 3], B[i + 4], B[i + 5], B[i + 6], B[i + 7], B[i + 8], B[i + 9]); });
+  }
+}
+const VS_BOARD = 0xece4cc;
 
 // ---- street furniture ------------------------------------------------------------------------------
 // Each piece is drawn by decor.ts streetFurniture in the pavement's frame: at (x, z) along the kerb

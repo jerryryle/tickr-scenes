@@ -1,14 +1,14 @@
 // Test scene: the Victorian city's street pieces (victorian-street.ts) close up, for judging them at
 // the board's resolution: the gas lamp by day and by night, the Westminster signal showing stop,
-// caution and go, the halt post, each piece of street furniture, and the finger post of the road
-// in (its arm unlettered here). They stand along a kerb of York stone on granite setts, with a box
+// caution and go, a constable on point duty in two of his poses, each piece of street furniture,
+// and the finger post of the road in (its arm unlettered here). They stand along a kerb of York stone on granite setts, with a box
 // truck's height (a 3.6 m post) at the end of the row for scale. It shows one view a second.
 // Build and render it with
 //   make tool SCENE=long-day TOOL=vicstreets SECS=18   -> build/long-day-vicstreets/vicstreets.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { makeLampMaterial, setSignalTime } from "../src/signals.ts";
-import { vicBench, vicBollard, vicCabShelter, vicDustBin, vicFingerPost, vicHaltPost, vicHitchPost, vicLamp, vicNewsStand, vicPillarBox, vicSignal, vicStreetPump, vicTrough } from "../src/city-victorian/victorian-street.ts";
+import { vicBench, vicBollard, vicCabShelter, vicDustBin, vicConstable, vicFingerPost, vicHitchPost, vicLamp, vicNewsStand, vicPillarBox, vicSignal, vicStreetPump, vicTrough } from "../src/city-victorian/victorian-street.ts";
 import type { VicPiece } from "../src/city-victorian/victorian-street.ts";
 import { VIC_STREET } from "../src/city-victorian/victorian-buildings-town.ts";
 
@@ -18,7 +18,7 @@ const PIECES: [string, VicPiece, number][] = [
   ["pump", vicStreetPump, 0], ["bin", vicDustBin, 4], ["bench", vicBench, 8], ["pillar", vicPillarBox, 12],
   ["news", vicNewsStand, 16], ["hitch", vicHitchPost, 20], ["shelter", vicCabShelter, 25], ["trough", vicTrough, 31], ["bollard", vicBollard, 35],
 ];
-const LAMP_X = -6, SIG_X = [40, 46, 52], HALT_X = 58, FINGER_X = 66;
+const LAMP_X = -6, SIG_X = [40, 46, 52], BOBBY_X = 58, FINGER_X = 66;
 
 // Night: what aux.z -5 (gas lantern glass) glows by, as the city's facade material does.
 const NIGHT = { value: 0 };
@@ -42,7 +42,7 @@ const VIEWS: View[] = [
   [46, 3.5, -14, 46, 3.6, 0.6, 46, 0],
   [46, 3.5, -14, 46, 3.6, 0.6, 46, 1],
   [SIG_X[0] - 4, 4.8, -3.5, SIG_X[0], 4.6, 0.8, 50, 0],
-  [HALT_X - 3, 2.0, -3.2, HALT_X, 1.8, 0.8, 44, 0],
+  [BOBBY_X + 1.5, 1.6, -7.5, BOBBY_X + 1.5, 1.2, -3, 44, 0],
   ...PIECES.map(([, , x]): View => [x - 2.4, 1.8, -2.6, x, 0.7, 0.8, 44, 0]),
   [FINGER_X - 6, 2.2, -7, FINGER_X, 2.8, 0.8, 44, 0],
   [14, 4.5, -16, 14, 1.0, 1.5, 50, 1],
@@ -76,7 +76,10 @@ export default function createScene({ sys }: SceneInputs): Scene {
         vicSignal(s, lamps, x, 1.2, 1, 0, 0, -1, (k, hide) => lamps.aux.set((k + (hide ? 3 : 0)) * 64 + off, -1, 0));
       });
       lamps.aux.set(0, 0, -1);
-      vicHaltPost(s, HALT_X, 2.3, -1, 0, 2.15, 0.375);
+      // (Side on and face on, each pose tagged to show at signal time 5 s: phase 0 with offset 0, phase 1 with 13.)
+      vicConstable(lamps, BOBBY_X, -3, [{ yaw: 0, tag: () => lamps.aux.set(6 * 64, -1, 0) }]);
+      vicConstable(lamps, BOBBY_X + 3, -3, [{ yaw: Math.PI / 2, tag: () => lamps.aux.set(6 * 64 + 13, -1, 1) }]);
+      lamps.aux.set(0, 0, -1);
       vicFingerPost(s, FINGER_X, 1.5, CURB, -1, 0, 0, -1, 3.2, 4.0, 0.5, 2.3);
       s.box(80, 1.8, 1.5, 0.1, 3.6, 0.1, 0xff00ff);   // (a box truck's height, for scale)
       for (const [b, m] of [[g, mat], [s, mat], [lamps, lampMat]] as const) scene.add(b.build(m)!);
