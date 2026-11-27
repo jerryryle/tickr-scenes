@@ -1025,7 +1025,7 @@ export class Truck {
     root.position.set(T.pivot, 0, 0);
     const sm = Sh.build(kit.paint)!; sm.position.set(-T.rear[0], -T.rear[1], 0); shafts.position.set(T.rear[0], T.rear[1], 0); shafts.add(sm);
     root.add(A.build(kit.paint)!, shafts, harness);
-    const horses = new HorseTeam(kit.paint, HORSE_COATS[TRUCK_MODELS.indexOf(this.model) % HORSE_COATS.length], T.horses.length);
+    const horses = new HorseTeam(kit.paint, HORSE_COATS[[2, 0, 3, 0, 1][TRUCK_MODELS.indexOf(this.model)]], T.horses.length);
     root.add(...horses.meshes);
     this.root.add(root);
     // (Unhitched, the shafts or pole tip forward about their back ends until their tips touch the ground.)
