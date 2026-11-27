@@ -264,17 +264,22 @@ export function vicFingerPost(s: Batch, x: number, z: number, y0: number, fx: nu
   });
 }
 
-// ---- the setts -------------------------------------------------------------------------------------
-// A Victorian street's road and junctions are granite setts. city.ts tags their ground (aux.z
-// VIC_SETT, aux.xy the way along the street in the world), and applySetts draws the stones on the ground's
-// material from the world position: courses SETT_W wide across the road, each stone SETT_L long and
-// a little lighter or darker than the next, broken bond, with dark joints between. Where a stone
-// comes to less than about two pixels the pattern fades to the stones' mean tone, so far streets
-// read as even stone and never shimmer.
-export const VIC_SETT = -7;
-const SETT_W = 0.25, SETT_L = 0.4;
+// ---- the setts and the flags ---------------------------------------------------------------------
+// A Victorian street's road and junctions are granite setts, and its pavements York stone flags.
+// city.ts tags their ground (aux.z VIC_SETT or VIC_FLAGS, aux.xy the way along the street in the
+// world), and applySetts draws the stones on the ground's material from the world position: each
+// kind in rows of stones STONES gives (along by across, in metres), broken bond, each stone a little
+// lighter or darker than the next, with joints between. Setts lie in courses across the road, flags
+// with their long side along the kerb. Where a stone comes to less than about two pixels the
+// pattern fades to the stones' mean tone, so far streets read as even stone and never shimmer.
+export const VIC_SETT = -7, VIC_FLAGS = -8;
+// (Per kind: size along and across, the tone's spread, how dark a joint is, the joint's width, and
+// the pixel's share of a stone over which the pattern fades.)
+const STONES = { sett: { u: 0.25, v: 0.4, lo: 0.88, hi: 1.1, joint: 0.6, jw: 0.02, fade: [0.18, 0.42] }, flag: { u: 0.9, v: 0.6, lo: 0.92, hi: 1.07, joint: 0.66, jw: 0.012, fade: [0.12, 0.35] } };
+const glsl = (x: number) => x.toFixed(3);
 export function applySetts(mat: THREE.Material) {
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
+  const S = STONES.sett, F = STONES.flag;
   mat.onBeforeCompile = (shader, renderer) => {
     prev(shader, renderer);
     shader.vertexShader = shader.vertexShader
@@ -283,19 +288,30 @@ export function applySetts(mat: THREE.Material) {
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;")
       .replace("#include <color_fragment>", `#include <color_fragment>
-  if (abs(vSettAux.z - (${VIC_SETT.toFixed(1)})) < 0.5) {
+  float sett = abs(vSettAux.z - (${glsl(VIC_SETT)})) < 0.5 ? 1.0 : 0.0, flag = abs(vSettAux.z - (${glsl(VIC_FLAGS)})) < 0.5 ? 1.0 : 0.0;
+  if (sett + flag > 0.5) {
     vec2 d = length(vSettAux.xy) > 0.5 ? normalize(vSettAux.xy) : vec2(1.0, 0.0);
-    vec2 p = vec2(dot(vSettXZ, d), dot(vSettXZ, vec2(-d.y, d.x)));   // (x: along the street, across the courses)
-    vec2 c = vec2(p.x / ${SETT_W.toFixed(2)}, p.y / ${SETT_L.toFixed(2)});
-    c.y += 0.5 * floor(c.x);
+    vec2 p = vec2(dot(vSettXZ, d), dot(vSettXZ, vec2(-d.y, d.x)));   // (x: along the street, y: across it)
+    vec2 size = sett > 0.5 ? vec2(${glsl(S.u)}, ${glsl(S.v)}) : vec2(${glsl(F.u)}, ${glsl(F.v)});
+    vec2 c = p / size;
+    if (sett > 0.5) c.y += 0.5 * floor(c.x); else c.x += 0.5 * floor(c.y);   // (broken bond)
     vec2 cell = floor(c), f = fract(c);
     float h = fract(sin(dot(mod(cell, 1024.0), vec2(12.9898, 78.233))) * 43758.5453);
-    float edge = min(min(f.x, 1.0 - f.x) * ${SETT_W.toFixed(2)}, min(f.y, 1.0 - f.y) * ${SETT_L.toFixed(2)});
-    float detail = 1.0 - smoothstep(0.4, 1.3, max(fwidth(c.x), fwidth(c.y)));
-    float tone = mix(0.88, 1.1, h) * mix(1.0, 0.6, 1.0 - smoothstep(0.02, 0.05, edge));
-    diffuseColor.rgb *= mix(0.95, tone, detail);
+    // (Each way on its own, as a low camera sees the ground foreshortened: a pixel's size on the
+    // ground that way, m; the joints across it are drawn at least about that wide, and fade out as a pixel comes to a given share of a stone's side that way (fade).)
+    vec2 px = vec2(fwidth(p.x), fwidth(p.y));
+    vec2 fade = sett > 0.5 ? vec2(${glsl(S.fade[0])}, ${glsl(S.fade[1])}) : vec2(${glsl(F.fade[0])}, ${glsl(F.fade[1])});
+    vec2 show = 1.0 - smoothstep(vec2(fade.x), vec2(fade.y), px / size);
+    float jw0 = sett > 0.5 ? ${glsl(S.jw)} : ${glsl(F.jw)};
+    vec2 jw = max(vec2(jw0), 0.7 * px);
+    vec2 e = min(f, 1.0 - f) * size;
+    float joint = max((1.0 - smoothstep(jw.x * 0.5, jw.x * 1.25, e.x)) * show.x, (1.0 - smoothstep(jw.y * 0.5, jw.y * 1.25, e.y)) * show.y);
+    float detail = max(show.x, show.y);
+    float tone = mix(1.0, sett > 0.5 ? mix(${glsl(S.lo)}, ${glsl(S.hi)}, h) : mix(${glsl(F.lo)}, ${glsl(F.hi)}, h), min(show.x, show.y))
+      * mix(1.0, sett > 0.5 ? ${glsl(S.joint)} : ${glsl(F.joint)}, joint);
+    diffuseColor.rgb *= mix(sett > 0.5 ? 0.95 : 0.98, tone, detail);
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|setts-v1";
+  mat.customProgramCacheKey = () => prevKey() + "|setts-v7";
   mat.needsUpdate = true;
 }
