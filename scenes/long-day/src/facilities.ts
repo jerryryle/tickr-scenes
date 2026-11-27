@@ -250,7 +250,7 @@ export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: num
     // (Ryder's own premises go by the firm's name alone; a public body or a market takes its place's.)
     const label = VIC_LABEL[id];
     if (isRyderFacility(id)) return label;
-    return h(4) < 0.5 && !VIC_PUBLIC.has(id) ?`${VIC_PEOPLE[Math.floor(h(5) * VIC_PEOPLE.length)]} ${label}` : `${VIC_PLACES[Math.floor(h(6) * VIC_PLACES.length)]} ${label}`;
+    return h(4) < 0.5 && !VIC_PUBLIC.has(id) ? `${VIC_PEOPLE[Math.floor(h(5) * VIC_PEOPLE.length)]} ${label}` : `${VIC_PLACES[Math.floor(h(6) * VIC_PLACES.length)]} ${label}`;
   }
   if (plan.style.storybook) {
     if (id === "knittingWorks") return `${plan.name} Knitting Works`;
