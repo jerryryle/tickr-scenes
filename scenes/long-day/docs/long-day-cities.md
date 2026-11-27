@@ -55,7 +55,9 @@ Three alternatives lost.
 ## The catalogue
 
 The catalogue holds 35 cities: five for each real style (coastal, metro, desert, brick,
-mainstreet and port) and five storybook towns. A city's id is `<style>-<slug>`, where the slug is
+mainstreet and port), four storybook towns, and Ravensgate, the one Victorian town, which took
+the fifth storybook town's place on its roads. The Victorian style is a real style to the visit
+planner, so Ravensgate comes up as often as any other real city. A city's id is `<style>-<slug>`, where the slug is
 its name in lower-case kebab form, so "Higgle-on-the-Wobble" is `storybook-higgle-on-the-wobble`.
 A city is in the catalogue once its folder is in `src/city-<style>/` and `src/world.ts` lists its id.
 The visit planner picks from the list by position, so a new city goes at the end of it.
@@ -94,7 +96,7 @@ A city file is `<slug>.ts` and its contents file `<slug>-contents.ts`. An asset 
 is `<slug>-<asset type>-<asset name>.ts` in the city's folder, and an asset a style shares is
 `<style>-<asset type>-<asset name>.ts` in the style's folder. The asset type is a word such as
 `vehicle`, `vignette`, `landmark` or `buildings`. A style's own definition is `<style>-style.ts`,
-and `src/styles.ts` holds the shared `CityStyle` type and the list of the seven styles. Assets every
+and `src/styles.ts` holds the shared `CityStyle` type and the list of the eight styles. Assets every
 style uses, such as `cars.ts` and `boats.ts`, sit in `src/` itself.
 
 Every file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL` or
@@ -311,7 +313,8 @@ looking from a to b. The map holds these fields.
    samples run from 40 m before gate a to 40 m past gate b, or past the end of the freeway stretch
    on a freeway city's way in.
 3. Its land every 10 m: how much of it is b's (the rest is a's), how much of the storybook's
-   creeps in, and how much of it is coast.
+   creeps in, how much of a Victorian city's has (`period`, which turns the trucks into carriages
+   over the last 900 m before one), and how much of it is coast.
 4. Its set pieces, each as `RoadPiece` in `src/country.ts` has it, plus the way it faces.
 5. Its items: trees, rocks, ponds, wind turbines, pylons, farms, grazing cows, utility poles and
    fence bays, each with its place and what it is.
