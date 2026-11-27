@@ -337,13 +337,15 @@ function vicShopRow(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
   }
 }
 
-// Downtown's grand buildings, as tall as hs allows: a bank behind its portico of columns under a
-// pediment, a department store with a dome on its corner, a Gothic office front of pointed windows
-// under gablets and a turret, or chambers in stone under a mansard with its dormers.
+// Downtown's grand buildings are three to five storeys, as tall as hs allows. Most are chambers
+// (Italianate offices in stone) or a Gothic office front of pointed windows under gablets. On a lot 15 m wide or more, one in ten is a bank behind its portico of columns
+// under a pediment and one in ten a department store, a few of the widest of those with a dome.
+// (Ravensgate has some 270 downtown lots, three in four of them that wide, so these odds give it
+// about twenty banks, twenty stores and five domes.)
 function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readonly number[], rnd: VicRand, door: VicDoor) {
   const X0 = b.x0 - 0.26, X1 = b.x1 + 0.26, W = X1 - X0, D = b.z1 - b.z0;
-  const floors = vClamp(Math.round(3 + hs * 3 + (rnd() - 0.4) * 1.4), 3, 6), r = rnd();
-  const kind = W >= 15 && r < 0.28 ? "bank" : r < 0.5 ? "store" : r < 0.75 ? "gothic" : "chambers";
+  const floors = vClamp(Math.round(3 + hs * 3 + (rnd() - 0.4) * 1.4), 3, 5), r = rnd(), wide = W >= 15;
+  const kind = wide && r < 0.1 ? "bank" : wide && r < 0.2 ? "store" : r < 0.55 ? "gothic" : "chambers";
   const roof = vPick(rnd, VIC_SLATES), lightWalls = walls.filter(vIsRender), stoneC = lightWalls.length ? vPick(rnd, lightWalls) : VIC.stone;
   if (kind === "bank") {
     // (Stone, two tall storeys and an attic, the portico before its middle bays.)
@@ -378,7 +380,9 @@ function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
     s.box((X0 + X1) / 2, top - 0.25, zf - 0.2, W - 0.02, 0.5, 0.44, VIC.stone);
     const m = vicMansard(s, X0 + 0.02, zf + 0.02, X1 - 0.02, zb - 0.02, top, 3.0, 0.9, roof);
     for (let i = 0; i < bays; i++) { const [a0, a1] = vicBayX(X0, X1, i); if (i === 0 || i === bays - 1) continue; vicDormer(s, (a0 + a1) / 2, zf + 0.35, top + 0.4, 1.3, 1.8, VIC.stone, roof, 1.0); }
-    // the corner dome: a drum, the dome in copper gone green, a lantern and its finial
+    // the corner dome on half of the stores 20 m wide or more: a drum, the dome in copper gone
+    // green, a lantern and its finial
+    if (W < 20 || rnd() < 0.5) return;
     const cx = rnd() < 0.5 ? X0 + 2.4 : X1 - 2.4, cz = zf + 2.4;
     s.cyl(cx, top + 1.6, cz, 2.5, 3.2, VIC.stone, 10);
     s.cyl(cx, top + 3.3, cz, 2.75, 0.25, vicShade(VIC.stone, 0.9), 10);
@@ -388,8 +392,8 @@ function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
     return;
   }
   if (kind === "gothic") {
-    // (Red or stock brick, pointed windows, a steep roof with a gablet over each pair of bays, a
-    // turret with its spire on one corner.)
+    // (Red or stock brick, pointed windows, a steep roof with a gablet over each pair of bays, and
+    // on one in three a turret with its spire on one corner.)
     const wall = vPick(rnd, walls.filter((c) => !vIsRender(c)).concat([VIC.red])), v = Math.floor(rnd() * 4), dk = Math.floor(bays / 2);
     const top = vicBox(s, X0, zf, X1, zb, y0, [{ tile: FACADE.VICT_GOTHIC, v, floors: 1, floorH: 4.4 }, { tile: FACADE.VICT_GOTHIC, v, floors: floors - 1, floorH: 3.7 }], wall, [{ k: dk, tile: FACADE.VICT_DOOR, v: v % 2 }]);
     const [d0, d1] = vicBayX(X0, X1, dk);
@@ -402,21 +406,30 @@ function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
       s.box((gx0 + gx1) / 2, top + 0.9, zf + 0.05, gx1 - gx0, 1.8, 0.3, wall);
       vicGable(s, gx0, zf - 0.1, gx1, zf + 2.6, top + 1.8, (gx1 - gx0) * 0.6, roof, wall, true, 0.15);
     }
+    if (rnd() < 0.67) return;
     const tx = rnd() < 0.5 ? X0 + 1.2 : X1 - 1.2;
     s.cyl(tx, top + 1.5, zf + 1.2, 1.3, 3.0 + 3, wall, 8);
     s.cone(tx, top + 4.5 + 2.6, zf + 1.2, 1.5, 5.2, roof, 8);
     s.cyl(tx, top + 4.5 + 5.6, zf + 1.2, 0.05, 1.0, VIC.black, 4);
     return;
   }
-  // chambers: stone or stucco, the grand windows, a heavy cornice, a mansard with dormers
-  const v = Math.floor(rnd() * 4), dk = Math.floor(bays / 2);
-  const top = vicBox(s, X0, zf, X1, zb, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 4.6 }, { tile: FACADE.VICT_GRAND, v, floors: floors - 1, floorH: 3.8 }], stoneC, [{ k: dk, tile: FACADE.VICT_DOOR, v: 2 + (v % 2) }]);
+  // chambers: in any of downtown's stones (cream, buff, grey or red sandstone) or stucco, a heavy
+  // cornice, and the grand windows ranked by storey as an Italianate palazzo's are: the tallest on
+  // the first floor under pediments, lower ones over them under cornices. Half have a mansard with
+  // a dormer in each bay, half a balustrade with a low slate roof behind it.
+  const v = Math.floor(rnd() * 4), dk = Math.floor(bays / 2), wall = vPick(rnd, walls);
+  const top = vicBox(s, X0, zf, X1, zb, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 4.6 }, { tile: FACADE.VICT_GRAND, v: 0, floors: 1, floorH: 4.2 }, { tile: FACADE.VICT_GRAND, v: 3, floors: floors - 2, floorH: 3.5 }], wall, [{ k: dk, tile: FACADE.VICT_DOOR, v: 2 + (v % 2) }]);
   const [d0, d1] = vicBayX(X0, X1, dk);
   door(d0, d1, zf);
-  s.box((X0 + X1) / 2, top - 0.25, zf - 0.22, W - 0.02, 0.5, 0.5, vicShade(stoneC, 0.9));
-  vicMansard(s, X0 + 0.02, zf + 0.02, X1 - 0.02, zb - 0.02, top, 3.0, 0.95, roof);
-  for (let i = 0; i < bays; i++) { const [a0, a1] = vicBayX(X0, X1, i); vicDormer(s, (a0 + a1) / 2, zf + 0.45, top + 0.45, 1.2, 1.7, stoneC, roof, 1.0); }
-  for (const x of [X0 + 0.8, X1 - 0.8]) vicStack(s, x, (zf + zb) / 2, top + 2.0, 0.8, 2.2, 2.6, stoneC, 4);
+  s.box((X0 + X1) / 2, top - 0.25, zf - 0.22, W - 0.02, 0.5, 0.5, vicShade(wall, 0.9));
+  if (rnd() < 0.5) {
+    vicMansard(s, X0 + 0.02, zf + 0.02, X1 - 0.02, zb - 0.02, top, 3.0, 0.95, roof);
+    for (let i = 0; i < bays; i++) { const [a0, a1] = vicBayX(X0, X1, i); vicDormer(s, (a0 + a1) / 2, zf + 0.45, top + 0.45, 1.2, 1.7, wall, roof, 1.0); }
+  } else {
+    s.box((X0 + X1) / 2, top + 0.5, zf + 0.12, W - 0.02, 1.0, 0.25, vicShade(wall, 0.97));
+    vicHip(s, X0 + 0.3, zf + 0.4, X1 - 0.3, zb - 0.3, top, 2.2, roof);
+  }
+  for (const x of [X0 + 0.8, X1 - 0.8]) vicStack(s, x, (zf + zb) / 2, top + 2.0, 0.8, 2.2, 2.6, wall, 4);
 }
 // A dome's profile (Batch.lathe): a little upright at its foot, then round to the lantern's ring.
 const VIC_DOME: readonly (readonly [number, number])[] = [[1, 0], [1, 0.12], [0.94, 0.38], [0.78, 0.62], [0.5, 0.86], [0.22, 1]];
