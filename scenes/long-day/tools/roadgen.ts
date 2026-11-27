@@ -108,7 +108,7 @@ export function draftRoad(r: WorldRoad, metres: number, A: RoadEnd, B: RoadEnd):
   // Signs: leaving, the distance, and the welcome, for each way the road is driven.
   const signs = (way: 1 | -1, from: CityPlan, to: CityPlan, fw: boolean) => {
     add({ kind: "leave", s: LAND_SEAM + 60, side: 1, len: 40, variant: from.style.storybook ? 1 : from.style.victorian ? 2 : 0, text: `LEAVING ${from.name.toUpperCase()}` }, way);
-    if (SB > 1700) add({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: 0, text: `${to.name.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` }, way);
+    if (SB > 1700) add({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: from.style.victorian ? 2 : 0, text: `${to.name.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` }, way);
     add({ kind: "welcome", s: L - (fw ? 940 : 230), side: 1, len: 40, variant: to.style.storybook ? 1 : to.style.victorian ? 2 : 0, text: `WELCOME TO ${to.name.toUpperCase()}`, n: fw ? -12 : undefined }, way);   // (into a freeway city it stands on the left: the freeway is on the right)
   };
   signs(1, PA, PB, toFreeway);

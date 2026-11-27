@@ -204,8 +204,49 @@ const STORY_NAMES: Partial<Record<FacilityId, string[]>> = {
   school: ["Twiddledee Primary"], theater: ["The Tumbledown Playhouse"], dentist: ["Smilewhistle Dental"], musicStore: ["Kazoo & Co."],
   doughnutShop: ["The Holy Holey Doughnut"], deli: ["The Pickled Pickle"], bigBox: ["Everything Bigger"],
 };
+// These are the Victorian city's trades: every facility a period label in place of its modern one
+// (so no "Data Center" or "Motel" stands in a gaslit street), with a few names of its own for some.
+const VIC_LABEL: Record<FacilityId, string> = {
+  dc: "Goods Depot", ryderWarehouse: "Ryder & Sons Carriers", parcelHub: "Parcels Office", tireDist: "Wheelwright", bottling: "Mineral Water Works",
+  brewery: "Ale Stores", coldStorage: "Ice House", lumberYard: "Timber Yard", chemPlant: "Alkali Works", factory: "Manufactory", mill: "Corn Mill",
+  paperMill: "Paper Mill", applianceWh: "Ironmongery Stores", furnitureWh: "Cabinet Works", foodServiceWh: "Provision Stores", motoDepot: "Livery Stables",
+  bikeWh: "Velocipede Works", electronicsDC: "Telegraph Stores", plumbingSupply: "Plumber & Glazier", medicalDC: "Druggists' Sundries", outfitterDC: "Drapery Warehouse",
+  vendingDepot: "Sweet Factory", pianoMaker: "Pianoforte Maker", gameDist: "Games & Puzzles", spaWh: "Bath & Hydropathic Supply", marineDealer: "Ship's Chandler",
+  creamery: "Dairy", fitnessDC: "Gymnastic Apparatus", artStorage: "Picture Dealer", partySupply: "Fancy Goods", signShop: "Signwriter", toyImporter: "Toy Importer",
+  gardenDC: "Seedsman", bowlingSupply: "Skittle Alley Supply", aquariumTransfer: "Fishmonger", sanitationDepot: "Vestry Yard", dataCenter: "Telegraph Exchange",
+  ryderService: "Ryder & Sons Smithy", rentalLot: "Ryder & Sons Jobmaster", construction: "Builder's Yard", knittingWorks: "Knitting Works", steamBrewery: "Steam Brewery",
+  retail: "Emporium", bigBox: "Department Store", grocery: "Grocer", cornerStore: "Tobacconist & Sweets", restaurant: "Chop House", diner: "Eating House",
+  bar: "Public House", sportsBar: "Sporting Tavern", autoShop: "Wheelwright & Farrier", dealership: "Carriage Builder", bakery: "Baker", hardware: "Ironmonger",
+  bikeShop: "Velocipedes", electronicsStore: "Scientific Instruments", florist: "Florist", iceCream: "Ices & Confectionery", pharmacy: "Chemist", outfitter: "Outfitter",
+  arcade: "Penny Gaff", deli: "Provisions", gym: "Gymnasium", musicStore: "Music Seller", trophyShop: "Silversmith", toyStore: "Toy Shop", gardenCenter: "Nurseryman",
+  bowlingAlley: "Skittle Alley", doughnutShop: "Pie Shop", goatYoga: "Riding School", cafe: "Coffee House", dentist: "Dentist", motel: "Coaching Inn", barber: "Barber",
+  pawnShop: "Pawnbroker", laundromat: "Washhouse", petGroomer: "Dog Fancier", theater: "Music Hall", office: "Chambers", officeTower: "Exchange Buildings",
+  hotel: "Grand Hotel", concertHall: "Assembly Rooms", museum: "Museum", aquarium: "Aquarium", hospital: "Infirmary", stadium: "Cricket Ground",
+  courthouse: "Assize Court", lawOffice: "Solicitors", ryderOffice: "Ryder & Sons Counting House", residence: "Residence", apartment: "Mansions", school: "Board School",
+  weddingVenue: "Pleasure Gardens", countyFair: "Fairground", pettingZoo: "Menagerie", marina: "Boat House", farm: "Dairy Farm", farmCoop: "Corn Exchange",
+  treeFarm: "Nursery Garden", greenhouse: "Glasshouse", pumpkinPatch: "Market Garden", treeLot: "Christmas Tree Seller", boatyard: "Boatbuilder",
+  fishMarket: "Fish Market", shipChandler: "Ship Chandler", seafood: "Oyster Rooms", surfShop: "Bathing Machines",
+};
+const VIC_NAMES: Partial<Record<FacilityId, string[]>> = {
+  bar: ["The Coach & Horses", "The Gaslight Arms", "The Rose & Crown", "The Lamplighter"], restaurant: ["Simpson's Chop House", "The Cheshire Grill"],
+  retail: ["Bunting & Lace Emporium", "Hargreaves' Fancy Goods"], grocery: ["Pennywhistle & Sons, Grocers", "Mrs. Beadle's Provisions"],
+  bakery: ["Crumpet & Co. Bakers", "Hobb's Steam Bakery"], hardware: ["Cogsworth Ironmongery"], pharmacy: ["Dr. Thistlewood's Remedies"],
+  cafe: ["The Kettle & Lamp Coffee House"], hotel: ["The Grand Midland Hotel"], theater: ["The Alhambra Music Hall"], museum: ["Museum of Curiosities"],
+  school: ["St. Bartholomew's Board School"], officeTower: ["The Corn Exchange Buildings"], bigBox: ["Whiteley & Sons Universal Provider"],
+};
+const VIC_PLACES = ["Kingsgate", "Holborn", "Cheapside", "Ludgate", "Aldgate", "Smithfield", "Clerkenwell", "Blackfriars", "Shoreditch", "Mortlake", "Eastcheap", "Moorfields"];
+const VIC_PEOPLE = ["Hobbs & Sons", "Pickering's", "Mrs. Fairweather's", "Thackeray's", "Brindle & Co.", "Ashworth's", "Plumtree's", "Gubbins'", "Wetherby's", "Marchbanks'"];
+const VIC_STREETS = ["High St", "Mill Lane", "Church St", "Market St", "King St", "Queen St", "Station Rd", "Canal St", "Victoria Rd", "Albert St", "Gas St", "Brewery Lane"];
 export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: number): string {
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
+  if (plan.style.victorian) {
+    if (id === "steamBrewery") return `${plan.name} Steam Brewery`;
+    const own = VIC_NAMES[id];
+    if (own && h(7) < 0.6) return own[Math.floor(h(8) * own.length)];
+    if (id === "residence" || id === "apartment") return `${2 + Math.floor(h(3) * 60)} ${VIC_STREETS[Math.floor(h(9) * VIC_STREETS.length)]}`;
+    const label = VIC_LABEL[id];
+    return h(4) < 0.5 ? `${VIC_PEOPLE[Math.floor(h(5) * VIC_PEOPLE.length)]} ${label}` : `${VIC_PLACES[Math.floor(h(6) * VIC_PLACES.length)]} ${label}`;
+  }
   if (plan.style.storybook) {
     if (id === "knittingWorks") return `${plan.name} Knitting Works`;
     const sn = STORY_NAMES[id];

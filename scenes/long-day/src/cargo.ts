@@ -89,6 +89,27 @@ export const CARGO: CargoType[] = [
   cargoType("windupToys", "Wind-up toys", "uncommon", "handTruck", ["hardware", "toyStore"], ["toyStore", "retail", "school", "partySupply"], "box26", [4, 10], 0.5),
   cargoType("balloons", "Balloon bunches", "uncommon", "carry", ["partySupply", "toyStore"], ["school", "theater", "cafe", "residence", "hotel"], "box16", [2, 6], 0.5),
   cargoType("musicBoxes", "Music boxes", "uncommon", "carry", ["musicStore", "toyStore"], ["theater", "hotel", "residence", "museum", "retail"], "box16", [2, 6], 0.25),
+  // The Victorian city's goods (VIC_CARGO) are drawn only there, and carried by hand, on the sack
+  // truck, rolled or lifted between two: its brewery's ale and stout, the grocer's and baker's
+  // staples, and a household's treasures. Each comes from and goes to facilities Ravensgate has.
+  cargoType("teaChests", "Tea chests", "common", "handTruck", ["dc", "foodServiceWh", "ryderWarehouse"], ["grocery", "cafe", "cornerStore", "hotel", "deli", "restaurant"], "box26", [6, 14], 0.5),
+  cargoType("aleBarrels", "Barrels of ale", "common", "handTruck", ["steamBrewery"], ["bar", "sportsBar", "hotel", "restaurant", "diner", "motel"], "box26", [4, 10], 0.5),
+  cargoType("flourSacks", "Sacks of flour", "common", "handTruck", ["farmCoop", "farm", "mill"], ["bakery", "grocery", "restaurant", "diner"], "box26", [6, 16], 0.25),
+  cargoType("coalSacks", "Coal sacks", "common", "carry", ["lumberYard", "ryderWarehouse", "factory"], ["residence", "apartment", "bakery", "laundromat"], "box26", [4, 10], 0.25),
+  cargoType("milkChurns", "Milk churns", "common", "carry", ["farm", "farmCoop"], ["grocery", "cornerStore", "cafe", "bakery", "deli", "diner"], "box16", [3, 8], 0.25),
+  cargoType("soapCrates", "Crates of soap", "common", "handTruck", ["factory", "chemPlant", "dc"], ["laundromat", "grocery", "cornerStore", "hotel", "hospital"], "box26", [6, 14], 0.5),
+  cargoType("stoutCasks", "Casks of stout", "uncommon", "roll", ["steamBrewery"], ["bar", "sportsBar", "hotel", "deli"], "box26", [3, 8], 0.5),
+  cargoType("hatBoxes", "Hat boxes", "uncommon", "carry", ["retail", "outfitter"], ["residence", "apartment", "hotel"], "box16", [3, 8], 0.25),
+  cargoType("steamerTrunk", "Steamer trunk", "uncommon", "teamLift", ["hotel", "furnitureWh"], ["residence", "hotel", "apartment"], "box26", [1, 2], 1),
+  cargoType("carpets", "Rolled carpets", "uncommon", "teamLift", ["furnitureWh", "retail"], ["residence", "hotel", "apartment", "office"], "box26", [2, 4], 1),
+  cargoType("pennyFarthing", "Penny-farthing", "uncommon", "carry", ["bikeWh", "bikeShop"], ["bikeShop", "residence", "school"], "box26", [1, 3], 0.5),
+  cargoType("sewingMachine", "Sewing machines", "uncommon", "carry", ["hardware", "retail"], ["residence", "apartment", "laundromat", "outfitter"], "box16", [2, 5], 0.25),
+  cargoType("grandfatherClock", "Grandfather clock", "rare", "teamLift", ["furnitureWh"], ["residence", "hotel", "office"], "box26", [1, 1], 1),
+  cargoType("clawBath", "Cast-iron bath", "rare", "teamLift", ["hardware", "plumbingSupply"], ["residence", "hotel"], "box26", [1, 1], 2),
+  cargoType("birdcage", "Birdcage", "rare", "carry", ["petGroomer", "pettingZoo"], ["residence", "hotel", "cafe"], "box16", [1, 1], 0.25),
+  cargoType("gramophone", "Gramophone", "rare", "carry", ["musicStore", "electronicsStore"], ["residence", "hotel", "cafe", "bar"], "box16", [1, 2], 0.25),
+  cargoType("celloCase", "Cello case", "rare", "carry", ["musicStore"], ["school", "hotel", "museum", "residence"], "box16", [1, 2], 0.25),
+  cargoType("stuffedBear", "Stuffed bear", "humorous", "teamLift", ["artStorage"], ["museum"], "box26", [1, 1], 3),
   // Baton in-jokes.
   cargoType("teeth", "Jar of additional teeth", "humorous", "carry", ["pawnShop"], ["dentist"], "box16", [1, 1], 0.25),
   cargoType("redPanda", "Giant stuffed red panda", "humorous", "teamLift", ["toyStore", "partySupply"], ["office", "officeTower"], "box26", [1, 1], 3),
@@ -153,9 +174,18 @@ export const SEA_CARGO = new Set(["seafood", "shipStores", "surfboards", "nets"]
 export const STORY_CARGO = new Set(["knitwear", "rainbowJars", "lollipops", "cloudCushions", "windupToys", "balloons", "musicBoxes"]);
 // Those the knitting works makes (which every storybook city has) are what one sends on as freight.
 export const STORY_FREIGHT = ["knitwear", "cloudCushions"];
-// (Whatever `allow` says, the storybook city's are drawn only with `story`, which only its own job picks pass.)
-export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean, story = false): CargoType | null {
-  const ok = (c: CargoType) => (!c.season || c.season === season) && (story || !STORY_CARGO.has(c.id)) && (!allow || allow(c));
+// The Victorian city's goods are likewise made only there, and in a Victorian city every job draws
+// from them alone (journey.ts makeJob). Its steam brewery's are what it sends on as freight, and the
+// city before it brings in one of VIC_FREIGHT_IN, which come from facilities every city has
+// (journey.ts freightFor).
+export const VIC_CARGO = new Set(["teaChests", "aleBarrels", "flourSacks", "coalSacks", "milkChurns", "soapCrates", "stoutCasks", "hatBoxes", "steamerTrunk",
+  "carpets", "pennyFarthing", "sewingMachine", "grandfatherClock", "clawBath", "birdcage", "gramophone", "celloCase", "stuffedBear"]);
+export const VIC_FREIGHT = ["aleBarrels", "stoutCasks"];
+export const VIC_FREIGHT_IN = ["teaChests", "flourSacks", "soapCrates"];
+// (Whatever `allow` says, a city's own goods (STORY_CARGO, VIC_CARGO) are drawn only when `own` names
+// that set, which only that city's own job picks pass.)
+export function pickCargo(r1: number, r2: number, humor: number, season: "winter" | "autumn" | null, allow?: (c: CargoType) => boolean, own: Set<string> | null = null): CargoType | null {
+  const ok = (c: CargoType) => (!c.season || c.season === season) && ((own?.has(c.id) ?? false) || (!STORY_CARGO.has(c.id) && !VIC_CARGO.has(c.id))) && (!allow || allow(c));
   const tiers = (["common", "uncommon", "rare", "humorous"] as Tier[]).filter((t) => CARGO.some((c) => c.tier === t && ok(c)));
   const w = { ...TIER_WEIGHT, humorous: humor };
   const total = tiers.reduce((a, t) => a + w[t], 0);

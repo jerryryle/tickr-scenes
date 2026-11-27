@@ -8,6 +8,7 @@
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
 import { storyRigs } from "./storyvehicles.ts";
+import { vicRigs } from "./city-victorian/victorian-vehicles.ts";
 import type { StoryRig } from "./storyvehicles.ts";
 import { SB } from "./city-storybook/storybook-buildings-town.ts";
 import { Batch, keepWarm } from "./geom.ts";
@@ -34,6 +35,9 @@ export interface Obstacle { x: number; z: number; r: number; still?: boolean; ow
 // The storybook city's traffic is its own contraptions (storyvehicles.ts) and nothing else but the
 // Ryder trucks, which are cartoonish there as the player's is (fleet.ts, `toon`).
 const STORY_TRAFFIC: Record<string, number> = { hamster: 1.4, strider: 1.4, caterpillar: 0.8, pogo: 1.2, unicycle: 1.0, balloon: 0.8, teacup: 1.2, snail: 0.7, ryder: 0.8 };
+// The Victorian city's traffic is horse-drawn and period (city-victorian/victorian-vehicles.ts),
+// with a steam traction engine now and then, and the Ryder trucks, which are carriages there.
+const VIC_TRAFFIC: Record<string, number> = { hansom: 1.6, growler: 1.2, omnibus: 0.7, dray: 0.6, coster: 0.7, coalcart: 0.6, horseback: 0.8, pennyfarthing: 0.4, traction: 0.12, ryder: 0.8 };
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
   colors: number[] | null;             // body tints; null keeps the painted colours
@@ -138,6 +142,8 @@ export class Traffic {
       const cap = rig.id === "caterpillar" || rig.id === "balloon" ? 4 : 8;
       this.kinds.push({ id: rig.id, len: rig.len, width: rig.width, vmax: rig.vmax, weight: 0, colors: rigCols, mesh: null, cap, rig });
     }
+    // (And the Victorian city's (VIC_TRAFFIC), the same way, each with its own tints.)
+    for (const rig of vicRigs()) this.kinds.push({ id: rig.id, len: rig.len, width: rig.width, vmax: rig.vmax, weight: 0, colors: rig.colors, mesh: null, cap: rig.cap, rig });
     this.material = material;
     const bb = new Batch(); bb.box(0, 0, 0, 0.28, 0.14, 0.5, 0xffffff);
     const bm = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -323,7 +329,7 @@ export class Traffic {
   // in sight down a long street).
   private count(id: string, near: { x: number; z: number } | null = null) { let n = 0; for (const c of this.cars) if (c.kind.id === id && (!near || Math.hypot(c.x - near.x, c.z - near.z) <= TRAFFIC_DESPAWN)) n++; return n; }
   private pickKind(plan: CityPlan): VehicleKind | null {
-    const w = (k: VehicleKind) => plan.style.storybook ? STORY_TRAFFIC[k.id] ?? 0 : k.weight;
+    const w = (k: VehicleKind) => plan.style.storybook ? STORY_TRAFFIC[k.id] ?? 0 : plan.style.victorian ? VIC_TRAFFIC[k.id] ?? 0 : k.weight;
     const pool = this.kinds.filter((k) => w(k) > 0 && (k.id !== "icecream" || plan.style.id !== "port"));
     let t = this.rnd() * pool.reduce((a, k) => a + w(k), 0);
     for (const k of pool) { if ((t -= w(k)) < 0) return k; }

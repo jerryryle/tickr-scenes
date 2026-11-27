@@ -53,7 +53,7 @@ import type { Gate, KerbDoor } from "./city.ts";
 import type { CityGraph, CNode } from "./citygraph.ts";
 import { DOCK_PLATFORM, dockBayFor, dockDoorH, dockDoorW, dockStair, facilityAt, facilityName, hasSign, siteLayout } from "./facilities.ts";
 import type { FacilityId } from "./facilities.ts";
-import { CARGO, CARGO_BY_ID, pickCargo, SEA_CARGO, STORY_CARGO, STORY_FREIGHT, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
+import { CARGO, CARGO_BY_ID, pickCargo, SEA_CARGO, STORY_CARGO, STORY_FREIGHT, VIC_CARGO, VIC_FREIGHT, VIC_FREIGHT_IN, slotAlign, slotCompact, slotEnd, slotFind, TRUCK_SLOTS, truckCarries } from "./cargo.ts";
 import { blockGoals, LANE_KERB, Path, planRoute, STOP_BACK } from "./route.ts";
 import type { DockDoor, DockGeom, Goal, Pose, Route } from "./route.ts";
 import { freewayGate, freewayMerge, FW_OFF_V } from "./freeway.ts";
@@ -375,13 +375,18 @@ export class Journey {
   // city before it picks this up last, in this truck (swapping first if it must).
   // A storybook city sends its wonders on: the city after one picks them up last, from the works
   // (its bolts of knitting or its cloud cushions: every storybook city has the works).
+  // A Victorian city is the same with its steam brewery's ale and stout, and is itself brought one
+  // of the period goods that come from facilities every city has (cargo.ts VIC_FREIGHT_IN), so
+  // nothing modern arrives there.
   freightFor(N: number): { cargo: string; units: number; truck: TruckModel } | null {
     // (A visit's spec may give it.)
     const given = visitOf(this.cfg.seed, N).spec?.freight;
     if (given) return given === "none" ? null : { ...given };
     if (N <= 0) return null;
-    const pool = CARGO.filter((c) => c.tier === "common" && c.handling !== "walkOn" && !c.season && c.truck !== "flatbed");
-    const c = journeyStyle(this.cfg.seed, N - 1).storybook ? CARGO_BY_ID.get(STORY_FREIGHT[Math.floor(hash2(N, 5, this.cfg.seed, 0xf8e) * STORY_FREIGHT.length)])! : pool[Math.floor(hash2(N, 2, this.cfg.seed, 0xf8e) * pool.length)];
+    const pool = CARGO.filter((c) => c.tier === "common" && c.handling !== "walkOn" && !c.season && c.truck !== "flatbed" && !VIC_CARGO.has(c.id));
+    const pick = (ids: string[], k: number) => CARGO_BY_ID.get(ids[Math.floor(hash2(N, k, this.cfg.seed, 0xf8e) * ids.length)])!;
+    const c = journeyStyle(this.cfg.seed, N).victorian ? pick(VIC_FREIGHT_IN, 6) : journeyStyle(this.cfg.seed, N - 1).victorian ? pick(VIC_FREIGHT, 7)
+      : journeyStyle(this.cfg.seed, N - 1).storybook ? pick(STORY_FREIGHT, 5) : pool[Math.floor(hash2(N, 2, this.cfg.seed, 0xf8e) * pool.length)];
     const truck: TruckModel = c.truck === "box16" && hash2(N, 3, this.cfg.seed, 0xf8e) < 0.5 ? "box26" : c.truck;
     const units = Math.min(c.units[1], Math.max(c.units[0], Math.round(c.units[0] + (c.units[1] - c.units[0]) * hash2(N, 4, this.cfg.seed, 0xf8e))),
       Math.floor(TRUCK_SLOTS[truck] / c.slots), maxHandUnits(c.id));   // it may be picked up by hand
@@ -770,15 +775,18 @@ export class Journey {
     // When a swap is due: the cargo another truck is for (a box16 load too, though the box26 could
     // carry it) that has a source within reach. Most of it comes from few kinds of facility,
     // which many cities lack, so drawing it blind mostly misses.
-    const here = new Set([`${bx},${bz}`]);
+    // (In a Victorian city, only its own goods: cargo.ts VIC_CARGO.)
+    const here = new Set([`${bx},${bz}`]), vic = !!this.plan.style.victorian, own = vic ? VIC_CARGO : null;
     const pool = swapDue && !freight && !DEBUG_CARGO
-      ? new Set(CARGO.filter((c) => c.truck !== st.truck && !STORY_CARGO.has(c.id) && this.findNear(c.from, bx, bz, SWAP_SEARCH, here, 2, c.truck).length).map((c) => c.id))
+      ? new Set(CARGO.filter((c) => c.truck !== st.truck && (vic ? VIC_CARGO.has(c.id) : !STORY_CARGO.has(c.id) && !VIC_CARGO.has(c.id)) && this.findNear(c.from, bx, bz, SWAP_SEARCH, here, 2, c.truck).length).map((c) => c.id))
       : null;
     // (The waterfront's cargo with a source near, looked for once: makeJob's shore pick.)
     let seaNear: Set<string> | null = null;
     // (And the storybook city's wonders with a source near are likewise looked for once.)
     let storyNear: Set<string> | null = null;
     const storyHas = (k: { id: string }) => (storyNear ??= new Set([...STORY_CARGO].filter((id) => this.findNear(CARGO_BY_ID.get(id)!.from, bx, bz, 14, here, 1).length > 0))).has(k.id);
+    let vicNear: Set<string> | null = null;
+    const vicHas = (k: { id: string }) => (vicNear ??= new Set([...VIC_CARGO].filter((id) => this.findNear(CARGO_BY_ID.get(id)!.from, bx, bz, 14, here, 1).length > 0))).has(k.id);
     const seaHas = (k: { id: string }) => (seaNear ??= new Set([...SEA_CARGO].filter((id) => this.findNear(CARGO_BY_ID.get(id)!.from, bx, bz, SEARCH, here, 1).length > 0))).has(k.id);
     for (let attempt = 0; attempt < 24; attempt++) {
       st.jobCounter++;
@@ -787,15 +795,19 @@ export class Journey {
       // (In a town on the sea, half the first attempts try the waterfront's cargo, where it has a
       // source near and this truck can carry it (or a swap is due): its fish markets, chandlers and
       // surf shops, facilities.ts waterfrontAt. About one job in ten comes out the waterfront's.)
-      const shore = !freight && !DEBUG_CARGO && !change && attempt < 12 && this.plan.outline.sea !== null && this.rand(9) < 0.5
+      const shore = !freight && !DEBUG_CARGO && !change && !vic && attempt < 12 && this.plan.outline.sea !== null && this.rand(9) < 0.5
         ? pickCargo(this.rand(1), this.rand(2), 0, season, (k) => SEA_CARGO.has(k.id) && (swapDue || truckCarries(st.truck, k.truck)) && seaHas(k)) : null;
       // (In the storybook city, half the first attempts are its own wonders (cargo.ts STORY_CARGO),
       // one with a source near that this truck can carry. Nowhere else are they ever drawn.)
       const story = !freight && !DEBUG_CARGO && !change && !shore && attempt < 10 && this.plan.style.storybook && this.rand(11) < 0.5
-        ? pickCargo(this.rand(1), this.rand(2), 0, season, (k) => STORY_CARGO.has(k.id) && (swapDue || truckCarries(st.truck, k.truck)) && storyHas(k), true) : null;
-      const c = freight ? CARGO_BY_ID.get(freight.cargo)! : (DEBUG_CARGO && CARGO_BY_ID.get(DEBUG_CARGO)) || shore || story ||
-        (change && pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season, (k) => pool!.has(k.id))) ||
-        pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season)!;
+        ? pickCargo(this.rand(1), this.rand(2), 0, season, (k) => STORY_CARGO.has(k.id) && (swapDue || truckCarries(st.truck, k.truck)) && storyHas(k), STORY_CARGO) : null;
+      // (In a Victorian city, the first attempts are its goods with a source near that this truck
+      // can carry; the rest any of its goods.)
+      const period = vic && !freight && !DEBUG_CARGO && !change && attempt < 16
+        ? pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season, (k) => VIC_CARGO.has(k.id) && (swapDue || truckCarries(st.truck, k.truck)) && vicHas(k), VIC_CARGO) : null;
+      const c = freight ? CARGO_BY_ID.get(freight.cargo)! : (DEBUG_CARGO && CARGO_BY_ID.get(DEBUG_CARGO)) || shore || story || period ||
+        (change && pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season, (k) => pool!.has(k.id), own)) ||
+        pickCargo(this.rand(1), this.rand(2), this.cfg.humorFrequency, season, own ? (k) => own.has(k.id) : undefined, own)!;
       // The final pickup goes in any truck that can carry all of the next city's freight (it
       // changes to the next city's truck at the country truck stop); otherwise swap first.
       // The final pickup goes in the next city's own truck (swapping first if need be): the
@@ -810,9 +822,10 @@ export class Journey {
       // widening the search only after a few attempts.
       // Rare and humorous cargo comes from rare facilities, so it may look further afield. A
       // swap's cargo looks as far as its pool did.
-      const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous" || SEA_CARGO.has(c.id) || STORY_CARGO.has(c.id);   // (the waterfront's and the works' come from few places)
-      // (The storybook city has one works: its freight is fetched from it wherever it is in town.)
-      let sources = this.findNear(c.from, bx, bz, reach || (STORY_CARGO.has(c.id) && freight ? 40 : change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2, truck);
+      const near = attempt < 14, wide = c.tier === "rare" || c.tier === "humorous" || SEA_CARGO.has(c.id) || STORY_CARGO.has(c.id) || VIC_CARGO.has(c.id);   // (the waterfront's, the works' and the Victorian city's come from few places)
+      // (The storybook city has one works, and the Victorian city one brewery: its freight is fetched
+      // from it wherever it is in town.)
+      let sources = this.findNear(c.from, bx, bz, reach || ((STORY_CARGO.has(c.id) || VIC_FREIGHT.includes(c.id)) && freight ? 40 : change ? SWAP_SEARCH : freight ? (near ? 9 : 18) : wide ? (near ? 7 : 14) : near ? 5 : SEARCH), avoid, 2, truck);
       if (!sources.length) continue;
       // (A load left on the pallet jack: from a dock, or a shop with a door it can come out of,
       // rather than one where it would have to wait on the pavement, if there are any.)

@@ -21,6 +21,11 @@ const CK = {
   card: 0xb07a45, tape: 0xd8c08a, white: 0xeeeee8, black: 0x1c1c1e, steel: 0x9aa0a6, wood: 0xa47a4a, darkWood: 0x6b4a2c,
   red: 0xc0392b, blue: 0x1f5fb0, yellow: 0xf2c200, green: 0x2e8b57, orange: 0xe67e22, pink: 0xf08bb4, gold: 0xd4af37,
 };
+// The Victorian goods' palette, and the turned profiles of a barrel, a milk churn and a horn (Batch.lathe).
+const VC = { tin: 0x8a8a84, stencil: 0x2a2018, iron: 0x2a2a2a, cream: 0xece2c8, brass: 0xc9a040, enamel: 0xf4f4f0, japan: 0x141414, gilt: 0xd4af37 };
+const BARREL = [[0.78, 0], [0.9, 0.12], [0.98, 0.3], [1, 0.5], [0.98, 0.7], [0.9, 0.88], [0.78, 1]] as const;
+const CHURN = [[0.92, 0], [1, 0.03], [1, 0.6], [0.96, 0.68], [0.7, 0.82], [0.56, 0.9], [0.56, 1]] as const;
+const HORN = [[0.08, 0], [0.1, 0.3], [0.18, 0.6], [0.4, 0.82], [1, 1]] as const;
 const TRAILER_SAILER = { scale: 0.5, mastDown: true }, JETSKI = { scale: 0.8 };
 const vpick = <T,>(a: T[], i: number) => a[((i % a.length) + a.length) % a.length];
 
@@ -120,6 +125,220 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.boxR(x + 0.02, y + 0.21, z, 0.36, 0.03, 0.26, c, 0, 0, 0.3);
     b.box(x, y + 0.085, z + 0.134, 0.3, 0.02, 0.006, 0xd4af37);
     b.box(x - 0.12, y + 0.09, z - 0.145, 0.03, 0.03, 0.03, 0xd4af37); b.box(x - 0.12, y + 0.12, z - 0.155, 0.02, 0.06, 0.02, 0xd4af37);
+  } },
+  // ---- the Victorian city's goods (cargo.ts VIC_CARGO) ----
+  // A tea chest is a plywood cube edged in tin, stencilled with the merchant's red roundel and mark.
+  teaChests: { size: [0.5, 0.5, 0.5], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.25, z, 0.5, 0.5, 0.5, vpick([0xcda36a, 0xc0945e, 0xd6b07a], i));
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(x + sx * 0.245, y + 0.25, z + sz * 0.245, 0.03, 0.5, 0.03, VC.tin);
+    for (const yy of [0.015, 0.485]) for (const s of [-1, 1]) { b.box(x, y + yy, z + s * 0.245, 0.5, 0.03, 0.03, VC.tin); b.box(x + s * 0.245, y + yy, z, 0.03, 0.03, 0.5, VC.tin); }
+    for (const s of [-1, 1]) {
+      b.cyl(x, y + 0.31, z + s * 0.253, 0.085, 0.006, vpick([0xa8322a, 0x2a4a7a, 0xa8322a], i), 10, Math.PI / 2);
+      b.box(x, y + 0.14, z + s * 0.253, 0.3, 0.05, 0.006, VC.stencil);
+      b.cyl(x + s * 0.253, y + 0.28, z, 0.07, 0.006, VC.stencil, 8, 0, Math.PI / 2);
+    }
+  } },
+  // A barrel of ale stands on end, bellied oak bound in four iron hoops, its head pale.
+  aleBarrels: { size: [0.5, 0.64, 0.5], build: (b, x, y, z, i) => {
+    b.lathe("barrel", BARREL, x, y, z, 0.25, 0.64, vpick([0x9a6a3a, 0x8a5e34, 0xa87444], i), 12);
+    for (const k of [0, 1]) b.cyl(x, y + 0.004 + k * 0.632, z, 0.2, 0.008, 0xc89a64, 12);
+    for (const [t, r] of [[0.1, 0.226], [0.27, 0.245], [0.73, 0.245], [0.9, 0.226]]) b.cyl(x, y + t * 0.64, z, r + 0.006, 0.035, VC.iron, 12);
+  } },
+  // A cask of stout lies on its side to be rolled: dark oak, black hoops, and a cream-painted head.
+  stoutCasks: { size: [0.62, 0.62, 0.72], round: true, build: (b, x, y, z) => {
+    b.lathe("barrel", BARREL, x, y + 0.31, z - 0.36, 0.31, 0.72, 0x4e321e, 12, 0, Math.PI / 2);
+    for (const s of [-1, 1]) {
+      b.cyl(x, y + 0.31, z + s * 0.356, 0.25, 0.008, VC.cream, 12, Math.PI / 2);
+      b.cyl(x, y + 0.31, z + s * 0.361, 0.2, 0.004, 0x8a2a20, 14, Math.PI / 2); b.cyl(x, y + 0.31, z + s * 0.364, 0.17, 0.004, VC.cream, 14, Math.PI / 2);
+      b.cyl(x + 0.08, y + 0.24, z + s * 0.367, 0.035, 0.004, 0x2a1a10, 8, Math.PI / 2);
+    }
+    for (const [t, r] of [[0.1, 0.28], [0.27, 0.304], [0.73, 0.304], [0.9, 0.28]]) b.cyl(x, y + 0.31, z - 0.36 + t * 0.72, r + 0.006, 0.04, VC.iron, 12, Math.PI / 2);
+  } },
+  // A sack of flour lies plump on its side, the miller's blue mark on its flank and its ends tied.
+  flourSacks: { size: [0.52, 0.28, 0.38], build: (b, x, y, z, i) => {
+    const cloth = vpick([0xe8e0c8, 0xded4b8, 0xece6d4], i);
+    b.box(x, y + 0.075, z, 0.48, 0.15, 0.38, cloth);
+    b.cyl(x, y + 0.14, z, 0.14, 0.48, cloth, 10, 0, Math.PI / 2);
+    for (const s of [-1, 1]) {
+      b.box(x + s * 0.255, y + 0.12, z, 0.03, 0.1, 0.12, cloth);
+      b.box(x, y + 0.09, z + s * 0.193, 0.28, 0.08, 0.006, vpick([0x2a4a7a, 0x8a2a24], i));
+    }
+  } },
+  // A coal sack is dark sacking with its mouth open on a heap of black lumps.
+  coalSacks: { size: [0.5, 0.42, 0.4], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.17, z, 0.46, 0.34, 0.38, 0x443a2e);
+    b.box(x, y + 0.335, z, 0.48, 0.04, 0.4, 0x564a3a);
+    ([[-0.1, -0.06, 0.1], [0.08, 0.07, 0.09], [0.1, -0.09, 0.08], [-0.08, 0.1, 0.08], [0, 0, 0.1]] as const).forEach(([dx, dz, r], k) => b.ico(x + dx, y + 0.35, z + dz, r, (i + k) % 2 ? 0x16161a : 0x24262c, 0.7));
+  } },
+  // A milk churn is a tall tin can with a shoulder and neck, a mushroom lid, handles and a brass plate.
+  milkChurns: { size: [0.36, 0.66, 0.36], build: (b, x, y, z, i) => {
+    b.lathe("churn", CHURN, x, y, z, 0.18, 0.6, 0xc8ccd0, 12);
+    b.cyl(x, y + 0.001, z, 0.165, 0.002, 0xa0a4a8, 12);
+    b.cyl(x, y + 0.615, z, 0.1, 0.03, 0xb8bcc0, 10);
+    b.cyl(x, y + 0.64, z, 0.115, 0.025, 0xc8ccd0, 10);
+    b.box(x, y + 0.655, z, 0.12, 0.012, 0.025, 0x8a8e92);
+    b.cyl(x, y + 0.3, z, 0.183, 0.07, vpick([0xc9a040, 0xb08a3a], i), 12);
+    for (const s of [-1, 1]) b.box(x, y + 0.5, z + s * 0.15, 0.08, 0.025, 0.04, 0x8a8e92);
+  } },
+  // A crate of soap is pale pine with corner posts, and the soapmaker's label on two sides.
+  soapCrates: { size: [0.56, 0.32, 0.4], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.16, z, 0.56, 0.32, 0.4, 0xd8b47c);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.box(x + sx * 0.265, y + 0.16, z + sz * 0.185, 0.04, 0.324, 0.04, 0xa8844e);
+    for (const dz of [-0.07, 0.07]) b.box(x, y + 0.322, z + dz, 0.5, 0.004, 0.012, 0x8a6a3e);
+    const ink = vpick([0xb83228, 0x2a6a3a, 0x2a4a8a], i);
+    for (const s of [-1, 1]) {
+      b.box(x, y + 0.17, z + s * 0.203, 0.3, 0.15, 0.004, VC.cream);
+      b.cyl(x, y + 0.17, z + s * 0.206, 0.055, 0.004, ink, 10, Math.PI / 2);
+      for (const dx of [-0.1, 0.1]) b.box(x + dx, y + 0.17, z + s * 0.206, 0.06, 0.02, 0.004, ink);
+    }
+  } },
+  // A hat box is a round band box, its lid a shade apart, tied across the top with a ribbon and bow.
+  hatBoxes: { size: [0.44, 0.28, 0.44], build: (b, x, y, z, i) => {
+    const [body, lid, rib] = vpick([[0xe8b4bc, 0xf4ece2, 0x7a1f3a], [0x9ab8a8, 0x3a4e44, 0xf4ece2], [0xdcc89a, 0x2a3a5a, 0xc04050], [0xb8a8d4, 0xf4ece2, 0x4a2a6a]], i);
+    b.cyl(x, y + 0.12, z, 0.2, 0.24, body, 14);
+    b.cyl(x, y + 0.25, z, 0.215, 0.06, lid, 14);
+    b.box(x, y + 0.282, z, 0.43, 0.006, 0.035, rib); b.box(x, y + 0.282, z, 0.035, 0.006, 0.43, rib);
+    for (const s of [-1, 1]) b.ico(x + s * 0.035, y + 0.29, z, 0.035, rib, 0.6);
+  } },
+  // A steamer trunk is canvas over wood, banded with slats, brass at the corners and leather handles.
+  steamerTrunk: { size: [1.0, 0.62, 0.56], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.3, z, 0.98, 0.6, 0.54, vpick([0x5e3e24, 0x3a4a3a, 0x6a2a22], i));
+    for (const dx of [-0.3, 0.3]) b.box(x + dx, y + 0.3, z, 0.06, 0.61, 0.56, 0xb88e5a);
+    for (const yy of [0.04, 0.42, 0.58]) b.box(x, y + yy, z, 1.0, 0.04, 0.56, 0xb88e5a);
+    for (const sx of [-1, 1]) for (const yy of [0.04, 0.58]) for (const sz of [-1, 1]) b.box(x + sx * 0.48, y + yy, z + sz * 0.26, 0.06, 0.06, 0.06, VC.brass);
+    for (const sx of [-1, 1]) b.box(x + sx * 0.505, y + 0.32, z, 0.02, 0.04, 0.2, 0x2a1a10);
+    b.box(x, y + 0.42, z + 0.283, 0.08, 0.1, 0.01, VC.brass);
+  } },
+  // A rolled carpet is a long roll in a deep ground with bands of its border showing, fringed at the ends.
+  carpets: { size: [2.2, 0.34, 0.34], build: (b, x, y, z, i) => {
+    const [ground, band, end] = vpick([[0x8a1f24, 0x1f2a5a, 0xd8b878], [0x1f3a5a, 0xc8a050, 0x8a1f24], [0x5a3a1a, 0xc87a3a, 0x2a4a3a]], i);
+    b.cyl(x, y + 0.17, z, 0.17, 2.1, ground, 12, 0, Math.PI / 2);
+    for (const dx of [-0.85, -0.3, 0.3, 0.85]) b.cyl(x + dx, y + 0.17, z, 0.174, 0.1, band, 12, 0, Math.PI / 2);
+    for (const s of [-1, 1]) {
+      b.cyl(x + s * 1.052, y + 0.17, z, 0.16, 0.004, end, 12, 0, Math.PI / 2);
+      b.cyl(x + s * 1.055, y + 0.17, z, 0.08, 0.004, ground, 8, 0, Math.PI / 2);
+      b.cyl(x + s * 1.075, y + 0.17, z, 0.15, 0.04, VC.cream, 10, 0, Math.PI / 2);
+    }
+  } },
+  // A penny-farthing: a tall front wheel and a small one behind, joined by a curved backbone, with a
+  // saddle over the big wheel and its handlebar across.
+  pennyFarthing: { size: [1.5, 1.32, 0.3], build: (b, x, y, z, i) => {
+    const frame = vpick([0x1a1a1a, 0x5a1a1a, 0x1e3a2a], i);
+    const wheel = (cx: number, cy: number, r: number, n: number) => {
+      for (let k = 0; k < n; k++) { const a = (k / n) * Math.PI * 2; b.boxR(cx + r * Math.cos(a), cy + r * Math.sin(a), z, (2 * Math.PI * r / n) * 1.08, 0.035, 0.04, 0x2a2a2a, 0, 0, a + Math.PI / 2); }
+      for (let k = 0; k < n / 3; k++) b.boxR(cx, cy, z, 2 * r, 0.012, 0.012, 0x9aa0a6, 0, 0, (k / (n / 3)) * Math.PI);
+      b.cyl(cx, cy, z, 0.04, 0.1, frame, 8, Math.PI / 2);
+    };
+    const fx = x + 0.15, fr = 0.6, rx = x - 0.58, rr = 0.17;
+    wheel(fx, y + fr, fr, 24); wheel(rx, y + rr, rr, 12);
+    for (const s of [-1, 1]) b.box(fx, y + fr + 0.33, z + s * 0.05, 0.03, 0.66, 0.02, frame);   // (the fork, from the hub to the head)
+    // (The backbone: from the head down round the big wheel's back to the little wheel's hub.)
+    const pts: [number, number][] = [[fx - 0.02, y + 1.24], [fx - 0.35, y + 1.13], [fx - 0.58, y + 0.88], [rx + 0.05, y + 0.45], [rx, y + rr]];
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const [ax, ay] = pts[k], [bx, by] = pts[k + 1];
+      b.boxR((ax + bx) / 2, (ay + by) / 2, z, Math.hypot(bx - ax, by - ay) + 0.02, 0.035, 0.035, frame, 0, 0, Math.atan2(by - ay, bx - ax));
+    }
+    b.box(fx - 0.12, y + 1.27, z, 0.2, 0.05, 0.1, 0x5a3a22);
+    b.box(fx + 0.02, y + 1.29, z, 0.03, 0.03, 0.5, frame);
+    for (const s of [-1, 1]) b.box(fx + 0.02, y + 1.29, z + s * 0.26, 0.05, 0.04, 0.05, 0x8a6a48);
+  } },
+  // A sewing machine is the black head with gold scrollwork on a polished base, its wheel at the side.
+  sewingMachine: { size: [0.46, 0.34, 0.22], build: (b, x, y, z) => {
+    b.box(x, y + 0.03, z, 0.46, 0.06, 0.22, 0x6a3a1e);
+    b.box(x, y + 0.075, z, 0.4, 0.03, 0.18, VC.japan);
+    b.box(x + 0.13, y + 0.17, z, 0.08, 0.17, 0.1, VC.japan);
+    b.box(x - 0.01, y + 0.27, z, 0.36, 0.07, 0.1, VC.japan);
+    b.box(x - 0.16, y + 0.2, z, 0.06, 0.13, 0.08, VC.japan);
+    b.box(x - 0.17, y + 0.11, z, 0.008, 0.06, 0.008, 0xd8dce0);
+    for (const s of [-1, 1]) b.box(x - 0.01, y + 0.27, z + s * 0.052, 0.26, 0.025, 0.004, VC.gilt);
+    b.cyl(x + 0.19, y + 0.23, z, 0.07, 0.03, 0x8a8e92, 12, 0, Math.PI / 2);
+    b.cyl(x + 0.05, y + 0.32, z, 0.015, 0.03, 0xc8323a, 6);
+  } },
+  // A grandfather clock lies on its back to be carried, head first: a mahogany case, the cream dial
+  // up in its hood, and the brass pendulum behind the trunk's glass.
+  grandfatherClock: { size: [2.0, 0.44, 0.52], build: (b, x, y, z, i) => {
+    const wood = vpick([0x5a2a18, 0x6e3a1e, 0x3e2214], i);
+    b.box(x - 0.8, y + 0.21, z, 0.4, 0.42, 0.52, wood);
+    b.box(x - 0.1, y + 0.18, z, 1.0, 0.36, 0.42, wood);
+    b.box(x + 0.7, y + 0.21, z, 0.58, 0.42, 0.52, wood);
+    b.box(x + 0.97, y + 0.22, z, 0.06, 0.44, 0.56, 0x2a1810);
+    for (const s of [-1, 1]) b.ico(x + 1.0, y + 0.36, z + s * 0.2, 0.04, VC.brass);
+    b.cyl(x + 0.66, y + 0.425, z, 0.19, 0.01, VC.cream, 16);
+    b.cyl(x + 0.82, y + 0.426, z, 0.1, 0.01, 0x2a3a7a, 10);
+    b.box(x + 0.72, y + 0.433, z, 0.13, 0.004, 0.016, 0x111111); b.box(x + 0.66, y + 0.434, z + 0.05, 0.016, 0.004, 0.1, 0x111111);
+    b.box(x - 0.08, y + 0.362, z, 0.64, 0.006, 0.22, 0x1a120c);
+    b.box(x + 0.05, y + 0.366, z, 0.42, 0.004, 0.015, VC.brass);
+    b.cyl(x - 0.22, y + 0.367, z, 0.07, 0.006, VC.brass, 12);
+  } },
+  // A cast-iron bath stands on four gilt claw feet: painted outside, white enamel within its rolled rim.
+  clawBath: { size: [1.6, 0.7, 0.76], build: (b, x, y, z, i) => {
+    const paint = vpick([0x2e4a36, 0x6a1f2a, 0xe0d8c4, 0x2a3a5a], i);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) { b.box(x + sx * 0.55, y + 0.09, z + sz * 0.22, 0.06, 0.14, 0.06, VC.brass); b.ico(x + sx * 0.57, y + 0.04, z + sz * 0.23, 0.05, VC.brass, 0.8); }
+    b.box(x, y + 0.4, z, 0.84, 0.52, 0.76, paint);
+    for (const s of [-1, 1]) b.cyl(x + s * 0.42, y + 0.4, z, 0.38, 0.52, paint, 16);
+    b.box(x, y + 0.675, z, 0.86, 0.03, 0.8, VC.enamel);
+    for (const s of [-1, 1]) b.cyl(x + s * 0.42, y + 0.675, z, 0.4, 0.03, VC.enamel, 16);
+    b.box(x, y + 0.692, z, 0.84, 0.004, 0.62, 0xc4ccd2);
+    for (const s of [-1, 1]) b.cyl(x + s * 0.42, y + 0.692, z, 0.31, 0.004, 0xc4ccd2, 16);
+  } },
+  // A birdcage is a brass dome of bars on a round tray, its ring on top and a canary on the perch.
+  birdcage: { size: [0.36, 0.66, 0.36], build: (b, x, y, z) => {
+    b.cyl(x, y + 0.03, z, 0.17, 0.06, VC.brass, 14);
+    const N = 12;
+    for (let k = 0; k < N; k++) {
+      const a = (k / N) * Math.PI * 2, cx = Math.cos(a) * 0.15, cz = Math.sin(a) * 0.15;
+      b.cyl(x + cx, y + 0.24, z + cz, 0.006, 0.36, VC.brass, 4);
+      // (Every other bar curves on over the dome, as two straight pieces, to the crown.)
+      if (k % 2) continue;
+      for (const [r0, y0, r1, y1] of [[0.15, 0.42, 0.11, 0.53], [0.11, 0.53, 0.0, 0.59]]) {
+        const l = Math.hypot(r1 - r0, y1 - y0), tilt = Math.atan2(r0 - r1, y1 - y0);
+        b.boxR(x + Math.cos(a) * (r0 + r1) / 2, y + (y0 + y1) / 2, z + Math.sin(a) * (r0 + r1) / 2, 0.012, l, 0.012, VC.brass, 0, -a, tilt);
+      }
+    }
+    for (const yy of [0.07, 0.42]) b.tubeSeg(x, y + yy, z, 0.153, 0.015, VC.brass, 14);
+    b.ico(x, y + 0.6, z, 0.025, VC.brass);
+    b.tubeSeg(x, y + 0.635, z, 0.03, 0.01, VC.brass, 8, Math.PI / 2);
+    b.box(x, y + 0.2, z, 0.006, 0.006, 0.28, 0x8a6a48);
+    b.ico(x, y + 0.24, z, 0.045, 0xf2d230, 1.1); b.ico(x + 0.04, y + 0.27, z, 0.025, 0xf2d230); b.box(x + 0.068, y + 0.27, z, 0.015, 0.008, 0.01, 0xe08a2a);
+    b.boxR(x - 0.05, y + 0.22, z, 0.05, 0.012, 0.03, 0xd8b828, 0, 0, -0.5);
+  } },
+  // A gramophone: a mahogany box with a black record on its turntable and a great brass horn.
+  gramophone: { size: [0.64, 0.66, 0.4], build: (b, x, y, z) => {
+    b.box(x - 0.14, y + 0.08, z, 0.34, 0.16, 0.34, 0x5a2a18);
+    b.box(x - 0.14, y + 0.012, z, 0.36, 0.024, 0.36, 0x3e1c10);
+    b.cyl(x - 0.14, y + 0.165, z, 0.15, 0.01, 0x161616, 16);
+    b.cyl(x - 0.14, y + 0.171, z, 0.05, 0.004, 0xb83228, 8);
+    b.box(x - 0.26, y + 0.2, z + 0.12, 0.03, 0.08, 0.03, VC.brass);
+    b.boxR(x - 0.18, y + 0.22, z + 0.06, 0.2, 0.02, 0.02, VC.brass, 0, 0.6, 0);
+    b.lathe("horn", HORN, x - 0.1, y + 0.2, z, 0.2, 0.42, VC.brass, 14, 0, 0, -0.7);
+    b.cyl(x + 0.168, y + 0.517, z, 0.18, 0.004, 0x5a3a14, 14, 0, -0.7);
+  } },
+  // A cello case stands on end: a waisted leather shell, broad below and narrow above, with its neck.
+  celloCase: { size: [0.46, 1.24, 0.28], build: (b, x, y, z, i) => {
+    const hide = vpick([0x1e1a18, 0x6a3a1e, 0x2a3a2a], i);
+    b.cyl(x, y + 0.24, z, 0.22, 0.26, hide, 16, Math.PI / 2);
+    b.cyl(x, y + 0.66, z, 0.17, 0.24, hide, 14, Math.PI / 2);
+    b.box(x, y + 0.45, z, 0.3, 0.4, 0.22, hide);
+    b.box(x, y + 0.98, z, 0.13, 0.5, 0.18, hide);
+    b.cyl(x, y + 1.2, z, 0.075, 0.18, hide, 10, Math.PI / 2);
+    for (const yy of [0.2, 0.55, 0.95]) b.box(x, y + yy, z + 0.133, 0.05, 0.03, 0.006, VC.brass);
+    b.box(x, y + 0.7, z + 0.13, 0.12, 0.03, 0.03, 0x2a1a10);
+  } },
+  // A stuffed bear for the museum rears on its plinth, paws up, its muzzle paler than its coat.
+  stuffedBear: { size: [0.9, 1.85, 0.8], build: (b, x, y, z) => {
+    const fur = 0x5a3a24, muzzle = 0x9a7a54;
+    b.box(x, y + 0.08, z, 0.9, 0.16, 0.8, 0x3e2414); b.box(x, y + 0.165, z, 0.84, 0.01, 0.74, 0x5e4a2a);
+    for (const s of [-1, 1]) { b.ico(x, y + 0.42, z + s * 0.17, 0.17, fur, 1.5); b.box(x + 0.06, y + 0.2, z + s * 0.17, 0.24, 0.08, 0.14, fur); }
+    b.ico(x, y + 0.98, z, 0.36, fur, 1.55);
+    b.ico(x + 0.1, y + 0.95, z, 0.26, 0x6e4a2e, 1.4);
+    b.ico(x + 0.1, y + 1.56, z, 0.2, fur, 1.0);
+    b.ico(x + 0.28, y + 1.52, z, 0.1, muzzle, 0.8); b.ico(x + 0.37, y + 1.54, z, 0.03, 0x111111);
+    for (const s of [-1, 1]) {
+      b.ico(x + 0.02, y + 1.74, z + s * 0.12, 0.06, fur);
+      b.ico(x + 0.23, y + 1.62, z + s * 0.08, 0.02, 0x111111);
+      for (const [dx, dy, dz, r] of [[0.06, 1.32, 0.3, 0.11], [0.15, 1.48, 0.36, 0.1], [0.24, 1.62, 0.39, 0.09]]) b.ico(x + dx, y + dy, z + s * dz, r, fur);
+      for (const dz of [-0.04, 0, 0.04]) b.box(x + 0.33, y + 1.64, z + s * (0.39 + dz), 0.06, 0.015, 0.012, VC.cream);
+    }
   } },
   truckTires: { size: [1.0, 1.0, 0.3], round: true, build: (b, x, y, z) => {
     b.cyl(x, y + 0.5, z, 0.5, 0.3, CK.black, 14, Math.PI / 2); b.cyl(x, y + 0.5, z, 0.26, 0.31, 0x8a9096, 8, Math.PI / 2);

@@ -24,7 +24,7 @@ import type { Aboard, DwellNow, Stop } from "./journey.ts";
 import { swapClear, swapWalkPace, swapWalkPoint, swapWalkU } from "./director.ts";
 import { BedLoad, buildCarried, Herd } from "./loads.ts";
 import type { CarriedLoad } from "./loads.ts";
-import { ARM_F, ARM_U, blendPose, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
+import { ARM_F, ARM_U, blendPose, CARTER_DRIVER, CARTER_MATE, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
 import type { BodyPose } from "./character.ts";
 
 
@@ -75,8 +75,8 @@ export class Crew {
   private v3 = new THREE.Vector3(); private v4 = new THREE.Vector3(); private v5 = new THREE.Vector3(); private v6 = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
-    this.driver = new Character(material, DRIVER_LOOK);
-    this.helper = new Character(material, WORKER_LOOK, true);
+    this.driver = new Character(material, DRIVER_LOOK, false, CARTER_DRIVER);
+    this.helper = new Character(material, WORKER_LOOK, true, CARTER_MATE);
     this.helper.root.visible = false;
     scene.add(this.driver.root, this.helper.root);
     this.scene = scene; this.material = material;
@@ -107,6 +107,22 @@ export class Crew {
       this.jackHandle = new THREE.Group(); this.jackHandle.add(hb.build(material)!);
       this.jackHandle.position.set(JACK_PIVOT[0], JACK_PIVOT[1], 0);
       this.tools.palletJack.add(this.jackHandle);
+    }
+    // In a Victorian city the hand truck is a wooden sack truck in the same frame: oak rails with
+    // turned grips past the top rung, iron-tyred wheels and an iron nose plate (update shows one
+    // or the other).
+    {
+      const b = new Batch(), OAK = 0x9a6e40, IRON = 0x2e2e30;
+      for (const z of [-0.2, 0.2]) {
+        b.cyl(0, 0, z, HT_WHEEL, 0.05, IRON, 10, Math.PI / 2); b.cyl(0, 0, z, HT_WHEEL * 0.55, 0.055, OAK, 8, Math.PI / 2);
+        b.box(0.02, 0.57, z * 0.9, 0.05, 1.3, 0.05, OAK);
+        b.box(0.02, HT_GRIP[1] + 0.06, z * 0.9, 0.035, 0.14, 0.035, 0x5a3a22);
+      }
+      for (const y of [0.3, 0.65, HT_GRIP[1] - 0.04]) b.box(0.02, y, 0, 0.03, 0.04, 0.36, OAK);
+      b.box(0.14, HT_PLATE + 0.015, 0, 0.24, 0.03, 0.4, IRON);
+      b.box(0.02, 0, 0, 0.03, 0.03, 0.46, IRON);
+      const sack = b.build(material)!; sack.visible = false;
+      this.tools.handTruck.add(sack);
     }
     // Forklift in its own frame: origin on the ground under the fork heels, forks along +x.
     {
@@ -180,10 +196,15 @@ export class Crew {
     this.stagedShown.length = 0;
     this.herd?.hide();
     this.tools.handTruck.visible = this.tools.palletJack.visible = false;
+    { const [modern, sack] = this.tools.handTruck.children, vic = !!j.plan?.style.victorian; modern.visible = !vic; sack.visible = vic; }
     this.forklift.visible = false; this.stackWorking = false;
     this.forkDoor = 0; this.forkSpot = null; this.mateSpot = null;
     this.gagPoint = null;
     d.root.visible = true;
+    // In carter's dress in the Victorian city, and on the road while more than half of it has crept
+    // in (CountryRoad.periodAt), as the trucks turn toons by storyAt (main.ts setToon).
+    const road0 = st.mode === "country" ? j.country : null;
+    d.period = this.helper.period = road0 ? road0.periodAt(j.countryS) > 0.5 : !!j.plan.style.victorian;
     d.vestOn = false;   // (on for a dock stop, below: set on every update, so a scrub back takes it off)
     // (A tractor-trailer's door dwell before or after a dock stop, journey.ts doorDwell: the driver
     // at its doors only, the stop's loads and the dock's worker not in it.)

@@ -39,9 +39,9 @@ export interface TeamLayout {
   dash: number; pivot: number; horses: [number, number][]; scale: number; pole: boolean;
   rear: [number, number]; tip: [number, number]; reach: number; front: number; back: number;
 }
-const LAYOUTS = new Map<TruckSpec, TeamLayout>();
+const TEAM_LAYOUTS = new Map<TruckSpec, TeamLayout>();
 export function teamLayout(s: TruckSpec): TeamLayout {
-  let L = LAYOUTS.get(s);
+  let L = TEAM_LAYOUTS.get(s);
   if (L) return L;
   const pole = s.cab === "daycab", scale = 0.9, front = 0.82, back = 1.0;
   // (The dashboard stands far enough ahead of the seat for the coachman's feet and the climb's
@@ -57,14 +57,14 @@ export function teamLayout(s: TruckSpec): TeamLayout {
   const rear: [number, number] = [pole ? s.wheelR * front + 0.12 : dash - 0.02 - pivot, pole ? 0.72 : 0.9];
   const tip: [number, number] = pole ? [wx + 0.62 * scale - pivot, 1.02 * scale] : [wx + 0.42 * scale - pivot, 1.15 * scale + 0.04];
   L = { dash, pivot, horses, scale, pole, rear, tip, reach, front, back };
-  LAYOUTS.set(s, L);
+  TEAM_LAYOUTS.set(s, L);
   return L;
 }
 
 // ---- a few shapes --------------------------------------------------------------------------------
-type V3 = [number, number, number];
+type CarV3 = [number, number, number];
 // A straight rod or strap from A to B, `w` across (z when level) and `t` thick.
-export function carRod(b: Batch, A: V3, B: V3, w: number, t: number, color: number) {
+export function carRod(b: Batch, A: CarV3, B: CarV3, w: number, t: number, color: number) {
   const dx = B[0] - A[0], dy = B[1] - A[1], dz = B[2] - A[2], len = Math.hypot(dx, dy, dz) || 1e-3;
   const rz = Math.asin(THREE.MathUtils.clamp(dy / len, -1, 1)), ry = Math.atan2(-dz, dx);
   b.boxR((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2, len, t, w, color, 0, ry, rz);
@@ -89,7 +89,7 @@ export function spokedWheel(b: Batch) {
 
 // ---- lettering -----------------------------------------------------------------------------------
 // A sign-writer's letters, 5 by 7 cells, each row's runs of cells drawn as one block.
-const GLYPHS: Record<string, string[]> = {
+const CAR_GLYPHS: Record<string, string[]> = {
   A: [" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"], C: [" ####", "#    ", "#    ", "#    ", "#    ", "#    ", " ####"],
   D: ["#### ", "#   #", "#   #", "#   #", "#   #", "#   #", "#### "], E: ["#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#####"],
   H: ["#   #", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"], I: [" ### ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "],
@@ -103,10 +103,10 @@ const GLYPHS: Record<string, string[]> = {
 };
 // letters writes `text` centred on (x, y) on a side of the van facing `face` (+1: +z, -1: -z) at
 // z, its letters `h` tall, standing `t` proud.
-export function letters(b: Batch, text: string, x: number, y: number, z: number, face: 1 | -1, h: number, t: number, color: number) {
+export function carLetters(b: Batch, text: string, x: number, y: number, z: number, face: 1 | -1, h: number, t: number, color: number) {
   const p = h / 7, adv = 6 * p, w = text.length * adv - p;
   for (let i = 0; i < text.length; i++) {
-    const g = GLYPHS[text[i]] ?? GLYPHS[" "];
+    const g = CAR_GLYPHS[text[i]] ?? CAR_GLYPHS[" "];
     const lx = -w / 2 + i * adv;
     for (let r = 0; r < 7; r++) {
       const row = g[r];
@@ -194,9 +194,9 @@ export function vanTrim(kerb: Batch, street: Batch, c: BoxDims, top: string, low
     for (const [p0, p1, q0, q1] of [[bx0, bx1, by0 - 0.04, by0], [bx0, bx1, by1, by1 + 0.04], [bx0 - 0.04, bx0, by0 - 0.04, by1 + 0.04], [bx1, bx1 + 0.04, by0 - 0.04, by1 + 0.04]])
       b.span(p0, q0, Math.min(z0, at(0.022)), p1, q1, Math.max(z0, at(0.022)), CC.gold);
     const h1 = Math.min((by1 - by0) * 0.62, (bx1 - bx0) / (top.length * 6 / 7) * 0.9);
-    letters(b, top, (x0 + x1) / 2, (by0 + by1) / 2, at(0.016), face, h1, 0.012, CC.letter);
+    carLetters(b, top, (x0 + x1) / 2, (by0 + by1) / 2, at(0.016), face, h1, 0.012, CC.letter);
     const h2 = Math.min((wy - yb - 0.3) * 0.5, (x1 - x0 - 0.6) / (low.length * 6 / 7) * 0.8);
-    letters(b, low, (x0 + x1) / 2, (yb + 0.12 + wy - 0.05) / 2, at(d), face, h2, 0.012, CC.gold);
+    carLetters(b, low, (x0 + x1) / 2, (yb + 0.12 + wy - 0.05) / 2, at(d), face, h2, 0.012, CC.gold);
   }
   // The roof: an oilcloth top overhanging the sides a little, run on ahead as a canopy on two
   // brackets, and a rail round it on posts.
@@ -221,14 +221,14 @@ export function drayParts(b: Batch, c: BoxDims) {
       b.span(x - 0.035, y - 0.24, z * (hw + 0.035), x + 0.035, y + 0.62, z * (hw + 0.105), CC.stake);
       b.span(x - 0.045, y + 0.03, z * (hw + 0.03), x + 0.045, y + 0.08, z * (hw + 0.11), CC.iron);
     }
-    letters(b, "RYDER & CO.", (x0 + x1) / 2, y + 0.09, z * (hw + 0.065), z as 1 | -1, 0.15, 0.01, CC.board);
+    carLetters(b, "RYDER & CO.", (x0 + x1) / 2, y + 0.09, z * (hw + 0.065), z as 1 | -1, 0.15, 0.01, CC.board);
   }
 }
 
 // teamGear builds the forecarriage's axle bed (`axle`), the shafts or pole (`shafts`) and the
 // harness between the horses and them, with the reins to the coachman's hands (`harness`), in the
 // team's frame (x forward from the front axle). `hands` is where the reins end, in that frame.
-export function teamGear(axle: Batch, shafts: Batch, harness: Batch, s: TruckSpec, L: TeamLayout, hands: V3) {
+export function teamGear(axle: Batch, shafts: Batch, harness: Batch, s: TruckSpec, L: TeamLayout, hands: CarV3) {
   const sc = L.scale, P = L.pivot, [rx, ry] = L.rear, [tx, ty] = L.tip;
   axle.span(-0.08, s.wheelR * L.front + 0.08, -(s.frontZ - 0.08), 0.08, s.wheelR * L.front + 0.24, s.frontZ - 0.08, CC.under);
   const STRAP = 0x1c1612;
@@ -267,12 +267,12 @@ export function teamGear(axle: Batch, shafts: Batch, harness: Batch, s: TruckSpe
 
 // ---- the team ------------------------------------------------------------------------------------
 // The horses' parts' geometry, one set per look, shared by every team (never disposed).
-const HORSE_GEO = new Map<HorseLook, THREE.BufferGeometry[]>();
+const TEAM_HORSE_GEO = new Map<HorseLook, THREE.BufferGeometry[]>();
 function horseGeometry(look: HorseLook) {
-  let g = HORSE_GEO.get(look);
+  let g = TEAM_HORSE_GEO.get(look);
   if (!g) {
     g = horseParts(look).map((p) => { const b = new Batch(); p(b); const geo = b.build(new THREE.MeshBasicMaterial())!.geometry; geo.userData.shared = true; return geo; });
-    HORSE_GEO.set(look, g);
+    TEAM_HORSE_GEO.set(look, g);
   }
   return g;
 }

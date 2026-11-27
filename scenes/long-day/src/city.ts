@@ -21,9 +21,9 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
-import { VIC_STREET, vicBackYard, vicGate, vicLot, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
-import { vicLamp } from "./city-victorian/victorian-street.ts";
-import { buildBreweryStatic } from "./city-victorian/victorian-landmark-steam-brewery.ts";
+import { VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
+import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
+import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
@@ -631,8 +631,8 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
     for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt);
     g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
   }
-  buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook);
-  buildStopSigns(solid, G, n, ox, oz, !!CS.storybook);
+  buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook, !!CS.victorian);
+  buildStopSigns(solid, G, n, ox, oz, !!CS.storybook, !!CS.victorian);
   // (Their poles and posts, for the driver's walks and the street life.)
   for (const p of signalPoles(G, n)) pavementObstacle(p.px - ox, p.pz - oz, 0.16);
   for (const [x, z] of stopSignPosts(G, n).values()) pavementObstacle(x - ox, z - oz, 0.05);
@@ -1482,7 +1482,8 @@ function riverBoats(G: CityGraph, seed: number): Map<number, RiverBoat[]> {
         if (r > 0.45) continue;
         const t = (k + 0.5) / Math.floor(L / 25), ex = (bx - ax) / L, ez = (bz - az) / L;
         const nx = -ez * wd, nz = ex * wd;
-        const kind: BoatKind = r < 0.1 ? "narrowboat" : r < 0.25 ? "cruiser" : r < 0.37 ? "sailboat" : "rowboat", { beam, len } = boatSize(kind);
+        // (The Victorian city has no motor cruisers: narrowboats in their place.)
+        const kind: BoatKind = r < 0.1 ? "narrowboat" : r < 0.25 ? (CS.victorian ? "narrowboat" : "cruiser") : r < 0.37 ? "sailboat" : "rowboat", { beam, len } = boatSize(kind);
         const b: RiverBoat = { kind, x: ax + (bx - ax) * t + nx * (1 + beam / 2), z: az + (bz - az) * t + nz * (1 + beam / 2),
           yaw: Math.atan2(-ez, ex) + (hash2(blk.id, i * 7 + k, seed, 0xb0a8) < 0.5 ? Math.PI : 0), paint: BOAT_PAINTS[Math.floor(r * 97) % BOAT_PAINTS.length], r: Math.hypot(len, beam) / 2 };
         if (kept.some((o) => Math.hypot(o.x - b.x, o.z - b.z) < o.r + b.r + 0.5)) continue;
@@ -1640,7 +1641,7 @@ DRAW.billboard = (R, _g, s) => { drawBillboard(s, rectFrom(R.r), R.top as number
 export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet: FleetBuilder | null = null): (cx: number, cz: number) => ChunkBuild {
   return function* (cx, cz) {
     // The entrance doors of the tile's kerb facilities (one per side, where kerbDoors found the building).
-    const G = plan.graph, doors = G.tile(cx, cz).blocks.map((b) => G.blocks[b]).filter((b) => b.inCity).flatMap((b) => kerbDoors(plan, b.kx, b.kz).map((d, side) => d && { d, f: b.sides[side] }));
+    const G = plan.graph, doors = G.tile(cx, cz).blocks.map((b) => G.blocks[b]).filter((b) => b.inCity).flatMap((b) => kerbDoors(plan, b.kx, b.kz).map((d, side) => d && { d, f: b.sides[side], b }));
     yield;
     const slots: number[] = [];
     const takeSlot = (text: string, style: SignStyle) => { const k = signAtlas.alloc(text, style); if (k >= 0) slots.push(k); return k >= 0 ? signAtlas.uv(k) : null; };
@@ -1649,7 +1650,17 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
     doors.forEach((e) => {
       if (!e) return;
       const P = G.facePt(e.f, 0, 0), [rx, rz] = frameApply({ ox: 0, oz: 0, rot: P.h }, 9, 18);
-      inFrame({ ox: P.x - cx * BLOCK - rx, oz: P.z - cz * BLOCK - rz, rot: P.h }, [solid, ground, lamps], () => entranceDoor(solid, { ...e.d, side: 0 }));
+      inFrame({ ox: P.x - cx * BLOCK - rx, oz: P.z - cz * BLOCK - rz, rot: P.h }, [solid, ground, lamps], () => {
+        entranceDoor(solid, { ...e.d, side: 0 });
+        // (The Victorian city's facilities have their name over the door, on a signwriter's board
+        // in gilt edged in gilt: signs.ts facilitySign.)
+        const sign = plan.style.victorian && !e.d.plain ? facilitySign(plan, e.b.kx, e.b.kz) : null, uv = sign ? takeSlot(sign.text, sign.style) : null;
+        if (uv) {
+          const d = FRONT_NODE[0][2], w = 3.4, y = (e.d.y ?? CURB_H) + e.d.h + 0.45;
+          fspan(solid, 0, e.d.a - w / 2 - 0.07, e.d.a + w / 2 + 0.07, y - 0.32, y + 0.32, e.d.n - 0.1, e.d.n - 0.02, 0xc9a44a);
+          signQuad(DC.quads, uv, 0, e.d.a, e.d.n - 0.11, y, w, w / 8, -RIGHT[d][0], -RIGHT[d][1]);
+        }
+      });
     });
     const group = new THREE.Group();
     for (const [b, m] of [[ground, mats.ground], [solid, mats.solid], [lamps, mats.lamp]] as const) {
@@ -2106,14 +2117,18 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
   for (let k = 0; k < poly.length; k++) { const [x0, z0] = poly[k], [x1, z1] = poly[(k + 1) % poly.length], w = x0 * z1 - x1 * z0; A += w; cx += (x0 + x1) * w; cz += (z0 + z1) * w; }
   cx /= 3 * A; cz /= 3 * A;
   const room = polyDist(poly, cx, cz), R = Math.min(5, room * 0.25), y = CURB_H;
-  // (A border of darker paving round the fountain, its basin, water, and the spire's tiers.)
+  // (A border of darker paving round the fountain, its basin, water, and the spire's tiers. The
+  // Victorian city's square has a statue or a drinking fountain in iron railings instead.)
   g.cyl(cx, y + 0.01, cz, R + 2.2, 0.02, shade(CS.pavers, 0.85), 24);
-  s.cyl(cx, y + 0.3, cz, R, 0.6, 0xbab2a2, 24);
-  s.cyl(cx, y + 0.55, cz, R - 0.35, 0.06, 0x4a7fa8, 24);
-  s.cyl(cx, y + 1.0, cz, 0.45, 1.6, 0xbab2a2, 10);
-  s.cyl(cx, y + 1.85, cz, 1.4, 0.18, 0xbab2a2, 16);
-  s.cyl(cx, y + 2.3, cz, 0.25, 0.9, 0xbab2a2, 8);
-  s.cyl(cx, y + 2.8, cz, 0.7, 0.12, 0xbab2a2, 12);
+  if (CS.victorian) vicMonument(s, cx, y, cz, R, rnd);
+  else {
+    s.cyl(cx, y + 0.3, cz, R, 0.6, 0xbab2a2, 24);
+    s.cyl(cx, y + 0.55, cz, R - 0.35, 0.06, 0x4a7fa8, 24);
+    s.cyl(cx, y + 1.0, cz, 0.45, 1.6, 0xbab2a2, 10);
+    s.cyl(cx, y + 1.85, cz, 1.4, 0.18, 0xbab2a2, 16);
+    s.cyl(cx, y + 2.3, cz, 0.25, 0.9, 0xbab2a2, 8);
+    s.cyl(cx, y + 2.8, cz, 0.7, 0.12, 0xbab2a2, 12);
+  }
   // (The ring of trees, as many as fit clear of the edge; a bench between each two, facing in.)
   const rr = Math.min(room - 3, R + 7.5), n = Math.max(4, Math.min(10, Math.floor(rr * Math.PI * 2 / 7)));
   for (let k = 0; k < n; k++) {
@@ -2131,8 +2146,11 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
   for (let k = 0; k < 4; k++) {
     const a = (k + 0.5) * Math.PI / 2, x = cx + Math.cos(a) * (rr + 3), z = cz + Math.sin(a) * (rr + 3);
     if (!inPoly(poly, x, z) || polyDist(poly, x, z) < 1.5) continue;
+    pavementObstacle(x, z, 0.15, PK.lamp);
+    // (The Victorian city's is a gas lamp: victorian-street.ts.)
+    if (CS.victorian) { const l = vicLamp(s, x, z, cx, cz, y); DC.lampSites.push(l[0], l[1], l[2]); continue; }
     s.cyl(x, y + 2.2, z, 0.08, 4.4, C.pole, 6); s.aux.set(0, 0, -2); s.cyl(x, y + 4.5, z, 0.28, 0.4, C.lampHead, 8); s.aux.set(0, 0, -1);
-    DC.lampSites.push(x, y + 4.4, z); pavementObstacle(x, z, 0.15, PK.lamp);
+    DC.lampSites.push(x, y + 4.4, z);
   }
 }
 // A one-way street's markings (driven +along: its traffic in the forward half, to the right): a
@@ -2163,13 +2181,33 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
     }
   }
 }
+// The Victorian city's setts are laid in courses SETT_COURSE across (m), its pavement flags FLAG_LEN long.
+const SETT_COURSE = 0.6, FLAG_LEN = 1.2;
 function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
   loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[]; furniture?: [FurnitureItem[], FurnitureItem[]] | null }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
     axis === 0 ? b.box(al, y, ac, lal, h, lac, color) : b.box(ac, y, al, lac, h, lal, color);
   const len = a1 - a0, mid = (a0 + a1) / 2, cl = STREET / 2;
+  // A flat quad on the ground batch, from u0 to u1 along and v0 to v1 across, at height y.
+  const flat = (u0: number, u1: number, v0: number, v1: number, y: number, color: number) => {
+    const P = (u: number, v: number): [number, number] => axis === 0 ? [u, v] : [v, u];
+    const [ax, az] = P(u0, v0), [bx, bz] = P(u1, v0), [cx, cz] = P(u1, v1), [dx, dz] = P(u0, v1);
+    g.tri(ax, y, az, bx, y, bz, cx, y, cz, color); g.tri(ax, y, az, cx, y, cz, dx, y, dz, color);
+  };
   // The street's asphalt (kerb to kerb, and under the sidewalks).
   box(g, mid, -0.05, cl, len, 0.1, STREET, C.asphalt);
+  // The Victorian city's road is granite setts (C.asphalt their middle tone), laid in courses
+  // across the road. Each course is laid in two halves, each a patch of its own tone, lighter,
+  // darker or the middle one; and there is a channel of flat granite along each kerb.
+  if (CS.victorian) {
+    for (let k = Math.ceil(a0 / SETT_COURSE); (k + 1) * SETT_COURSE <= a1; k++) for (const h of [0, 1]) {
+      const r = hash2(k, h + Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5e7);
+      if (r < 0.5) continue;
+      const v0 = h ? cl + (k % 2 ? 1.3 : -1.3) : KERB + 0.4, v1 = h ? STREET - KERB - 0.4 : cl + (k % 2 ? 1.3 : -1.3);
+      flat(k * SETT_COURSE + 0.01, (k + 1) * SETT_COURSE - 0.01, v0 + 0.01, v1 - 0.01, 0.003, shade(C.asphalt, r < 0.75 ? 1.08 : 0.92));
+    }
+    for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
+  }
   // The frontages in this segment's `along` coordinate.
   const alOf = (f: Frontage) => (f === loF ? loAl : hiAl);
   const drive = (f: Frontage): [number, number] | null => {
@@ -2203,16 +2241,23 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       if (CS.storybook) {
         // The sidewalk is checkered with cream squares laid on the pink, two across, clear of the kerb's edge strip.
         const c0 = lo === 0 ? 0 : edge + 0.25, c1 = lo === 0 ? edge : STREET, cw = (c1 - c0) / 2, y = CURB_H + 0.002;
-        const quad = (u0: number, u1: number, v0: number, v1: number) => {
-          const P = (u: number, v: number): [number, number] => axis === 0 ? [u, v] : [v, u];
-          const [ax, az] = P(u0, v0), [bx, bz] = P(u1, v0), [cx, cz] = P(u1, v1), [dx, dz] = P(u0, v1);
-          g.tri(ax, y, az, bx, y, bz, cx, y, cz, SB.cream); g.tri(ax, y, az, cx, y, cz, dx, y, dz, SB.cream);
-        };
         for (let k = Math.floor(p0 / 1.5); k * 1.5 < p1; k++) for (let j = 0; j < 2; j++) {
           if ((k + j) % 2) continue;
           const u0 = Math.max(p0, k * 1.5) + 0.01, u1 = Math.min(p1, (k + 1) * 1.5) - 0.01;
-          if (u1 - u0 > 0.05) quad(u0, u1, c0 + j * cw + 0.01, c0 + (j + 1) * cw - 0.01);
+          if (u1 - u0 > 0.05) flat(u0, u1, c0 + j * cw + 0.01, c0 + (j + 1) * cw - 0.01, y, SB.cream);
         }
+      } else if (CS.victorian) {
+        // The pavement is York stone flags, two rows across with their joints staggered, clear of
+        // the kerb's edge strip; a flag here and there is a shade paler or darker than the rest.
+        const c0 = lo === 0 ? 0 : edge + 0.25, c1 = lo === 0 ? edge : STREET, cw = (c1 - c0) / 2, y = CURB_H + 0.002;
+        for (let j = 0; j < 2; j++) for (let k = Math.floor(p0 / FLAG_LEN - j / 2); (k + j / 2) * FLAG_LEN < p1; k++) {
+          const r = hash2(k, j + Math.round(c0), (DC.plan as CityPlan).seed, 0xf1a6);
+          if (r > 0.36) continue;
+          const u0 = Math.max(p0, (k + j / 2) * FLAG_LEN) + 0.015, u1 = Math.min(p1, (k + 1 + j / 2) * FLAG_LEN) - 0.015;
+          if (u1 - u0 > 0.05) flat(u0, u1, c0 + j * cw + 0.015, c0 + (j + 1) * cw - 0.015, y, shade(C.sidewalk, r < 0.2 ? 1.1 : 0.9));
+        }
+        // (The granite kerb's face, under its edge strip.)
+        box(g, (p0 + p1) / 2, CURB_H / 2, lo === 0 ? KERB + 0.003 : STREET - KERB - 0.003, p1 - p0, CURB_H, 0.006, C.curb);
       }
     }
     if (d) box(g, (d[0] + d[1]) / 2, 0.015, (lo + hi) / 2, d[1] - d[0] - 0.02, 0.03, hi - lo - 0.02, 0x8f8b80);   // (a cm short all round: shared planes flicker)
@@ -2237,6 +2282,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     for (let p = m0 + 1.5; p < m1 - 1; p += 2.2) { const c = hash2(Math.round(p * 10), Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5b1) < 0.5 ? 0x3e6b34 : 0x4b7a3a; if (poles.every((q) => Math.abs(q - p) > 0.8)) box(s, p, CURB_H + 0.22, cl, 1.3, 0.44, 0.4, c); }
     for (let k = 0; k < nL; k++) {
       const p = m0 + (m1 - m0) * (k + 0.5) / nL, [px, pz] = axis === 0 ? [p, cl] : [cl, p];
+      // (The Victorian city's is a gas lamp: victorian-street.ts.)
+      if (CS.victorian) { const l = vicLamp(s, px, pz, axis === 0 ? px : px + 1, axis === 0 ? pz + 1 : pz, CURB_H); DC.lampSites.push(l[0], l[1], l[2]); continue; }
       s.cyl(px, CURB_H + 3.75, pz, 0.1, 7.5, C.pole, 6);
       for (const d of [-1, 1]) {
         const [hx, hz] = axis === 0 ? [px, cl + d * 1.6] : [cl + d * 1.6, pz];
@@ -2263,7 +2310,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   }
   // Loading zones (lo side, hi side): 16 m of yellow kerb, inside the street's ends, and no
   // markings on the road.
-  feat.loading?.forEach((at, i) => {
+  // (The Victorian city paints no kerbs.)
+  if (!CS.victorian) feat.loading?.forEach((at, i) => {
     if (at === null || at === undefined) return;
     const c = Math.max(a0 + 14, Math.min(a1 - 14, at)), kerbE = i ? STREET - KERB : KERB;
     if (a1 - a0 < 30) return;
@@ -2279,6 +2327,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     if (!feat.oneway) box(g, a0 + (STOP_BACK - 0.2), M, (backLo + backHi) / 2, 0.4, MH, backHi - backLo - 0.5, C.white);
     for (const c0 of [a0 + 0.3, a1 - 3.3])
       for (let ac = KERB + 0.6, k = 0; ac < STREET - KERB - 0.4; ac += 1.0, k++) box(g, c0 + 1.4, M, ac, 2.8, MH, 0.5, CS.storybook && k % 2 ? SB.pink : C.white);
+  } else if (!feat.ring) {
+    // The Victorian city's crossings are strips of flat stone laid across the setts, two flags wide.
+    for (const c0 of [a0 + 0.8, a1 - 2.8]) for (const [u0, u1] of [[c0, c0 + 0.99], [c0 + 1.01, c0 + 2]]) flat(u0, u1, KERB + 0.4, STREET - KERB - 0.4, 0.006, shade(C.sidewalk, 0.9));
   }
   // Streetlights on both sidewalks, staggered; street trees where the district has them. (A city
   // whose file lists its contents: its own, drawn with the tile's.)
@@ -2389,6 +2440,8 @@ function waterEdges(s: Batch, box: BoxFn, axis: 0 | 1, a0: number, a1: number, w
       const n = Math.max(1, Math.round(len / 15));
       for (let k = 0; k <= n; k++) {
         const p = a0 + 1 + (len - 2) * k / n, [x, z] = axis === 0 ? [p, edge] : [edge, p];
+        // (The Victorian city's is a gas lamp standing on the parapet: victorian-street.ts.)
+        if (CS.victorian) { const l = vicLamp(s, x, z, axis === 0 ? x : x - out, axis === 0 ? z - out : z, CURB_H + 1.07); DC.lampSites.push(l[0], l[1], l[2]); continue; }
         s.cyl(x, CURB_H + 1.0 + 1.3, z, 0.07, 2.6, IRON, 6);
         s.aux.set(0, 0, -2); s.box(x, CURB_H + 3.75, z, 0.36, 0.5, 0.36, C.lampHead); s.aux.set(0, 0, -1);
         DC.lampSites.push(x, CURB_H + 3.7, z);
@@ -2400,8 +2453,12 @@ function waterEdges(s: Batch, box: BoxFn, axis: 0 | 1, a0: number, a1: number, w
       for (let p = a0 + 10; p < a1 - 6; p += 20) {
         // (A bench a metre in from the railing, its back to the street.)
         const ac = edge - out * 1.1;
-        box(s, p, CURB_H + 0.45, ac, 1.8, 0.08, 0.45, 0x7a5a3a);
-        box(s, p, CURB_H + 0.7, ac - out * 0.22, 1.8, 0.4, 0.08, 0x7a5a3a);
+        // (The Victorian city's is of cast iron, its seat a little nearer the water: victorian-street.ts.)
+        if (CS.victorian) { if (axis === 0) vicBench(s, p, ac + out * 0.82, 0, -out, CURB_H); else vicBench(s, ac + out * 0.82, p, -out, 0, CURB_H); }
+        else {
+          box(s, p, CURB_H + 0.45, ac, 1.8, 0.08, 0.45, 0x7a5a3a);
+          box(s, p, CURB_H + 0.7, ac - out * 0.22, 1.8, 0.4, 0.08, 0x7a5a3a);
+        }
         const [x, z] = axis === 0 ? [p, ac] : [ac, p];
         pavementObstacle(x, z, 1.0, PK.bench);
         busy[i].push([p - 1.3, p + 1.3]);   // (the street furniture keeps off it)
@@ -3402,7 +3459,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // to the void that glints at a distance.)
   if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, LOT_TOP, 0, L.edge + 0.02, pave);
   fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge + 0.02, 0x66655f);
-  for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
+  if (DC.fac !== "steamBrewery") for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
 
   // The dock building: a plinth up to platform height, a band of dock doors on the yard side,
   // then a building of its own (warehouseLook): wall colour and cladding, height, roof, an accent
@@ -3413,6 +3470,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   const top = DC.fac === "knittingWorks" ? buildWorksStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L)
     : DC.fac === "steamBrewery" ? buildBreweryStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L) : buildWarehouse(s, side, face, L, r, district, rnd);
   if (DC.fac === "ryderWarehouse" && uv) ryderRoofSign(s, r, top, face, uv);
+  if (DC.fac === "steamBrewery") { breweryDock(s, L, quads, uv); return; }
 
   // Platform and its edge, bumpers, a door at every bay (the site's own style), the leveller,
   // seal and dock light at the bays trucks use, wall packs, the steps, and some dressing.
@@ -3551,7 +3609,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
 
   // A shallow dock sits beside the store or tower that fronts the rest of the street (the knitting
   // works' yard is its process instead: storybook-landmark-knitting-works.ts).
-  if (!L.deep && DC.fac !== "knittingWorks" && DC.fac !== "steamBrewery") {
+  if (!L.deep && DC.fac !== "knittingWorks") {
     const sr = frontRect(side, L.a1, 48.5, 2, 39.5);
     if (district === "downtown") {
       const wall = pick(rnd, CS.walls.downtown);
@@ -3586,6 +3644,93 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
       fspan(s, side, 34.2, 43.8, y - 0.65, y + 0.65, 1.88, 1.995, C.dark);
       signQuad(quads, uv, side, 39, 1.87, y, 9.2, 1.15, ox, oz);
     }
+  }
+}
+
+// The steam brewery's dock is dressed for its period (victorian-landmark-steam-brewery.ts builds the
+// rest): a stone platform with a stone coping, timber double doors on iron strap hinges (folded back
+// open at the bays carriages use), gas lamps on brackets between the bays, stone steps with an iron
+// handrail, casks and a sack barrow on the platform, iron railings along the street, and the name
+// painted on a board over the doors and in big letters across the brewhouse.
+function breweryDock(s: Batch, L: DockLayout, quads: Quad[], uv: ReturnType<SignAtlas["uv"]> | null) {
+  const side = L.side, P = DOCK_PLATFORM, { stone, coping, timber, iron } = BREWERY_DOCK;
+  const bw = L.bays.length > 1 ? L.bays[1] - L.bays[0] : L.a1 - L.a0, dw = bw * 0.41, doorH = dockDoorH(L);
+  const used = dockUsedBays(L), usedA = used.map((i) => L.bays[i]);
+  const lr = (salt: number) => hash2(Math.floor(L.look * 1e6), salt, 0x77, 0);
+  fspan(s, side, L.a0, L.a1, 0, P - 0.12, L.edge, L.wall, stone);
+  fspan(s, side, L.a0, L.a1, P - 0.12, P, L.edge - 0.08, L.wall, coping);
+  for (let a = L.a0 + 1.2; a < L.a1 - 0.5; a += 1.2) fspan(s, side, a - 0.02, a + 0.02, 0.05, P - 0.14, L.edge - 0.02, L.edge + 0.02, 0x8a8274);   // the stones' joints
+  // Each bay has a stone surround and its timber doors: closed (planked, two strap hinges a leaf),
+  // or open, each leaf folded back flat over the next door where that is closed (else it opens in).
+  const opens = L.bays.map((_, i) => used.includes(i) || (lr(i) < 0.2 && !used.some((u) => Math.abs(u - i) <= 1)));
+  L.bays.forEach((b, i) => {
+    const open = opens[i];
+    fspan(s, side, b - dw - 0.3, b + dw + 0.3, P + doorH, P + doorH + 0.35, L.wall - 0.08, L.wall + 0.01, coping);   // the lintel
+    for (const k of [-1, 1]) fspan(s, side, b + k * (dw + 0.15) - 0.15, b + k * (dw + 0.15) + 0.15, P, P + doorH, L.wall - 0.06, L.wall + 0.01, coping);
+    if (open) {
+      fspan(s, side, b - dw, b + dw, P + 0.005, P + doorH, L.wall - 0.03, L.wall + 0.01, 0x121416);
+      for (const k of [-1, 1]) {
+        const a0 = k < 0 ? b - 2 * dw - 0.3 : b + dw + 0.3, a1 = a0 + dw;
+        if (opens[i + k] || a0 < L.a0 || a1 > L.a1) continue;
+        fspan(s, side, a0, a1, P + 0.05, P + doorH - 0.05, L.wall - 0.2, L.wall - 0.14, timber);
+        for (const y of [0.5, doorH - 0.6]) fspan(s, side, a0 + 0.1, a1 - 0.1, P + y, P + y + 0.1, L.wall - 0.23, L.wall - 0.2, iron);
+      }
+    } else {
+      fspan(s, side, b - dw, b + dw, P, P + doorH, L.wall - 0.09, L.wall - 0.03, timber);
+      for (let a = b - dw + 0.32; a < b + dw - 0.1; a += 0.32) fspan(s, side, a - 0.015, a + 0.015, P, P + doorH, L.wall - 0.1, L.wall - 0.09, 0x3e2a1a);
+      for (const y of [0.5, doorH - 0.6]) for (const k of [-1, 1]) fspan(s, side, k < 0 ? b - dw + 0.05 : b + 0.1, k < 0 ? b - 0.1 : b + dw - 0.05, P + y, P + y + 0.1, L.wall - 0.13, L.wall - 0.1, iron);
+      fspan(s, side, b - 0.03, b + 0.03, P, P + doorH, L.wall - 0.12, L.wall - 0.1, 0x2a1c12);
+    }
+  });
+  // A gas lamp on a bracket between each pair of bays and at the ends, lit at night
+  // (applyLampLight).
+  const lamps = [L.a0 + 0.9, ...L.bays.slice(1).map((b, i) => (b + L.bays[i]) / 2), L.a1 - 0.9];
+  for (const la of lamps) {
+    const y = P + doorH + 0.9, n = L.wall - 0.55;
+    fspan(s, side, la - 0.04, la + 0.04, y - 0.5, y - 0.05, L.wall - 0.06, L.wall - 0.01, iron);
+    fspan(s, side, la - 0.03, la + 0.03, y - 0.05, y + 0.02, n, L.wall - 0.01, iron);
+    const ax = s.aux.clone(); s.aux.set(0, 0, -2); fspan(s, side, la - 0.15, la + 0.15, y - 0.45, y - 0.08, n - 0.15, n + 0.15, BREWERY_DOCK.lamp); s.aux.copy(ax);
+    fspan(s, side, la - 0.2, la + 0.2, y - 0.08, y, n - 0.2, n + 0.2, iron);
+    const [lx, lz] = frontPt(side, la, n); DC.lampSites.push(lx, y - 0.3, lz);
+  }
+  // Stone steps and an iron handrail up to the platform for each used bay, where any dock has them.
+  const flights = new Set<number>();
+  for (const p of usedA) flights.add(Math.round((p + dockStair(L, p)) * 10) / 10);
+  for (const aS of flights) {
+    for (let k = 0; k < 5; k++) fspan(s, side, aS - 0.55, aS + 0.55, 0, (k + 1) * P / 5, L.edge - 2.6 + k * 0.52, L.edge, k === 4 ? coping : stone);
+    const ra = aS + (aS < (L.a0 + L.a1) / 2 ? -1 : 1) * 0.6;
+    fspan(s, side, ra - 0.03, ra + 0.03, 0, 1.0, L.edge - 2.53, L.edge - 2.47, iron);
+    fspan(s, side, ra - 0.035, ra + 0.035, 0, P + 1.0, L.edge - 0.13, L.edge - 0.07, iron);
+    const d = FRONT_NODE[side][2], [mx, mz] = frontPt(side, ra, L.edge - 1.3), [rx, rz] = RIGHT[d];
+    const run = 2.4, len = Math.hypot(run, P), th = Math.atan2(P, run);
+    if (rx === 0) s.boxR(mx, 1.0 + P / 2, mz, 0.05, 0.05, len, iron, -th * rz, 0, 0);
+    else s.boxR(mx, 1.0 + P / 2, mz, len, 0.05, 0.05, iron, 0, 0, th * rx);
+  }
+  // On the platform, away from the used bays and the steps, stand casks or a sack barrow.
+  L.bays.forEach((b, i) => {
+    if (used.some((u) => Math.abs(u - i) <= 1) || lr(300 + i) > 0.6) return;
+    const a = b + (lr(310 + i) < 0.5 ? -1 : 1) * 0.9;
+    if ([...flights].some((f) => Math.abs(f - a) < 1.6) || a < L.a0 + 0.6 || a > L.a1 - 0.6) return;
+    const n = L.edge + 0.9, [x, z] = frontPt(side, a, n);
+    if (lr(320 + i) < 0.7) {
+      for (const [da, dy] of [[-0.45, 0], [0.45, 0], [0, 0.85]] as const) { const [cx, cz] = frontPt(side, a + da, n); s.cyl(cx, P + 0.42 + dy, cz, 0.4, 0.84, 0x8c5c30, 8); s.cyl(cx, P + 0.42 + dy, cz, 0.43, 0.07, iron, 8); }
+    } else { fspan(s, side, a - 0.25, a + 0.25, P, P + 1.2, n - 0.05, n + 0.05, iron); s.cyl(x, P + 0.2, z, 0.2, 0.6, iron, 8, 0, Math.PI / 2); }
+  });
+  // Iron railings stand on a low wall along the street, open across the driveway.
+  const pLo = Math.min(...usedA);
+  if (pLo - 4.5 > 9.5) {
+    fspan(s, side, 9.2, pLo - 4.5, 0, 0.55, 0.3, 0.6, BREWERY_DOCK.brick);
+    fspan(s, side, 9.2, pLo - 4.5, 1.5, 1.55, 0.42, 0.48, iron);
+    for (let a = 9.3; a < pLo - 4.5; a += 0.32) fspan(s, side, a - 0.025, a + 0.025, 0.55, 1.65, 0.43, 0.47, iron);
+  }
+  // The name is painted on a board in a gilt frame over the doors, and in big letters on the
+  // brewhouse's name band.
+  if (uv) {
+    const d = FRONT_NODE[side][2], ox = -RIGHT[d][0], oz = -RIGHT[d][1], mid = (L.a0 + L.a1) / 2;
+    const y = P + doorH + 0.35 + 0.75;
+    fspan(s, side, mid - 4.1, mid + 4.1, y - 0.6, y + 0.6, L.wall - 0.1, L.wall - 0.02, BREWERY_DOCK.gilt);
+    signQuad(quads, uv, side, mid, L.wall - 0.11, y, 7.6, 0.95, ox, oz);
+    signQuad(quads, uv, side, mid, L.wall - 0.11, breweryNameY(), 14.4, 1.8, ox, oz);
   }
 }
 
