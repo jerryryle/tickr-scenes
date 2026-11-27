@@ -712,10 +712,30 @@ export function vicShed(s: Batch, y0: number, wall: number, rnd: VicRand) {
   s.box(-0.3, y0 + 0.9, -1.01, 0.8, 1.7, 0.03, vPick(rnd, [VIC.green, VIC.black, VIC.oak]));
   if (rnd() < 0.4) vicStack(s, 0.8, 0, y0 + 2.2, 0.45, 0.45, 1.3, wall, 1);
 }
-// vicSquare draws a garden square w by d (centred on its frame's origin) in place of a car park:
-// lawns inside iron railings, gravel walks, and in a big one (`big`) a statue or a fountain in the
-// middle. Its trees are trees of their own.
+// vicSquare draws what a commercial block keeps in its middle w by d (centred on its frame's
+// origin), where another city parks. A big one (`big`) is a garden square: lawns inside iron
+// railings, gravel walks, and a statue or a fountain in the middle. The rest (all of Ravensgate's,
+// 13 to 28 m by 11 to 16 m) are the shops' yard behind them: laid with setts, walled in brick with
+// a cart gateway in each long side, a stable or cart shed under a lean-to against one end, and a
+// few casks by the other. Its trees are trees of their own, planted 3 m or more in from its edge
+// (city.ts), clear of the shed.
 export function vicSquare(s: Batch, g: Batch, w: number, d: number, y0: number, big: boolean, grass: number, rnd: VicRand) {
+  if (!big) {
+    const hw = w / 2 - 0.3, hd = d / 2 - 0.3, wh = 1.9, gate = 1.6, wall = rnd() < 0.6 ? VIC.stock : 0x9a4a36;
+    g.box(0, y0 + 0.01, 0, w, 0.02, d, 0x6e6a62);
+    for (const k of [-1, 1]) {
+      for (const [a0, a1] of [[-hw, -gate], [gate, hw]]) s.box((a0 + a1) / 2, y0 + wh / 2, k * hd, a1 - a0, wh, 0.25, wall);
+      s.box(k * hw, y0 + wh / 2, 0, 0.25, wh, 2 * hd, wall);
+    }
+    // the shed: its back the end wall, its roof sloping down to the yard, a door or two
+    const e = rnd() < 0.5 ? -1 : 1, sd = 2.2, sx = e * (hw - sd / 2), L = 2 * hd - 0.3;
+    s.box(sx, y0 + 1.25, 0, sd, 2.5, L, wall);
+    s.boxR(sx + e * 0.05, y0 + 2.75, 0, sd + 0.5, 0.1, L + 0.3, VIC.slate, 0, 0, e * 0.3);
+    const nd = L > 8 ? 2 : 1;
+    for (let i = 0; i < nd; i++) s.box(sx - e * (sd / 2 + 0.01), y0 + 1.0, (i + 0.5 - nd / 2) * L / nd, 0.04, 2.0, 1.5, vPick(rnd, [VIC.green, VIC.black, VIC.timber]));
+    for (let i = 0; i < 3; i++) s.cyl(-e * (hw - 0.6), y0 + 0.5, hd - 0.6 - i * 0.85, 0.38, 1.0, rnd() < 0.5 ? VIC.oak : 0x5e3e26, 6);
+    return;
+  }
   g.box(0, y0 + 0.01, 0, w, 0.02, d, grass);
   // the walks: one all round inside the railings, and across from gate to gate
   const p = 1.6, gw = VIC.gravel;
@@ -728,7 +748,6 @@ export function vicSquare(s: Batch, g: Batch, w: number, d: number, y0: number, 
   vicRailings(s, -hw, hd, -hw, -hd, y0, 1.15, VIC.black, [[hd - gate, hd + gate]], 0.5);
   vicRailings(s, hw, -hd, hw, hd, y0, 1.15, VIC.black, [[hd - gate, hd + gate]], 0.5);
   for (const [x, z] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) { s.box(x, y0 + 0.7, z, 0.3, 1.4, 0.3, VIC.stone); s.ico(x, y0 + 1.5, z, 0.16, VIC.stone); }
-  if (!big) return;
   g.cyl(0, y0 + 0.024, 0, Math.min(w, d) * 0.22, 0.02, gw, 16);
   if (rnd() < 0.5) {
     // a statue: a gentleman in bronze on his stepped stone plinth
