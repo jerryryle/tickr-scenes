@@ -70,10 +70,11 @@ function makeVicRigs(): VicRig[] {
     b.box(x, y, z, 0.12, 0.2, 0.12, INK); headLamp(b, x + 0.035, y + 0.01, z, 0.07, 0.12, 0.09); b.box(x, y + 0.13, z, 0.08, 0.06, 0.08, INK);
   }
 
-  // A person dressed for the period: what they wear, as a coat (a long one hangs to the knee), the
-  // trousers or a skirt, their skin, the hat, and what they hold.
+  // A person dressed for the period: what they wear, as a coat (a long one hangs to the knee, and a
+  // box coat has a cape over the shoulders, as a cabman's or busman's did), the trousers or a skirt,
+  // their skin, the hat, and what they hold.
   type Hat = "top" | "bowler" | "cap" | "bonnet" | "boater" | "fantail";
-  interface Dress { coat: number; legs: number; skin?: number; hat: Hat; hatCol?: number; skirt?: boolean; long?: boolean; hands?: "reins" | "lap" | "bar" | "side"; scarf?: number; apron?: number }
+  interface Dress { coat: number; legs: number; skin?: number; hat: Hat; hatCol?: number; skirt?: boolean; long?: boolean; cape?: boolean; hands?: "reins" | "lap" | "bar" | "side"; scarf?: number; apron?: number }
   function hat(b: Batch, y: number, h: Hat, col: number) {
     if (h === "top") { b.cyl(0, y, 0, 0.17, 0.025, col, 10); b.cyl(0, y + 0.13, 0, 0.115, 0.26, col, 10); b.cyl(0, y + 0.04, 0, 0.118, 0.04, INK, 10); }
     else if (h === "bowler") { b.cyl(0, y, 0, 0.16, 0.02, col, 10); b.ico(0, y + 0.03, 0, 0.125, col, 0.85); }
@@ -96,6 +97,7 @@ function makeVicRigs(): VicRig[] {
     }
     b.box(-0.02, 0.4, 0, 0.26, 0.5, 0.38, d.coat);
     if (d.long) { b.box(-0.08, 0.14, 0, 0.2, 0.32, 0.42, d.coat); for (const s of [-1, 1]) b.box(0.2, 0.12, s * 0.12, 0.4, 0.08, 0.18, d.coat); }
+    if (d.cape) b.box(0.0, 0.52, 0, 0.36, 0.24, 0.56, d.coat);
     if (d.apron) b.box(0.15, 0.2, 0, 0.04, 0.55, 0.34, d.apron);
     b.box(0.03, 0.66, 0, 0.18, 0.06, 0.2, d.scarf ?? CREAM);   // (a collar, or a neckerchief)
     arms(b, 0.62, d.coat, sk, d.hands ?? "lap");
@@ -175,7 +177,7 @@ function makeVicRigs(): VicRig[] {
         b.box(-0.36, 1.62, 0, 0.02, 0.62, 1.0, GLASS);                       // the front glass, up
         seated(b, -1.15, 0.92, 0, 0, { coat: BLACK, legs: GREY, hat: "top", hands: "lap" });   // a fare inside
         b.box(-1.75, 2.0, 0, 0.3, 0.4, 0.6, INK); b.box(-1.78, 2.27, 0, 0.42, 0.06, 0.62, LEATHER);   // the cabby's perch
-        seated(b, -1.82, 2.3, 0, 0, { coat: DRAB, legs: BROWN, hat: "top", hands: "reins", long: true, scarf: RED });
+        seated(b, -1.82, 2.3, 0, 0, { coat: DRAB, legs: BROWN, hat: "top", hands: "reins", long: true, cape: true, scarf: RED });
         rod(b, [-1.35, 2.62, 0.18], [-1.25, 3.55, 0.28], 0.025, INK);                     // his whip
         for (const s of [-1, 1]) rod(b, [-1.42, 2.66, s * 0.12], [HS_HX + 0.75, 1.75, s * 0.12], 0.018, LEATHER);   // the reins
       },
@@ -212,7 +214,7 @@ function makeVicRigs(): VicRig[] {
         b.box(-0.05, 1.3, 0, 0.6, 0.8, 1.2, INK);                          // the box under the driver's seat
         b.box(0.0, 1.73, 0, 0.5, 0.08, 1.1, LEATHER);
         b.boxR(0.42, 1.25, 0, 0.5, 0.05, 1.0, INK, 0, 0, -0.7);              // the footboard
-        seated(b, -0.05, 1.77, -0.15, 0, { coat: NAVY, legs: BROWN, hat: "bowler", hands: "reins", long: true });
+        seated(b, -0.05, 1.77, -0.15, 0, { coat: NAVY, legs: BROWN, hat: "bowler", hands: "reins", long: true, cape: true });
         for (const s of [-1, 1]) rod(b, [0.33, 2.15, -0.15 + s * 0.12], [GR_HX + 0.75, 1.75, s * 0.12], 0.018, LEATHER);
       },
       axle(0.5, 1.4, 0.06, WOOD_D, 10),
@@ -272,7 +274,7 @@ function makeVicRigs(): VicRig[] {
         b.box(0.35, OB_TOP + 0.08, 0, 0.5, 0.3, 1.3, INK); b.box(0.35, OB_TOP + 0.24, 0, 0.5, 0.06, 1.2, LEATHER);
         b.boxR(0.75, 2.05, 0, 0.7, 0.05, 1.4, 0xffffff, 0, 0, -0.9);
         b.box(0.35, 1.3, 0, 0.8, 1.0, 1.3, INK);
-        seated(b, 0.3, OB_TOP + 0.27, 0, 0, { coat: DRAB, legs: BROWN, hat: "top", hatCol: 0x3a3a3a, hands: "reins", long: true, scarf: RED });
+        seated(b, 0.3, OB_TOP + 0.27, 0, 0, { coat: DRAB, legs: BROWN, hat: "top", hatCol: 0x3a3a3a, hands: "reins", long: true, cape: true, scarf: RED });
         for (const s of [-1, 1]) rod(b, [0.68, OB_TOP + 0.65, s * 0.12], [OB_HX + 0.75, 1.75, s * 0.4], 0.018, LEATHER);
         rod(b, [0.6, 0.95, 0], [OB_HX + 0.9, 1.3, 0], 0.08, WOOD_D);
         b.box(0.85, 0.95, 0, 0.08, 0.08, 1.5, WOOD_D);
@@ -297,8 +299,8 @@ function makeVicRigs(): VicRig[] {
   };
 
   // ---- the brewer's dray ------------------------------------------------------------------------
-  // A pair of heavy horses walks a long low dray with barrels stacked on it, the drayman up on his
-  // seat in a leather apron.
+  // A pair of heavy horses walks a long low dray with its casks laid on their sides across it, two
+  // tiers high, the drayman and his mate up on the seat in leather aprons.
   const DR_S = 1.12, DR_L = 8.0, DR_HX = DR_L / 2 - 0.95 * DR_S;
   const BARREL: readonly (readonly [number, number])[] = [[0.84, 0], [0.95, 0.18], [1, 0.5], [0.95, 0.82], [0.84, 1]];
   const barrel = (b: Batch, x: number, y: number, z: number, lying: boolean) => {
@@ -321,13 +323,14 @@ function makeVicRigs(): VicRig[] {
         b.box(-1.7, 1.05, 0, 4.4, 0.16, 1.9, WOOD_D);                          // the bed
         for (const s of [-1, 1]) { b.box(-1.7, 1.25, s * 0.93, 4.4, 0.26, 0.05, 0xffffff); b.box(-1.7, 1.25, s * 0.955, 4.0, 0.06, 0.01, CREAM); }
         b.box(-3.88, 1.3, 0, 0.06, 0.4, 1.9, 0xffffff);
-        for (let k = 0; k < 5; k++) for (const z of [-0.43, 0.43]) barrel(b, -3.45 + k * 0.72, 1.13, z, false);
-        for (let k = 0; k < 4; k++) barrel(b, -3.1 + k * 0.72, 1.91 + 0.31, 0, true);
+        for (let k = 0; k < 5; k++) for (const z of [-0.43, 0.43]) barrel(b, -3.45 + k * 0.72, 1.46, z, true);
+        for (let k = 0; k < 4; k++) for (const z of [-0.43, 0.43]) barrel(b, -3.09 + k * 0.72, 1.98, z, true);   // (the top tier in the grooves of the bottom one)
         // The drayman's seat, high on its iron stays, and the pole between the horses.
         for (const s of [-1, 1]) rod(b, [0.2, 1.1, s * 0.5], [0.55, 1.95, s * 0.5], 0.05, IRON);
         b.box(0.55, 2.0, 0, 0.5, 0.1, 1.3, 0xffffff); b.boxR(0.95, 1.6, 0, 0.6, 0.05, 1.2, INK, 0, 0, -0.9);
-        seated(b, 0.5, 2.05, 0, 0, { coat: 0x3a3a3c, legs: BROWN, hat: "cap", hatCol: BROWN, hands: "reins", apron: 0x6a4a2a, scarf: RED });
-        for (const s of [-1, 1]) rod(b, [0.88, 2.42, s * 0.12], [DR_HX + 0.75 * DR_S, 1.75 * DR_S, s * 0.47], 0.02, LEATHER);
+        seated(b, 0.5, 2.05, -0.3, 0, { coat: 0x3a3a3c, legs: BROWN, hat: "cap", hatCol: BROWN, hands: "reins", apron: 0x6a4a2a, scarf: RED });
+        seated(b, 0.5, 2.05, 0.32, 0, { coat: 0x4a4038, legs: BROWN, hat: "bowler", hatCol: 0x2a2420, hands: "lap", apron: 0x6a4a2a, skin: SKIN2 });
+        for (const s of [-1, 1]) rod(b, [0.88, 2.42, -0.3 + s * 0.12], [DR_HX + 0.75 * DR_S, 1.75 * DR_S, s * 0.47], 0.02, LEATHER);
         rod(b, [0.5, 0.9, 0], [DR_HX + 0.8, 1.4, 0], 0.09, WOOD_D);
         for (const s of [-1, 1]) lamp(b, 0.75, 1.75, s * 0.66);   // (a lamp each side of the seat, lit after dark)
       },
@@ -415,14 +418,14 @@ function makeVicRigs(): VicRig[] {
   // ---- the gentleman on horseback ---------------------------------------------------------------
   // The rider (the first part: his coat takes the vehicle's tint) sits his saddle, rising to the trot.
   // The part is built about the withers and set HB_SEAT behind them and down, the saddle in the dip
-  // of the horse's back (horse.ts HORSE: its top line falls from the withers).
+  // of the horse's back (horse.ts HORSE: its top line falls from the withers). The horse wears a
+  // bridle and girth alone (horse.ts HorseLook `ridden`); its saddle is the last part, which rides on its body.
   const HB_L = 2.6, HB_HX = HB_L / 2 - 0.95, HB_SEAT: [number, number] = [-0.2, -0.06];
   const horseback: VicRig = {
     id: "horseback", len: HB_L, width: 0.8, vmax: 4.5, cap: 4,
     colors: [0x1c1c20, 0x222a3a, 0x3a2a1e, 0x4a4a48, 0x7a1a1a],
     parts: [
-      (b) => {   // (built in the horse's frame: the saddle on its back, his legs either side)
-        b.box(-0.3, 1.66, 0, 0.55, 0.08, 0.7, LEATHER); b.box(-0.3, 1.6, 0, 0.7, 0.04, 0.75, 0x6a2a22);
+      (b) => {   // (built in the horse's frame from HB_SEAT: his legs either side of its back)
         b.box(-0.32, 1.95, 0, 0.26, 0.5, 0.38, 0xffffff);
         b.box(-0.42, 1.78, 0, 0.18, 0.3, 0.42, 0xffffff);                    // the tails of his frock coat
         for (const s of [-1, 1]) {
@@ -431,16 +434,25 @@ function makeVicRigs(): VicRig[] {
           b.box(-0.04, 0.94, s * 0.38, 0.24, 0.07, 0.12, INK);
           rod(b, [-0.3, 2.16, s * 0.22], [-0.2, 1.86, s * 0.22], 0.1, 0xffffff); rod(b, [-0.2, 1.86, s * 0.22], [0.08, 1.8, s * 0.1], 0.09, 0xffffff);
           b.ico(0.1, 1.8, s * 0.1, 0.05, 0xd8d0c0);                         // (gloves)
-          rod(b, [0.1, 1.8, s * 0.1], [0.95, 1.9, s * 0.08], 0.015, LEATHER);
+          rod(b, [0.1, 1.8, s * 0.1], [0.9 - HB_SEAT[0], 1.6 - HB_SEAT[1], s * 0.07], 0.015, LEATHER);
         }
         b.box(-0.29, 2.22, 0, 0.18, 0.06, 0.2, CREAM);
         b.ico(-0.3, 2.36, 0, 0.11, SKIN, 1.1);
         b.dy += 2.46; { const m = b.mark(); hat(b, 0, "top", BLACK); b.transformFrom(m, { ox: -0.3, oz: 0, rot: 0 }); } b.dy -= 2.46;
       },
-      ...team([CHESTNUT], [0]),
+      ...team([{ ...CHESTNUT, ridden: true }], [0]),
+      (b) => {   // the saddle, in the horse's frame: its seat, pommel and cantle, its flaps, leathers and irons
+        b.box(-0.5, 1.6, 0, 0.5, 0.07, 0.36, LEATHER); b.box(-0.25, 1.64, 0, 0.1, 0.08, 0.24, LEATHER); b.box(-0.74, 1.66, 0, 0.08, 0.1, 0.3, LEATHER);
+        for (const s of [-1, 1]) {
+          b.boxR(-0.36, 1.44, s * 0.31, 0.32, 0.3, 0.03, LEATHER, s * 0.12, 0, 0);   // (under his thigh)
+          rod(b, [-0.38, 1.56, s * 0.3], [-0.27, 0.92, s * 0.37], 0.025, LEATHER);
+          b.box(-0.25, 0.88, s * 0.38, 0.13, 0.03, 0.12, 0x9a9a98);
+        }
+      },
     ],
     pose(s, out) {
       poseTeam(s, HB_HX, 1, out, 1);
+      out[1 + HORSE_PARTS].copy(out[1]);   // (the saddle rides on the horse's body)
       const k = Math.min(1, s.v / 2.5), post = 0.06 * k * Math.abs(Math.sin(s.odo / 1.6 * TAU));
       at(out[0], HB_HX + HB_SEAT[0], HB_SEAT[1] + post, 0, 0, 0, -0.08 * k);
     },
@@ -507,7 +519,9 @@ function makeVicRigs(): VicRig[] {
 
   // ---- the steam traction engine ----------------------------------------------------------------
   // Its boiler on great straked hind wheels, the flywheel spinning at its side, a canopy on brass
-  // posts, the driver on the footplate; puffs of smoke chuff from its chimney and drift behind.
+  // posts, and its crew of two on the footplate between the hind wheels, the coal bunker behind
+  // them: the driver at the regulator and the steersman at his wheel. Puffs of smoke chuff from its
+  // chimney and drift behind.
   const TE_L = 5.8, TE_RR = 0.95, TE_FR = 0.55, TE_CH: [number, number] = [1.85, 3.55], TE_PUFFS = 4;
   const traction: VicRig = {
     id: "traction", len: TE_L, width: 2.5, vmax: 1.8, cap: 2,
@@ -521,13 +535,17 @@ function makeVicRigs(): VicRig[] {
         b.box(-1.25, 1.45, 0, 0.7, 1.1, 1.05, 0xffffff);                                       // the firebox
         b.box(0.9, 2.1, 0, 0.7, 0.3, 0.5, 0x2a2a2a); b.cyl(0.4, 2.15, 0, 0.1, 0.4, BRASS, 8);   // the cylinder block and the dome
         b.cyl(-0.5, 2.25, -0.2, 0.04, 0.5, BRASS, 6);                                          // the whistle
-        b.box(-1.95, 1.1, 0, 0.8, 0.8, 1.7, 0xffffff); heap(b, -2.3, -1.6, -0.75, 0.75, 1.45, 0.08, 0x161616, 0x2a2a2a);   // the tender, coal in it
-        b.box(-2.2, 0.72, 0, 0.6, 0.06, 1.2, IRON);                                            // the footplate
+        b.box(-2.5, 1.1, 0, 0.6, 0.8, 1.5, 0xffffff); heap(b, -2.75, -2.25, -0.65, 0.65, 1.45, 0.08, 0x161616, 0x2a2a2a);   // the tender, coal in it
+        b.box(-1.9, 0.72, 0, 0.62, 0.06, 1.3, IRON);                                           // the footplate
+        { const m = b.mark(); b.dy += 1.75;   // the steering wheel, upright at the footplate's side
+          ring(b, 0, 0.24, 0.035, 0.035, IRON, 12); b.box(0, 0, 0, 0.44, 0.03, 0.03, IRON); b.box(0, 0, 0, 0.03, 0.44, 0.03, IRON);
+          b.dy -= 1.75; b.transformFrom(m, { ox: -1.7, oz: 0.62, rot: 0 }); }
         b.box(1.65, 0.7, 0, 0.3, 0.3, 1.5, IRON);                                              // the front axle's perch
         for (const [x, z] of [[-2.25, -1.0], [-2.25, 1.0], [1.45, -0.9], [1.45, 0.9]]) b.cyl(x, 2.35, z, 0.035, 1.6, BRASS, 6);
         b.box(-0.4, 3.18, 0, 3.9, 0.06, 2.2, 0x222222); b.box(-0.4, 3.13, 0, 3.95, 0.06, 2.24, 0xffffff);   // the canopy
         b.box(-0.9, 2.05, 0.8, 0.1, 0.1, 0.5, IRON);                                           // the flywheel's bearing
-        standing(b, -2.1, 0.75, -0.25, 0, { coat: 0x3a3a3c, legs: 0x2a2a2c, hat: "cap", hatCol: 0x2a2a2a, hands: "bar", scarf: RED });
+        standing(b, -1.95, 0.75, -0.3, 0, { coat: 0x3a3a3c, legs: 0x2a2a2c, hat: "cap", hatCol: 0x2a2a2a, hands: "bar", scarf: RED });
+        standing(b, -2.05, 0.75, 0.3, 0, { coat: 0x4a4238, legs: 0x2a2a2c, hat: "bowler", hatCol: 0x2a2420, hands: "bar" });
       },
       (b) => {   // the hind wheels: broad iron tyres with diagonal strakes, iron spokes
         for (const s of [-1, 1]) {
