@@ -22,7 +22,7 @@ export type VicDoor = (x0: number, x1: number, n: number, painted?: boolean) => 
 // The palette: stock brick, red brick, stucco, Portland stone, slate, soot, cast iron painted
 // green or black, gilt, and the gas lamps' warm light.
 export const VIC = {
-  stock: 0xb8a27a, red: 0x8e3b2a, stucco: 0xe8dfc8, stone: 0xd2c7ac, slate: 0x4a5058, soot: 0x3a3632,
+  stock: 0xb8a27a, red: 0x8e3b2a, stucco: 0xdcd2b8, stone: 0xd2c7ac, slate: 0x4a5058, soot: 0x3a3632,
   iron: 0x23302a, black: 0x1c1d20, green: 0x2e4a36, maroon: 0x6a1f2a, navy: 0x24324e, gilt: 0xc9a44a,
   timber: 0x6a4a30, cream: 0xefe6cf, lamp: 0xffd27a, chimneyPot: 0xa8583a, glass: 0x2a3440,
   slateDark: 0x3c4148, lead: 0x6a7078, brickDark: 0x6a3024, oak: 0x7a5434, coal: 0x222226, canvas: 0xd8ceb4,
