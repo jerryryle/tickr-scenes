@@ -4,10 +4,13 @@
 //   make tool SCENE=long-day TOOL=carriages SECS=15   -> build/long-day-carriages/carriages.png
 // With CARRIAGE_CLIP set to a model it is instead a clip of that carriage trotting past, slowing to a
 // walk and stopping, then standing, filmed from the street (CLIP_VIEW "side", or "front" from its
-// front quarter): render it a frame every 100 ms, DEFINE="CARRIAGE_CLIP=box26 CLIP_VIEW=side".
+// front quarter): render it a frame every 100 ms, DEFINE="CARRIAGE_CLIP=box26 CLIP_VIEW=side". With
+// CARRIAGE_CLIP=fleet it shows each model baked as a rental lot parks it, unhitched (fleet.ts), and
+// as traffic draws it, its team walking.
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { LIVERY_ASSETS, Truck, TruckKit } from "../src/truck.ts";
+import { FleetBaker } from "../src/fleet.ts";
 import type { LiveryName, TruckModel } from "../src/truck.ts";
 
 const CARRIAGE_CLIP: string = "";
@@ -22,6 +25,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera;
   const rows: Truck[][] = [];
   let clip: Truck | null = null, cs = 0, ct = 0;
+  let fleet: { g: THREE.Object3D; x: number }[] | null = null;
   return {
     setup() {
       const gl = sys.gl({ antialias: true });
@@ -38,7 +42,23 @@ export default function createScene({ sys }: SceneInputs): Scene {
       try { draw(f.t); ctx.drawImage(r.domElement as any, 0, 0); } catch (e: any) { sys.log("carriages: " + (e?.stack ?? e)); }
     },
   };
+  function drawFleet(time: number) {
+    if (!fleet) {
+      const kit = new TruckKit({} as Record<LiveryName, CanvasImageSource>);
+      const white = new THREE.DataTexture(new Uint8Array([244, 244, 240, 255]), 1, 1); white.needsUpdate = true;
+      for (const n of LIVERY_ASSETS) kit.livery[n].map = white;
+      const baker = new FleetBaker(kit);
+      scene.add(baker.build(MODELS.map((model, i) => ({ model, x: i * 14 - 10, z: 9, h: 0, carriage: 1 })))!);
+      fleet = (["box16", "box26"] as TruckModel[]).map((m, i) => { const g = baker.vehicle(m, 0, 1)!; scene.add(g); return { g, x: i * 16 }; });
+    }
+    for (const f of fleet) { const x = f.x + time * 1.5; f.g.position.set(x, 0, 0); f.g.userData.team?.(time * 1.5, 1.5, time, f.x); }
+    if (time < 4) { cam.fov = 40; cam.position.set(20, 4, -10); cam.lookAt(20, 1, 9); }
+    else { cam.fov = 34; cam.position.set(10 + time * 1.5, 2.5, -9); cam.lookAt(10 + time * 1.5, 1.4, 0); }
+    cam.updateProjectionMatrix();
+    r.render(scene, cam);
+  }
   function drawClip(time: number) {
+    if (CARRIAGE_CLIP === "fleet") { drawFleet(time); return; }
     if (!clip) {
       const kit = new TruckKit({} as Record<LiveryName, CanvasImageSource>);
       const white = new THREE.DataTexture(new Uint8Array([244, 244, 240, 255]), 1, 1); white.needsUpdate = true;

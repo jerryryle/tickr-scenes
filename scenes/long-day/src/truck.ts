@@ -316,7 +316,7 @@ function toonRegions(s: TruckSpec): ToonRegion[] {
 // livery shrinks away from a painted body. carriage.ts grows the rest: the seat, lamps, panelling,
 // wheels and the team.
 const CARRIAGE_RECOLOR: [number, number][] = [
-  [TC.white, CC.van], [TC.frame, CC.woodDark], [TC.alu, CC.wood], [TC.chrome, CC.brass], [TC.black, CC.iron], [TC.step, CC.woodDark], [TC.hub, CC.woodDark],
+  [TC.white, CC.van], [TC.frame, CC.woodDark], [TC.alu, CC.wood], [TC.chrome, CC.brass], [TC.black, CC.woodDark], [TC.step, CC.woodDark], [TC.hub, CC.woodDark],
 ];
 const TC_COLORS = Object.values(TC).map((h) => [new THREE.Color(h), h] as const);
 // The truck colour (TC) a vertex has, or -1.
