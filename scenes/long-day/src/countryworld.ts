@@ -116,7 +116,7 @@ const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf
 // billboards, and its signs are finger posts (vicFingerPost). The truck turns into a carriage at the
 // same point: its cab, back doors and exhaust change at half (truck.ts), as the oncoming traffic does.
 const PERIOD_MODERN = 0.5;
-// The colour a of the way to b by k (0..1), channel by channel.
+// This mixes colour a k of the way (0..1) to colour b, channel by channel.
 function lerpColor(a: number, b: number, k: number) {
   const ch = (sh: number) => Math.round(((a >> sh) & 255) * (1 - k) + ((b >> sh) & 255) * k) << sh;
   return ch(16) | ch(8) | ch(0);
@@ -1115,7 +1115,7 @@ export class CountryWorld {
   // (None, nor a pylon, where a Victorian city has crept in.)
   private drawTurbine(R: RoadGeo, s: Batch, sa: number, n: number, spins: TurbineSpin[], road: CountryRoad) {
     if (R.periodAt(sa) > PERIOD_MODERN) return;
-    const r =this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 4, R.key), ph = r() * 6.3;
+    const r = this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 4, R.key), ph = r() * 6.3;
     const [x, z, h] = this.L(sa, n), c = R.climateAt(sa, n), wind = this.windIn(road, c), yaw = this.windYaw(road);
     const tk = Math.floor(sa / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.driveSeed, 0x3ab3) < 0.08;
     const rpm = wind < 0.3 || stopped ? 0 : (9 + 8 * Math.min(1, (wind - 0.3) / 0.6)) * (0.94 + 0.12 * hash3(tk, road.inp.city, 8, road.inp.driveSeed, 0x3ab4));

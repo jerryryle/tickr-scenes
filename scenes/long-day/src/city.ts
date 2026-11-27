@@ -1124,7 +1124,6 @@ DRAW.close = (R, g, s) => {
 // A house round a close, facing in to it from its own frame: its path, its wall and floors.
 DRAW.closeHouse = (R, g, s, rnd) => {
   const y = CURB_H, h: Rect = { x0: -4, z0: 2.5, x1: 4, z1: 10 }, wall = R.wall as number;
-  if (CS.victorian) { g.box(0, y + 0.02, 1.25, 1.2, 0.02, 2.5, CS.pavers); vicLot(s, h, y, "residential", 0, [wall], rnd, () => {}); return; }   // (a villa: victorian-buildings-town.ts)
   g.box(0, y + 0.02, 1.25, 1.2, 0.02, 2.5, CS.pavers);
   const top = facadeBox(s, h.x0, h.z0, h.x1, h.z1, y, [{ tile: FACADE.RESIDENTIAL, floors: R.floors as number, floorH: 3.1 }], wall, 2, FACADE.DOOR);
   flatRoof(s, h, top, wall, rnd, 0);
