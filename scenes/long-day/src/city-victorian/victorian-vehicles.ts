@@ -522,7 +522,11 @@ function makeVicRigs(): VicRig[] {
   // posts, and its crew of two on the footplate between the hind wheels, the coal bunker behind
   // them: the driver at the regulator and the steersman at his wheel. Puffs of smoke chuff from its
   // chimney and drift behind.
-  const TE_L = 5.8, TE_RR = 0.95, TE_FR = 0.55, TE_CH: [number, number] = [1.85, 3.55], TE_PUFFS = 4;
+  const TE_L = 5.8, TE_RR = 0.95, TE_FR = 0.55, TE_CH: [number, number] = [1.85, 3.55], TE_PUFFS = 8;
+  // The flywheel is on the crankshaft's end, outside the hornplates and inboard of the near hind
+  // wheel, about two thirds of its size. The crankshaft turns TE_GEAR times to the hind wheels' once
+  // through the spur gearing, so the flywheel stands still when the engine does.
+  const TE_FLY = { x: -0.9, y: 2.05, z: 0.66, r: 0.65 }, TE_GEAR = 10;
   const traction: VicRig = {
     id: "traction", len: TE_L, width: 2.5, vmax: 1.8, cap: 2,
     colors: [0x8a1e22, 0x2e5a34, 0x5a1a20, 0x2a3a6a],
@@ -543,7 +547,7 @@ function makeVicRigs(): VicRig[] {
         b.box(1.65, 0.7, 0, 0.3, 0.3, 1.5, IRON);                                              // the front axle's perch
         for (const [x, z] of [[-2.25, -1.0], [-2.25, 1.0], [1.45, -0.9], [1.45, 0.9]]) b.cyl(x, 2.35, z, 0.035, 1.6, BRASS, 6);
         b.box(-0.4, 3.18, 0, 3.9, 0.06, 2.2, 0x222222); b.box(-0.4, 3.13, 0, 3.95, 0.06, 2.24, 0xffffff);   // the canopy
-        b.box(-0.9, 2.05, 0.8, 0.1, 0.1, 0.5, IRON);                                           // the flywheel's bearing
+        b.box(TE_FLY.x, TE_FLY.y, TE_FLY.z - 0.1, 0.16, 0.16, 0.12, IRON);                     // the crankshaft's bearing
         standing(b, -1.95, 0.75, -0.3, 0, { coat: 0x3a3a3c, legs: 0x2a2a2c, hat: "cap", hatCol: 0x2a2a2a, hands: "bar", scarf: RED });
         standing(b, -2.05, 0.75, 0.3, 0, { coat: 0x4a4238, legs: 0x2a2a2c, hat: "bowler", hatCol: 0x2a2420, hands: "bar" });
       },
@@ -564,9 +568,9 @@ function makeVicRigs(): VicRig[] {
         }
         b.cyl(0, 0, 0, 0.05, 1.5, IRON, 6, Math.PI / 2);
       },
-      (b) => {   // the flywheel
-        ring(b, 0, 0.5, 0.07, 0.09, 0x2a2a2a, 18);
-        for (let k = 0; k < 6; k++) b.boxR(0, 0, 0, 0.95, 0.06, 0.05, 0x2a2a2a, 0, 0, k / 6 * Math.PI);
+      (b) => {   // the flywheel: a heavy rim and six spokes
+        ring(b, 0, TE_FLY.r - 0.04, 0.09, 0.1, 0x2a2a2a, 20);
+        for (let k = 0; k < 3; k++) b.boxR(0, 0, 0, TE_FLY.r * 1.9, 0.06, 0.05, 0x2a2a2a, 0, 0, k / 3 * Math.PI);
         b.cyl(0, 0, 0, 0.08, 0.14, BRASS, 8, Math.PI / 2);
       },
       ...Array.from({ length: TE_PUFFS }, (_, i) => (b: Batch) => {   // the puffs of smoke, a little cloud each
@@ -575,16 +579,20 @@ function makeVicRigs(): VicRig[] {
       }),
     ],
     pose(s, out) {
-      const chug = 0.012 * Math.sin(s.odo / 0.9 * TAU) + 0.006 * Math.sin(s.t * 9 + s.seed);
+      // (crank is the crankshaft's turn; the engine rocks a little at each of its two beats a turn.)
+      const crank = s.odo / TE_RR * TE_GEAR;
+      const chug = 0.012 * Math.sin(2 * crank) + 0.006 * Math.sin(s.t * 9 + s.seed);
       at(out[0], 0, chug, 0);
       roll(out[1], -1.5, TE_RR, s);
       roll(out[2], 1.75, TE_FR, s);
-      at(out[3], -0.9, 2.05 + chug, 0.9, 0, 0, -s.odo / 0.25 - s.t * 1.5);
-      // A puff leaves the chimney every quarter of a cycle (faster as it goes), rises, swells and is
-      // left behind by the engine going on, then shrinks away.
-      const LIFE = 2.6;
+      at(out[3], TE_FLY.x, TE_FLY.y + chug, TE_FLY.z, 0, 0, -crank);
+      // A puff leaves the chimney at each beat of the exhaust, two to the crank's turn, and the
+      // fire's smoke keeps coming slowly when it stands. Each rises and swells where it was left,
+      // so the engine draws away from it at its own speed, and drifts a little on the breeze, then
+      // shrinks away. (a is how far through its life a puff is, and sec its age.)
+      const rate = s.v * TE_GEAR / (TE_RR * Math.PI * TE_PUFFS) + 0.25;
       for (let i = 0; i < TE_PUFFS; i++) {
-        const a = ((s.odo / 1.4 + s.t * 0.4 + i / TE_PUFFS) % 1 + 1) % 1, sec = a * LIFE;
+        const a = ((crank / Math.PI / TE_PUFFS + s.t * 0.25 + i / TE_PUFFS) % 1 + 1) % 1, sec = a / rate;
         const size = (0.35 + 1.5 * a) * (a < 0.75 ? 1 : (1 - a) / 0.25);
         at(out[4 + i], TE_CH[0] - sec * (s.v + 0.3), TE_CH[1] + 0.15 + sec * 0.8, 0.15 * Math.sin(a * 5 + i), 0, a * 3 + i, 0, size);
       }

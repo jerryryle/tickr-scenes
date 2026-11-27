@@ -7,7 +7,8 @@
 //   the copper house beside it shows its coppers through tall arched openings, a cast-iron water
 //   tank on its roof, and a pipe bridge to the brewhouse;
 //   the engine house has its beam engine on its front, the great beam rocking on iron columns
-//   before the gable, its flywheel turning below and the cylinder at the other end;
+//   before the gable, its flywheel turning below with a governor beside it, and the cylinder at
+//   the other end;
 //   the malt kiln behind has a pyramid roof and a white cowl that turns in the wind, and the
 //   boiler house's tall chimney smokes beside it;
 //   along the street, casks roll down a ramp from the loft over the dray horses' stable into the
@@ -47,6 +48,9 @@ export const BREWERY = {
   beam: { a: 45.5, n: 16.6, y: 13.6, half: 4.5 },
   wheel: { a: 41, n: 17.0, y: 4.0, r: 3.0, crank: 1.2 },
   cyl: { a: 50, y0: 0.13, y1: 5.6, r: 0.75 },
+  // (The governor stands behind the wheel's rim, between it and the beam's back column, and a lay
+  // shaft drives it from the crankshaft. Its arms hinge at y and are `arm` long to the balls.)
+  governor: { a: 44.55, n: 17.55, y: 6.3, arm: 0.45 },
   kiln: { a0: 41, a1: 50, n0: 30, n1: 39, top: 11, rise: 7.5 },
   boiler: { a0: 32.8, a1: 39.5, n0: 31, n1: 36.8, top: 5.2 },
   chimney: { a: 36, n: 39.3, h: 34, r0: 1.7, r1: 1.1 },
@@ -271,6 +275,11 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
     brBox(s, F, W.a - W.r - 0.4, W.a + W.r + 0.4, BR_GROUND, BR_GROUND + 0.02, W.n - 0.7, W.n + 0.7, BR_COL.dark);
     brBox(s, F, W.a - 0.5, W.a + 0.5, BR_GROUND, W.y - 0.2, W.n + 0.4, W.n + 0.9, BR_COL.stone);   // (the bearing pedestal stands behind the wheel)
     brRod(s, brAt(F, W.a, W.n - 0.45, W.y), brAt(F, W.a, E.n0, W.y), 0.16, BR_COL.black, 6);
+    // the governor's lay shaft off the crankshaft, its bevel boxes and the pillar it stands on
+    const Gv = BR.governor;
+    brRod(s, brAt(F, W.a, Gv.n, W.y), brAt(F, Gv.a, Gv.n, W.y), 0.09, BR_COL.black, 5);
+    for (const a of [W.a, Gv.a]) brBox(s, F, a - 0.22, a + 0.22, W.y - 0.22, W.y + 0.22, Gv.n - 0.22, Gv.n + 0.22, BR_COL.iron);
+    brBox(s, F, Gv.a - 0.16, Gv.a + 0.16, BR_GROUND, W.y - 0.22, Gv.n - 0.16, Gv.n + 0.16, BR_COL.green);
     // the cylinder: lagged in timber with iron bands, on a stone block
     const Cy = BR.cyl, [kx, , kz] = brAt(F, Cy.a, Bm.n, 0);
     s.box(kx, BR_GROUND + 0.35, kz, 2.0, 0.7, 2.0, BR_COL.stone);
@@ -378,22 +387,29 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
 // ---- the moving parts -------------------------------------------------------------------------
 // SteamBreweryFx is built in the world when a Victorian city is (main.ts buildCity) and posed by
 // scene time alone (update), so scrubbing replays it: the beam engine (its beam rocking, flywheel,
-// connecting rod and piston rod), the kiln's cowl, the casks rolling down the ramp, and the smoke
-// and steam from the chimney, the cowl, the coppers and the engine's exhaust.
+// connecting rod, piston rod and governor), the kiln's cowl, the casks rolling down the ramp, and
+// the smoke and steam from the chimney, the cowl, the coppers and the engine's exhaust.
+// The engine's linkage is solved from the crank's angle each frame. The connecting rod keeps its
+// length from the crank pin to the beam's end, and the beam turns about its pivot to meet it. The
+// piston rod hangs from the beam's other end and slides at its own length in the cylinder's gland.
 const BR_ENGINE_RATE = 1.15;   // the flywheel's turn, radians a second
-interface BrPuffSource { o: THREE.Vector3; k: number; rate: number; size: number; rise: number; drift: number; color: THREE.Color; pulse: boolean }
+const BR_GOVERNOR_GEAR = 6;    // the governor's turns to the flywheel's
+const BR_PISTON_ROD = 9.4;     // the piston rod's length, so its foot stays in the cylinder at the top of the stroke
+interface BrPuffSource { o: THREE.Vector3; k: number; rate: number; size: number; rise: number; drift: number; color: THREE.Color; phase: number }
 export class SteamBreweryFx {
   private group = new THREE.Group();
   private wheel: THREE.Object3D | null = null;
   private beam: THREE.Object3D | null = null;
   private connRod: THREE.Object3D | null = null;
   private pistonRod: THREE.Object3D | null = null;
+  private governor: THREE.Object3D | null = null;
   private cowl: THREE.Object3D | null = null;
   private casks: THREE.Object3D[] = [];
   private puffs: THREE.InstancedMesh | null = null;
   private sources: BrPuffSource[] = [];
   private F: BreweryFrame | null = null;
-  private inn = new THREE.Vector3(); private al = new THREE.Vector3(); private wind = new THREE.Vector3();
+  // (axis is al x up: a positive turn about it carries al towards up, whichever way round the frame is.)
+  private inn = new THREE.Vector3(); private al = new THREE.Vector3(); private axis = new THREE.Vector3(); private wind = new THREE.Vector3();
   private m = new THREE.Matrix4(); private q = new THREE.Quaternion(); private v = new THREE.Vector3(); private v2 = new THREE.Vector3(); private sc = new THREE.Vector3();
   built = "";
 
@@ -402,7 +418,7 @@ export class SteamBreweryFx {
   clear() {
     for (const o of [...this.group.children]) { this.group.remove(o); o.traverse((c) => { if (c instanceof THREE.Mesh) c.geometry.dispose(); }); }
     if (this.puffs) { (this.puffs.material as THREE.Material).dispose(); this.puffs.dispose(); }
-    this.wheel = this.beam = this.connRod = this.pistonRod = this.cowl = null; this.casks = []; this.puffs = null; this.sources = []; this.F = null; this.built = "";
+    this.wheel = this.beam = this.connRod = this.pistonRod = this.governor = this.cowl = null; this.casks = []; this.puffs = null; this.sources = []; this.F = null; this.built = "";
   }
 
   build(plan: CityPlan, layout: (bx: number, bz: number) => DockLayout | null) {
@@ -418,7 +434,7 @@ export class SteamBreweryFx {
   // buildAt builds the moving parts in frame F (a tool scene builds them here directly).
   buildAt(F: BreweryFrame) {
     this.F = F;
-    this.inn.set(F.inn[0], 0, F.inn[1]).normalize(); this.al.set(F.al[0], 0, F.al[1]).normalize();
+    this.inn.set(F.inn[0], 0, F.inn[1]).normalize(); this.al.set(F.al[0], 0, F.al[1]).normalize(); this.axis.crossVectors(this.al, BR_UP);
     this.wind.copy(this.al).multiplyScalar(0.8).addScaledVector(this.inn, 0.45);
     const piece = (make: (b: Batch) => void, pivot: BrP3) => {
       const b = new Batch(); make(b); const m = b.build(this.mat); if (!m) return new THREE.Object3D();
@@ -447,29 +463,50 @@ export class SteamBreweryFx {
       }
       for (const u of [-Bm.half, 0, Bm.half]) { const p = brAt(F, Bm.a + u, Bm.n, Bm.y); b.cyl(p[0], p[1], p[2], u ? 0.26 : 0.42, 0.42, BR_COL.black, 8, Math.PI / 2, 0, yawN); }
     }, bc);
-    // the rods are a unit long, stood on their foot, and stretched to fit (update)
-    const unitRod = (r: number, c: number) => piece((b) => { b.cyl(0, 0.5, 0, r, 1, c, 6); b.cyl(0, 0.04, 0, r + 0.08, 0.16, BR_COL.black, 6); b.cyl(0, 0.96, 0, r + 0.08, 0.16, BR_COL.black, 6); }, [0, 0, 0]);
-    this.connRod = unitRod(0.14, BR_COL.green); this.pistonRod = unitRod(0.1, 0xb8b4aa);
-    // the cowl: a white hood on a drum, open to one side, with a vane behind to keep it from the wind
+    // The rods are built at their own lengths, stood up from their foot, and turned into place
+    // (update): the connecting rod with its brasses at both ends, the piston rod with its crosshead.
+    const Lc = Math.hypot(W.crank, Bm.y - W.y);
+    this.connRod = piece((b) => { b.cyl(0, Lc / 2, 0, 0.14, Lc, BR_COL.green, 6); for (const y of [0.1, Lc - 0.1]) b.cyl(0, y, 0, 0.22, 0.3, BR_COL.black, 6); }, [0, 0, 0]);
+    this.pistonRod = piece((b) => { b.cyl(0, BR_PISTON_ROD / 2, 0, 0.1, BR_PISTON_ROD, 0xb8b4aa, 6); b.box(0, BR_PISTON_ROD - 0.15, 0, 0.36, 0.3, 0.36, BR_COL.black); }, [0, 0, 0]);
+    // The governor is a spindle with two arms hinged at its head, a ball on each and links down to
+    // the sleeve, spun about the spindle (update). It turns at a steady speed, so its balls stand
+    // out at the one angle where they balance, where cos = g / (w^2 arm).
+    const Gv = BR.governor, gc = brAt(F, Gv.a, Gv.n, Gv.y), wG = BR_ENGINE_RATE * BR_GOVERNOR_GEAR;
+    const tilt = Math.acos(Math.min(1, 9.81 / (wG * wG * Gv.arm))), bx = Gv.arm * Math.sin(tilt), by = Gv.arm * Math.cos(tilt);
+    this.governor = piece((b) => {
+      b.cyl(gc[0], gc[1] - 1.1, gc[2], 0.05, 2.3, BR_COL.black, 4);
+      b.cone(gc[0], gc[1] + 0.25, gc[2], 0.12, 0.3, BR_COL.gilt, 6);
+      b.cyl(gc[0], gc[1] - by * 0.95, gc[2], 0.1, 0.18, BR_COL.gilt, 6);                          // the sleeve
+      for (const s of [-1, 1]) {
+        const ball: BrP3 = [gc[0] + s * bx, gc[1] - by, gc[2]], mid: BrP3 = [gc[0] + s * bx / 2, gc[1] - by / 2, gc[2]];
+        brRod(b, gc, ball, 0.035, BR_COL.black, 4);
+        brRod(b, mid, [gc[0], gc[1] - by * 0.95, gc[2]], 0.03, BR_COL.black, 4);
+        b.ico(ball[0], ball[1], ball[2], 0.15, BR_COL.gilt);
+      }
+    }, gc);
+    // The cowl is a white hood on a drum, open to one side, and its fan stands out over the
+    // opening. The wind blows the fan, and the opening with it, round to leeward.
     const K = BR.kiln, kc = brAt(F, (K.a0 + K.a1) / 2, (K.n0 + K.n1) / 2, K.top + K.rise + 0.5);
     this.cowl = piece((b) => {
       b.cyl(kc[0], kc[1] + 0.8, kc[2], 0.72, 1.6, BR_COL.white, 10);
       b.lathe("cowlcap", [[1, 0], [0.8, 0.5], [0.3, 0.9], [0, 1]], kc[0], kc[1] + 1.6, kc[2], 0.78, 0.9, BR_COL.white, 10);
       b.box(kc[0] + 0.62, kc[1] + 0.9, kc[2], 0.3, 1.1, 1.0, BR_COL.dark);           // the opening, to +x before it turns
-      b.box(kc[0] - 1.0, kc[1] + 1.2, kc[2], 1.4, 1.2, 0.08, BR_COL.white);          // the vane, behind
+      b.box(kc[0] + 1.1, kc[1] + 2.0, kc[2], 1.6, 0.9, 0.08, BR_COL.white);          // the fan, out over it
       b.cyl(kc[0], kc[1] + 2.7, kc[2], 0.04, 0.6, BR_COL.black, 4); b.ico(kc[0], kc[1] + 3.05, kc[2], 0.12, BR_COL.gilt);
     }, kc);
     // the casks that roll (stood at the frame's origin, along n, posed in update)
     const R = BR.ramp, cp = brAt(F, R.aTop, R.n, 0);
     for (let i = 0; i < 3; i++) this.casks.push(piece((b) => brCask(b, F, R.aTop, R.n, 0), cp));
     // the puffs: one instanced mesh of hard-edged cubes, as puffs.ts draws them
-    const src = (p: BrP3, k: number, rate: number, size: number, rise: number, drift: number, color: number, pulse = false) =>
-      this.sources.push({ o: new THREE.Vector3(...p), k, rate, size, rise, drift, color: new THREE.Color(color), pulse });
+    const src = (p: BrP3, k: number, rate: number, size: number, rise: number, drift: number, color: number, phase = 0) =>
+      this.sources.push({ o: new THREE.Vector3(...p), k, rate, size, rise, drift, color: new THREE.Color(color), phase });
     const Ch = BR.chimney;
     src(brAt(F, Ch.a, Ch.n, Ch.h + 0.9), 9, 0.11, 1.5, 6, 18, BR_COL.smoke);
     src(brAt(F, (K.a0 + K.a1) / 2, (K.n0 + K.n1) / 2, K.top + K.rise + 2.6), 5, 0.16, 0.8, 4, 6, 0xd8d4cc);
     for (const ac of BR.copper.arches) src(brAt(F, ac, BR.copper.n0 + 1.9, BR.copper.top + 2.4), 4, 0.22, 0.32, 3.5, 3, BR_COL.steam);
-    src(brAt(F, BR.cyl.a, BR.beam.n, BR.cyl.y1 + 0.3), 3, BR_ENGINE_RATE / (2 * Math.PI), 0.5, 2.2, 1.5, BR_COL.steam, true);
+    // (The engine is double-acting and exhausts at each end of the stroke, when the crank points
+    // straight up or down. Each of the three puffs comes every third stroke.)
+    src(brAt(F, BR.cyl.a, BR.beam.n, BR.cyl.y1 + 0.3), 3, BR_ENGINE_RATE / (3 * Math.PI), 0.5, 2.2, 1.5, BR_COL.steam, -1 / 6);
     const n = this.sources.reduce((s, x) => s + x.k, 0);
     this.puffs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), n);
     this.puffs.frustumCulled = false;
@@ -480,18 +517,26 @@ export class SteamBreweryFx {
 
   update(t: number) {
     const F = this.F; if (!F || !this.wheel || !this.beam || !this.connRod || !this.pistonRod) return;
-    const W = BR.wheel, Bm = BR.beam, th = t * BR_ENGINE_RATE;
-    this.wheel.quaternion.setFromAxisAngle(this.inn, -th);
-    // (The crank pin is at angle th round the wheel's centre in the a-y plane; the beam's near end
-    // follows it, its rod about the same length whatever the angle, and the far end works the piston.)
-    const pinA = W.a + W.crank * Math.cos(th), pinY = W.y + W.crank * Math.sin(th);
-    const phi = Math.asin(Math.max(-1, Math.min(1, (W.y - pinY) / Bm.half)));
-    this.beam.quaternion.setFromAxisAngle(this.inn, -phi);
-    const near = brAt(F, Bm.a - Bm.half * Math.cos(phi), Bm.n, Bm.y - Bm.half * Math.sin(phi)), far = brAt(F, Bm.a + Bm.half * Math.cos(phi), Bm.n, Bm.y + Bm.half * Math.sin(phi));
-    this.stretch(this.connRod, brAt(F, pinA, Bm.n, pinY), near);
-    this.stretch(this.pistonRod, brAt(F, BR.cyl.a, Bm.n, BR.cyl.y1 + 0.2), far);
-    // the cowl turns its back to the wind, which swings a little this way and that
-    if (this.cowl) this.cowl.quaternion.setFromAxisAngle(BR_UP, Math.atan2(-F.al[1], F.al[0]) + Math.PI + 0.55 * Math.sin(t * 0.13) + 0.25 * Math.sin(t * 0.41 + 1.3));
+    const W = BR.wheel, Bm = BR.beam, h = Bm.half, th = t * BR_ENGINE_RATE;
+    this.wheel.quaternion.setFromAxisAngle(this.axis, th);
+    if (this.governor) this.governor.quaternion.setFromAxisAngle(BR_UP, th * BR_GOVERNOR_GEAR);
+    // The crank pin is at angle th round the wheel's centre in the a-y plane. The beam's near end is
+    // where the circle it swings on about the pivot meets the circle the connecting rod's top can
+    // reach about the pin, on the wheel's side. The rod is as long as it is when the beam lies level.
+    const pinA = W.a + W.crank * Math.cos(th), pinY = W.y + W.crank * Math.sin(th), Lc = Math.hypot(W.crank, Bm.y - W.y);
+    const dx = pinA - Bm.a, dy = pinY - Bm.y, d = Math.hypot(dx, dy), ux = dx / d, uy = dy / d;
+    const along = (d * d + h * h - Lc * Lc) / (2 * d), across = Math.sqrt(Math.max(0, h * h - along * along));
+    const nearA = Bm.a + along * ux + across * uy, nearY = Bm.y + along * uy - across * ux;
+    const phi = Math.atan2(Bm.y - nearY, Bm.a - nearA);
+    this.beam.quaternion.setFromAxisAngle(this.axis, phi);
+    this.place(this.connRod, brAt(F, pinA, Bm.n, pinY), brAt(F, nearA, Bm.n, nearY));
+    // The piston rod hangs from the far end and points down through the gland on the cylinder's
+    // top. (The far end sways sideways by a few centimetres, so the rod leans by under a degree.)
+    const far = brAt(F, Bm.a + h * Math.cos(phi), Bm.n, Bm.y + h * Math.sin(phi)), gland = brAt(F, BR.cyl.a, Bm.n, BR.cyl.y1 + 0.3);
+    this.v2.set(far[0] - gland[0], far[1] - gland[1], far[2] - gland[2]).normalize();
+    this.place(this.pistonRod, [far[0] - this.v2.x * BR_PISTON_ROD, far[1] - this.v2.y * BR_PISTON_ROD, far[2] - this.v2.z * BR_PISTON_ROD], far);
+    // The cowl's opening turns to leeward, hunting a little about it in the gusts.
+    if (this.cowl) this.cowl.quaternion.setFromAxisAngle(BR_UP, Math.atan2(-this.wind.z, this.wind.x) + 0.12 * Math.sin(t * 0.37) + 0.06 * Math.sin(t * 1.1 + 1.3));
     // the casks come out of the loft door in turn, roll down the ramp and along into the cooperage
     const R = BR.ramp, Co = BR.cooperage, r = BR.caskR, slope = R.aTop - R.aFoot, flat = R.aFoot - Co.a1, path = slope + flat + 1.4, T = 7.5;
     this.casks.forEach((c, k) => {
@@ -501,14 +546,13 @@ export class SteamBreweryFx {
       const p = brAt(F, a, R.n, y + r + 0.07);
       c.position.set(p[0], p[1], p[2]);
       // (Laid along n, it turns about n as it rolls towards -a.)
-      c.quaternion.setFromAxisAngle(this.inn, d / r);
+      c.quaternion.setFromAxisAngle(this.axis, d / r);
     });
     // the puffs rise, swell, drift downwind and shrink away, each source's in turn
     if (this.puffs) {
       let i = 0;
       for (const s of this.sources) for (let k = 0; k < s.k; k++) {
-        let age = ((t * s.rate + k / s.k) % 1 + 1) % 1;
-        if (s.pulse) age = ((t * s.rate + k * 0.37) % 1 + 1) % 1;   // (the exhaust puffs once a stroke, its puffs overlapping)
+        const age = ((t * s.rate + k / s.k + s.phase) % 1 + 1) % 1;
         const g = 0.5 + 0.5 * Math.sin(k * 2.3);
         this.v.copy(s.o).addScaledVector(this.wind, s.drift * age * age).addScaledVector(this.al, Math.sin(k * 1.7) * 0.3);
         this.v.y += s.rise * age;
@@ -521,10 +565,9 @@ export class SteamBreweryFx {
     }
   }
 
-  // stretch stands a unit rod from p to q.
-  private stretch(o: THREE.Object3D, p: BrP3, q: BrP3) {
-    this.v.set(p[0], p[1], p[2]); this.v2.set(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
-    const L = this.v2.length();
-    o.position.copy(this.v); o.quaternion.setFromUnitVectors(BR_UP, this.v2.multiplyScalar(1 / L)); o.scale.set(1, L, 1);
+  // place stands a rod that was built up from its foot with the foot at p, pointing at q.
+  private place(o: THREE.Object3D, p: BrP3, q: BrP3) {
+    this.v.set(q[0] - p[0], q[1] - p[1], q[2] - p[2]).normalize();
+    o.position.set(p[0], p[1], p[2]); o.quaternion.setFromUnitVectors(BR_UP, this.v);
   }
 }
