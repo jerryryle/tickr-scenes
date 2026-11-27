@@ -25,5 +25,9 @@ export const DEBUG_BLOCK: number[] | null = DEBUG_VIEW.startsWith("block:") ? DE
 // (DEBUG_VIEW "at:x,z": circling low over that point, a junction say, its traffic about it; "at:x,z,h": from
 // a fixed spot in the street 16 m out from it along heading h.)
 export const DEBUG_AT: number[] | null = DEBUG_VIEW.startsWith("at:") ? DEBUG_VIEW.slice(3).split(",").map(Number) : null;
+// (DEBUG_VIEW "eye:x,y,z,tx,ty,tz;...": fixed shots, each the camera's place and the point it
+// looks at, held DEBUG_EYE_SECS seconds apiece in turn.)
+export const DEBUG_EYES: number[][] | null = DEBUG_VIEW.startsWith("eye:") ? DEBUG_VIEW.slice(4).split(";").map((e) => e.split(",").map(Number)) : null;
+export const DEBUG_EYE_SECS: number = 3;
 export const DEBUG_CLOWN_AFTER: number = 0;   // test renders and tests: the clowns come once the truck has stood held this many seconds (clowns.ts; 0: as they do)
 export const DEBUG_CAMLOG: number = 0;     // test renders: log the camera, truck and shot at every tick (TICK lines)

@@ -446,6 +446,14 @@ on: no tool rewrites a file that exists. Replacing a city means drafting a new o
 4. `make tractorturns SCENE=long-day [ARGS="<city id> ..."]` runs `tools/tractorturns.ts`, which
    writes each city's `noTractor` lists afresh and changes nothing else in its file. Run it after a
    hand edit that moves a junction, a signal pole, a stop sign or a piece of street furniture.
+5. `make relot SCENE=long-day ARGS="<city id>"` runs `tools/relot.ts`, which writes the city's
+   lotted blocks' contents afresh from today's rules after a change to how blocks are lotted. A
+   lotted block is a shopping, downtown or residential block with its facility at the kerb, other
+   than the plaza; every other recipe keeps what the file has, and a hand edit to a lotted
+   block's recipes is lost. Every lotted block's detail is
+   drawn afresh, since a rule's recipe takes its frame from the city file's rounded layout. Then
+   redraft the doors and furniture (`make clearstops ... DOORS=1`, then `make clearstops`, in turn
+   until neither changes anything) and run step 4.
 
 `test/tractorturns.ts` checks that a city of each style lists the moves the sweep bans, that a
 tractor can still get in and out by every gate, and that a tractor driven through two towns keeps

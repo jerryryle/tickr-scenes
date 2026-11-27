@@ -21,7 +21,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
-import { VIC_GASLIGHT, VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
+import { VIC_GASLIGHT, VIC_STREET, vicBackYard, vicCorner, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
@@ -780,7 +780,8 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
     if (!pavilions) return;
   }
   const depth = pavilions ? 6 : LOT_DEPTH[district], [w0, w1] = pavilions ? [7, 9] : LOT_WIDTH[district], hs = plan.downtownHeight(blk.kx, blk.kz);
-  type Lot = { f: number; a0: number; a1: number; d: number; pts: [number, number][]; floors?: number; wall?: number };
+  // (corner: a Victorian corner lot's building's outline, in its face's frame: vicCorners below.)
+  type Lot = { f: number; a0: number; a1: number; d: number; pts: [number, number][]; floors?: number; wall?: number; corner?: [number, number][] };
   const lots: Lot[] = [];
   const corners = (f: number, a0: number, a1: number, d: number) => [[a0, 0.3], [a1, 0.3], [a1, d], [a0, d]].map(([a, n]) => { const p = G.facePt(f, a, n); return [p.x - ox, p.z - oz] as [number, number]; });
   const overlaps = (p: [number, number][], q: [number, number][]) => {
@@ -806,7 +807,59 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
     }
     return false;
   };
-  for (const f of faces) {
+  // A Victorian street is built up to its corners (vicCorners): its shops, offices and houses here,
+  // its industry and its parks' pavilions as any other city's.
+  const vicCorners = CS.victorian && !keep && (district === "residential" || district === "commercial" || district === "downtown");
+  if (vicCorners) {
+    // A corner where the block's side turns 15° to 125° between two straight streets is one
+    // building fronting both (vicCorner). Its lot is bounded by the two streets and by two lines
+    // square to them, each as far from the other street as the district's lots are deep, so the
+    // rows on both streets end square against it. The rest of each side is cut into lots that fill
+    // it: from corner to corner, to the corner itself where it turns too little to leave the
+    // corner's lot 4 m along both streets, or to the node's line where it runs straight on past a
+    // street opening opposite.
+    const F = blk.faces, k = F.length, at = (f: number, a: number, n: number) => { const P = G.facePt(f, a, n); return [P.x - ox, P.z - oz] as [number, number]; };
+    // (Point (a, n) of face f in face g's frame, past g's ends too, as CityGraph.toFace is not; and
+    // the a along f's line n = n1 where g's n is n2.)
+    const onG = (g: number, f: number, a: number, n: number): [number, number] => {
+      const P = G.facePt(f, a, n), O = G.facePt(g, 0, 0), A = G.facePt(g, 1, 0), N = G.facePt(g, 0, 1), dx = P.x - O.x, dz = P.z - O.z;
+      return [dx * (A.x - O.x) + dz * (A.z - O.z), dx * (N.x - O.x) + dz * (N.z - O.z)];
+    };
+    const meet = (f: number, n1: number, g: number, n2: number) => { const v0 = onG(g, f, 0, n1)[1]; return (n2 - v0) / (onG(g, f, 1, n1)[1] - v0); };
+    const s0 = F.map((f) => G.faceA0(f) + 0.5), s1 = F.map((f) => G.faceA1(f) - 0.5), byStart = F.map(() => false), byEnd = F.map(() => false);
+    for (let i = 0; i < k; i++) {
+      const f = F[i], j = (i + 1) % k, g = F[j];
+      if (G.streets[f >> 1].k !== 0 || G.streets[g >> 1].k !== 0) continue;
+      const turn = angleDiff(G.facePt(g, 0, 0).h - G.facePt(f, 0, 0).h);
+      if (Math.abs(turn) < 0.26) { s1[i] = G.faceLen(f) - 0.3; s0[j] = 0.3; continue; }
+      if (turn > 0 || turn < -2.18) continue;
+      const aC = meet(f, 0.3, g, 0.3), aCg = onG(g, f, aC, 0.3)[0];
+      const af = meet(f, depth, g, depth), ag = onG(g, f, af, depth)[0], pts = [at(f, af, 0.3), at(f, aC, 0.3), at(g, ag, 0.3), at(f, af, depth)];
+      if (aC - af < 4 || ag - aCg < 4) { s1[i] = aC - 0.05; s0[j] = aCg + 0.05; continue; }
+      if (af < s0[i] || ag > s1[j] || !pts.every(([x, z]) => inPoly(poly, x, z)) || lots.some((l) => overlaps(l.pts, pts))) continue;
+      // (The building's outline: its fronts 0.4 in from the streets' pavements, its walls 4 cm off
+      // the rows' lot lines, as a row's buildings stand, vicLot.)
+      const fa = af + 0.04, n0 = onG(g, f, fa, 0)[0], nq = (ag - 0.04 - n0) / (onG(g, f, fa, 1)[0] - n0);
+      const corner = [[fa, nq], onG(f, g, ag - 0.04, 0.4), [meet(f, 0.4, g, 0.4), 0.4], [fa, 0.4]].map(([a, n]) => [cm2(a), cm2(n)] as [number, number]);
+      lots.push({ f, a0: af, a1: aC, d: depth, pts, corner });
+      s1[i] = af; s0[j] = ag; byEnd[i] = byStart[j] = true;
+    }
+    for (let i = 0; i < k; i++) {
+      const f = F[i], L = s1[i] - s0[i];
+      if (L < 3.5) continue;
+      const n = Math.max(1, Math.round(L / ((w0 + w1) / 2))), ws = Array.from({ length: n }, () => range(rnd, w0, w1)), sum = ws.reduce((t, w) => t + w, 0);
+      let a = s0[i];
+      ws.forEach((w, m) => {
+        const a1 = a + w * L / sum, d = depth * range(rnd, 0.8, 1.1), first = m === 0, last = m === n - 1;
+        // (No deeper than a corner's lot beside it; one that won't fit, as against a row round a
+        // corner with no corner building, is tried shorter at that end.)
+        const dd = (first && byStart[i]) || (last && byEnd[i]) ? Math.min(d, depth) : d;
+        for (let t = 0; t <= 3 && !tryLot(f, a + (first ? t : 0), a1 - (last ? t : 0), dd); t++);
+        a = a1;
+      });
+    }
+  }
+  if (!vicCorners) for (const f of faces) {
     const A0 = G.faceA0(f), A1 = G.faceA1(f);
     if (pavilions) { const m = (A0 + A1) / 2, w = range(rnd, w0, w1); tryLot(f, m - w / 2, m + w / 2, depth); continue; }
     let a = A0 + 0.5;
@@ -849,6 +902,7 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
     inFrame(fr, [g, s, DC.lamps], () => {
       const b: Rect = { x0: L.a0 + 0.3, z0: 0.4, x1: L.a1 - 0.3, z1: L.d - 0.3 }, rect = [cm2(b.x0), cm2(b.z0), cm2(b.x1), cm2(b.z1)];
       if (CS.storybook && !pavilions && district !== "industrial") { place("storyLot", { side, rect, district, hs: cm2(hs) }, g, s, rnd); return; }
+      if (L.corner) { place("vicCorner", { side, pts: L.corner, district, hs: cm2(hs) }, g, s, rnd); return; }
       if (CS.victorian) { place("vicLot", { side, rect, district: pavilions ? "park" : district, hs: cm2(hs) }, g, s, rnd); return; }
       if (district === "downtown") {
         const w0 = pick(rnd, CS.walls.downtown), f0 = Math.max(3, Math.round((3 + hs * range(rnd, 4, 14)) * CS.towerScale));
@@ -958,12 +1012,20 @@ DRAW.storyLot = (R, _g, s, rnd) => {
 // A Victorian lot's building (vicLot), on `rect` in its face's frame, by its district (a park's
 // pavilion where the district is "park"): victorian-buildings-town.ts.
 DRAW.vicLot = (R, _g, s, rnd) => {
-  const [x0, z0, x1, z1] = R.rect as number[], side = R.side as number, d = R.district as District;
+  const [x0, z0, x1, z1] = R.rect as number[], d = R.district as District;
   const walls = d === "park" ? CS.walls.commercial : CS.walls[d as "downtown" | "commercial" | "residential" | "industrial"];
-  vicLot(s, { x0, z0, x1, z1 }, CURB_H, d, R.hs as number, walls, rnd, (dx0, dx1, n, painted = false) => {
-    const bays = Math.max(1, Math.round((dx1 - dx0) / BAY));
-    doorSpot(side, painted ? dx1 - (dx1 - dx0) * (Math.floor(bays / 2) + 0.5) / bays : bays > 1 ? dx0 + (dx1 - dx0) * Math.round(bays / 2) / bays : (dx0 + dx1) / 2, n);
-  }, R.at ? seedOf({ k: "row", at: R.at }) : undefined);   // (a row's lots share their frame, their side of the block)
+  vicLot(s, { x0, z0, x1, z1 }, CURB_H, d, R.hs as number, walls, rnd, vicDoor(R.side as number), R.at ? seedOf({ k: "row", at: R.at }) : undefined);   // (a row's lots share their frame, their side of the block)
+};
+// A Victorian corner lot's building (vicCorner), its outline `pts` in its face's frame. (It shares
+// its frame, and so its row's design, with the lots along its face.)
+DRAW.vicCorner = (R, _g, s, rnd) => {
+  const d = R.district as "downtown" | "commercial" | "residential";
+  vicCorner(s, R.pts as [number, number][], CURB_H, d, R.hs as number, CS.walls[d], rnd, vicDoor(R.side as number), R.at ? seedOf({ k: "row", at: R.at }) : undefined);
+};
+// (A Victorian lot's front door, from x0 to x1 at depth n in its face's frame, recorded for kerbDoors.)
+const vicDoor = (side: number) => (dx0: number, dx1: number, n: number, painted = false) => {
+  const bays = Math.max(1, Math.round((dx1 - dx0) / BAY));
+  doorSpot(side, painted ? dx1 - (dx1 - dx0) * (Math.floor(bays / 2) + 0.5) / bays : bays > 1 ? dx0 + (dx1 - dx0) * Math.round(bays / 2) / bays : (dx0 + dx1) / 2, n);
 };
 // A Victorian block middle's buildings and yards (buildInfill): a grand building downtown
 // (vicTower), a warehouse or mill elsewhere (vicWorks), an industrial yard's stacks (vicYard) and
@@ -1081,7 +1143,7 @@ DRAW.closeHouse = (R, g, s, rnd) => {
 // anywhere clear of the shops, up to the sidewalk where there are none).
 // (kerbDoors only looks for a wall to put a door in on a side with no lot, and every side has one
 // where it can.) Its own random stream, so the rest of the block is drawn as it was.
-type InfillLot = { f: number; a0: number; a1: number; d: number; pts: [number, number][] };
+type InfillLot = { f: number; a0: number; a1: number; d: number; pts: [number, number][]; corner?: unknown };
 function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [number, number][], ox: number, oz: number, district: District, lots: InfillLot[], keep: [number, number][] | null, hs: number, extra: [number, number][][] = []) {
   if (district === "park") return;
   // (Industry's yards come up near the street: sheds and stacked containers behind a fence line.)
@@ -1120,8 +1182,9 @@ function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [num
   };
   if (district === "residential") {
     // Behind each house its garden, as wide as its lot and as deep as the block allows (14 m at
-    // most), fenced on three sides; in it a tree, perhaps a shed at the back, perhaps a patio.
-    for (const L of lots) for (const gd of [14, 11, 8, 5]) {
+    // most), fenced on three sides; in it a tree, perhaps a shed at the back, perhaps a patio. (A
+    // corner house has none: its back is the rows' gardens' corner.)
+    for (const L of lots) if (!L.corner) for (const gd of [14, 11, 8, 5]) {
       const A0 = L.a0 + 0.3, A1 = L.a1 - 0.3, pts = [[A0, L.d], [A1, L.d], [A1, L.d + gd], [A0, L.d + gd]].map(([a, n]) => { const P = G.facePt(L.f, a, n); return [P.x - ox, P.z - oz] as [number, number]; });
       if (!pts.every(([x, z]) => inPoly(poly, x, z) && polyDist(poly, x, z) > 0.3) || spans(pts)) continue;
       if (lots.some((o) => o !== L && !sep(o.pts, pts, 0)) || placed.some((t) => !sep(t, pts, 0.3)) || (keep && !sep(keep, pts, 1))) continue;   // (other gardens a little off: their fences never coincide)

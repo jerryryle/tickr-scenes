@@ -65,38 +65,43 @@ function vicBox(s: Batch, x0: number, z0: number, x1: number, z1: number, y0: nu
   const corners = [[x0, z1], [x1, z1], [x1, z0], [x0, z0]];
   let y = y0;
   bands.forEach((band, bi) => {
-    const h = band.floors * band.floorH, col = band.color ?? color, tile = band.tile + FACADE_KINDS * band.v;
+    const h = band.floors * band.floorH, col = band.color ?? color;
     for (let sd = 0; sd < 4; sd++) {
       const [ax, az] = corners[sd], [bx, bz] = corners[(sd + 1) % 4], L = Math.hypot(bx - ax, bz - az);
       if (flank && sd % 2 === 1) {
         if (flank === (sd === 1 ? "x0" : "x1")) continue;
-        // (A blank side is the tile's plain strip left of its window, 28 px of 128, laid in pieces
-        // about as wide as that strip is on a front.)
-        const m = Math.max(1, Math.round(L / 0.8));
-        for (let j = 0; j < m; j++) s.wall(ax + (bx - ax) * j / m, az + (bz - az) * j / m, ax + (bx - ax) * (j + 1) / m, az + (bz - az) * (j + 1) / m, y, y + h, col, tile, 0, 0.22, 0, band.floors);
+        // (A blank side is the band's wall with no window, VICT_PLAIN, at a front's scale.)
+        s.wall(ax, az, bx, bz, y, y + h, col, FACADE.VICT_PLAIN + FACADE_KINDS * band.v, 0, L / BAY, 0, band.floors);
         continue;
       }
-      const bays = Math.max(1, Math.round(L / (sd % 2 ? BAY : bay)));
-      const at = (j: number): [number, number] => [ax + (bx - ax) * j / bays, az + (bz - az) * j / bays];
-      const sp = sd === 2 ? special.filter((q) => q.k < bays && (q.all || bi === 0)) : [];
-      let j0 = 0;
-      const run = (j1: number) => { if (j1 > j0) { const [px, pz] = at(j0), [qx, qz] = at(j1); s.wall(px, pz, qx, qz, y, y + h, col, tile, 0, j1 - j0, 0, band.floors); } };
-      for (let j = 0; j < bays; j++) {
-        const q = sp.filter((o) => o.k === j);
-        if (!q.length) continue;
-        run(j); j0 = j + 1;
-        const [px, pz] = at(j), [qx, qz] = at(j + 1), door = q.find((o) => !o.all), colm = q.find((o) => o.all);
-        const upper = colm ? colm.tile + FACADE_KINDS * colm.v : tile;
-        if (door && bi === 0) {
-          s.wall(px, pz, qx, qz, y, y + band.floorH, col, door.tile + FACADE_KINDS * door.v, 0, 1, 0, 1);
-          if (band.floors > 1) s.wall(px, pz, qx, qz, y + band.floorH, y + h, col, upper, 0, 1, 1, band.floors - 1);
-        } else s.wall(px, pz, qx, qz, y, y + h, col, upper, 0, 1, 0, band.floors);
-      }
-      run(bays);
+      vicRun(s, ax, az, bx, bz, y, band, color, sd === 2 ? special : [], sd % 2 ? BAY : bay, bi === 0);
     }
     y += h;
   });
   return y;
+}
+// vicRun walls one band of a facade from (ax, az) to (bx, bz), facing (-dz, dx), from y up, in bays
+// of about `bay`, its special bays (counted from a) given their own tiles; a door only in the
+// `first` band.
+function vicRun(s: Batch, ax: number, az: number, bx: number, bz: number, y: number, band: VicBand, color: number, special: VicSpecial[], bay: number, first: boolean) {
+  const h = band.floors * band.floorH, col = band.color ?? color, tile = band.tile + FACADE_KINDS * band.v;
+  const bays = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / bay));
+  const at = (j: number): [number, number] => [ax + (bx - ax) * j / bays, az + (bz - az) * j / bays];
+  const sp = special.filter((q) => q.k < bays && (q.all || first));
+  let j0 = 0;
+  const run = (j1: number) => { if (j1 > j0) { const [px, pz] = at(j0), [qx, qz] = at(j1); s.wall(px, pz, qx, qz, y, y + h, col, tile, 0, j1 - j0, 0, band.floors); } };
+  for (let j = 0; j < bays; j++) {
+    const q = sp.filter((o) => o.k === j);
+    if (!q.length) continue;
+    run(j); j0 = j + 1;
+    const [px, pz] = at(j), [qx, qz] = at(j + 1), door = q.find((o) => !o.all), colm = q.find((o) => o.all);
+    const upper = colm ? colm.tile + FACADE_KINDS * colm.v : tile;
+    if (door && first) {
+      s.wall(px, pz, qx, qz, y, y + band.floorH, col, door.tile + FACADE_KINDS * door.v, 0, 1, 0, 1);
+      if (band.floors > 1) s.wall(px, pz, qx, qz, y + band.floorH, y + h, col, upper, 0, 1, 1, band.floors - 1);
+    } else s.wall(px, pz, qx, qz, y, y + h, col, upper, 0, 1, 0, band.floors);
+  }
+  run(bays);
 }
 // The span of front bay k (from x1) of a wall x0..x1 in bays of about `bay`.
 function vicBayX(x0: number, x1: number, k: number, bay = BAY): [number, number] {
@@ -236,12 +241,19 @@ export function vicLot(s: Batch, b: VicRect, y0: number, district: VicDistrict, 
 // (A lot stands VIC_SET in from the back of the pavement, city.ts buildLots; the area, its railings
 // and the steps reach out over that strip, so no verge shows between them and the pavement.)
 const VIC_SET = 0.38;
-function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], rnd: VicRand, door: VicDoor, rs: VicRand) {
-  const X0 = b.x0 - 0.26, X1 = b.x1 + 0.26, W = X1 - X0, D = b.z1 - b.z0;
+// A row's design, drawn from its seed's stream: two or three storeys and their height, the brick
+// or render, a stuccoed ground floor, the windows' variants, the slate, whether the canted bays
+// rise both floors, and dormers.
+function vicRowLook(rs: VicRand, walls: readonly number[]) {
   const storeys = rs() < 0.5 ? 3 : 2, fh = 3.15 + (rs() - 0.5) * 0.1;
   const brick = vPick(rs, walls), render = vIsRender(brick), stuccoGround = !render && rs() < 0.6;
   const groundCol = stuccoGround ? VIC.stucco : brick, vUp = (render ? 2 : 0) + (rs() < 0.5 ? 1 : 0), vGround = (render || stuccoGround ? 2 : 0) + (rs() < 0.5 ? 1 : 0);
   const roof = vPick(rs, VIC_SLATES), bays2 = rs() < 0.75, dormers = storeys === 2 && rs() < 0.5;
+  return { storeys, fh, brick, render, groundCol, vUp, vGround, roof, bays2, dormers };
+}
+function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], rnd: VicRand, door: VicDoor, rs: VicRand) {
+  const X0 = b.x0 - 0.26, X1 = b.x1 + 0.26, W = X1 - X0, D = b.z1 - b.z0;
+  const { storeys, fh, brick, render, groundCol, vUp, vGround, roof, bays2, dormers } = vicRowLook(rs, walls);
   const area = D < 5.5 ? 0 : storeys === 3 ? (D >= 7 ? 1.4 : 0.9) : D >= 7 ? 1.6 : 1.0, sunk = storeys === 3;
   const zf = b.z0 + area, hd = Math.min(D - area, 9.5), zb = zf + hd, zs = b.z0 - VIC_SET;
   const n = W >= 8 ? 2 : 1, hw = W / n, bays = hw >= 4 ? 2 : 1, bw = hw / bays;
@@ -377,6 +389,148 @@ function vicShopRow(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
     s.box(x - sx * 0.2, y0 + gH + fh * 0.8 - 0.62, zf - 0.95, 0.07, 1.05, 0.9, vPick(rnd, [VIC.maroon, VIC.green, VIC.navy]));
     s.box(x - sx * 0.2, y0 + gH + fh * 0.8 - 0.62, zf - 0.95, 0.05, 1.15, 1.0, VIC.gilt);
   }
+}
+
+// ---- corners ----------------------------------------------------------------------------------
+// vicCorner draws a corner lot's building (city.ts buildLots), which fronts two streets as a
+// Victorian street's corner plot did. Its outline q is four points in the frame of the street the
+// lot is counted along, f (the street at -z): the back corner, where the rows on both streets end
+// against it; the end of its front on the other street, g; the street corner; and the end of its
+// front on f. Its walls run round them in that order, each facing out as Batch.wall's do.
+// On a shopping street or downtown it is a public house, a shop or a bank, its door in a canted
+// corner and a side door beside the row. Where people live it is mostly an end house of f's row (`row`, as vicLot has it) turned
+// to face both streets, and now and then a corner shop or a pub.
+export type VicPt = [number, number];
+export function vicCorner(s: Batch, q: VicPt[], y0: number, district: VicDistrict, hs: number, walls: readonly number[], rnd: VicRand, door: VicDoor, row?: number) {
+  for (const [x, z] of q) PLACED.foot.push(...toTile(x, z));
+  const r = rnd();
+  const kind = district === "residential" ? (r < 0.2 ? "shop" : r < 0.32 ? "pub" : "house") : district === "downtown" ? (r < 0.45 ? "bank" : r < 0.7 ? "pub" : "shop") : r < 0.4 ? "pub" : r < 0.85 ? "shop" : "bank";
+  if (kind === "house") { vicEndHouse(s, q, y0, walls, rnd, door, row); return; }
+  // A bank is in stone, its storeys as tall as downtown's height there allows, the grand
+  // building's windows; a shop or pub is a shopfront under sash windows, a pub's glazed tiles in a
+  // dark colour.
+  const bank = kind === "bank", pub = kind === "pub", v = Math.floor(rnd() * 4), light = walls.filter(vIsRender);
+  const wall = bank ? (light.length ? vPick(rnd, light) : VIC.stone) : vPick(rnd, walls), render = vIsRender(wall), roof = vPick(rnd, VIC_SLATES), vUp = (render ? 2 : 0) + (rnd() < 0.5 ? 1 : 0);
+  const uppers = bank ? vClamp(Math.round(2 + hs * 3 + (rnd() - 0.4) * 1.4), 2, 4) : pub ? 2 : 1 + Math.floor(rnd() * (district === "residential" ? 2 : 2.6));
+  const gH = bank ? 5.0 : 4.1 + (rnd() - 0.5) * 0.1, fh = bank ? 4.0 : 3.3, top = y0 + gH + uppers * fh;
+  const gc = pub ? vPick(rnd, [VIC.maroon, VIC.green, VIC.navy, 0x3a2a22]) : undefined;
+  const ground: VicBand = bank ? { tile: FACADE.VICT_GRAND, v, floors: 1, floorH: gH } : { tile: FACADE.VICT_SHOPWIN, v, floors: 1, floorH: gH, color: gc };
+  const up: VicBand = { tile: bank ? FACADE.VICT_GRAND : FACADE.VICT_SASH, v: bank ? 3 : vUp, floors: uppers, floorH: fh };
+  // the walls round the outline with its corner cut off, the door in the cant and a side door on
+  // f's front in the bay beside the row (the one recorded: a facility's door goes on a side's
+  // front); the back walls windowed all the way down
+  const o = vicCant(q, 2, bank ? 2.4 : 2.0), entrance: VicSpecial[] = [{ k: 0, tile: bank ? FACADE.VICT_DOOR : FACADE.VICT_SHOP, v: bank ? 2 + (v % 2) : v }];
+  const fb = vicBays(o[4][0], o[3][0]), side: VicSpecial[] = [{ ...entrance[0], k: fb - 1 }];
+  o.forEach((a, i) => {
+    const b = o[(i + 1) % o.length], front = i >= 1 && i <= 3;
+    vicRun(s, a[0], a[1], b[0], b[1], y0, front ? ground : { ...up, floors: 1, floorH: gH }, wall, i === 2 ? entrance : i === 3 ? side : [], i === 2 ? Math.hypot(b[0] - a[0], b[1] - a[1]) : BAY, true);
+    vicRun(s, a[0], a[1], b[0], b[1], y0 + gH, up, wall, [], BAY, false);
+  });
+  door(o[4][0], o[4][0] + (o[3][0] - o[4][0]) / fb, o[3][1]);
+  // the cornice and the parapet over it along the fronts, a hipped slate roof behind, a stack on
+  // each back wall
+  for (let i = 1; i <= 3; i++) {
+    vicLedge(s, o[i], o[i + 1], top - 0.2, 0.36, 0.15, 0.34, vicShade(render ? wall : VIC.stone, 0.95), [i > 1 ? 0.17 : -0.02, i < 3 ? 0.17 : -0.02]);
+    vicLedge(s, o[i], o[i + 1], top + 0.4, 0.8, -0.12, 0.24, bank ? vicShade(wall, 0.97) : wall, [i > 1 ? 0.12 : -0.02, i < 3 ? 0.12 : -0.02]);
+  }
+  vicHipPoly(s, o, top, 3.0, roof);
+  for (const i of [0, 4]) {
+    const a = o[i], b = o[(i + 1) % 5], [nx, nz] = vicOut(a, b);
+    vicStack(s, (a[0] + b[0]) / 2 - nx * 0.45, (a[1] + b[1]) / 2 - nz * 0.45, top + 0.4, 0.8, 0.8, 2.8, wall, 2 + Math.floor(rnd() * 2));
+  }
+  const [cx, cz] = [(o[2][0] + o[3][0]) / 2, (o[2][1] + o[3][1]) / 2], [nx, nz] = vicOut(o[2], o[3]);
+  // half the banks: a dome over the corner, on a drum, with its lantern and finial
+  if (bank && rnd() < 0.5) {
+    const dx = cx - nx * 2.6, dz = cz - nz * 2.6;
+    s.cyl(dx, top + 1.4, dz, 2.1, 2.8, VIC.stone, 10);
+    s.cyl(dx, top + 2.9, dz, 2.3, 0.22, vicShade(VIC.stone, 0.9), 10);
+    s.lathe("vicDome", VIC_DOME, dx, top + 3.0, dz, 2.1, 2.9, VIC.copper, 10);
+    s.cyl(dx, top + 6.3, dz, 0.4, 0.8, VIC.stone, 6); s.cone(dx, top + 7.0, dz, 0.45, 0.7, VIC.copper, 6); s.cyl(dx, top + 7.8, dz, 0.05, 1.0, VIC.black, 4);
+  }
+  // a pub's lamp on its bracket over the door, and its sign hung from an iron arm on f's front
+  if (pub) {
+    s.box(cx + nx * 0.45, y0 + gH + 0.35, cz + nz * 0.45, 0.9, 0.06, 0.06, VIC.black, Math.atan2(-nz, nx));
+    vicLantern(s, cx + nx * 0.9, y0 + gH + 0.05, cz + nz * 0.9, 0.24);
+    const x = o[3][0] - 0.6, zf = o[3][1];
+    s.box(x, y0 + gH + fh * 0.8, zf - 0.7, 0.06, 0.06, 1.4, VIC.black);
+    s.box(x, y0 + gH + fh * 0.8 - 0.62, zf - 0.95, 0.07, 1.05, 0.9, vPick(rnd, [VIC.maroon, VIC.green, VIC.navy]));
+    s.box(x, y0 + gH + fh * 0.8 - 0.62, zf - 0.95, 0.05, 1.15, 1.0, VIC.gilt);
+  }
+  // a shop's blind, now and then, rolled out over the pavement along f's front (vicShopRow's)
+  if (kind === "shop" && rnd() < 0.45) {
+    const x0 = o[4][0] + 0.2, x1 = o[3][0] - 0.2, zf = o[3][1], uw = x1 - x0, c = vPick(rnd, [VIC.green, VIC.maroon, VIC.navy, 0x8a6a2a, 0x7a3a2a]), ns = Math.max(4, Math.round(uw / 0.62)), sw = uw / ns;
+    for (let k = 0; k < ns; k++) s.boxR(x0 + (k + 0.5) * sw, y0 + gH - 1.05, zf - 0.78, sw - 0.004, 0.05, 1.6, k % 2 ? VIC.canvas : c, -0.36, 0, 0);
+    s.box((x0 + x1) / 2, y0 + gH - 1.45, zf - 1.52, uw, 0.22, 0.03, c);
+  }
+}
+// An end house: the last house of f's row, in the row's design, turned to face both streets with
+// sash windows on both fronts behind the row's sunken area or front garden, its door in the bay of
+// f's front beside the row, a hipped slate roof, and half a stack completing the row's last one.
+function vicEndHouse(s: Batch, q: VicPt[], y0: number, walls: readonly number[], rnd: VicRand, door: VicDoor, row?: number) {
+  const rs = row === undefined ? rnd : mulberry32(row);
+  if (row !== undefined) rs();   // (the row's draw of villas or a terrace: vicLot)
+  const { storeys, fh, brick, render, groundCol, vUp, vGround, roof } = vicRowLook(rs, walls);
+  const area = storeys === 3 ? 1.4 : 1.6, sunk = storeys === 3, h = vicInset(q, [0, area, area, 0]), zf = h[2][1], zs = q[2][1] - VIC_SET;
+  const bands: VicBand[] = [{ tile: FACADE.VICT_SASH, v: vGround, floors: 1, floorH: fh + 0.25, color: groundCol }, { tile: FACADE.VICT_SASH, v: vUp, floors: 1, floorH: fh }];
+  if (storeys === 3) bands.push({ tile: FACADE.VICT_SASH, v: vUp, floors: 1, floorH: fh - 0.45 });
+  const top = y0 + bands.reduce((t, b) => t + b.floors * b.floorH, 0);
+  const nb = vicBays(h[3][0], h[2][0]), bw = (h[2][0] - h[3][0]) / nb, dm = h[3][0] + bw / 2;
+  h.forEach((a, i) => {
+    const b = h[(i + 1) % 4];
+    let y = y0;
+    bands.forEach((band, bi) => { vicRun(s, a[0], a[1], b[0], b[1], y, band, brick, i === 2 ? [{ k: nb - 1, tile: FACADE.VICT_DOOR, v: vGround }] : [], BAY, bi === 0); y += band.floors * band.floorH; });
+  });
+  door(h[3][0], h[3][0] + bw, zf);
+  for (const i of [1, 2]) vicLedge(s, h[i], h[i + 1], top - 0.15, 0.3, 0.12, 0.3, vicShade(render ? brick : VIC.stucco, 0.92), [i === 2 ? 0.15 : -0.02, i === 1 ? 0.15 : -0.02]);
+  const rh = 3.4;
+  vicHipPoly(s, h, top, rh, roof);
+  vicStack(s, h[3][0] + 0.375, (h[3][1] + h[0][1]) / 2, top + rh * 0.55, 0.75, 0.7, rh * 0.45 + 1.2, brick, 2);
+  { const [nx, nz] = vicOut(h[0], h[1]); vicStack(s, (h[0][0] + h[1][0]) / 2 - nx * 0.5, (h[0][1] + h[1][1]) / 2 - nz * 0.5, top + 0.3, 0.8, 0.8, rh * 0.5 + 1.4, brick, 3); }
+  // the area, sunk, behind its railings, or the garden behind a dwarf wall with railings on it,
+  // along both fronts; the step over it or the path through it to the door
+  const ql = vicInset(q, [0, -VIC_SET, -VIC_SET, 0]), ground = sunk ? VIC.soot : 0x4a6a34, yA = y0 + 0.022;
+  vicQuad(s, [ql[3][0], yA, ql[3][1]], [ql[2][0], yA, ql[2][1]], [h[2][0], yA, h[2][1]], [h[3][0], yA, h[3][1]], ground, [0, 1, 0]);
+  vicQuad(s, [ql[2][0], yA, ql[2][1]], [ql[1][0], yA, ql[1][1]], [h[1][0], yA, h[1][1]], [h[2][0], yA, h[2][1]], ground, [0, 1, 0]);
+  const rl = vicInset(q, [0, -VIC_SET + (sunk ? 0.1 : 0.18), -VIC_SET + (sunk ? 0.1 : 0.18), 0]), gap = rl[2][0] - dm;
+  if (sunk) {
+    vicRailings(s, rl[1][0], rl[1][1], rl[2][0], rl[2][1], y0, 1.0, VIC.black);
+    vicRailings(s, rl[2][0], rl[2][1], rl[3][0], rl[3][1], y0, 1.0, VIC.black, [[gap - 0.75, gap + 0.75]]);
+  } else {
+    vicLedge(s, rl[1], rl[2], y0 + 0.25, 0.5, 0, 0.26, groundCol, [0, 0.13]);
+    for (const [x0, x1] of [[rl[3][0], dm - 0.6], [dm + 0.6, rl[2][0]]]) s.box((x0 + x1) / 2, y0 + 0.25, rl[2][1], x1 - x0, 0.5, 0.26, groundCol);
+    vicRailings(s, rl[1][0], rl[1][1], rl[2][0], rl[2][1], y0 + 0.5, 0.6, VIC.black, [], 0.36);
+    vicRailings(s, rl[2][0], rl[2][1], rl[3][0], rl[3][1], y0 + 0.5, 0.6, VIC.black, [[gap - 0.6, gap + 0.6]], 0.36);
+  }
+  s.box(dm, y0 + (sunk ? 0.07 : 0.025), (zs + zf) / 2, sunk ? 1.3 : 1.0, sunk ? 0.14 : 0.05, zf - zs, VIC.flag);
+}
+// The outline q with its corner i cut off by a cant: c along each of its two walls from the corner.
+function vicCant(q: VicPt[], i: number, c: number): VicPt[] {
+  const p = q[i], at = (r: VicPt): VicPt => { const l = Math.hypot(r[0] - p[0], r[1] - p[1]); return [p[0] + (r[0] - p[0]) * c / l, p[1] + (r[1] - p[1]) * c / l]; };
+  return [...q.slice(0, i), at(q[(i + q.length - 1) % q.length]), at(q[(i + 1) % q.length]), ...q.slice(i + 1)];
+}
+// The outline q with each wall i (from q[i] to the next point) moved in by d[i]; a negative d moves it out.
+function vicInset(q: VicPt[], d: number[]): VicPt[] {
+  const n = q.length, lines = q.map((p, i) => { const r = q[(i + 1) % n], l = Math.hypot(r[0] - p[0], r[1] - p[1]), dx = (r[0] - p[0]) / l, dz = (r[1] - p[1]) / l; return { px: p[0] + dz * d[i], pz: p[1] - dx * d[i], dx, dz }; });
+  return q.map((_, i) => {
+    const A = lines[(i + n - 1) % n], B = lines[i], t = ((B.px - A.px) * B.dz - (B.pz - A.pz) * B.dx) / (A.dx * B.dz - A.dz * B.dx);
+    return [A.px + A.dx * t, A.pz + A.dz * t];
+  });
+}
+// The way a wall drawn from a to b faces.
+function vicOut(a: VicPt, b: VicPt): VicPt { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]; }
+// A ledge (a cornice, a parapet, a dwarf wall) along the wall from a to b, h high about y and d
+// deep, its middle `out` in front of the wall. It runs on past a and b by `ext`, to meet the next
+// one round a corner; at an end against the next lot it stops 2 cm short, its end clear of the side
+// wall there and of the next lot's ledge, which may be in its plane in another colour.
+function vicLedge(s: Batch, a: VicPt, b: VicPt, y: number, h: number, out: number, d: number, col: number, ext: [number, number]) {
+  const [nx, nz] = vicOut(a, b), dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz), m = (ext[1] - ext[0]) / 2 / l;
+  s.box((a[0] + b[0]) / 2 + dx * m + nx * out, y, (a[1] + b[1]) / 2 + dz * m + nz * out, l + ext[0] + ext[1], h, d, col, Math.atan2(-dz, dx));
+}
+// A hipped roof h high over an outline, each wall's slope rising from its top at y to a point over
+// the outline's middle.
+function vicHipPoly(s: Batch, o: VicPt[], y: number, h: number, col: number) {
+  const cx = o.reduce((t, p) => t + p[0], 0) / o.length, cz = o.reduce((t, p) => t + p[1], 0) / o.length;
+  o.forEach((a, i) => { const b = o[(i + 1) % o.length], [nx, nz] = vicOut(a, b); s.tri(a[0], y, a[1], b[0], y, b[1], cx, y + h, cz, col, [nx, 0.8, nz]); });
 }
 
 // Downtown's grand buildings are three to five storeys, as tall as hs allows. Most are chambers

@@ -13,7 +13,7 @@ import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
 import { DEBUG_VISIT } from "./debug.ts";
 import { parseVisitSpecs, visitOf } from "./visits.ts";
-import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCENARIO, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_STOP, DEBUG_STOP_LEAD, DEBUG_VIEW } from "./debug.ts";
+import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_EYE_SECS, DEBUG_EYES, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCENARIO, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_STOP, DEBUG_STOP_LEAD, DEBUG_VIEW } from "./debug.ts";
 import { SCENARIOS } from "./scenarios.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
@@ -509,6 +509,11 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const e = gateEnd(plan.graph.gates[0]), fx = Math.cos(e.h), fz = -Math.sin(e.h), d = 45 - tourT * 2;
       cx = e.x; cz = e.z;
       cam.position.set(e.x + fx * d - fz * 3, 5, e.z + fz * d + fx * 3); cam.lookAt(e.x - fx * 20, 7, e.z - fz * 20);
+    } else if (DEBUG_EYES) {
+      // Fixed shots in turn ("eye:x,y,z,tx,ty,tz;..."), to see one place from several sides.
+      const e = DEBUG_EYES[Math.min(DEBUG_EYES.length - 1, Math.floor(tourT / DEBUG_EYE_SECS))];
+      cx = e[3]; cz = e[5];
+      cam.position.set(e[0], e[1], e[2]); cam.lookAt(e[3], e[4], e[5]);
     } else if (DEBUG_AT) {
       // Circling low over a point ("at:x,z"), a junction's poles and its traffic; or, given a
       // heading too ("at:x,z,h"), from a fixed spot in the street 16 m out that way and 5 m up. The
