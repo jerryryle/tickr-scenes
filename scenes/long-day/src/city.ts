@@ -779,8 +779,9 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   const faces = blk.faces.slice().sort((p, q) => (G.faceA1(q) - G.faceA0(q)) - (G.faceA1(p) - G.faceA0(p)) || p - q);
   // A cul-de-sac (a close) into a big block where people live, in about half of those with room:
   // off the middle of its longest side, a lane in to a turning circle, and houses round it facing
-  // in. Its lane's span of that side has no lot.
-  const close = district === "residential" && !keep ? closeOf(G, blk, poly, ox, oz, faces[0], plan.seed) : null;
+  // in. Its lane's span of that side has no lot. (The Victorian city has none: a turning circle
+  // is a suburb's.)
+  const close = district === "residential" && !keep && !CS.victorian ? closeOf(G, blk, poly, ox, oz, faces[0], plan.seed) : null;
   // (A lot that won't fit is tried shallower, then narrower; a park's pavilion goes mid-side.)
   const tryLot = (f: number, a0: number, a1: number, d: number) => {
     for (const k of [1, 0.65, 0.4]) {
