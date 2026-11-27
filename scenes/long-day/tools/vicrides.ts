@@ -13,7 +13,7 @@ import type { VicRig } from "../src/city-victorian/victorian-vehicles.ts";
 const RIDES_CLIP = 0;
 const ROW = 14, COPIES = 3;
 // RIDE_STRIDE holds a stride's length (m) for each, so the copies show three points in it.
-const RIDE_STRIDE: Record<string, number> = { hansom: 1.6, growler: 1.6, omnibus: 1.6, dray: 1.8, coster: 1.0, coalcart: 1.7, horseback: 1.6, pennyfarthing: 4.1, traction: 1.4 };
+const RIDE_STRIDE: Record<string, number> = { hansom: 1.6, growler: 1.6, omnibus: 1.6, dray: 1.8, coster: 1.0, coalcart: 1.7, horseback: 1.6, pennyfarthing: 4.4, traction: 1.4 };
 
 export default function createScene({ sys }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera;

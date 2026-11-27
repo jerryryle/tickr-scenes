@@ -329,6 +329,7 @@ function makeVicRigs(): VicRig[] {
         seated(b, 0.5, 2.05, 0, 0, { coat: 0x3a3a3c, legs: BROWN, hat: "cap", hatCol: BROWN, hands: "reins", apron: 0x6a4a2a, scarf: RED });
         for (const s of [-1, 1]) rod(b, [0.88, 2.42, s * 0.12], [DR_HX + 0.75 * DR_S, 1.75 * DR_S, s * 0.47], 0.02, LEATHER);
         rod(b, [0.5, 0.9, 0], [DR_HX + 0.8, 1.4, 0], 0.09, WOOD_D);
+        for (const s of [-1, 1]) lamp(b, 0.75, 1.75, s * 0.66);   // (a lamp each side of the seat, lit after dark)
       },
       axle(0.6, 1.75, 0.11, 0xa8282a, 12),
       axle(0.85, 2.0, 0.12, 0xa8282a, 14),
@@ -344,8 +345,8 @@ function makeVicRigs(): VicRig[] {
 
   // ---- the costermonger's cart ------------------------------------------------------------------
   // A donkey draws a little two-wheeled cart heaped with oranges, apples and cabbages, the coster
-  // sitting on its front in his cap and neckerchief.
-  const CO_S = 0.62, CO_L = 3.5, CO_HX = CO_L / 2 - 0.95 * CO_S;
+  // sitting on its front in his cap and neckerchief, his feet clear of the donkey's quarters.
+  const CO_S = 0.62, CO_L = 4.5, CO_HX = CO_L / 2 - 0.95 * CO_S;
   const heap = (b: Batch, x0: number, x1: number, z0: number, z1: number, y: number, r: number, col: number, col2: number) => {
     let k = 0;
     for (let x = x0 + r; x <= x1 - r + 1e-6; x += r * 1.9) for (let z = z0 + r; z <= z1 - r + 1e-6; z += r * 1.9, k++) {
@@ -366,6 +367,7 @@ function makeVicRigs(): VicRig[] {
         heap(b, -0.8, -0.1, -0.5, 0.5, 0.66, 0.12, 0x5a8a3a, 0x7aa04a);          // cabbages
         b.box(0.05, 0.76, 0, 0.5, 0.2, 0.9, 0x8a6a3a); heap(b, -0.2, 0.3, -0.42, 0.42, 0.8, 0.06, 0xd8c040, 0xc8302a);   // a basket of pears and plums
         for (const s of [-1, 1]) rod(b, [0.3, 0.62, s * 0.5], [CO_HX + 0.1 * CO_S, 1.15 * CO_S, s * 0.25], 0.05, WOOD_D);
+        lamp(b, 0.36, 0.98, 0.5);   // (a lamp on the front board, lit after dark)
         seated(b, 0.15, 0.86, -0.38, 0, { coat: 0x5a4a32, legs: 0x4a3a28, hat: "cap", hatCol: TWEED, hands: "reins", scarf: 0xc8302a, skin: SKIN2 });
         for (const s of [-1, 1]) rod(b, [0.53, 1.24, -0.38 + s * 0.1], [CO_HX + 0.7 * CO_S, 1.7 * CO_S, s * 0.08], 0.015, LEATHER);
       },
@@ -396,6 +398,7 @@ function makeVicRigs(): VicRig[] {
         }
         heap(b, -2.3, -1.6, -0.7, 0.7, 1.02, 0.08, 0x141414, 0x262626);       // loose coal at the tail
         for (const s of [-1, 1]) rod(b, [0.0, 0.95, s * 0.6], [CC_HX + 0.1 * CC_S, 1.15 * CC_S, s * 0.4], 0.06, WOOD_D);
+        lamp(b, 0.12, 1.62, 0.66);   // (a lamp on the front board, lit after dark)
         seated(b, 0.1, 1.5, -0.45, 0, { coat: 0x2e2c2a, legs: 0x2a2826, hat: "fantail", hatCol: 0x2a2624, hands: "reins", skin: 0xa88466, scarf: 0x3a3634 });
         for (const s of [-1, 1]) rod(b, [0.48, 1.88, -0.45 + s * 0.1], [CC_HX + 0.75 * CC_S, 1.75 * CC_S, s * 0.12], 0.015, LEATHER);
       },
@@ -411,7 +414,9 @@ function makeVicRigs(): VicRig[] {
 
   // ---- the gentleman on horseback ---------------------------------------------------------------
   // The rider (the first part: his coat takes the vehicle's tint) sits his saddle, rising to the trot.
-  const HB_L = 2.6, HB_HX = HB_L / 2 - 0.95;
+  // The part is built about the withers and set HB_SEAT behind them and down, the saddle in the dip
+  // of the horse's back (horse.ts HORSE: its top line falls from the withers).
+  const HB_L = 2.6, HB_HX = HB_L / 2 - 0.95, HB_SEAT: [number, number] = [-0.2, -0.06];
   const horseback: VicRig = {
     id: "horseback", len: HB_L, width: 0.8, vmax: 4.5, cap: 4,
     colors: [0x1c1c20, 0x222a3a, 0x3a2a1e, 0x4a4a48, 0x7a1a1a],
@@ -426,7 +431,7 @@ function makeVicRigs(): VicRig[] {
           b.box(-0.04, 0.94, s * 0.38, 0.24, 0.07, 0.12, INK);
           rod(b, [-0.3, 2.16, s * 0.22], [-0.2, 1.86, s * 0.22], 0.1, 0xffffff); rod(b, [-0.2, 1.86, s * 0.22], [0.08, 1.8, s * 0.1], 0.09, 0xffffff);
           b.ico(0.1, 1.8, s * 0.1, 0.05, 0xd8d0c0);                         // (gloves)
-          rod(b, [0.1, 1.8, s * 0.1], [0.7, 1.95, s * 0.08], 0.015, LEATHER);
+          rod(b, [0.1, 1.8, s * 0.1], [0.95, 1.9, s * 0.08], 0.015, LEATHER);
         }
         b.box(-0.29, 2.22, 0, 0.18, 0.06, 0.2, CREAM);
         b.ico(-0.3, 2.36, 0, 0.11, SKIN, 1.1);
@@ -437,33 +442,37 @@ function makeVicRigs(): VicRig[] {
     pose(s, out) {
       poseTeam(s, HB_HX, 1, out, 1);
       const k = Math.min(1, s.v / 2.5), post = 0.06 * k * Math.abs(Math.sin(s.odo / 1.6 * TAU));
-      at(out[0], HB_HX, post, 0, 0, 0, -0.08 * k);
+      at(out[0], HB_HX + HB_SEAT[0], HB_SEAT[1] + post, 0, 0, 0, -0.08 * k);
     },
   };
 
   // ---- the penny-farthing -----------------------------------------------------------------------
-  // The rider sits high over the big front wheel, pedalling its cranks direct; his thighs and
-  // shins are posed to the pedals.
-  const PF_R = 0.66, PF_HUB: [number, number] = [0.35, PF_R], PF_HIP: [number, number] = [0.13, 1.4], PF_CRANK = 0.13, PF_THIGH = 0.45, PF_SHIN = 0.47;
+  // The rider sits on top of the big wheel, his saddle just behind its crown and his hips nearly
+  // over its hub, pedalling its cranks direct. His hands are on the bars across his lap, and his
+  // thighs and shins are posed to the pedals.
+  const PF_R = 0.7, PF_HUB: [number, number] = [0.3, PF_R], PF_HIP: [number, number] = [0.19, 1.5], PF_CRANK = 0.13, PF_THIGH = 0.46, PF_SHIN = 0.5;
+  const PF_TAIL: [number, number] = [-0.72, 0.19];   // (the little wheel's hub)
   const pennyfarthing: VicRig = {
-    id: "pennyfarthing", len: 1.8, width: 0.7, vmax: 4.5, cap: 4,
+    id: "pennyfarthing", len: 2.0, width: 0.7, vmax: 4.5, cap: 4,
     colors: [0x6a5e48, 0x2a3450, 0x7a2a22, 0x3a4a30],
     parts: [
       (b) => {
-        // The frame: the backbone curving from the head down to the little wheel, the fork, the bars.
-        const arc: P3[] = Array.from({ length: 6 }, (_, i) => { const a = i / 5; return [0.3 - a * 0.95, 1.36 - Math.sin(a * Math.PI / 2) * 0.98 - a * 0.0, 0]; });
+        // The frame: the backbone curving from the head down to the little wheel, the fork, the bars
+        // with their grips swept back, the saddle.
+        const arc: P3[] = Array.from({ length: 6 }, (_, i) => { const a = i / 5; return [0.27 + (PF_TAIL[0] + 0.05 - 0.27) * a, 1.46 - Math.sin(a * Math.PI / 2) * (1.26 - PF_TAIL[1]), 0]; });
         for (let i = 0; i < 5; i++) rod(b, arc[i], arc[i + 1], 0.05, INK);
-        for (const s of [-1, 1]) rod(b, [0.3, 1.36, s * 0.04], [PF_HUB[0], PF_HUB[1], s * 0.07], 0.04, INK);
-        rod(b, [-0.62, 0.38, 0], [-0.65, 0.19, 0.05], 0.03, INK);
-        rod(b, [0.32, 1.38, 0], [0.4, 1.46, 0], 0.04, INK); b.box(0.4, 1.46, 0, 0.04, 0.04, 0.62, INK);
-        b.box(0.12, 1.39, 0, 0.26, 0.05, 0.16, LEATHER);
-        // The rider: a tweed jacket (the tint), a cap, his arms to the bars.
-        b.box(0.12, 1.47, 0, 0.24, 0.14, 0.32, 0xd8ccb0);
-        b.boxR(0.18, 1.74, 0, 0.24, 0.5, 0.36, 0xffffff, 0, 0, -0.22);
-        for (const s of [-1, 1]) { rod(b, [0.25, 1.92, s * 0.2], [0.33, 1.68, s * 0.24], 0.09, 0xffffff); rod(b, [0.33, 1.68, s * 0.24], [0.42, 1.48, s * 0.29], 0.08, 0xffffff); b.ico(0.42, 1.47, s * 0.3, 0.045, SKIN); }
-        b.box(0.27, 2.0, 0, 0.16, 0.06, 0.2, CREAM);
-        b.ico(0.3, 2.13, 0, 0.11, SKIN, 1.1);
-        b.dy += 2.24; { const m = b.mark(); hat(b, 0, "cap", 0x4a4a3a); b.transformFrom(m, { ox: 0.3, oz: 0, rot: 0 }); } b.dy -= 2.24;
+        for (const s of [-1, 1]) rod(b, [0.27, 1.46, s * 0.04], [PF_HUB[0], PF_HUB[1], s * 0.07], 0.04, INK);
+        rod(b, [PF_TAIL[0] + 0.05, PF_TAIL[1] + 0.2, 0], [PF_TAIL[0], PF_TAIL[1], 0.05], 0.03, INK);
+        rod(b, [0.27, 1.46, 0], [0.34, 1.6, 0], 0.04, INK); b.box(0.34, 1.6, 0, 0.04, 0.04, 0.5, INK);
+        for (const s of [-1, 1]) { rod(b, [0.34, 1.6, s * 0.25], [0.28, 1.56, s * 0.33], 0.035, INK); b.box(0.27, 1.555, s * 0.34, 0.1, 0.05, 0.05, LEATHER); }
+        b.box(0.17, 1.47, 0, 0.28, 0.05, 0.16, LEATHER);
+        // The rider: a tweed jacket (the tint), a cap, leaning a little to the bars.
+        b.box(0.18, 1.56, 0, 0.26, 0.14, 0.32, 0xd8ccb0);
+        b.boxR(0.2, 1.83, 0, 0.24, 0.5, 0.36, 0xffffff, 0, 0, -0.18);
+        for (const s of [-1, 1]) { rod(b, [0.25, 2.0, s * 0.2], [0.31, 1.78, s * 0.27], 0.09, 0xffffff); rod(b, [0.31, 1.78, s * 0.27], [0.28, 1.58, s * 0.32], 0.08, 0xffffff); b.ico(0.28, 1.56, s * 0.33, 0.045, SKIN); }
+        b.box(0.27, 2.08, 0, 0.16, 0.06, 0.2, CREAM);
+        b.ico(0.29, 2.21, 0, 0.11, SKIN, 1.1);
+        b.dy += 2.32; { const m = b.mark(); hat(b, 0, "cap", 0x4a4a3a); b.transformFrom(m, { ox: 0.29, oz: 0, rot: 0 }); } b.dy -= 2.32;
       },
       (b) => {   // the big wheel, its cranks and pedals (they turn with it)
         ring(b, 0, PF_R - 0.02, 0.04, 0.05, 0x1a1a1a, 24); ring(b, 0, PF_R - 0.05, 0.025, 0.03, 0x8a8a8a, 24);
@@ -482,7 +491,7 @@ function makeVicRigs(): VicRig[] {
       at(out[0], 0, 0, 0, wob);
       const turn = -s.odo / PF_R;
       at(out[1], PF_HUB[0], PF_HUB[1], 0, 0, 0, turn);
-      at(out[2], -0.65, 0.19, 0, 0, 0, -s.odo / 0.19);
+      at(out[2], PF_TAIL[0], PF_TAIL[1], 0, 0, 0, -s.odo / PF_TAIL[1]);
       // Each leg's knee from its hip and pedal (two links: the knee forward), thigh and shin hanging from it.
       for (const [k, side, ph] of [[3, -1, 0], [5, 1, Math.PI]] as const) {
         const px = PF_HUB[0] + Math.cos(turn + ph) * PF_CRANK, py = PF_HUB[1] + Math.sin(turn + ph) * PF_CRANK;
@@ -501,7 +510,7 @@ function makeVicRigs(): VicRig[] {
   // posts, the driver on the footplate; puffs of smoke chuff from its chimney and drift behind.
   const TE_L = 5.8, TE_RR = 0.95, TE_FR = 0.55, TE_CH: [number, number] = [1.85, 3.55], TE_PUFFS = 4;
   const traction: VicRig = {
-    id: "traction", len: TE_L, width: 2.3, vmax: 1.8, cap: 2,
+    id: "traction", len: TE_L, width: 2.5, vmax: 1.8, cap: 2,
     colors: [0x8a1e22, 0x2e5a34, 0x5a1a20, 0x2a3a6a],
     parts: [
       (b) => {
