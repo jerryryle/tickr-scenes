@@ -84,7 +84,7 @@ export class FleetBaker {
     g.add(...team.meshes);
     const base = new THREE.Matrix4(), sc = L.scale * carriage;
     g.userData.team = (odo: number, v: number, t: number, seed: number) => {
-      L.horses.forEach(([x, z], j) => { base.makeScale(sc, sc, sc).setPosition(x, 0, z); team.pose(j, base, odo / sc + j * 0.4, v / sc, t, seed + j * 0.53); });
+      L.horses.forEach(([x, z], j) => { base.makeScale(sc, sc, sc).setPosition(x, 0, z); team.pose(j, base, odo / sc, v / sc, t, seed + j * 0.53); });
       team.commit();
     };
     return g;

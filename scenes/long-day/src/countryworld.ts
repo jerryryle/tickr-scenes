@@ -32,6 +32,7 @@ import type { BiomeId, RoadGeo, RoadPiece, RoadSign, RoadView } from "./country.
 import type { RoadItems, RoadMapPiece } from "./roadmap.ts";
 import { storyTree } from "./city-storybook/storybook-buildings-town.ts";
 import { vicFingerPost } from "./city-victorian/victorian-street.ts";
+import { carriageAt } from "./carriage.ts";
 import { applyPaintTint, CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
@@ -1412,7 +1413,7 @@ export class CountryWorld {
         const stalls: StallPose[] = [];
         for (let k = 0; k < 3; k++) {
           const [x, z, h] = this.L(S + 95 + k * 9, 59);
-          stalls.push({ model: (["box26", "box16", "tractor"] as TruckModel[])[k], x, z, h: h + Math.PI / 2, toon: this.V.storyAt(S + 95 + k * 9), carriage: this.V.periodAt(S + 95 + k * 9) });
+          stalls.push({ model: (["box26", "box16", "tractor"] as TruckModel[])[k], x, z, h: h + Math.PI / 2, toon: this.V.storyAt(S + 95 + k * 9), carriage: carriageAt(this.V.periodAt(S + 95 + k * 9)) });
         }
         this.fleetJobs.push({ stalls, y: this.pieceY });
         break;

@@ -30,6 +30,13 @@ export const CC = {
 // How far past the truck's nose its team may reach with no change to the nose (m): about what the
 // stop-short checks leave clear ahead of it anyway.
 export const TEAM_SLACK = 0.3;
+// How much a truck is a carriage where the road's period is `period` (CountryRoad.periodAt): it
+// turns over the short stretch where the period passes CARRIAGE_BAND, about 40 m of road where the
+// crew change into carters (crew.ts) and the oncoming traffic turns horse-drawn. Half a truck with
+// its team half grown is a muddle of floating parts to watch for long. (main.ts setToon; the
+// country truck stops' parked trucks: countryworld.ts.)
+const CARRIAGE_BAND = [0.45, 0.55];
+export const carriageAt = (period: number) => THREE.MathUtils.smoothstep(period, CARRIAGE_BAND[0], CARRIAGE_BAND[1]);
 
 // A model's carriage: where its dashboard stands (the floor ends there, and the horses stand ahead),
 // the front axle the team turns about, each horse's withers (x, z) in the truck's frame and its

@@ -314,7 +314,7 @@ looking from a to b. The map holds these fields.
    on a freeway city's way in.
 3. Its land every 10 m: how much of it is b's (the rest is a's), how much of the storybook's
    creeps in, how much of a Victorian city's has (`period`, rising over the last 900 m before one;
-   the trucks turn into carriages where it passes a half: `CARRIAGE_BAND` in `src/main.ts`), and
+   the trucks turn into carriages where it passes a half: `CARRIAGE_BAND` in `src/carriage.ts`), and
    how much of it is coast.
 4. Its set pieces, each as `RoadPiece` in `src/country.ts` has it, plus the way it faces.
 5. Its items: trees, rocks, ponds, wind turbines, pylons, farms, grazing cows, utility poles and

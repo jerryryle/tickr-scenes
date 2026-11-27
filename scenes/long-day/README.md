@@ -248,7 +248,7 @@ written into the city file by `tools/vicjunctions.ts` (`make vicjunctions SCENE=
 keeps a junction's poles only where it keeps its semaphores.
 
 The trucks become horse-drawn carriages there, and on the drive to or from it over the 40 m or so
-where the road's `period` passes a half (`CountryRoad.periodAt`, `CARRIAGE_BAND` in `src/main.ts`).
+where the road's `period` passes a half (`CountryRoad.periodAt`, `CARRIAGE_BAND` in `src/carriage.ts`).
 Near Ravensgate the country road loses its markings, poles, pylons, turbines and billboards, its
 signs are finger posts, and the oncoming traffic is horse-drawn. Its people dress for the period
 (`FIG_STYLE.victorian` in `src/figure.ts`), the crew as carters (`src/character.ts`), and it has
