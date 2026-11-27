@@ -34,10 +34,43 @@ import { storyTree } from "./city-storybook/storybook-buildings-town.ts";
 import { applyPaintTint, CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
+import { vicRigs } from "./city-victorian/victorian-vehicles.ts";
+import type { VicRig } from "./city-victorian/victorian-vehicles.ts";
+import type { RigState } from "./storyvehicles.ts";
 import { boatAt, deckW, hull, wedge } from "./boats.ts";
 import type { Station } from "./boats.ts";
 
 const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8b57, 0xe0a020];
+// Near a Victorian city (periodAt over a half where the truck meets it) what comes the other way is
+// horse-drawn, one of these rigs (city-victorian/victorian-vehicles.ts) at its own pace, a repeat
+// in the list making it likelier.
+const ONCOMING_RIGS = ["growler", "hansom", "dray", "coster", "coalcart", "horseback", "growler", "traction"];
+
+// RoadRigs draws the rigs met on the road: a part of every rig of a kind is one instanced mesh,
+// made the first time one is met, its pure white repainted per vehicle (cars.ts applyPaintTint).
+class RoadRigs {
+  private meshes = new Map<string, THREE.InstancedMesh[]>();
+  private pose = Array.from({ length: 16 }, () => new THREE.Matrix4());
+  private m = new THREE.Matrix4(); private col = new THREE.Color();
+  constructor(private parent: THREE.Object3D, private material: THREE.Material, private cap: number) {}
+  begin() { for (const ms of this.meshes.values()) for (const m of ms) m.count = 0; }
+  add(rig: VicRig, base: THREE.Matrix4, s: RigState, paint: number) {
+    let ms = this.meshes.get(rig.id);
+    if (!ms) {
+      ms = rig.parts.map((build) => {
+        const b = new Batch(); build(b);
+        const m = new THREE.InstancedMesh(b.build(this.material)!.geometry, this.material, this.cap);
+        m.count = 0; m.frustumCulled = false;
+        for (let i = 0; i < this.cap; i++) m.setColorAt(i, this.col.set(0xffffff));
+        this.parent.add(m); return m;
+      });
+      this.meshes.set(rig.id, ms);
+    }
+    rig.pose(s, this.pose);
+    ms.forEach((m, k) => { if (m.count < this.cap) { m.setMatrixAt(m.count, this.m.multiplyMatrices(base, this.pose[k])); m.setColorAt(m.count++, this.col.set(paint)); } });
+  }
+  end() { for (const ms of this.meshes.values()) for (const m of ms) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; } }
+}
 const SEG = 60;                  // segment length along the road (m); short, so building one never stalls a frame for long
 const SEG_AHEAD = 480, SEG_BEHIND = 300;
 const STORY_STEPS = 8;           // the storybook's creep into the real land near it goes in this many steps (storyLook)
@@ -239,6 +272,7 @@ export class CountryWorld {
   private q = { x: 0, z: 0, h: 0, k: 0 };
   // Things that move with time.
   private cars: CarFleet;
+  private rigs: RoadRigs;   // (the horse-drawn ones near a Victorian city)
   private carPoses: number[] = [];   // oncoming cars: x, z, heading, height
   private carMat: THREE.MeshLambertMaterial;
   private train: THREE.Group | null = null;
@@ -272,6 +306,7 @@ export class CountryWorld {
       carMat.onBeforeCompile = (shader, r) => { prev(shader, r); shader.fragmentShader = shader.fragmentShader.replace("#include <emissivemap_fragment>", "#ifdef USE_COLOR\n  totalEmissiveRadiance *= vColor.rgb;\n#endif\n#include <emissivemap_fragment>"); };
       carMat.customProgramCacheKey = () => prevKey() + "|cartint-v1"; }
     this.cars = new CarFleet(this.group, carMat, 10);
+    this.rigs = new RoadRigs(this.group, carMat, 4);
     this.cars.keepWarm(scene);   // (in the scene: the road's group is hidden in town, where the first oncoming car's frame would come)
     // A wide plane under everything, following the truck, for the far land under the fog.
     // (Subdivided: fog is computed per vertex.)
@@ -426,7 +461,7 @@ export class CountryWorld {
     this.herd = []; this.tractorObj = null;
     for (const g of [...this.gates, ...this.lights, ...this.weighLamps, ...this.ramps, ...(this.boat ? [this.boat] : [])]) { this.group.remove(g); disposeTree(g); }
     this.gates = []; this.lights = []; this.weighLamps = []; this.ramps = []; this.boat = null; this.foam = null;
-    this.cars.begin(); this.cars.end();
+    this.cars.begin(); this.cars.end(); this.rigs.begin(); this.rigs.end();
   }
 
   // Stream segments around the truck (all at once after a jump) and move what moves.
@@ -503,19 +538,24 @@ export class CountryWorld {
     this.carMat.emissive.setScalar(0.22 * LAMPS_ON.value);
     let n = 0;
     this.carPoses.length = 0;
-    this.cars.begin();
+    this.cars.begin(); this.rigs.begin();
     for (let i = 0; i < road.meetings.length && n < 10; i++) {
       const tm = road.meetings[i];
-      const s = road.sAt(tm) - ONCOMING_SPEED * (u - tm);
+      // (Horse-drawn where the meeting is in the Victorian city's reach, and slow: it still meets
+      // the truck at tm.)
+      const rig = road.periodAt(road.sAt(tm)) > 0.5 ? vicRigs().find((r) => r.id === ONCOMING_RIGS[Math.floor(hash2(i, 0x0d, 0xa7, 0x52) * ONCOMING_RIGS.length)])! : null;
+      const sp = rig ? rig.vmax * 0.9 : ONCOMING_SPEED;
+      const s = road.sAt(tm) - sp * (u - tm);
       if (Math.abs(s - sTruck) > 330 || s < road.landFrom || s > road.landTo) continue;
       road.point(s, -LANE, this.p);
       this.quat.setFromEuler(this.eul.set(0, this.p.h + Math.PI, -Math.atan(road.gradeAt(s))));   // (it drives down the road: its nose dips where the road climbs)
       this.m4.compose(this.v.set(this.p.x, road.heightAt(s), this.p.z), this.quat, this.one);
+      if (rig) { this.rigs.add(rig, this.m4, { odo: 1000 + sp * (u - tm), v: sp, t: u, seed: i }, rig.colors[i % rig.colors.length]); n++; continue; }
       this.cars.add(carKindAt(hash2(i, 0x0c, 0xa7, 0x51)), this.m4, ONCOMING_PAINTS[i % ONCOMING_PAINTS.length]);
       this.carPoses.push(this.p.x, this.p.z, this.p.h + Math.PI, road.heightAt(s));
       n++;
     }
-    this.cars.end();
+    this.cars.end(); this.rigs.end();
   }
 
   private updateCrossing(road: CountryRoad, u: number) {
