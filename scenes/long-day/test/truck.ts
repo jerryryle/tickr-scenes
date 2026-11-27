@@ -29,6 +29,7 @@ import { Traffic, truckObstacles } from "../src/traffic.ts";
 import { Crowd } from "../src/crowd.ts";
 import { Ambient } from "../src/ambient.ts";
 import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
+import type { VisitSpec } from "../src/visits.ts";
 {
   const proc = (globalThis as any).process, minutes = Number(proc.argv[2] ?? 10), OVERLAP_MAX = 0.4, PED_R = 0.3, HELD_MAX = 60, errs: string[] = [];
   for (const model of Object.keys(SPECS) as (keyof typeof SPECS)[]) {
@@ -46,9 +47,14 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
     if (walksInto(at(3.5, 1.4), o)) errs.push("reversing: someone walking away from the truck's swing holds it");
     if (!walksInto(at(2.0, 0), o)) errs.push("reversing: someone standing in the truck's swing doesn't hold it");
   }
-  for (const seed of [659803215, 7, 8, 5, 11, 1, 2, 3, 4, 6, 9, 10, 12, 13, 14]) {
+  // (Then three in Ravensgate, among its horse-drawn traffic: the carriage's horses reach past a
+  // truck's nose, box16's and the tractor's most.)
+  const VIC: Record<number, VisitSpec> = { 0: { city: "victorian-ravensgate" } };
+  const runs: [number, Record<number, VisitSpec> | undefined][] = [659803215, 7, 8, 5, 11, 1, 2, 3, 4, 6, 9, 10, 12, 13, 14].map((s) => [s, undefined]);
+  for (const [s, truck] of [[13, "box26"], [9, "tractor"], [21, "box16"]] as const) runs.push([s, { 0: { ...VIC[0], truck } }]);
+  for (const [seed, visits] of runs) {
     const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial(), traffic = new Traffic(scene, mat, null);
-    const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn");
+    const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn", visits);
     const crowd = new Crowd(scene, mat);
     j.attachLife(new StreetLife(traffic, crowd, new Ambient(scene, mat)));
     let worst = 0, checks = 0, hits = 0, held = 0, heldMost = 0;
@@ -59,7 +65,8 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
       heldMost = Math.max(heldMost, held);
       if (held > HELD_MAX && held <= HELD_MAX + SIM_DT && errs.length < 10) errs.push(`seed ${seed} at ${(j.st.simTime / 60).toFixed(2)} min: the truck (${j.st.mode}) has stood in the street ${HELD_MAX} s`);
       if (j.st.mode === "country" || j.st.mode === "inbound" || (j.path && j.path.ramps.length && j.path.yAt(j.st.s) > 1)) continue;
-      const E = truckExtents(j.st.truck), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+      // (A carriage's front is its horses' noses.)
+      const E = truckExtents(j.st.truck, !!j.plan.style.victorian), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
       const tb = [[E.rear, -1.25], [E.front, -1.25], [E.front, 1.25], [E.rear, 1.25]].map(([a, b]) => [j.pose.x + fx * a + rx * b, j.pose.z + fz * a + rz * b]);
       // (A tractor and its trailer, two boxes: the trailer from the kingpin at its own angle, as it
       // swings behind on a turn or reversing into a bay.)
@@ -104,7 +111,7 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
         if (-gap > OVERLAP_MAX && errs.length < 10) errs.push(`seed ${seed} at ${(j.st.simTime / 60).toFixed(2)} min: the truck (${j.st.mode}) overlaps a ${c.kind.id} by ${(-gap).toFixed(2)} m`);
       }
     }
-    console.log(`truck: seed ${seed}, ${minutes} min, ${checks} vehicle checks near it, deepest overlap ${worst.toFixed(2)} m; pedestrians hit ${hits}; longest stand ${heldMost.toFixed(0)} s`);
+    console.log(`truck: seed ${seed}${visits ? ` in Ravensgate (${visits[0].truck})` : ""}, ${minutes} min, ${checks} vehicle checks near it, deepest overlap ${worst.toFixed(2)} m; pedestrians hit ${hits}; longest stand ${heldMost.toFixed(0)} s`);
   }
   if (errs.length) { for (const e of errs) console.error(e); proc.exit(1); }
 }

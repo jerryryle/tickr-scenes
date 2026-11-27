@@ -143,10 +143,11 @@ function makeVicRigs(): VicRig[] {
   const at = (out: THREE.Matrix4, x: number, y: number, z: number, rx = 0, ry = 0, rz = 0, s = 1) =>
     out.compose(vv.set(x, y, z), qq.setFromEuler(ee.set(rx, ry, rz)), sc.set(s, s, s));
   // poseTeam poses a team whose withers are at x, scaled by `s` (a donkey is a small horse, a dray
-  // horse a big one, and a small horse takes short strides), into out[i..i + HORSE_PARTS).
-  const poseTeam = (st: RigState, x: number, s: number, out: THREE.Matrix4[], i: number) => {
+  // horse a big one, and a small horse takes short strides), into out[i..i + HORSE_PARTS); a pair
+  // (`pair`) shares its parts, so it is posed abreast (horse.ts poseHorse).
+  const poseTeam = (st: RigState, x: number, s: number, out: THREE.Matrix4[], i: number, pair = false) => {
     hb.compose(vv.set(x, 0, 0), qq.identity(), sc.set(s, s, s));
-    poseHorse({ odo: st.odo / s, v: st.v / s, t: st.t, seed: st.seed }, hb, out, i);
+    poseHorse({ odo: st.odo / s, v: st.v / s, t: st.t, seed: st.seed }, hb, out, i, pair);
   };
   // trot is how a horse-drawn body rides on its springs: a little bounce at the horse's stride, and a sway.
   const ride = (st: RigState, stride: number) => 0.025 * Math.min(1, st.v / 2) * Math.abs(Math.sin(st.odo / stride * TAU)) + 0.006 * Math.sin(st.t * 1.7 + st.seed);
@@ -291,7 +292,7 @@ function makeVicRigs(): VicRig[] {
       at(out[0], 0, ride(s, 1.6) * 0.6, 0);
       roll(out[1], 0.2, 0.55, s);
       roll(out[2], -2.7, 0.78, s);
-      poseTeam(s, OB_HX, 1, out, 3);
+      poseTeam(s, OB_HX, 1, out, 3, true);
     },
   };
 
@@ -337,7 +338,7 @@ function makeVicRigs(): VicRig[] {
       at(out[0], 0, ride(s, 1.8) * 0.4, 0);
       roll(out[1], 0.05, 0.6, s);
       roll(out[2], -2.9, 0.85, s);
-      poseTeam(s, DR_HX, DR_S, out, 3);
+      poseTeam(s, DR_HX, DR_S, out, 3, true);
     },
   };
 

@@ -235,8 +235,10 @@ const hsJv = new THREE.Vector3(), hsGw = [0, 0, 0], hsHx = [0, 0, 0, 0], hsHy = 
 const hsAt = (o: THREE.Matrix4, x: number, y: number, z: number, rx: number, ry: number, rz: number) => o.compose(hsVv.set(x, y, z), hsQq.setFromEuler(hsEe.set(rx, ry, rz)), hsOne);
 
 // poseHorse writes its parts' matrices into out[i..i + HORSE_PARTS), each `base` (the horse's
-// frame in its rig's) times the part's place in the horse's frame.
-export function poseHorse(s: HorseState, base: THREE.Matrix4, out: THREE.Matrix4[], i: number) {
+// frame in its rig's) times the part's place in the horse's frame. `abreast` poses horses abreast
+// that share their parts (one part draws them all, off the frame's middle): they turn only about
+// z, so they do not roll, shake their heads or swish their tails sideways.
+export function poseHorse(s: HorseState, base: THREE.Matrix4, out: THREE.Matrix4[], i: number, abreast = false) {
   const v = Math.abs(s.v), seed = s.seed, sp = hsFract(seed * 0.618);
   // How much it walks, trots or trots on (gw), and how much it is moving at all (go).
   hsGw[2] = hsSs(v, 5.0, 7.0); hsGw[0] = 1 - hsSs(v, 2.0, 2.8); hsGw[1] = Math.max(0, 1 - hsGw[0] - hsGw[2]);
@@ -264,13 +266,13 @@ export function poseHorse(s: HorseState, base: THREE.Matrix4, out: THREE.Matrix4
   }
   // (The resting hoof stands tipped on its toe, a little forward.)
   hsHx[2] += restL * 0.1; hsHy[2] += restL * 0.06; hsHx[3] += restR * 0.1; hsHy[3] += restR * 0.06;
-  const roll = 0.035 * (restR - restL);
+  const roll = abreast ? 0 : 0.035 * (restR - restL);
   // The head tosses now and then, and lowers a little standing; the tail swishes in bursts, and
   // lifts at the trot.
   const toss = Math.pow(Math.max(0, Math.sin((s.t / (7 + 6 * hsFract(seed * 0.71)) + seed * 1.7) * Math.PI * 2)), 14) * (1 - 0.6 * (1 - hsGw[0]) * go);
-  const neckZ = nod + 0.35 * toss - 0.1 * (1 - go), neckY = 0.15 * toss * Math.sin(s.t * Math.PI * 6);
+  const neckZ = nod + 0.35 * toss - 0.1 * (1 - go), neckY = abreast ? 0 : 0.15 * toss * Math.sin(s.t * Math.PI * 6);
   const burst = Math.pow(Math.max(0, Math.sin((s.t / (4.5 + 3 * hsFract(seed * 0.29)) + seed * 2.3) * Math.PI * 2)), 6);
-  const tailX = 0.5 * burst * Math.sin(s.t * Math.PI * 2 * 1.6), tailZ = -0.3 * (1 - hsGw[0]) * go;
+  const tailX = abreast ? 0 : 0.5 * burst * Math.sin(s.t * Math.PI * 2 * 1.6), tailZ = -0.3 * (1 - hsGw[0]) * go;
 
   // The body: bobbing, pitching a little and rolling to a rested leg.
   hsAt(hsL, 0, -bob - 0.02 * Math.max(restL, restR), 0, roll, 0, pitch);
