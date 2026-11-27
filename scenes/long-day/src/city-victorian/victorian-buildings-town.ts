@@ -370,13 +370,15 @@ function vicShopRow(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
   }
 }
 
-// Downtown's grand buildings, as tall as hs allows: a bank behind its portico of columns under a
-// pediment, a department store with a dome on its corner, a Gothic office front of pointed windows
-// under gablets and a turret, or chambers in stone under a mansard with its dormers.
+// Downtown's grand buildings are three to five storeys, as tall as hs allows. Most are chambers
+// (Italianate offices in stone) or a Gothic office front of pointed windows under gablets. On a lot 15 m wide or more, one in ten is a bank behind its portico of columns
+// under a pediment and one in ten a department store, a few of the widest of those with a dome.
+// (Ravensgate has some 270 downtown lots, three in four of them that wide, so these odds give it
+// about twenty banks, twenty stores and five domes.)
 function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readonly number[], rnd: VicRand, door: VicDoor) {
   const X0 = b.x0 - 0.26, X1 = b.x1 + 0.26, W = X1 - X0, D = b.z1 - b.z0;
-  const floors = vClamp(Math.round(3 + hs * 3 + (rnd() - 0.4) * 1.4), 3, 6), r = rnd();
-  const kind = W >= 15 && r < 0.28 ? "bank" : r < 0.5 ? "store" : r < 0.75 ? "gothic" : "chambers";
+  const floors = vClamp(Math.round(3 + hs * 3 + (rnd() - 0.4) * 1.4), 3, 5), r = rnd(), wide = W >= 15;
+  const kind = wide && r < 0.1 ? "bank" : wide && r < 0.2 ? "store" : r < 0.55 ? "gothic" : "chambers";
   const roof = vPick(rnd, VIC_SLATES), lightWalls = walls.filter(vIsRender), stoneC = lightWalls.length ? vPick(rnd, lightWalls) : VIC.stone;
   if (kind === "bank") {
     // (Stone, two tall storeys and an attic, the portico before its middle bays.)
@@ -411,7 +413,9 @@ function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
     s.box((X0 + X1) / 2, top - 0.25, zf - 0.2, W - 0.02, 0.5, 0.44, VIC.stone);
     const m = vicMansard(s, X0 + 0.02, zf + 0.02, X1 - 0.02, zb - 0.02, top, 3.0, 0.9, roof);
     for (let i = 0; i < bays; i++) { const [a0, a1] = vicBayX(X0, X1, i); if (i === 0 || i === bays - 1) continue; vicDormer(s, (a0 + a1) / 2, zf + 0.35, top + 0.4, 1.3, 1.8, VIC.stone, roof, 1.0); }
-    // the corner dome: a drum, the dome in copper gone green, a lantern and its finial
+    // the corner dome on half of the stores 20 m wide or more: a drum, the dome in copper gone
+    // green, a lantern and its finial
+    if (W < 20 || rnd() < 0.5) return;
     const cx = rnd() < 0.5 ? X0 + 2.4 : X1 - 2.4, cz = zf + 2.4;
     s.cyl(cx, top + 1.6, cz, 2.5, 3.2, VIC.stone, 10);
     s.cyl(cx, top + 3.3, cz, 2.75, 0.25, vicShade(VIC.stone, 0.9), 10);
@@ -421,8 +425,8 @@ function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
     return;
   }
   if (kind === "gothic") {
-    // (Red or stock brick, pointed windows, a steep roof with a gablet over each pair of bays, a
-    // turret with its spire on one corner.)
+    // (Red or stock brick, pointed windows, a steep roof with a gablet over each pair of bays, and
+    // on one in three a turret with its spire on one corner.)
     const wall = vPick(rnd, walls.filter((c) => !vIsRender(c)).concat([VIC.red])), v = Math.floor(rnd() * 4), dk = Math.floor(bays / 2);
     const top = vicBox(s, X0, zf, X1, zb, y0, [{ tile: FACADE.VICT_GOTHIC, v, floors: 1, floorH: 4.4 }, { tile: FACADE.VICT_GOTHIC, v, floors: floors - 1, floorH: 3.7 }], wall, [{ k: dk, tile: FACADE.VICT_DOOR, v: v % 2 }]);
     const [d0, d1] = vicBayX(X0, X1, dk);
@@ -435,21 +439,30 @@ function vicGrandLot(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
       s.box((gx0 + gx1) / 2, top + 0.9, zf + 0.05, gx1 - gx0, 1.8, 0.3, wall);
       vicGable(s, gx0, zf - 0.1, gx1, zf + 2.6, top + 1.8, (gx1 - gx0) * 0.6, roof, wall, true, 0.15);
     }
+    if (rnd() < 0.67) return;
     const tx = rnd() < 0.5 ? X0 + 1.2 : X1 - 1.2;
     s.cyl(tx, top + 1.5, zf + 1.2, 1.3, 3.0 + 3, wall, 8);
     s.cone(tx, top + 4.5 + 2.6, zf + 1.2, 1.5, 5.2, roof, 8);
     s.cyl(tx, top + 4.5 + 5.6, zf + 1.2, 0.05, 1.0, VIC.black, 4);
     return;
   }
-  // chambers: stone or stucco, the grand windows, a heavy cornice, a mansard with dormers
-  const v = Math.floor(rnd() * 4), dk = Math.floor(bays / 2);
-  const top = vicBox(s, X0, zf, X1, zb, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 4.6 }, { tile: FACADE.VICT_GRAND, v, floors: floors - 1, floorH: 3.8 }], stoneC, [{ k: dk, tile: FACADE.VICT_DOOR, v: 2 + (v % 2) }]);
+  // chambers: in any of downtown's stones (cream, buff, grey or red sandstone) or stucco, a heavy
+  // cornice, and the grand windows ranked by storey as an Italianate palazzo's are: the tallest on
+  // the first floor under pediments, lower ones over them under cornices. Half have a mansard with
+  // a dormer in each bay, half a balustrade with a low slate roof behind it.
+  const v = Math.floor(rnd() * 4), dk = Math.floor(bays / 2), wall = vPick(rnd, walls);
+  const top = vicBox(s, X0, zf, X1, zb, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 4.6 }, { tile: FACADE.VICT_GRAND, v: 0, floors: 1, floorH: 4.2 }, { tile: FACADE.VICT_GRAND, v: 3, floors: floors - 2, floorH: 3.5 }], wall, [{ k: dk, tile: FACADE.VICT_DOOR, v: 2 + (v % 2) }]);
   const [d0, d1] = vicBayX(X0, X1, dk);
   door(d0, d1, zf);
-  s.box((X0 + X1) / 2, top - 0.25, zf - 0.22, W - 0.02, 0.5, 0.5, vicShade(stoneC, 0.9));
-  vicMansard(s, X0 + 0.02, zf + 0.02, X1 - 0.02, zb - 0.02, top, 3.0, 0.95, roof);
-  for (let i = 0; i < bays; i++) { const [a0, a1] = vicBayX(X0, X1, i); vicDormer(s, (a0 + a1) / 2, zf + 0.45, top + 0.45, 1.2, 1.7, stoneC, roof, 1.0); }
-  for (const x of [X0 + 0.8, X1 - 0.8]) vicStack(s, x, (zf + zb) / 2, top + 2.0, 0.8, 2.2, 2.6, stoneC, 4);
+  s.box((X0 + X1) / 2, top - 0.25, zf - 0.22, W - 0.02, 0.5, 0.5, vicShade(wall, 0.9));
+  if (rnd() < 0.5) {
+    vicMansard(s, X0 + 0.02, zf + 0.02, X1 - 0.02, zb - 0.02, top, 3.0, 0.95, roof);
+    for (let i = 0; i < bays; i++) { const [a0, a1] = vicBayX(X0, X1, i); vicDormer(s, (a0 + a1) / 2, zf + 0.45, top + 0.45, 1.2, 1.7, wall, roof, 1.0); }
+  } else {
+    s.box((X0 + X1) / 2, top + 0.5, zf + 0.12, W - 0.02, 1.0, 0.25, vicShade(wall, 0.97));
+    vicHip(s, X0 + 0.3, zf + 0.4, X1 - 0.3, zb - 0.3, top, 2.2, roof);
+  }
+  for (const x of [X0 + 0.8, X1 - 0.8]) vicStack(s, x, (zf + zb) / 2, top + 2.0, 0.8, 2.2, 2.6, wall, 4);
 }
 // A dome's profile (Batch.lathe): a little upright at its foot, then round to the lantern's ring.
 const VIC_DOME: readonly (readonly [number, number])[] = [[1, 0], [1, 0.12], [0.94, 0.38], [0.78, 0.62], [0.5, 0.86], [0.22, 1]];
@@ -457,10 +470,11 @@ const VIC_DOME: readonly (readonly [number, number])[] = [[1, 0], [1, 0.12], [0.
 const VIC_OGEE: readonly (readonly [number, number])[] = [[1, 0], [0.86, 0.14], [0.62, 0.32], [0.46, 0.54], [0.3, 0.8], [0.06, 1]];
 
 // A park's lot: a cast-iron bandstand's roof over a kiosk for refreshments (its door to the path),
-// or a pavilion with a veranda along its front and a clock in its gable.
+// or a pavilion with a veranda along its front and a clock in its gable. A park has a lot on each
+// side, so the bandstand is the rarer of the two, and a park seldom has more than one.
 function vicParkLot(s: Batch, b: VicRect, y0: number, rnd: VicRand, door: VicDoor) {
   const W = b.x1 - b.x0, D = b.z1 - b.z0, cx = (b.x0 + b.x1) / 2;
-  if (rnd() < 0.55) {
+  if (rnd() < 0.25) {
     const R = vClamp(Math.min(W, D) / 2 - 0.9, 1.9, 2.8), n = 8, step = Math.PI * 2 / n, rot = -Math.PI / 2 - step / 2, cz = b.z0 + 1.1 + R;
     const top = facadePrism(s, cx, cz, R, n, rot, y0 + 0.35, [{ tile: FACADE.VICT_SHOPWIN, floors: 1, floorH: 2.9 }], VIC.green, 0, FACADE.VICT_DOOR);
     s.cyl(cx, y0 + 0.17, cz, R + 1.15, 0.34, VIC.flag, 8, 0, 0, Math.PI / 2 - rot);
@@ -491,13 +505,49 @@ function vicParkLot(s: Batch, b: VicRect, y0: number, rnd: VicRand, door: VicDoo
 }
 
 // ---- block middles ----------------------------------------------------------------------------
-// vicTower draws a downtown block's middle building, standing on its own on b (no door): a
-// grand civic building, a church with its spire or a department store with its corner dome.
+// vicTower draws a downtown block's middle building, standing on its own on b (no door). On a site
+// of 26 by 14 m or more it is a church with its spire, a town hall or a grand block. The sites
+// city.ts finds behind a downtown frontage are smaller (Ravensgate's are 8 to 11 m by 7 to 9 m, up
+// to five in a row), and on those it is what stood in the courts behind a town's streets: a
+// nonconformist chapel (two in five) or a merchant's warehouse in brick.
 export function vicTower(s: Batch, b: VicRect, y0: number, hs: number, walls: readonly number[], rnd: VicRand) {
+  const W = b.x1 - b.x0, D = b.z1 - b.z0;
+  if (Math.max(W, D) < 26 || Math.min(W, D) < 14) {
+    if (rnd() < 0.4) vicChapel(s, b, y0, walls, rnd);
+    else { const dw = walls.filter((c) => !vIsRender(c)); vicWorks(s, b, y0, vRange(rnd, 6, 7.5), vPick(rnd, dw.length ? dw : [VIC.red]), rnd); }
+    return;
+  }
   const r = rnd();
   if (r < 0.42) vicChurch(s, b, y0, rnd);
   else if (r < 0.7) vicTownHall(s, b, y0, hs, walls, rnd);
   else vicGrandBlock(s, b, y0, hs, walls, rnd);
+}
+// A chapel is a preaching box with its gable end to the front (-z), its doors in that end (a pair
+// where the front has an even number of bays), two tiers of windows down its sides for the
+// galleries, and a round window in the gable. Half are classical, in stucco or stone under a low
+// pediment with round-headed windows; half are Gothic, in brick under a steep roof with pointed
+// windows and a lead flèche on the ridge.
+function vicChapel(s: Batch, b: VicRect, y0: number, walls: readonly number[], rnd: VicRand) {
+  const x0 = b.x0 + 0.3, x1 = b.x1 - 0.3, z0 = b.z0 + 0.3, z1 = b.z1 - 0.3, w = x1 - x0, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const bays = vicBays(x0, x1), doors = bays % 2 ? [(bays - 1) / 2] : [bays / 2 - 1, bays / 2], roof = vPick(rnd, VIC_SLATES);
+  const classical = rnd() < 0.5, lw = walls.filter(vIsRender), dw = walls.filter((c) => !vIsRender(c));
+  const wall = classical ? (lw.length ? vPick(rnd, lw) : VIC.stucco) : vPick(rnd, dw.length ? dw : [VIC.red]);
+  const dv = (classical ? 2 : 0) + (rnd() < 0.5 ? 1 : 0), tile = classical ? FACADE.VICT_GRAND : FACADE.VICT_GOTHIC, v = classical ? 2 : Math.floor(rnd() * 2);
+  const top = vicBox(s, x0, z0, x1, z1, y0, [{ tile, v, floors: 2, floorH: classical ? 4.2 : 3.6 }], wall, doors.map((k) => ({ k, tile: FACADE.VICT_DOOR, v: dv })));
+  const rh = w * (classical ? 0.24 : 0.55);
+  if (classical) s.box(cx, top - 0.2, cz, w + 0.3, 0.4, z1 - z0 + 0.3, vicShade(wall, 0.9));   // the cornice, the pediment's foot on the front
+  vicGable(s, x0, z0, x1, z1, top, rh, roof, wall, true, classical ? 0.3 : 0.2);
+  // the round window in the gable: a stone ring and its glass
+  const ry = top + rh * 0.38, rr = Math.min(classical ? 0.6 : 1.0, rh * 0.28);
+  s.cyl(cx, ry, z0 - 0.03, rr + 0.18, 0.05, vicShade(VIC.stone, 0.95), 12, Math.PI / 2);
+  s.cyl(cx, ry, z0 - 0.06, rr, 0.05, VIC.glass, 12, Math.PI / 2);
+  if (!classical) {
+    // the flèche: a louvred base astride the ridge, a slender lead spire and its cross
+    const ry1 = top + rh;
+    s.box(cx, ry1 + 0.3, cz, 0.9, 1.4, 0.9, VIC.lead);
+    s.cone(cx, ry1 + 1.0 + 1.7, cz, 0.62, 3.4, VIC.lead, 8, 0, Math.PI / 8);
+    s.box(cx, ry1 + 4.7, cz, 0.06, 0.7, 0.06, VIC.gilt); s.box(cx, ry1 + 4.8, cz, 0.36, 0.06, 0.06, VIC.gilt);
+  }
 }
 // A church: its nave under a steep slate roof, lower aisles either side, a chancel at the east end,
 // and at the west end its tower with a broach spire, pinnacles at the corners and a weathercock.
@@ -715,10 +765,30 @@ export function vicShed(s: Batch, y0: number, wall: number, rnd: VicRand) {
   s.box(-0.3, y0 + 0.9, -1.01, 0.8, 1.7, 0.03, vPick(rnd, [VIC.green, VIC.black, VIC.oak]));
   if (rnd() < 0.4) vicStack(s, 0.8, 0, y0 + 2.2, 0.45, 0.45, 1.3, wall, 1);
 }
-// vicSquare draws a garden square w by d (centred on its frame's origin) in place of a car park:
-// lawns inside iron railings, gravel walks, and in a big one (`big`) a statue or a fountain in the
-// middle. Its trees are trees of their own.
+// vicSquare draws what a commercial block keeps in its middle w by d (centred on its frame's
+// origin), where another city parks. A big one (`big`) is a garden square: lawns inside iron
+// railings, gravel walks, and a statue or a fountain in the middle. The rest (all of Ravensgate's,
+// 13 to 28 m by 11 to 16 m) are the shops' yard behind them: laid with setts, walled in brick with
+// a cart gateway in each long side, a stable or cart shed under a lean-to against one end, and a
+// few casks by the other. Its trees are trees of their own, planted 3 m or more in from its edge
+// (city.ts), clear of the shed.
 export function vicSquare(s: Batch, g: Batch, w: number, d: number, y0: number, big: boolean, grass: number, rnd: VicRand) {
+  if (!big) {
+    const hw = w / 2 - 0.3, hd = d / 2 - 0.3, wh = 1.9, gate = 1.6, wall = rnd() < 0.6 ? VIC.stock : 0x9a4a36;
+    g.box(0, y0 + 0.01, 0, w, 0.02, d, 0x6e6a62);
+    for (const k of [-1, 1]) {
+      for (const [a0, a1] of [[-hw, -gate], [gate, hw]]) s.box((a0 + a1) / 2, y0 + wh / 2, k * hd, a1 - a0, wh, 0.25, wall);
+      s.box(k * hw, y0 + wh / 2, 0, 0.25, wh, 2 * hd, wall);
+    }
+    // the shed: its back the end wall, its roof sloping down to the yard, a door or two
+    const e = rnd() < 0.5 ? -1 : 1, sd = 2.2, sx = e * (hw - sd / 2), L = 2 * hd - 0.3;
+    s.box(sx, y0 + 1.25, 0, sd, 2.5, L, wall);
+    s.boxR(sx + e * 0.05, y0 + 2.75, 0, sd + 0.5, 0.1, L + 0.3, VIC.slate, 0, 0, e * 0.3);
+    const nd = L > 8 ? 2 : 1;
+    for (let i = 0; i < nd; i++) s.box(sx - e * (sd / 2 + 0.01), y0 + 1.0, (i + 0.5 - nd / 2) * L / nd, 0.04, 2.0, 1.5, vPick(rnd, [VIC.green, VIC.black, VIC.timber]));
+    for (let i = 0; i < 3; i++) s.cyl(-e * (hw - 0.6), y0 + 0.5, hd - 0.6 - i * 0.85, 0.38, 1.0, rnd() < 0.5 ? VIC.oak : 0x5e3e26, 6);
+    return;
+  }
   g.box(0, y0 + 0.01, 0, w, 0.02, d, grass);
   // the walks: one all round inside the railings, and across from gate to gate
   const p = 1.6, gw = VIC.gravel;
@@ -731,7 +801,6 @@ export function vicSquare(s: Batch, g: Batch, w: number, d: number, y0: number, 
   vicRailings(s, -hw, hd, -hw, -hd, y0, 1.15, VIC.black, [[hd - gate, hd + gate]], 0.5);
   vicRailings(s, hw, -hd, hw, hd, y0, 1.15, VIC.black, [[hd - gate, hd + gate]], 0.5);
   for (const [x, z] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) { s.box(x, y0 + 0.7, z, 0.3, 1.4, 0.3, VIC.stone); s.ico(x, y0 + 1.5, z, 0.16, VIC.stone); }
-  if (!big) return;
   g.cyl(0, y0 + 0.024, 0, Math.min(w, d) * 0.22, 0.02, gw, 16);
   if (rnd() < 0.5) {
     // a statue: a gentleman in bronze on his stepped stone plinth
