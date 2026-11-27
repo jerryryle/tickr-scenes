@@ -3,8 +3,9 @@
 // rigid parts, each built once (horseParts) and placed every frame by a matrix (poseHorse), so a
 // city's traffic can draw a part of every horse of a kind as one instanced mesh. Its pose comes from
 // how far it has come (odo), how fast it goes (v), the time (t) and a number of its own (seed),
-// alone, so scrubbing replays it: a walk, a trot when it goes faster, and standing, a horse shifts
-// its weight, swishes its tail and tosses its head now and then.
+// alone, so scrubbing replays it: a walk, a trot and a longer trot as it goes faster, a gallop at
+// a motor's speeds, and standing, a horse shifts its weight, swishes its tail and tosses its head
+// now and then.
 //
 // The horse's frame: +x forward, y up, z to its right; the origin on the ground under its withers
 // (the top of its shoulders), where a collar's traces or a shaft's tug are hitched. Units are metres.
@@ -223,20 +224,45 @@ export function horseParts(look: HorseLook): ((b: Batch) => void)[] {
 
 // ---- the gait ------------------------------------------------------------------------------------
 // A gait's stride (m a full cycle of the legs), the share of it each hoof stands on the ground, each
-// leg's place in the cycle (FL, FR, HL, HR), how high fore and hind hooves lift, and the body's bob
-// (twice a cycle) and the head's nod. The walk is four-beat (left hind, left fore, right hind, right
-// fore); the trot moves diagonal pairs together, and above hsFAST the trot lengthens.
-interface hsGait { S: number; duty: number; off: [number, number, number, number]; liftF: number; liftH: number; bob: number; nod: number }
-const hsWALK: hsGait = { S: 1.75, duty: 0.62, off: [0.25, 0.75, 0, 0.5], liftF: 0.12, liftH: 0.09, bob: 0.02, nod: 0.07 };
-const hsTROT: hsGait = { S: 2.6, duty: 0.44, off: [0, 0.5, 0.5, 0], liftF: 0.26, liftH: 0.15, bob: 0.045, nod: 0.02 };
-const hsFAST: hsGait = { S: 4.2, duty: 0.4, off: [0, 0.5, 0.5, 0], liftF: 0.28, liftH: 0.17, bob: 0.05, nod: 0.015 };
-const hsGAITS = [hsWALK, hsTROT, hsFAST];
-const hsSWEEP = 1.2;   // m: the furthest a hoof sweeps back under the horse while it stands on it (faster, it slips)
+// leg's place in the cycle (FL, FR, HL, HR: a leg's hoof comes down when the cycle reaches 1 - its
+// place), how high fore and hind hooves lift, the body's bob and pitch (`beats` times a cycle, `rock`
+// of a cycle early) and the head's nod. The walk is four-beat in lateral sequence (left hind, left
+// fore, right hind, right fore); the trot moves diagonal pairs together, and lengthens above
+// hsGAIT_AT[1]; the gallop is transverse on the right lead, its hinds then its fores, with a moment
+// in the air.
+//
+// A hoof on the ground stays put: it sweeps back under the horse by exactly as far as the horse
+// goes (the stride times the share on the ground), and it leaves and meets the ground at rest
+// (hsHoof). The gait follows from the distance gone alone, so the cadence rises with the speed
+// within a gait, and each faster gait takes a longer stride.
+interface hsGait { S: number; duty: number; off: [number, number, number, number]; liftF: number; liftH: number; bob: number; pitch: number; nod: number; beats: number; rock: number }
+const hsWALK: hsGait = { S: 1.75, duty: 0.62, off: [0.75, 0.25, 0, 0.5], liftF: 0.12, liftH: 0.09, bob: 0.02, pitch: 0.012, nod: 0.07, beats: 2, rock: 0 };
+const hsTROT: hsGait = { S: 2.8, duty: 0.42, off: [0, 0.5, 0.5, 0], liftF: 0.26, liftH: 0.15, bob: 0.045, pitch: 0.012, nod: 0.02, beats: 2, rock: 0 };
+const hsLONG: hsGait = { S: 4.6, duty: 0.26, off: [0, 0.5, 0.5, 0], liftF: 0.3, liftH: 0.18, bob: 0.05, pitch: 0.012, nod: 0.015, beats: 2, rock: 0 };
+const hsGALLOP: hsGait = { S: 7.5, duty: 0.16, off: [0.72, 0.62, 0, 0.9], liftF: 0.3, liftH: 0.22, bob: 0.06, pitch: 0.07, nod: 0.12, beats: 1, rock: 0.15 };
+const hsGAITS = [hsWALK, hsTROT, hsLONG, hsGALLOP];
+// The speeds (m/s, the horse's own size) about which it changes up to the next gait, each change
+// made over 0.4 m/s either side. A dray's or coal cart's walk and a cab's trot stay clear of them.
+const hsGAIT_AT = [2.5, 5.9, 12];
+// Below about 0.6 m/s the legs step in turn, each in a band of speed of its own (low end, width:
+// hsSETTLE), between the walk and standing square, so a horse halting squares up in four steps.
+const hsSETTLE: [number, number][] = [[0.17, 0.16], [0.43, 0.16], [0.04, 0.16], [0.3, 0.16]];
 const hsFract = (x: number) => x - Math.floor(x);
 const hsSs = THREE.MathUtils.smoothstep;
+// hsHoof gives a hoof's place (x from its rest, y up) at `f` through its cycle of gait G: on the
+// ground for the first `duty` of it, sweeping back by the stride's share on the ground; in the air
+// for the rest, its speed over the ground eased from rest to rest.
+const hsHP = [0, 0];
+function hsHoof(G: hsGait, f: number, lift: number) {
+  const D = G.S * G.duty;
+  if (f < G.duty) { hsHP[0] = D / 2 - D * (f / G.duty); hsHP[1] = 0; return hsHP; }
+  const u = (f - G.duty) / (1 - G.duty), e = u * u * (3 - 2 * u);
+  hsHP[0] = -D / 2 + G.S * e - (G.S - D) * u; hsHP[1] = lift * Math.sin(Math.PI * Math.pow(u, 0.8));
+  return hsHP;
+}
 
 const hsM4 = new THREE.Matrix4(), hsL = new THREE.Matrix4(), hsQq = new THREE.Quaternion(), hsEe = new THREE.Euler(), hsVv = new THREE.Vector3(), hsOne = new THREE.Vector3(1, 1, 1);
-const hsJv = new THREE.Vector3(), hsGw = [0, 0, 0], hsHx = [0, 0, 0, 0], hsHy = [0, 0, 0, 0];
+const hsJv = new THREE.Vector3(), hsGw = [0, 0, 0, 0], hsGx = new Array<number>(16).fill(0), hsHx = [0, 0, 0, 0], hsHy = [0, 0, 0, 0];
 const hsAt = (o: THREE.Matrix4, x: number, y: number, z: number, rx: number, ry: number, rz: number) => o.compose(hsVv.set(x, y, z), hsQq.setFromEuler(hsEe.set(rx, ry, rz)), hsOne);
 
 // poseHorse writes its parts' matrices into out[i..i + HORSE_PARTS), each `base` (the horse's
@@ -245,8 +271,10 @@ const hsAt = (o: THREE.Matrix4, x: number, y: number, z: number, rx: number, ry:
 // z, so they do not roll, shake their heads or swish their tails sideways.
 export function poseHorse(s: HorseState, base: THREE.Matrix4, out: THREE.Matrix4[], i: number, abreast = false) {
   const v = Math.abs(s.v), seed = s.seed, sp = hsFract(seed * 0.618);
-  // How much it walks, trots or trots on (gw), and how much it is moving at all (go).
-  hsGw[2] = hsSs(v, 5.0, 7.0); hsGw[0] = 1 - hsSs(v, 2.0, 2.8); hsGw[1] = Math.max(0, 1 - hsGw[0] - hsGw[2]);
+  // How much it walks, trots, trots on or gallops (gw), and how much it is moving at all (go).
+  let up = 1;
+  for (let g = 0; g < 3; g++) { const c = hsSs(v, hsGAIT_AT[g] - 0.4, hsGAIT_AT[g] + 0.4); hsGw[g] = up - c; up = c; }
+  hsGw[3] = up;
   const go = hsSs(v, 0.02, 0.35);
   // Standing, it rests a hind leg, by turns (rest: the right one, positive; the left, negative),
   // the hip on that side dropped.
@@ -254,20 +282,31 @@ export function poseHorse(s: HorseState, base: THREE.Matrix4, out: THREE.Matrix4
   const restR = (1 - go) * hsSs(sw, 0.25, 0.6), restL = (1 - go) * hsSs(-sw, 0.25, 0.6);
   let bob = 0, pitch = 0, nod = 0;
   for (let k = 0; k < 4; k++) { hsHx[k] = 0; hsHy[k] = 0; }
-  for (let g = 0; g < 3; g++) {
-    const G = hsGAITS[g], w = hsGw[g] * go;
+  // (Between two gaits the hooves' places are mixed, and a hoof is lifted by as much again as its
+  // places in the two differ (`spread`), so it steps from one to the other: a hoof the two have down
+  // in one place stays down, sweeping back as the ground does.)
+  for (let g = 0; g < 4; g++) {
+    const G = hsGAITS[g], w = hsGw[g];
     if (w <= 0) continue;
-    const ph = s.odo / G.S + sp, D = Math.min(G.S * G.duty, hsSWEEP);
-    bob += w * G.bob * (0.5 - 0.5 * Math.cos(ph * Math.PI * 4));
-    pitch += w * 0.012 * Math.sin(ph * Math.PI * 4);
-    nod += w * G.nod * Math.sin(ph * Math.PI * 4 + 0.6);
+    const ph = s.odo / G.S + sp, a = Math.PI * 2 * (G.beats * ph + G.rock);
+    bob += w * G.bob * (0.5 - 0.5 * Math.cos(a));
+    pitch += w * G.pitch * Math.sin(a);
+    nod += w * G.nod * Math.sin(a + 0.6);
     for (let k = 0; k < 4; k++) {
-      const f = hsFract(ph + G.off[k]), lift = hsLEGS[k].fore ? G.liftF : G.liftH;
-      let x: number, y: number;
-      if (f < G.duty) { x = D / 2 - D * (f / G.duty); y = 0; }
-      else { const u = (f - G.duty) / (1 - G.duty), e = u * u * (3 - 2 * u); x = -D / 2 + D * e; y = lift * Math.sin(Math.PI * Math.pow(u, 0.8)); }
-      hsHx[k] += w * x; hsHy[k] += w * y;
+      const [x, y] = hsHoof(G, hsFract(ph + G.off[k]), hsLEGS[k].fore ? G.liftF : G.liftH);
+      hsHx[k] += w * x; hsHy[k] += w * y; hsGx[g * 4 + k] = x;
     }
+  }
+  for (let k = 0; k < 4; k++) {
+    let spread = 0;
+    for (let g = 0; g < 4; g++) if (hsGw[g] > 0) spread += hsGw[g] * Math.abs(hsGx[g * 4 + k] - hsHx[k]);
+    hsHy[k] += Math.min(0.12, 0.6 * spread);
+  }
+  bob *= go; pitch *= go; nod *= go;
+  // (Halting, each leg steps from its place in the walk to standing square; setting off, back.)
+  for (let k = 0; k < 4; k++) {
+    const m = hsSs(v, hsSETTLE[k][0], hsSETTLE[k][0] + hsSETTLE[k][1]), x = hsHx[k];
+    hsHx[k] = m * x; hsHy[k] = m * hsHy[k] + 4 * m * (1 - m) * THREE.MathUtils.clamp(0.3 * Math.abs(x), 0.05, 0.12);
   }
   // (The resting hoof stands tipped on its toe, a little forward.)
   hsHx[2] += restL * 0.1; hsHy[2] += restL * 0.06; hsHx[3] += restR * 0.1; hsHy[3] += restR * 0.06;
@@ -277,7 +316,7 @@ export function poseHorse(s: HorseState, base: THREE.Matrix4, out: THREE.Matrix4
   const toss = Math.pow(Math.max(0, Math.sin((s.t / (7 + 6 * hsFract(seed * 0.71)) + seed * 1.7) * Math.PI * 2)), 14) * (1 - 0.6 * (1 - hsGw[0]) * go);
   const neckZ = nod + 0.35 * toss - 0.1 * (1 - go), neckY = abreast ? 0 : 0.15 * toss * Math.sin(s.t * Math.PI * 6);
   const burst = Math.pow(Math.max(0, Math.sin((s.t / (4.5 + 3 * hsFract(seed * 0.29)) + seed * 2.3) * Math.PI * 2)), 6);
-  const tailX = abreast ? 0 : 0.5 * burst * Math.sin(s.t * Math.PI * 2 * 1.6), tailZ = -0.3 * (1 - hsGw[0]) * go;
+  const tailX = abreast ? 0 : 0.5 * burst * Math.sin(s.t * Math.PI * 2 * 1.6), tailZ = -0.3 * (1 - hsGw[0]);
 
   // The body: bobbing, pitching a little and rolling to a rested leg.
   hsAt(hsL, 0, -bob - 0.02 * Math.max(restL, restR), 0, roll, 0, pitch);

@@ -1,11 +1,11 @@
-// Test scene: the horse (src/horse.ts) close, standing, walking and trotting on the spot, side on
-// and from a front quarter. Build and render it with
+// Test scene: the horse (src/horse.ts) close, standing, walking, trotting, trotting on and galloping
+// on the spot, side on and from a front quarter. Build and render it with
 //   make tool SCENE=long-day TOOL=horses SECS=8   -> build/long-day-horses/horses.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { HORSE_COATS, HORSE_PARTS, horseParts, poseHorse } from "../src/horse.ts";
 
-const SPEEDS = [0, 1.5, 3.5];
+const SPEEDS = [0, 1.5, 3.5, 8, 18];
 
 export default function createScene({ sys }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera;
@@ -34,7 +34,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
         });
         for (const m of meshes) m.instanceMatrix.needsUpdate = true;
         const v = Math.floor(t / 2) % 4;
-        if (v === 0) { cam.position.set(3.2, 1.2, -9.5); cam.lookAt(3.2, 1.0, 0); cam.fov = 34; }
+        if (v === 0) { cam.position.set(6.8, 1.2, -17); cam.lookAt(6.8, 1.0, 0); cam.fov = 34; }
         else if (v === 1) { cam.position.set(0, 1.3, -3.2); cam.lookAt(-0.2, 1.2, 0); cam.fov = 40; }
         else if (v === 2) { cam.position.set(2.4, 1.9, -2.4); cam.lookAt(0.2, 1.3, 0); cam.fov = 40; }
         else { cam.position.set(6.8, 1.3, -3.2); cam.lookAt(6.6, 1.0, 0); cam.fov = 40; }

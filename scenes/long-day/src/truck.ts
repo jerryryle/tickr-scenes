@@ -1119,7 +1119,7 @@ export class Truck {
     const sc = T.scale, seed0 = TRUCK_MODELS.indexOf(this.model) * 0.31;
     T.horses.forEach(([x, z], j) => {
       t.base.makeScale(sc, sc, sc).setPosition(x - T.pivot, 0, z);
-      t.horses.pose(j, t.base, this.distance / sc + j * 0.4, this.speed / sc, this.time, seed0 + j * 0.53);
+      t.horses.pose(j, t.base, this.distance / sc, this.speed / sc, this.time, seed0 + j * 0.53);
     });
     t.horses.commit();
   }
