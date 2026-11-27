@@ -108,8 +108,9 @@ const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf
   macadam: 0x6e665a };
 // Where a Victorian city has crept in further than this (CountryRoad.periodAt), the road keeps
 // nothing modern by it: no painted lines, utility poles, pylons, wind turbines, steel silos or
-// billboards, and its signs are finger posts (vicFingerPost).
-const PERIOD_MODERN = 0.3;
+// billboards, and its signs are finger posts (vicFingerPost). The truck turns into a carriage at the
+// same point: its cab, back doors and exhaust change at half (truck.ts), as the oncoming traffic does.
+const PERIOD_MODERN = 0.5;
 // The colour a of the way to b by k (0..1), channel by channel.
 function lerpColor(a: number, b: number, k: number) {
   const ch = (sh: number) => Math.round(((a >> sh) & 255) * (1 - k) + ((b >> sh) & 255) * k) << sh;
