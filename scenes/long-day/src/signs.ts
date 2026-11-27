@@ -84,7 +84,7 @@ class SlotUploads {
   }
 }
 
-export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean }
+export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean; gilt?: boolean }   // (gilt: the Victorian city's, gilt serif capitals inside a gilt line)
 interface SignJob { slot: number; text: string; style: SignStyle; baked: boolean }
 export interface SignMesh { mesh: THREE.Mesh; slots: number[]; ads: boolean }
 
@@ -184,6 +184,14 @@ export class SignAtlas {
       g.drawImage(this.logo, x + 6, y + 3, lw, 26);
       left = x + 12 + lw; width = SIGN_W - 18 - lw;
     }
+    if (j.style.gilt) {
+      // A signwriter's board: a gilt line inset round its edge, the name in shaded gilt capitals.
+      g.strokeStyle = j.style.fg; g.lineWidth = 1.5; g.strokeRect(x + 3.5, y + 3.5, SIGN_W - 7, SIGN_H - 7);
+      g.fillStyle = "rgba(0,0,0,0.55)"; fitAtlasText(g, j.text.toUpperCase(), left + width / 2 + 1, y + SIGN_H / 2 + 2, width - 6, 19, "bold", "serif");
+      g.fillStyle = j.style.fg; fitAtlasText(g, j.text.toUpperCase(), left + width / 2, y + SIGN_H / 2 + 1, width - 6, 19, "bold", "serif");
+      g.restore();
+      return;
+    }
     g.fillStyle = j.style.fg;
     fitAtlasText(g, j.text, left + width / 2, y + SIGN_H / 2 + 1, width, 22);
     g.restore();
@@ -201,9 +209,9 @@ export class SignAtlas {
 }
 
 // Centred bold text, shrunk to fit `width`.
-function fitAtlasText(g: CanvasRenderingContext2D, text: string, cx: number, cy: number, width: number, size: number, weight = "bold") {
+function fitAtlasText(g: CanvasRenderingContext2D, text: string, cx: number, cy: number, width: number, size: number, weight = "bold", family = "sans-serif") {
   g.textAlign = "center"; g.textBaseline = "middle";
-  const font = (s: number) => `${weight} ${s}px sans-serif`;
+  const font = (s: number) => `${weight} ${s}px ${family}`;
   g.font = font(size);
   while (size > 8 && g.measureText(text).width > width) { size--; g.font = font(size); }
   g.fillText(text, cx, cy);
@@ -323,12 +331,15 @@ export const AD_BATON_MARK = ADS.length - 1, AD_RYDER = [0, 1, 2], AD_GHOST = [A
 export const AD_BILLBOARD = ADS.map((_, i) => i).filter((i) => !AD_GHOST.includes(i) && i !== AD_BATON_MARK);
 
 const SIGN_BOARDS = ["#1f4f8f", "#2e6b3a", "#7a2e2e", "#3b3b42", "#8a5a1a", "#1d6f78", "#5b2d77", "#b0522a"];
+const VIC_BOARDS = ["#1e3a2a", "#4a1620", "#1c2640", "#141416", "#3a2418"];
 
 // The sign for the facility on block (bx, bz), or null for homes.
 export function facilitySign(plan: CityPlan, bx: number, bz: number): { text: string; style: SignStyle } | null {
   const id = facilityAt(plan, bx, bz);
   if (!hasSign(id)) return null;
   const name = facilityName(plan, id, bx, bz);
+  // (The Victorian city's are painted boards, a dark ground and gilt letters, Ryder's carriers' too.)
+  if (plan.style.victorian) return { text: name, style: { bg: VIC_BOARDS[Math.floor(hash2(bx, bz, plan.seed, 0x5163) * VIC_BOARDS.length)], fg: "#e0bc5c", logo: false, gilt: true } };
   if (/^Baton\b/.test(name)) return { text: name, style: { bg: "#000000", fg: "#e8eaf0", logo: false, baton: true } };
   if (isRyderFacility(id))
     return { text: (FAC[id] as FacilityDef).label.replace("Ryder ", ""), style: { bg: RED, fg: "#ffffff", logo: true } };

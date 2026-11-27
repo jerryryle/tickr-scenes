@@ -21,7 +21,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
-import { VIC_STREET, vicBackYard, vicGate, vicLot, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
+import { VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
@@ -1641,7 +1641,7 @@ DRAW.billboard = (R, _g, s) => { drawBillboard(s, rectFrom(R.r), R.top as number
 export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet: FleetBuilder | null = null): (cx: number, cz: number) => ChunkBuild {
   return function* (cx, cz) {
     // The entrance doors of the tile's kerb facilities (one per side, where kerbDoors found the building).
-    const G = plan.graph, doors = G.tile(cx, cz).blocks.map((b) => G.blocks[b]).filter((b) => b.inCity).flatMap((b) => kerbDoors(plan, b.kx, b.kz).map((d, side) => d && { d, f: b.sides[side] }));
+    const G = plan.graph, doors = G.tile(cx, cz).blocks.map((b) => G.blocks[b]).filter((b) => b.inCity).flatMap((b) => kerbDoors(plan, b.kx, b.kz).map((d, side) => d && { d, f: b.sides[side], b }));
     yield;
     const slots: number[] = [];
     const takeSlot = (text: string, style: SignStyle) => { const k = signAtlas.alloc(text, style); if (k >= 0) slots.push(k); return k >= 0 ? signAtlas.uv(k) : null; };
@@ -1650,7 +1650,17 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
     doors.forEach((e) => {
       if (!e) return;
       const P = G.facePt(e.f, 0, 0), [rx, rz] = frameApply({ ox: 0, oz: 0, rot: P.h }, 9, 18);
-      inFrame({ ox: P.x - cx * BLOCK - rx, oz: P.z - cz * BLOCK - rz, rot: P.h }, [solid, ground, lamps], () => entranceDoor(solid, { ...e.d, side: 0 }));
+      inFrame({ ox: P.x - cx * BLOCK - rx, oz: P.z - cz * BLOCK - rz, rot: P.h }, [solid, ground, lamps], () => {
+        entranceDoor(solid, { ...e.d, side: 0 });
+        // (The Victorian city's facilities have their name over the door, on a signwriter's board
+        // in gilt edged in gilt: signs.ts facilitySign.)
+        const sign = plan.style.victorian && !e.d.plain ? facilitySign(plan, e.b.kx, e.b.kz) : null, uv = sign ? takeSlot(sign.text, sign.style) : null;
+        if (uv) {
+          const d = FRONT_NODE[0][2], w = 3.4, y = (e.d.y ?? CURB_H) + e.d.h + 0.45;
+          fspan(solid, 0, e.d.a - w / 2 - 0.07, e.d.a + w / 2 + 0.07, y - 0.32, y + 0.32, e.d.n - 0.1, e.d.n - 0.02, 0xc9a44a);
+          signQuad(DC.quads, uv, 0, e.d.a, e.d.n - 0.11, y, w, w / 8, -RIGHT[d][0], -RIGHT[d][1]);
+        }
+      });
     });
     const group = new THREE.Group();
     for (const [b, m] of [[ground, mats.ground], [solid, mats.solid], [lamps, mats.lamp]] as const) {
@@ -2107,14 +2117,18 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
   for (let k = 0; k < poly.length; k++) { const [x0, z0] = poly[k], [x1, z1] = poly[(k + 1) % poly.length], w = x0 * z1 - x1 * z0; A += w; cx += (x0 + x1) * w; cz += (z0 + z1) * w; }
   cx /= 3 * A; cz /= 3 * A;
   const room = polyDist(poly, cx, cz), R = Math.min(5, room * 0.25), y = CURB_H;
-  // (A border of darker paving round the fountain, its basin, water, and the spire's tiers.)
+  // (A border of darker paving round the fountain, its basin, water, and the spire's tiers. The
+  // Victorian city's square has a statue or a drinking fountain in iron railings instead.)
   g.cyl(cx, y + 0.01, cz, R + 2.2, 0.02, shade(CS.pavers, 0.85), 24);
-  s.cyl(cx, y + 0.3, cz, R, 0.6, 0xbab2a2, 24);
-  s.cyl(cx, y + 0.55, cz, R - 0.35, 0.06, 0x4a7fa8, 24);
-  s.cyl(cx, y + 1.0, cz, 0.45, 1.6, 0xbab2a2, 10);
-  s.cyl(cx, y + 1.85, cz, 1.4, 0.18, 0xbab2a2, 16);
-  s.cyl(cx, y + 2.3, cz, 0.25, 0.9, 0xbab2a2, 8);
-  s.cyl(cx, y + 2.8, cz, 0.7, 0.12, 0xbab2a2, 12);
+  if (CS.victorian) vicMonument(s, cx, y, cz, R, rnd);
+  else {
+    s.cyl(cx, y + 0.3, cz, R, 0.6, 0xbab2a2, 24);
+    s.cyl(cx, y + 0.55, cz, R - 0.35, 0.06, 0x4a7fa8, 24);
+    s.cyl(cx, y + 1.0, cz, 0.45, 1.6, 0xbab2a2, 10);
+    s.cyl(cx, y + 1.85, cz, 1.4, 0.18, 0xbab2a2, 16);
+    s.cyl(cx, y + 2.3, cz, 0.25, 0.9, 0xbab2a2, 8);
+    s.cyl(cx, y + 2.8, cz, 0.7, 0.12, 0xbab2a2, 12);
+  }
   // (The ring of trees, as many as fit clear of the edge; a bench between each two, facing in.)
   const rr = Math.min(room - 3, R + 7.5), n = Math.max(4, Math.min(10, Math.floor(rr * Math.PI * 2 / 7)));
   for (let k = 0; k < n; k++) {
