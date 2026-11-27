@@ -44,7 +44,7 @@ function writeMap(M: RoadMap, r: WorldRoad) {
     `  id: ${JSON.stringify(M.id)}, key: ${M.key}, length: ${M.length},${M.freeway ? " freeway: true," : ""}`,
     `  biomes: ${drItem(M.biomes)},${M.coastSide ? ` coastSide: ${M.coastSide},` : ""}`,
     ...drList("heading", M.heading, 16), ...drList("height", M.height, 24), ...drList("hill", M.hill, 24),
-    ...drList("blend", M.blend, 24), ...(M.story ? drList("story", M.story, 24) : []), ...(M.coast ? drList("coast", M.coast, 24) : []),
+    ...drList("blend", M.blend, 24), ...(M.story ? drList("story", M.story, 24) : []), ...(M.period ? drList("period", M.period, 24) : []), ...(M.coast ? drList("coast", M.coast, 24) : []),
     `  pieces: [`, ...M.pieces.map((p) => `    ${drItem(p)},`), `  ],`,
     `  items: {`,
     ...(["trees", "rocks", "ponds", "turbines", "pylons", "farms", "cows", "poles", "fences"] as const).map((k) => drList(k, I[k], k === "trees" ? 32 : 24).map((l) => `  ${l}`)).flat(),

@@ -6,6 +6,12 @@ export const FACADE = {
   // The storybook city's are round and arched windows in thick trim (STORYBOOK), an arched shop window
   // and round-topped door (STORY_SHOP), a house's arched door beside a porthole (STORY_DOOR).
   STORYBOOK: 16, STORY_SHOP: 17, STORY_DOOR: 18,
+  // The Victorian city's are sash windows under lintels in brick or stucco (VICT_SASH), a painted
+  // timber shopfront under its fascia (VICT_SHOP), a panelled front door under a fanlight
+  // (VICT_DOOR), pointed Gothic windows (VICT_GOTHIC), a warehouse's stacked loading doors
+  // (VICT_WAREHOUSE), a grand building's pedimented windows between pilasters (VICT_GRAND) and a
+  // mill's rows of arched iron-framed windows (VICT_MILL).
+  VICT_SASH: 19, VICT_SHOP: 20, VICT_DOOR: 21, VICT_GOTHIC: 22, VICT_WAREHOUSE: 23, VICT_GRAND: 24, VICT_MILL: 25,
 } as const;
 // The atlas has room for this many kinds (a tile's kind is its id modulo this; facadeart.ts).
 export const FACADE_KINDS = 32;

@@ -78,6 +78,7 @@ export class Backdrop {
         }
         break;
       }
+      case "spires": // (the Victorian city's skyline: victorian-buildings-town.ts paints it; for now its chimneys)
       case "stacks": {
         ridge(15, 35, col);
         for (let i = 0; i < 60; i++) {

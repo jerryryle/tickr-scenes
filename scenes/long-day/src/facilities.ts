@@ -56,6 +56,8 @@ export const FAC = {
   construction: { label: "Construction Site", w: { industrial: 1, commercial: 1, downtown: 1.5, residential: 0.6 } },
   // The storybook city's knitting works (one to a storybook city: CityPlan.worksBlock) is never drawn by district.
   knittingWorks: { label: "Knitting Works", w: {}, dock: true },
+  // The Victorian city's steam brewery (one to a Victorian city: CityPlan.worksBlock) is never drawn by district.
+  steamBrewery: { label: "Steam Brewery", w: {}, dock: true },
   // Shops, restaurants and services.
   retail: { label: "Retail", w: { commercial: 6 } },
   bigBox: { label: "Big-Box Store", w: { commercial: 3 }, dock: true },
@@ -144,6 +146,7 @@ export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
   const own = plan.fileFacility(bx, bz);
   if (own) return own;
   if (plan.style.storybook && plan.worksBlock >= 0 && plan.blockOf(bx, bz)?.id === plan.worksBlock) return "knittingWorks";
+  if (plan.style.victorian && plan.worksBlock >= 0 && plan.blockOf(bx, bz)?.id === plan.worksBlock) return "steamBrewery";
   const park = !!plan.blockOf(bx, bz)?.park, wf = park ? null : waterfrontAt(plan, bx, bz);
   if (wf) return wf;
   const t = FAC_BY_DISTRICT.get(park ? "park" : plan.district(bx, bz))!;
@@ -294,8 +297,11 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   // (Never on the far side of a one-way street, whose kerb the truck can't drive along: the next
   // side round instead, or, anchored there, at the kerb.)
   const blk = plan.blockOf(bx, bz), G = plan.graph, anchored = !!blk && !blk.square && !!blk.anchor;
-  if (blk && (!blk.square || plan.style.storybook) && (!anchored || !G.drivable(blk.anchor!.face))) return { kind: "kerb" };   // (the storybook city's blocks are all lotted: city.ts buildBlockPart)
+  if (blk && (!blk.square || plan.style.storybook || plan.style.victorian) && (!anchored || !G.drivable(blk.anchor!.face))) return { kind: "kerb" };   // (the storybook city's blocks are all lotted: city.ts buildBlockPart)
   const fac = facilityAt(plan, bx, bz);
+  // (In the Victorian city every facility but the brewery is at the kerb: it has no modern yards,
+  // garages, stands or rental lots.)
+  if (plan.style.victorian && fac !== "steamBrewery") return { kind: "kerb" };
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
   let side = anchored ? blk!.sides.indexOf(blk!.anchor!.face) : Math.floor(h(0x51de) * 4);
   if (blk && !anchored) for (let k = 0; k < 4 && blk.sides[side] !== undefined && !G.drivable(blk.sides[side]); k++) side = (side + 1) % 4;
@@ -314,7 +320,7 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   }
   // Stores that take pallets by tractor-trailer have a truck yard as deep as an industrial one.
   // (The knitting works has a shallow van dock with its process laid out beside it: storybook-buildings-town.ts.)
-  const deep = fac !== "knittingWorks" && (plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery");
+  const deep = fac !== "knittingWorks" && fac !== "steamBrewery" && (plan.district(bx, bz) === "industrial" || fac === "bigBox" || fac === "grocery");
   const edge = deep ? 22.5 : 12;
   const a0 = 11.5, a1 = deep ? 48.5 : 29.5;
   // Bay spacing varies by site: tight van docks to wide truck bays.

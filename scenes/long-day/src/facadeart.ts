@@ -436,7 +436,9 @@ const faStoryDoor: FaKind = (p, v, rnd) => {
   else { p.rect(12, 104, 16, 12, "#e8333a", FA_TRIM); for (let i = 0; i < 3; i++) p.disc(15 + i * 5, 101, 4, FA_STORY_CURT[(i + v) % 4], FA_TRIM); }   // even variants have a pot of tufts
 };
 
-const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon, faStorybook, faStoryShop, faStoryDoor];
+const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon, faStorybook, faStoryShop, faStoryDoor,
+  // (The Victorian city's: sash, shop, door, Gothic, warehouse, grand, mill. Stand-ins until painted.)
+  faBrick, faStorefront, faDoor, faPunched, faIndustrial, faDeco, faIndustrial];
 
 // The whole atlas, on two new canvases.
 export function paintFacadeAtlas(): { colour: any; mask: any } {

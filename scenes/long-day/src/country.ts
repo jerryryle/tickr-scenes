@@ -271,7 +271,7 @@ export const BORE_HALF = 5.2, BORE_H = 6.6, CUT_N = 7.6, CUT_RUN = 80;
 export const OVER_DECK = 6.6, OVER_HALF = 7, OVER_ABUT = 10.5;
 export const tunnelTop = (p: RoadPiece) => 11 + 3 * p.variant;   // the hill over a tunnel's portals
 
-export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook" };
+export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook", victorian: "farmland" };
 
 // City N's hash key: its catalogue city's (visits.ts), what every default rule about the city hashes.
 export function citySeedOf(seed: number, N: number) { return cityHeadOf(seed, N).key; }
@@ -297,6 +297,7 @@ export interface RoadView {
   tunnelAt(s: number, margin?: number): RoadPiece | null;
   coastAt(s: number): number;
   storyAt(s: number): number;
+  periodAt(s: number): number;
   biomeAt(s: number, n?: number): BiomeId;
   climateAt(s: number, n?: number): Climate;
   clearAt(s: number, n: number): boolean;
@@ -317,7 +318,7 @@ export class RoadGeo implements RoadView {
   readonly shapes: RoadPiece[];               // tunnels and overpasses (the land they shape)
   private X: Float64Array; private Z: Float64Array; private H: Float64Array;
   private Y: Float64Array; private SM: Float64Array; private PM: Float64Array;
-  private blend: Float32Array; private story: Float32Array | null; private coast: Float32Array | null;
+  private blend: Float32Array; private story: Float32Array | null; private period: Float32Array | null; private coast: Float32Array | null;
   readonly coastSide: 1 | -1;
   // The world placement: local (x, z) turned by th, then moved by (tx, tz).
   private tc = 1; private ts = 0; private th = 0; private tx = 0; private tz = 0;
@@ -339,6 +340,7 @@ export class RoadGeo implements RoadView {
     for (let i = 0; i < n; i++) this.Y[i] = map.height[i] / 100;
     this.blend = Float32Array.from(map.blend);
     this.story = map.story ? Float32Array.from(map.story) : null;
+    this.period = map.period ? Float32Array.from(map.period) : null;
     this.coast = map.coast ? Float32Array.from(map.coast) : null;
     this.coastSide = map.coastSide ?? -1;
     this.shapes = this.pieces.filter((p) => p.kind === "tunnel" || p.kind === "overpass").map((p) => this.inMap(p));
@@ -421,10 +423,12 @@ export class RoadGeo implements RoadView {
     if (this.ferry && s1 > this.ferry.q0 && s0 < this.ferry.q1) lo = Math.min(lo, this.waterY - 1);
     return lo - 1;
   }
-  // How much of the land at s is coast (its sea on side coastSide); of b's land; of the storybook's.
+  // How much of the land at s is coast (its sea on side coastSide); of b's land; of the storybook's;
+  // of the Victorian city's.
   coastAt(s: number) { return this.land(this.coast, s); }
   blendAt(s: number) { return this.land(this.blend, s); }
   storyAt(s: number) { return this.land(this.story, s); }
+  periodAt(s: number) { return this.land(this.period, s); }
   isA(s: number, n = 0) { return hash2(Math.floor(s / 12), Math.floor(n / 12), this.key, 0xb10) >= this.blendAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.isA(s, n) ? this.bioA : this.bioB; }
   climateAt(s: number, n = 0): Climate { return this.isA(s, n) ? this.climA : this.climB; }
@@ -545,6 +549,7 @@ export class MirrorView implements RoadView {
   tunnelAt(s: number, margin = 0) { return this.base.tunnelAt(2 * this.c - s, margin); }
   coastAt(s: number) { return this.base.coastAt(2 * this.c - s); }
   storyAt(s: number) { return this.base.storyAt(2 * this.c - s); }
+  periodAt(s: number) { return this.base.periodAt(2 * this.c - s); }
   biomeAt(s: number, n = 0) { return this.base.biomeAt(2 * this.c - s, -n); }
   climateAt(s: number, n = 0) { return this.base.climateAt(2 * this.c - s, -n); }
   clearAt(s: number, n: number) { return this.base.clearAt(2 * this.c - s, -n); }
@@ -890,6 +895,7 @@ export class CountryRoad {
   tunnelAt(s: number, margin = 0) { return this.v.tunnelAt(s, margin); }
   coastAt(s: number) { return this.v.coastAt(s); }
   storyAt(s: number) { return this.v.storyAt(s); }
+  periodAt(s: number) { return this.v.periodAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.v.biomeAt(s, n); }
   climateAt(s: number, n = 0): Climate { return this.v.climateAt(s, n); }
   clearAt(s: number, n: number) { return this.v.clearAt(s, n); }
