@@ -17,7 +17,7 @@ import type { CarKind } from "./cars.ts";
 import { SPECS, TRAILER, truckExtents } from "./truck.ts";
 import { KINGPIN_TO_AXLES } from "./hitch.ts";
 import type { TruckModel } from "./truck.ts";
-import { signalsInStep, signalState } from "./signals.ts";
+import { SIGNAL_CYCLE, signalCycle, signalsInStep, signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
 import { CityPlan, pick } from "./city.ts";
 import { outOfSight } from "./citygraph.ts";
@@ -511,7 +511,7 @@ export class Traffic {
     if (!n0) { this.truckBk = tc.bk = null; this.truckStillT = 0; return; }
     // (With the nodes on past it whose lines are inside it, booked with it: else it would come to
     // their lines still booked through this one, too late to stop at them or book in turn.)
-    const { n, also } = this.through(T.path, n0);
+    const { n, also, together } = this.through(G, T.path, n0, seed);
     const N = G.nodes[n.node], dLine = n.sLine - 0.6 - (T.s + T.front), short = dLine > -0.5, stopped = T.v < 0.3 && dLine < 2.5;
     // (How long it has stood at its line: at an all-way stop, anyone who has waited at the kerb
     // longer crosses first, as for a car: pedFirst.)
@@ -524,12 +524,13 @@ export class Traffic {
     } else if (N.control === "stop") { sigOk = stopped || !!tc.bk; first = false; }
     else if (T.path.yields.some((y) => y.node === n.node)) first = false;
     // (The nodes booked with it, by their own controls too: a red light there holds it at this
-    // one's line, rather than waiting in this junction for it; an all-way stop or a give-way there,
-    // it books at its line once there is a gap, not on its approach.)
+    // one's line, rather than waiting in this junction for it, where their lights show its way
+    // green together (through); an all-way stop or a give-way there, it books at its line once
+    // there is a gap, not on its approach.)
     let alsoRed = false;
     for (const a of also) {
       const A = G.nodes[a];
-      if (A.control === "signal") { const sg = T.path.signals.find((x) => x.node === a); if (!sg || signalState(A, sg.phase, simTime, seed, prs) === "red") sigOk = first = false, alsoRed = true; }
+      if (A.control === "signal" && together) { const sg = T.path.signals.find((x) => x.node === a); if (!sg || signalState(A, sg.phase, simTime, seed, prs) === "red") sigOk = first = false, alsoRed = true; }
       else if (A.control === "stop" || T.path.yields.some((y) => y.node === a)) first = false;
     }
     // (Behind a car in its lane holding at the line for its turn: the truck's comes after that
@@ -649,9 +650,14 @@ export class Traffic {
     return out;
   }
   // Node n on path P, run on through the nodes after it whose lines come before its far mouth (or
-  // within 2 m of it): as one, out at the last one's mouth; also: those nodes.
-  private thru = { P: null as Path | null, n0: null as Path["nodes"][number] | null, n: null as unknown as Path["nodes"][number], also: [] as number[] };
-  private through(P: Path, n: Path["nodes"][number]): { n: Path["nodes"][number]; also: number[] } {
+  // within 2 m of it): as one, out at the last one's mouth; also: those nodes. together: whether
+  // the lights among them, unpreempted, show P's way through each green at once for a second or
+  // more of their cycles. Two lights linked for the street between them (signals.ts linkSignals)
+  // never do for a way that turns onto that street from the first one's cross street. Held at the
+  // first line for all of their reds at once, the truck would then wait there for good (truckBook),
+  // so it goes on its own light instead and stops at each red inside, as a car does.
+  private thru = { P: null as Path | null, n0: null as Path["nodes"][number] | null, n: null as unknown as Path["nodes"][number], also: [] as number[], together: true };
+  private through(G: CityGraph, P: Path, n: Path["nodes"][number], seed: number): { n: Path["nodes"][number]; also: number[]; together: boolean } {
     // (Kept from the step before for the same node: a step makes no garbage.)
     const T = this.thru;
     if (T.P === P && T.n0 === n) return T;
@@ -661,6 +667,12 @@ export class Traffic {
     const also: number[] = [];
     for (let k = i + 1; k < P.nodes.length && P.nodes[k].sLine < m.sOut + 2; k++) { m = { ...m, sOut: Math.max(m.sOut, P.nodes[k].sOut) }; also.push(P.nodes[k].node); }
     T.n = m; T.also = also;
+    // (Over a whole number of every light's cycle, a second at a time.)
+    const lights = P.signals.filter((g) => g.node === n.node || also.includes(g.node));
+    let cycle = SIGNAL_CYCLE;
+    for (const g of lights) while (cycle % signalCycle(G.nodes[g.node])) cycle += SIGNAL_CYCLE;
+    T.together = lights.length < 2;
+    for (let t = 0; t < cycle && !T.together; t++) T.together = lights.every((g) => signalState(G.nodes[g.node], g.phase, t, seed, null) === "green");
     return T;
   }
   // Whether car c, at rel from its line going v, could book footprint fp through n now: every
