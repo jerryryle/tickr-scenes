@@ -692,6 +692,53 @@ export function vicSquare(s: Batch, g: Batch, w: number, d: number, y0: number, 
     s.cyl(0, y0 + 3.0, 0, 0.18, 0.9, VIC.stone, 6); s.cone(0, y0 + 3.5, 0, 0.7, 0.3, VIC.stone, 10, Math.PI); s.ico(0, y0 + 3.85, 0, 0.18, VIC.stone);
   }
 }
+// vicPark lays out a park's block (its outline `pts`, pulled in from the kerb's back, on its lawn
+// at y0): iron railings round it on a stone kerb, gravel walks in from its corners to a round
+// flower bed in the middle, and stone piers at its gates. Its trees and pavilions are drawn by
+// city.ts as any park's. (Its lawn is the block's ground, just under y0, the pavement's top.)
+// (Each side's railings leave a gate at both of its ends and, on a long side, one in its middle,
+// where a park with a facility has its pavilion: city.ts buildLots puts one mid-side.)
+export function vicPark(s: Batch, g: Batch, pts: readonly (readonly [number, number])[], y0: number, rnd: VicRand) {
+  const n = pts.length, cx = pts.reduce((a, p) => a + p[0], 0) / n, cz = pts.reduce((a, p) => a + p[1], 0) / n;
+  const strip = (ax: number, az: number, bx: number, bz: number, w: number, y: number, col: number) => {
+    const L = Math.hypot(bx - ax, bz - az);
+    if (L > 0.1) g.box((ax + bx) / 2, y, (az + bz) / 2, L, 0.02, w, col, Math.atan2(-(bz - az), bx - ax));
+  };
+  for (let i = 0; i < n; i++) {
+    const [px, pz] = pts[(i + n - 1) % n], [ax, az] = pts[i], [bx, bz] = pts[(i + 1) % n];
+    const L = Math.hypot(bx - ax, bz - az);
+    // (Drawn so the bars face the street: the side's outward normal is (-tz, tx).)
+    const out = (-(bz - az)) * ((ax + bx) / 2 - cx) + (bx - ax) * ((az + bz) / 2 - cz) > 0;
+    const gate = Math.min(4.5, L / 3), gaps: [number, number][] = [[-1, gate], [L - gate, L + 1]];
+    if (L > 26) gaps.push([L / 2 - 5.5, L / 2 + 5.5]);
+    const k = 0.45 / L, [x0, z0, x1, z1] = [ax + (bx - ax) * k, az + (bz - az) * k, bx - (bx - ax) * k, bz - (bz - az) * k];
+    // the kerb the railings stand on, and the railings
+    strip(ax, az, bx, bz, 0.34, y0 + 0.08, VIC.stone);
+    if (L > 2 * gate + 1) {
+      if (out) vicRailings(s, x0, z0, x1, z1, y0 + 0.16, 1.2, VIC.black, gaps.map(([p, q]) => [p - 0.45, q - 0.45]), 0.45);
+      else vicRailings(s, x1, z1, x0, z0, y0 + 0.16, 1.2, VIC.black, gaps.map(([p, q]) => [L - 0.9 - q + 0.45, L - 0.9 - p + 0.45]), 0.45);
+    }
+    // a pier each side of every gate
+    for (const [p, q] of gaps) for (const t of [p, q]) {
+      if (t <= 0 || t >= L) continue;
+      const u = t / L; s.box(ax + (bx - ax) * u, y0 + 0.75, az + (bz - az) * u, 0.45, 1.5, 0.45, VIC.stone, Math.atan2(-(bz - az), bx - ax));
+    }
+    // a walk in from a corner (where the outline turns, not where a side only bends) to the bed
+    const t0 = Math.atan2(az - pz, ax - px), t1 = Math.atan2(bz - az, bx - ax);
+    let turn = Math.abs(t1 - t0); if (turn > Math.PI) turn = 2 * Math.PI - turn;
+    if (turn > 0.6) {
+      const d = Math.hypot(cx - ax, cz - az), u = 1.2 / d, v = 1 - 5.2 / d;
+      if (v > u) strip(ax + (cx - ax) * u, az + (cz - az) * u, ax + (cx - ax) * v, az + (cz - az) * v, 2.2, y0 - 0.012, VIC.gravel);
+    }
+  }
+  // the bed in the middle: a gravel round, a stone kerb, flowers
+  g.cyl(cx, y0 - 0.004, cz, 5.6, 0.02, VIC.gravel, 18);
+  s.cyl(cx, y0 + 0.1, cz, 2.9, 0.2, VIC.stone, 14);
+  s.cyl(cx, y0 + 0.21, cz, 2.6, 0.04, 0x4a6a34, 14);
+  const fl = vPick(rnd, [[0xb83a34, 0xe8c040], [0xd86a8a, 0xeee8da], [0x8a3a8a, 0xe8c040]]);
+  for (let i = 0; i < 14; i++) { const a = i / 14 * Math.PI * 2, r = i % 2 ? 1.9 : 1.2; s.ico(cx + Math.cos(a) * r, y0 + 0.36, cz + Math.sin(a) * r, 0.32, fl[i % 2], 0.6, i); }
+  s.ico(cx, y0 + 0.5, cz, 0.55, fl[0], 0.8);
+}
 // vicPlanter draws a street tree's iron guard on a paved block middle, in place of a planter: a cage
 // of bars round the trunk with a ring at its top, on an iron grate.
 export function vicPlanter(s: Batch, y0: number) {
