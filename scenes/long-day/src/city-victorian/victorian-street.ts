@@ -277,6 +277,11 @@ export function vicFingerPost(s: Batch, x: number, z: number, y0: number, fx: nu
 // and the pattern fades to the stones' mean tone where a stone comes to less than about two pixels
 // that way, so far streets read as even stone and never shimmer.
 export const VIC_SETT = -7, VIC_FLAGS = -8;
+// In the rain (SETT_WET: how wet, 0..1, set each frame from the weather: main.ts) the stones darken as
+// wet stone does and take a sheen of the sky's colour, strongest at a grazing look (Schlick's
+// Fresnel): over each stone's crown and not in its joints, and most where water stands in a
+// hollow of the setts (puddles at random, a few metres across).
+export const SETT_WET = { value: 0 };
 // (Per kind: size along the street and across it, m; how far a row's and a stone's joints may stray;
 // the tone's spread; how dark a joint is; the joint's width, m; and the pixel's share of a stone over
 // which the pattern fades.)
@@ -301,18 +306,20 @@ float stNoise(vec2 q) {
   vec2 i = floor(q), f = fract(q); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(stHash2(i), stHash2(i + vec2(1.0, 0.0)), f.x), mix(stHash2(i + vec2(0.0, 1.0)), stHash2(i + vec2(1.0, 1.0)), f.x), f.y);
 }`;
-export function applySetts(mat: THREE.Material) {
+export function applySetts(mat: THREE.Material, sky: THREE.Color) {
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   const S = STONES.sett, F = STONES.flag;
   const pick = (k: keyof typeof S) => `(sett > 0.5 ? ${glsl(S[k] as number)} : ${glsl(F[k] as number)})`;
   mat.onBeforeCompile = (shader, renderer) => {
     prev(shader, renderer);
+    shader.uniforms.uSettWet = SETT_WET; shader.uniforms.uSettSky = { value: sky };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec3 aAux;\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSettAux = aAux; vSettXZ = (modelMatrix * vec4(transformed, 1.0)).xz;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;" + SETT_GLSL)
+      .replace("#include <common>", "#include <common>\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;\nuniform float uSettWet;\nuniform vec3 uSettSky;" + SETT_GLSL)
       .replace("#include <color_fragment>", `#include <color_fragment>
+  float stShine = 0.0;   // (the wet sheen's strength here: emissivemap_fragment below)
   float sett = abs(vSettAux.z - (${glsl(VIC_SETT)})) < 0.5 ? 1.0 : 0.0, flag = abs(vSettAux.z - (${glsl(VIC_FLAGS)})) < 0.5 ? 1.0 : 0.0;
   if (sett + flag > 0.5) {
     vec2 d = length(vSettAux.xy) > 0.5 ? normalize(vSettAux.xy) : vec2(1.0, 0.0);
@@ -351,8 +358,15 @@ export function applySetts(mat: THREE.Material) {
     }
     tone = mix(vec3(1.0), tone, inner) * mix(1.0, ${pick("joint")}, joint);
     diffuseColor.rgb *= mix(vec3(sett > 0.5 ? 0.95 : 0.97), tone, detail);
-  }`);
+    if (uSettWet > 0.0) {
+      float puddle = sett > 0.5 ? smoothstep(0.52, 0.64, stNoise(vSettXZ * 0.3 + 31.0)) : 0.0;
+      diffuseColor.rgb *= mix(1.0, 0.62 - 0.2 * puddle, uSettWet);
+      stShine = uSettWet * mix(0.7, 1.6, puddle) * (1.0 - joint * (1.0 - puddle));
+    }
+  }`)
+      .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
+  if (stShine > 0.0) totalEmissiveRadiance += uSettSky * stShine * (0.06 + 0.94 * pow(1.0 - max(dot(normal, normalize(vViewPosition)), 0.0), 4.0));`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|setts-v9";
+  mat.customProgramCacheKey = () => prevKey() + "|setts-v11";
   mat.needsUpdate = true;
 }
