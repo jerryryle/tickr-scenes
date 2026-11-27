@@ -49,6 +49,7 @@ import { OCCLUSION } from "./occlusion.ts";
 import type { OccluderBox } from "./occlusion.ts";
 import { loadFields, saveFields } from "./snap.ts";
 import { Truck, truckExtents, truckLayout } from "./truck.ts";
+import type { TruckModel } from "./truck.ts";
 import { CARGO_BY_ID } from "./cargo.ts";
 import type { Pose } from "./route.ts";
 import { CountryRoad, CUT_RUN, ONRAMP_SHOT, pieceSigns } from "./country.ts";
@@ -334,7 +335,7 @@ export class Director {
     // (Not once the truck, freed, comes on up to the camera.)
     // (Then on to the road coverage: not back to the jam's shot.)
     if (this.beat === "clowns" && this.clownId >= 0 && cf?.up && Math.abs(st.v) > 0.3) {
-      const nose = truckExtents(st.truck).front, nx = j.pose.x + Math.cos(j.pose.h) * nose, nz = j.pose.z - Math.sin(j.pose.h) * nose;
+      const nose = this.ext(st.truck).front, nx = j.pose.x + Math.cos(j.pose.h) * nose, nz = j.pose.z - Math.sin(j.pose.h) * nose;
       if ((this.clownPos.x - nx) * Math.cos(this.clownH) - (this.clownPos.z - nz) * Math.sin(this.clownH) < CLOWN_NEAR) this.clownDone = this.clownId;
     }
     if (!st.jamT && !cf) this.clownDone = -1;   // (a new jam: its own shots; not while the lot just filmed is still about, off with theirs)
@@ -394,7 +395,7 @@ export class Director {
         // Out ahead along its way (over the street, round any corner it turns), to its left and up
         // over the traffic in between, looking back at its front.
         this.truckFrame(inp.truck);
-        const ex = truckExtents(st.truck);
+        const ex = this.ext(st.truck);
         if (!this.onRoute(j, ex.front + JAM_AHEAD, -JAM_SIDE, JAM_UP, this.jamPos)) this.at(this.jamPos, ex.front + JAM_AHEAD, JAM_UP, -JAM_SIDE);
         this.at(this.jamLook, ex.front - 1, 1.8, 0);
         this.variant = "jam";
@@ -418,7 +419,7 @@ export class Director {
       case "backup": {
         this.variant = "bay"; this.backSpot.copy(this.backupSpot(inp));
         // The settled frame: the docked truck and the bay, and the name sign readable over them.
-        const dk = j.dock, ex = truckExtents(st.truck);
+        const dk = j.dock, ex = this.ext(st.truck);
         this.backFov = 34; this.backLook.copy(this.backSpot);
         if (dk) {
           const p = this.dockedPose(dk), fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h);
@@ -456,7 +457,7 @@ export class Director {
         // Fixed across the street from where the truck will stop.
         const p = j.path!.eval(st.stopS, this.pose);
         const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
-        const c = truckExtents(st.truck).center;
+        const c = this.ext(st.truck).center;
         // On the far side of the street (street trees line the far sidewalk), a little ahead of centre.
         // (Up on a garage's roof, on the roof.)
         const y = j.pathY(st.stopS);
@@ -490,8 +491,13 @@ export class Director {
   }
 
   // ---- per frame ------------------------------------------------------------------------------
+  // A truck's extents as the shots frame it: a carriage's run to its team's noses (truck.ts
+  // truckExtents), so a shot set up on the front of the vehicle takes in the horses.
+  private carriage = false;
+  private ext(m: TruckModel) { return truckExtents(m, this.carriage); }
   update(inp: DirectorInput) {
     const { journey: j, truck, dt } = inp;
+    this.carriage = truck.carriage > 0.5;
     this.time = j.st.simTime + j.frac;   // journey time: shots follow the journey, not the frame count
     this.visitSeed = j.visit.jobs;
     truck.root.updateMatrixWorld(true);
@@ -571,7 +577,7 @@ export class Director {
     const j = inp.journey, st = j.st, truck = inp.truck;
     const s: Shot = { pos: this.v1, look: this.v2, cutaway: true };
     this.truckFrame(truck);
-    const ex = truckExtents(truck.model);
+    const ex = this.ext(truck.model);
     truck.anchors.driverEye.getWorldPosition(this.eye);
     truck.anchors.passengerEye.getWorldPosition(this.peye);
     truck.anchors.tablet.getWorldPosition(this.tab);
@@ -727,7 +733,7 @@ export class Director {
         s.cutaway = false; s.fov = 36; s.pan = 2.4;
         if (ph.phase === "enter" || handed) {
           this.truckFrame(newT);
-          const ne = truckExtents(newT.model);
+          const ne = this.ext(newT.model);
           s.pos.copy(this.loadPos);
           if (handed) this.at(s.look, ne.center, 1.6, 0); else this.at(s.look, ne.doorX, 1.8, ne.doorZ * 0.5);
           return s;
@@ -808,7 +814,7 @@ export class Director {
   // up to it) until its tail is SIGN_PAST metres past it. One board of a billboard row (whichever the
   // road's seed picks).
   private signsAhead(j: Journey): { piece: number; idx: number; sign: RoadSign }[] {
-    const r = j.country!, s0 = j.countryS, ex = truckExtents(j.st.truck), v = Math.max(j.st.v, 3);
+    const r = j.country!, s0 = j.countryS, ex = this.ext(j.st.truck), v = Math.max(j.st.v, 3);
     const inWindow = (g: RoadSign) => s0 + ex.rear < g.s + SIGN_PAST && s0 + ex.front < g.s + 2;
     // (The sign being filmed keeps the shot until the truck is past it, whatever comes up next.)
     if (this.beat === "roadside" && !this.feature && this.signPiece >= 0 && this.signPiece < r.pieces.length) {
@@ -909,7 +915,7 @@ export class Director {
       // its lettering runs across the street) and the street where the truck stops, in one frame
       // that still reads: never the sign alone.
       const blade = [-1, 1].map((k) => B.clone().add(new THREE.Vector3(rx * k * 1.05, 0.2 * k, rz * k * 1.05)));
-      const ex = truckExtents(st.truck), y0 = j.pathY(st.stopS);
+      const ex = this.ext(st.truck), y0 = j.pathY(st.stopS);
       const at = (x: number, y: number) => new THREE.Vector3(P.x + fx * x, y0 + y, P.z + fz * x);
       const stopPts = [at(ex.center, 0.3), at(ex.center, 3.6), at(ex.front, 0.3), at(ex.front, 3.6)];
       const fov = this.frameFit(c, [...blade, ...stopPts], this.v4, null);
@@ -945,7 +951,7 @@ export class Director {
   // Seconds until the truck drives into the name sign's frame: at its speed, or braking evenly to
   // a stop at the kerb if that takes longer.
   private curbLead(j: Journey): number {
-    const st = j.st, x = this.curbEnter - (st.s + truckExtents(st.truck).front);
+    const st = j.st, x = this.curbEnter - (st.s + this.ext(st.truck).front);
     if (x <= 0) return 0;
     const v = Math.max(st.v, 0.5), rem = Math.max(st.stopS - st.s, x + 0.01), a = v * v / (2 * rem);
     return Math.max(x / v, (v - Math.sqrt(Math.max(0, v * v - 2 * a * x))) / a);
@@ -976,7 +982,7 @@ export class Director {
   }
   // The setups that can be used from here, with the truck where it is and the road ahead as it is.
   private roadOptions(inp: DirectorInput): RoadShot[] {
-    const j = inp.journey, st = j.st, ex = truckExtents(inp.truck.model);
+    const j = inp.journey, st = j.st, ex = this.ext(inp.truck.model);
     const out: RoadShot[] = ["chase", "high"];
     if (st.mode === "drive" && j.path) {
       const v = Math.max(st.v, 4);
@@ -996,7 +1002,7 @@ export class Director {
   // Start a road setup (`kind`, or the next in the rotation), gliding there over `blend` seconds
   // from where the camera is now (0: a cut).
   private startRoad(inp: DirectorInput, kind: RoadShot | null, blend = 0) {
-    const j = inp.journey, st = j.st, ex = truckExtents(inp.truck.model);
+    const j = inp.journey, st = j.st, ex = this.ext(inp.truck.model);
     const prev = this.road;
     this.roadCount++;
     if (!kind) {
@@ -1030,7 +1036,7 @@ export class Director {
   }
 
   private roadCoverage(inp: DirectorInput, s: Shot): Shot {
-    const j = inp.journey, st = j.st, truck = inp.truck, ex = truckExtents(truck.model);
+    const j = inp.journey, st = j.st, truck = inp.truck, ex = this.ext(truck.model);
     const L = ex.front - ex.rear;
     // Time for a new setup? Its length is up, or the road no longer suits it (side tracking at a
     // turn, the lead car near the stop): glide on to the next one. (Not on the clock while the truck
@@ -1151,7 +1157,7 @@ export class Director {
   // filmed the truck in ("hold", easing in closer as the work starts) or the one that sees the work
   // best. A long load cuts once to a second angle, as the driver sets off on a trip half way through.
   private loadCoverage(inp: DirectorInput, ph: ReturnType<Journey["dwellPhase"]>, s: Shot): Shot {
-    const truck = inp.truck, ex = truckExtents(truck.model);
+    const truck = inp.truck, ex = this.ext(truck.model);
     let key = this.loadAltDone ? this.loadAlt : this.loadMaster;
     if (ph.phase === "load" && !this.loadAltDone && this.loadAlt && ph.len > LOAD_ALT_AFTER) {
       const ci = ph.chore ? inp.journey.chores.indexOf(ph.chore) : -1;
@@ -1215,7 +1221,7 @@ export class Director {
     // The work happens at the back: frame the bed's end with room behind it for the walk to the
     // facility (a trailer is long, so its frame sits further forward on the trailer). At a dock
     // the frame leans towards the cab, so the building doesn't fill half of it.
-    const lay = truckLayout(truck.model), ex = truckExtents(truck.model), back = lay.trailer ? lay.bedRear + 3 : lay.bedRear - 3.5;
+    const lay = truckLayout(truck.model), ex = this.ext(truck.model), back = lay.trailer ? lay.bedRear + 3 : lay.bedRear - 3.5;
     const dock = this.atDock ? 5 : 0;
     switch (v) {
       case "hold": pos.copy(this.holdPos); this.at(look, lay.bedRear + 0.5, 1.4, 0); return;
@@ -1236,7 +1242,7 @@ export class Director {
   // The truck (and the other one) as boxes that hide whatever is behind them.
   private truckBoxes(inp: DirectorInput): OccluderBox[] {
     const out: OccluderBox[] = [];
-    for (const t of [inp.truck, inp.other]) if (t) { const e = truckExtents(t.model); out.push({ x: t.root.position.x, z: t.root.position.z, h: t.heading, ax0: e.rear, ax1: e.front, hw: 1.3, top: 3.8 }); }
+    for (const t of [inp.truck, inp.other]) if (t) { const e = this.ext(t.model); out.push({ x: t.root.position.x, z: t.root.position.z, h: t.heading, ax0: e.rear, ax1: e.front, hw: 1.3, top: 3.8 }); }
     return out;
   }
 
@@ -1271,7 +1277,7 @@ export class Director {
   // Where to film a reverse into a dock bay from: beside the bay mouth, clear of the whole sweep
   // of the truck along the bay path and of anything tall, seeing the truck's street side.
   private backupSpot(inp: DirectorInput): THREE.Vector3 {
-    const j = inp.journey, dk = j.dock, ex = truckExtents(inp.truck.model);
+    const j = inp.journey, dk = j.dock, ex = this.ext(inp.truck.model);
     const p = dk ? this.dockedPose(dk) : j.path!.eval(j.st.stopS, this.pose);
     const fx = Math.cos(p.h), fz = -Math.sin(p.h), rx = Math.sin(p.h), rz = Math.cos(p.h);
     const px = p.x, pz = p.z;
