@@ -999,6 +999,10 @@ export class Truck {
     if (c?.kind === "box") { vanTrim(B, Bs, c, "RYDER & CO.", s.reefer ? "PURE ICE" : "CARRIERS", canopy); rearLamp(B, tail, c.x0 - 0.1, c.floor + 0.42, -(c.hw - 0.16)); }
     if (c?.kind === "flatbed") { drayParts(B, c); rearLamp(B, tail, c.x0 - 0.08, c.floor + 0.05, -(c.hw - 0.16)); }
     if (T.pivot > T.dash) for (const z of [-1, 1]) B.span(T.dash - 0.3, s.frameTop - 0.24, z * 0.36, T.pivot + 0.12, s.frameTop, z * 0.48, CC.woodDark);   // (the perch on to the forecarriage)
+    // The cab's steps (kept for the climb: buildCab) hang from the floor on iron straps, two a side,
+    // since the tank and boxes they were bolted to are gone.
+    for (const z of [-1, 1]) for (const x of [s.cabFront - 0.07 - s.doorLen + 0.2, s.cabFront - 0.37])
+      B.span(x - 0.025, 0.48, z * (s.cabHW + 0.02), x + 0.025, s.cabFloor - 0.1, z * (s.cabHW + 0.06), CC.iron);
     if (s.fifthWheel !== undefined) B.cyl(s.fifthWheel, s.frameTop + 0.08, 0, 0.62, 0.16, CC.woodDark, 12);   // (the trailer's turntable)
     this.growMesh(B.build(kit.paint), this.body);
     this.growMesh(Bs.build(kit.paint), this.nearWall && !this.trailer ? this.nearWall : this.body);
@@ -1083,15 +1087,18 @@ export class Truck {
   }
   // The spoked wheels: one to a side at each axle (a dual pair's outer one, moved in to the pair's
   // middle; the inner one left out), the front ones smaller, growing out of the tyres with the carriage.
+  // A tandem keeps one axle, the tractor's forward one and the trailer's back one, so a pantechnicon
+  // stands on wheels at its two ends.
   private poseSpokes(tmat: THREE.Matrix4 | null) {
     const s = this.spec, T = teamLayout(s), KC = this.carriage;
     let i = 0;
     for (const w of this.wheelSlots) {
-      const base = w.trailer ? TRAILER.rearZ : s.rearZ, inner = !w.steer && Math.abs(w.z) < base;
+      const base = w.trailer ? TRAILER.rearZ : s.rearZ;
+      const unused = (!w.steer && Math.abs(w.z) < base) || (w.trailer ? w.x !== Math.min(...TRAILER.axles) : !w.steer && w.x !== Math.max(...s.rearAxles));
       const r = w.r * (w.steer ? T.front : T.back), z = w.steer ? w.z : Math.sign(w.z) * base;
       this.e.set(0, w.steer ? this.steer : 0, -this.distance / r);
       this.q.setFromEuler(this.e);
-      this.m4.compose(this.v3.set(w.x, r, z), this.q, this.s3.set(r, r, inner ? 0 : KC));
+      this.m4.compose(this.v3.set(w.x, r, z), this.q, unused ? this.s3.set(0, 0, 0) : this.s3.set(r, r, KC));
       if (w.trailer && tmat) this.m4.premultiply(tmat);
       this.spokes!.setMatrixAt(i++, this.m4);
     }

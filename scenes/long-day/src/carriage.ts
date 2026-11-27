@@ -47,14 +47,16 @@ export function teamLayout(s: TruckSpec): TeamLayout {
   // (The dashboard stands far enough ahead of the seat for the coachman's feet and the climb's
   // footholds (crew.ts cabSpots), behind the door's front, so the climb's grab handles stay.)
   const dash = s.cabFront - 0.5;
-  // (A single horse stands in its shafts between the front wheels' tracks; a pair is too wide, and
-  // stands ahead of them.)
-  const rump = pole ? Math.max(dash + 0.08, s.frontAxle + s.wheelR * front + 0.06) : dash + 0.08;
+  // (The team stands between the front wheels' tracks, a pair as well as a single horse, since it
+  // turns with them. A pair's rumps are just ahead of the front axle, with the splinter bar on the
+  // forecarriage behind them: standing any further on, its noses reach past a tractor's by over a
+  // metre, and the truck stood minutes beside traffic at junctions.)
+  const rump = pole ? Math.max(dash + 0.08, s.frontAxle + 0.1) : dash + 0.08;
   const wx = rump + HORSE.rump * scale, nose = wx + HORSE.front * scale;
   const over = nose - (s.noseFront + 0.05), reach = over > TEAM_SLACK ? Math.ceil(over * 20) / 20 : 0;
   const pivot = s.frontAxle;
   const horses: [number, number][] = pole ? [[wx, -0.4], [wx, 0.4]] : [[wx, 0]];
-  const rear: [number, number] = [pole ? s.wheelR * front + 0.12 : dash - 0.02 - pivot, pole ? 0.72 : 0.9];
+  const rear: [number, number] = [pole ? 0.02 : dash - 0.02 - pivot, pole ? 0.72 : 0.9];
   const tip: [number, number] = pole ? [wx + 0.62 * scale - pivot, 1.02 * scale] : [wx + 0.42 * scale - pivot, 1.15 * scale + 0.04];
   L = { dash, pivot, horses, scale, pole, rear, tip, reach, front, back };
   TEAM_LAYOUTS.set(s, L);

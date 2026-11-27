@@ -6,7 +6,8 @@
 // walk and stopping, then standing, filmed from the street (CLIP_VIEW "side", or "front" from its
 // front quarter): render it a frame every 100 ms, DEFINE="CARRIAGE_CLIP=box26 CLIP_VIEW=side". With
 // CARRIAGE_CLIP=fleet it shows each model baked as a rental lot parks it, unhitched (fleet.ts), and
-// as traffic draws it, its team walking.
+// as traffic draws it, its team walking. With CLIP_MORPH=1 the clip's carriage grows from none of it
+// to all of it over its first 12 s, as it does on the road into the Victorian city.
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { LIVERY_ASSETS, Truck, TruckKit } from "../src/truck.ts";
@@ -15,6 +16,7 @@ import type { LiveryName, TruckModel } from "../src/truck.ts";
 
 const CARRIAGE_CLIP: string = "";
 const CLIP_VIEW: string = "side";
+const CLIP_MORPH: number = 0;
 const MODELS: TruckModel[] = ["box16", "box26", "reefer", "flatbed", "tractor"];
 // The clip's speed (m/s) at time t: a trot, slowing to a walk, walking on, pulling up and standing.
 const clipV = (t: number) => t < 4 ? 4 : t < 6 ? 4 - 2.5 * (t - 4) / 2 : t < 9 ? 1.5 : t < 11 ? 1.5 * (11 - t) / 2 : 0;
@@ -69,6 +71,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
     for (; ct < time; ct += 0.01) cs += clipV(ct) * 0.01;
     const v = clipV(time), a = (clipV(time + 0.05) - v) / 0.05, s0 = -30;
     clip.speed = v; clip.accel = a;
+    if (CLIP_MORPH) clip.carriage = THREE.MathUtils.clamp((time - 0.5) / 12, 0, 1);
     clip.follow(s0 + cs, 0, 0, 0, s0 + cs - clip.root.position.x);
     clip.update(1 / 10, time);
     const hx = clip.root.position.x + 8.4;
