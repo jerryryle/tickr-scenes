@@ -127,8 +127,8 @@ export const vicStreetPump = vsPiece(0.7, (s, y0) => {
   s.lathe("vicFoot", VS_FOOT, 0, y0 + 0.12, 0.1, 0.17, 0.3, VS_BLACK, 6);
   s.cyl(0, y0 + 1.05, 0.1, 0.1, 1.5, VS_BLACK, 6);
   s.cyl(0, y0 + 1.83, 0.1, 0.16, 0.06, VS_BLACK, 6);
-  s.cone(0, y0 + 1.86, 0.1, 0.12, 0.16, VS_BLACK, 6);
-  s.cyl(0, y0 + 1.99, 0.1, 0.07, 0.12, VS_BLACK, 4);
+  s.cyl(0, y0 + 1.9, 0.1, 0.1, 0.08, VS_BLACK, 6);
+  s.cyl(0, y0 + 1.98, 0.1, 0.06, 0.08, VS_BLACK, 6);
   s.boxR(0, y0 + 0.9, -0.08, 0.07, 0.07, 0.36, VS_BLACK, -0.4, 0, 0);
   s.boxR(0, y0 + 1.45, 0.42, 0.05, 0.05, 0.7, VS_BLACK, 0.5, 0, 0);
 });
