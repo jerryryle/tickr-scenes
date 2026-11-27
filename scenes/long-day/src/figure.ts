@@ -270,8 +270,8 @@ export class Figures {
         const kx = px + fx * sm * 0.48 * s, kz = pz + fz * sm * 0.48 * s, top = py - cm * 0.48 * s + 0.04 * s, bot = (b.y ?? CURB_H) + 0.03, H = top - bot;
         if (H > 0.05) {
           const d = lq[1] - lq[0], sw = d * 0.05 * s, kick = Math.abs(d) * 0.03 * s;
-          this.box(kx, top - H * 0.25, kz, 0.46 * s, H * 0.5, 0.52 * s, yaw, 0, gown);
-          this.box(kx + fx * kick + rx * sw, bot + H * 0.25, kz + fz * kick + rz * sw, 0.56 * s, H * 0.5 + 0.01, 0.62 * s, yaw, 0, gown, d * 0.1);
+          this.box(kx, top - H * 0.25, kz, 0.48 * s, H * 0.5, 0.54 * s, yaw, 0, gown);
+          this.box(kx + fx * kick + rx * sw, bot + H * 0.25, kz + fz * kick + rz * sw, 0.56 * s, H * 0.5 + 0.01, 0.6 * s, yaw, 0, gown, d * 0.1);
         }
         if (!own && k % 4 === 1) T(-0.04, -0.2, 0.24, 0.24, 0.36, gown);   // a bustle
         if (bodice !== gown) T(-0.03, 0, 0.29, 0.12, 0.4, bodice);           // the jacket's peplum
@@ -280,7 +280,7 @@ export class Figures {
         T(0.3, 0.123, 0.01, 0.36, 0.24, 0xf2efe6); L(0.17, 0.185, 0.01, 0.34, 0.3, 0xf2efe6);
         Hd(0.1, -0.11, 0.05, 0.06, 0.18, trim);                              // a ribbon in the hair
       }
-      if (shawl >= 0) { T(0.47, -0.02, 0.3, 0.24, 0.44, shawl); T(0.26, -0.135, 0.03, 0.26, 0.26, shawl); }
+      if (shawl >= 0) { T(0.51, -0.02, 0.3, 0.16, 0.46, shawl); T(0.3, -0.135, 0.03, 0.34, 0.3, shawl); }   // a shawl round the shoulders, its point down the back
     } else if (dress === "bobby") {
       L(0.06, 0, 0.28, 0.14, 0.4, V_BOBBY);                                  // the tunic's skirt, the belt and the buttons
       T(0.04, 0, 0.27, 0.05, 0.4, 0x111111);
@@ -300,8 +300,13 @@ export class Figures {
     else if (hat === "bowler") { Hd(0.125, 0, 0.3, 0.02, 0.28, hatC); Hd(0.185, -0.005, 0.22, 0.11, 0.21, hatC); Hd(0.25, -0.005, 0.16, 0.04, 0.15, hatC); }
     else if (hat === "cap") { Hd(0.14, 0.01, 0.26, 0.06, 0.24, hatC); Hd(0.115, 0.15, 0.11, 0.02, 0.2, hatC); }
     else if (hat === "helmet") { Hd(0.12, 0, 0.27, 0.02, 0.25, hatC); Hd(0.22, -0.005, 0.23, 0.2, 0.22, hatC); Hd(0.35, -0.005, 0.17, 0.08, 0.16, hatC); Hd(0.41, -0.005, 0.04, 0.05, 0.04, V_SILVER); Hd(0.21, 0.111, 0.01, 0.06, 0.05, V_SILVER); }
-    else if (hat === "bonnet") { Hd(0.03, -0.035, 0.19, 0.29, 0.26, hatC); Hd(0.14, 0.05, 0.12, 0.06, 0.29, hatC); Hd(-0.125, 0.01, 0.07, 0.025, 0.22, trim); }
+    else if (hat === "bonnet") {   // a hood over the back of the head, its brim standing out round the face, ribbons under the chin
+      Hd(0.03, -0.04, 0.18, 0.28, 0.25, hatC); Hd(0.15, 0.06, 0.16, 0.05, 0.34, hatC);
+      for (const r of [-0.15, 0.15]) Hd(0.0, 0.07, 0.12, 0.26, 0.04, hatC, r);
+      Hd(-0.125, 0.02, 0.06, 0.03, 0.24, trim); Hd(0.1, -0.02, 0.2, 0.04, 0.27, trim);
+    }
     else if (hat === "wide") { Hd(0.125, 0, 0.52, 0.02, 0.5, hatC); Hd(0.18, -0.005, 0.2, 0.1, 0.2, hatC); Hd(0.2, -0.04, 0.08, 0.07, 0.09, trim, 0.09); }
+    if (woman && hat !== "bonnet") Hd(0.03, -0.13, 0.09, 0.11, 0.13, b.hair);   // the hair up in a bun
     if (parasol) { const hd = this.handR; this.umbrella(hd[0] - fx * 0.05, this.head[1] + 0.45 * s, hd[2] - fz * 0.05, hd, b.parasol!, 0, yaw + Math.PI / 4, 0.4); }
   }
   private personBody(b: Body) {

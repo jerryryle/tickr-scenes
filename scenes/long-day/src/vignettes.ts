@@ -5,7 +5,9 @@
 // a utility hatch, a crossing guard, the morning coffee queue, a couple under a streetlight, a
 // falafel cart and a club's velvet rope after dark, a sled, a shoveller and a snowman in the
 // snow, an open hydrant on a hot afternoon, and in the parks chess, tai chi, a frisbee dog and a
-// kite.
+// kite. The Victorian city keeps out those that read modern (MODERN) and has its own: a
+// lamplighter at dusk and dawn, a chimney sweep and his boy, a newsboy, an organ grinder and his
+// monkey, Punch and Judy in the park, a crossing sweeper, a flower seller and the muffin man.
 // Each is anchored to a block side's frontage (a face of the street graph, citygraph.ts: `a`
 // along it, `n` across, 0 at the building line and -3 at the kerb face on a 3 m sidewalk), chosen
 // for its district, the hour, the weather and the season, and placed on the furniture it needs (decor.ts PK) or a free stretch of pavement.
@@ -186,6 +188,7 @@ const CONE = 0xd9a45a, SCOOPS = [0xff9ec0, 0xb8f0c8, 0x6a3a1e, 0xfff2c0];
 const HIVIS = 0xff7a1a, HARDHAT = 0xf2c200, CONE_ORANGE = 0xff5a1a;
 const CHALK = [0xff8fb0, 0x8fd0ff, 0xfff08a, 0xa8f0a0, 0xd8a8ff, 0xffffff];
 const PAINT = 0x2e9b5a;
+const RAGS = [0x5a4a3a, 0x4a4a42, 0x6a5a40, 0x3a3a44, 0x5a3a2a, 0x4a3a30];   // (worn coats: the newsboy, the organ grinder, the crossing sweeper)
 const VIC_CHALK = [0xf4f0e8, 0xece4d4, 0xf0dcd8];
 const BLOOMS = [0xd8303a, 0xf0e8f0, 0xe8c030, 0x9a5ac8, 0xf08aa8, 0xe86a2a, 0xf4f0d8];
 // Gas lamps (city-victorian/victorian-street.ts vicLamp): the lantern's bottom and its middle above the ground.
@@ -1618,8 +1621,12 @@ const K: Record<VK, Kind> = {
     draw(v, F, t) {
       const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0);
       // The bill on its board, and the bundle of papers at his feet.
-      { const [x, z] = P(f, v.a - 0.65, v.n - 0.1); F.box(x, Y0 + 0.4, z, 0.05, 0.8, 0.5, f.h0 + 0.25, 0, 0x3a2a1c); F.box(x, Y0 + 0.48, z, 0.06, 0.6, 0.44, f.h0 + 0.25, 0, 0xece4d0);
-        for (const y of [0.66, 0.56, 0.42]) F.box(x, Y0 + y, z, 0.07, y > 0.6 ? 0.07 : 0.035, 0.34, f.h0 + 0.25, 0, 0x1a1a1a); }
+      // (The board is an A-frame, a bill on each face, one to the street and one to the buildings.)
+      for (const k of [-1, 1]) {
+        const [x, z] = P(f, v.a - 0.75, v.n + k * 0.12), yaw = k < 0 ? toStreet(f) : toBldg(f);
+        F.box(x, Y0 + 0.42, z, 0.04, 0.84, 0.52, yaw, 0.15, 0x3a2a1c); F.box(x, Y0 + 0.47, z, 0.05, 0.64, 0.44, yaw, 0.15, 0xece4d0);
+        for (const y of [0.64, 0.52, 0.4]) F.box(x + Math.cos(yaw) * (0.43 - y) * 0.15, Y0 + y, z - Math.sin(yaw) * (0.43 - y) * 0.15, 0.06, y > 0.6 ? 0.08 : 0.04, 0.34, yaw, 0.15, 0x1a1a1a);
+      }
       { const [x, z] = P(f, v.a + 0.45, v.n - 0.15); F.box(x, Y0 + 0.08, z, 0.32, 0.16, 0.42, f.h0, 0, 0xdcd4c0); F.box(x, Y0 + 0.08, z, 0.33, 0.03, 0.43, f.h0, 0, 0x8a6a3a); }
       // The boy: a paper up over his head as he cries it, turning to look along the street; handing
       // one over to a buyer.
@@ -1627,7 +1634,7 @@ const K: Record<VK, Kind> = {
       let sell = 0;
       for (let i = 0; i < NEWS_BUYERS; i++) { const u = t - newsT(i) - 6; if (u > 0 && u < 2.5 && !(v.rel & (1 << i))) sell = Math.sin(u / 2.5 * Math.PI); }
       const [x, z] = P(f, v.a, v.n), look = Math.sin(t * 0.45) * 0.7 * (1 - sell);
-      F.person({ x, z, s: 0.64, yaw: toBldg(f) + (sell ? 0.6 * sell : 0), arms: [0.2, lerp(lerp(0.15, 2.8, cry), 1.3, sell)], fore: [0.9, lerp(lerp(0.15, 3.0, cry), 1.4, sell)], turn: look, nod: -0.25 * cry, dress: "boy", ...cs, shirt: shade(cs.shirt, 0.6), pants: 0x3a3430, hat: 0x4a4238 });
+      F.person({ x, z, s: 0.64, yaw: toBldg(f) + (sell ? 0.6 * sell : 0), arms: [0.2, lerp(lerp(0.15, 2.8, cry), 1.3, sell)], fore: [0.9, lerp(lerp(0.15, 3.0, cry), 1.4, sell)], turn: look, nod: -0.25 * cry, dress: "boy", ...cs, shirt: RAGS[v.seed % RAGS.length], pants: 0x3a3430, hat: 0x4a4238 });
       const hd = F.handR; F.box(hd[0], hd[1] + 0.08, hd[2], 0.04, 0.24, 0.17, toBldg(f), 0.3, 0xece4d0);
       const hl = F.handL; F.box(hl[0], hl[1] - 0.02, hl[2], 0.12, 0.26, 0.3, toBldg(f), 0, 0xb8a888);   // the bag
       // The buyers: along from up the street, a stop at the boy, on again.
@@ -1649,30 +1656,30 @@ const K: Record<VK, Kind> = {
     place(v, c, r, V) {
       const a = freeSpot(V, c, v.bx, v.bz, v.side, 1.8, -2.9, -1.7, r);
       if (a === null) return false;
-      v.a = a; v.n = -2.6; cast(r, v.c);
+      v.a = a; v.n = -1.9; cast(r, v.c);
       return true;
     },
     draw(v, F, t) {
-      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), yaw = toBldg(f), fx = Math.cos(yaw), fz = -Math.sin(yaw);
-      // The organ on its pole, front to the pavement: a mahogany case, its gilt front panel, the crank.
-      const [ox, oz] = P(f, v.a, -2.05), OY = Y0 + 0.98;
+      const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), yaw = toStreet(f), fx = Math.cos(yaw), fz = -Math.sin(yaw), ON = -2.5;
+      // The organ on its pole, its front to the street: a mahogany case, its gilt front panel, the crank.
+      const [ox, oz] = P(f, v.a, ON), OY = Y0 + 0.98;
       F.box(ox, Y0 + 0.36, oz, 0.07, 0.72, 0.07, yaw, 0, 0x2a1e14);
       F.box(ox, OY, oz, 0.38, 0.5, 0.62, yaw, 0, 0x5a2a1a);
       F.box(ox + fx * 0.195, OY + 0.02, oz + fz * 0.195, 0.01, 0.34, 0.48, yaw, 0, 0xc89a40);
-      for (let i = 0; i < 5; i++) { const [px, pz] = P(f, v.a - 0.18 + i * 0.09, -2.05 + 0.205); F.box(px, OY + 0.02, pz, 0.012, 0.26 - Math.abs(i - 2) * 0.05, 0.03, yaw, 0, 0x8a6a2a); }
-      const ang = t * 5, [cx, cz] = P(f, v.a + 0.36, -2.05), crX = cx - fx * Math.cos(ang) * 0.11, crY = OY + Math.sin(ang) * 0.11, crZ = cz - fz * Math.cos(ang) * 0.11;
+      for (let i = 0; i < 5; i++) { const [px, pz] = P(f, v.a - 0.18 + i * 0.09, ON - 0.205); F.box(px, OY + 0.02, pz, 0.012, 0.26 - Math.abs(i - 2) * 0.05, 0.03, yaw, 0, 0x8a6a2a); }
+      const ang = t * 5, [cx, cz] = P(f, v.a + 0.36, ON), crX = cx - fx * Math.cos(ang) * 0.11, crY = OY + Math.sin(ang) * 0.11, crZ = cz - fz * Math.cos(ang) * 0.11;
       F.seg(cx, OY, cz, crX, crY, crZ, 0.03, 0x3a3a3a);
       // The grinder behind it, turning the crank.
       const [gx, gz] = P(f, v.a + 0.2, v.n);
-      F.person({ x: gx, z: gz, yaw, arms: [0.35, 0.95 + Math.sin(ang) * 0.25], fore: [0.9, 1.45 + Math.cos(ang) * 0.3], foreOut: [0, -0.15], turn: Math.sin(t * 0.3) * 0.4, dress: "sack", vicHat: "bowler", ...cs, shirt: shade(cs.shirt, 0.5), pants: 0x3a3430, hat: 0x2a2622 });
-      // The monkey: on the organ, then down to the pavement with its cup held up, and back.
+      F.person({ x: gx, z: gz, yaw, arms: [0.35, 0.95 + Math.sin(ang) * 0.25], fore: [0.9, 1.45 + Math.cos(ang) * 0.3], foreOut: [0, -0.15], turn: Math.sin(t * 0.3) * 0.4, dress: "sack", vicHat: "bowler", ...cs, shirt: RAGS[(v.seed >> 3) % RAGS.length], pants: 0x3a3430, hat: 0x2a2622 });
+      // The monkey: on the organ, then down beside it with its cup held up, and back.
       const k = t % 14, hop = (u: number) => Math.sin(Math.min(1, Math.max(0, u)) * Math.PI) * 0.5;
-      const top: [number, number, number] = [ox, OY + 0.25, oz], [sx, sz] = P(f, v.a + 0.3, -1.25), ground: [number, number, number] = [sx, Y0, sz];
+      const top: [number, number, number] = [ox, OY + 0.25, oz], [sx, sz] = P(f, v.a - 0.75, ON + 0.1), ground: [number, number, number] = [sx, Y0, sz];
       const u = k < 6 ? 0 : k < 7 ? k - 6 : k < 10 ? 1 : k < 11 ? 11 - k : 0, e = vEase(u), arc = k >= 6 && k < 7 ? hop(k - 6) : k >= 10 && k < 11 ? hop(k - 10) : 0;
       const mx = lerp(top[0], ground[0], e), my = lerp(top[1], ground[1], e) + arc, mz = lerp(top[2], ground[2], e), cup = k > 7.2 && k < 9.8;
-      monkey(F, mx, my, mz, k < 6 ? yaw + Math.PI + Math.sin(t) * 0.5 : yaw, t, cup);
+      monkey(F, mx, my, mz, k < 6 ? yaw + Math.sin(t) * 0.5 : yaw - 0.6, t, cup);
     },
-    foot: (v) => [v.a - 0.9, v.a + 0.9, -2.9, -1.7],
+    foot: (v) => [v.a - 1.0, v.a + 0.9, -2.9, -1.5],
   },
 
   // Punch and Judy in the park: a striped booth on the grass by the pavement, Punch and Judy up on
@@ -1730,7 +1737,7 @@ const K: Record<VK, Kind> = {
       const stroke = Math.sin(t * 2.6), [x, z] = P(f, v.a, v.n), yaw = toStreet(f);
       // A little heap of what he has swept, along the gutter.
       for (let i = 0; i < 3; i++) { const [mx, mz] = P(f, v.a - 0.9 - i * 0.18, -3.15); F.box(mx, 0.04, mz, 0.22, 0.06 + i * 0.02, 0.2, f.h0 + i, 0, 0x4a3a2a); }
-      F.person({ x, z, s: 0.74, yaw: yaw + stroke * 0.15 * (1 - tip), lean: lerp(0.4, 0.05, tip), arms: [lerp(0.9, 0.3, tip), lerp(0.7, 2.6, tip)], fore: [lerp(1.0, 0.4, tip), lerp(0.8, 3.0, tip)], armOut: [0.1, 0.1], nod: lerp(0.3, -0.1, tip), dress: "boy", ...cs, shirt: shade(cs.shirt, 0.5), pants: 0x3a3226, hat: 0x3a342a });
+      F.person({ x, z, s: 0.74, yaw: yaw + stroke * 0.15 * (1 - tip), lean: lerp(0.4, 0.05, tip), arms: [lerp(0.9, 0.3, tip), lerp(0.7, 2.6, tip)], fore: [lerp(1.0, 0.4, tip), lerp(0.8, 3.0, tip)], armOut: [0.1, 0.1], nod: lerp(0.3, -0.1, tip), dress: "boy", ...cs, shirt: RAGS[(v.seed >> 5) % RAGS.length], pants: 0x3a3226, hat: 0x3a342a });
       // The broom: from the left hand down to its head out in the gutter, swinging across.
       const hl = F.handL, s = stroke * (1 - tip), [bx, bz] = P(f, v.a + s * 0.45, -3.2 + tip * 0.6), by = tip > 0.3 ? Y0 + 0.03 : 0.04;
       F.seg(hl[0], hl[1], hl[2], bx, by + 0.08, bz, 0.035, 0x6a5030);
