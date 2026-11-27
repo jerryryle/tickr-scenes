@@ -778,12 +778,14 @@ export class CountryRoad {
     const rail = this.stops.find((s) => s.kind === "rail");
     this.trainT = rail ? rail.arrive + 2 : -1;
     // Oncoming cars: a meeting every 7 to 25 s, none while the crossing is closed, and none
-    // within sight of either city (they would drive into its gate street).
+    // within sight of either city (they would drive into its gate street). In a Victorian city's
+    // reach they are horse-drawn (countryworld.ts updateCars) and meet it as near as 150 m from
+    // its edge: at a walk or a trot, one goes no more than 60 m while it is in sight.
     const seed = this.inp.driveSeed, city = this.inp.city, h = (k: number) => hash3(city, k, 0, seed, 0xc0a7);
     this.meetings = [];
     for (let t = 8 + 10 * h(90), i = 0; t < this.D - 6; t += 7 + 18 * hash2(i++, 3, seed + city, 0xcab)) {
       const s = this.sAt(t);
-      if (s < 700 || s > this.SB - 260) continue;
+      if ((s < 700 || s > this.SB - 260) && !(this.periodAt(s) > 0 && s > this.landFrom + 150 && s < this.SB - 150)) continue;
       if (this.ferry && s > this.ferry.s - 500 && s < this.ferry.s + FERRY_LEN + 500) continue;   // (they would drive into the water)
       if (this.pieces.some((p) => (p.kind === "cattle" || p.kind === "tractor") && s > p.s - 450 && s < p.s + p.len + 350)) continue;   // (the herd on the road; the lane to pass in)
       if (rail) {
