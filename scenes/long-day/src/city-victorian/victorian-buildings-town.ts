@@ -598,7 +598,7 @@ export function vicWorks(s: Batch, b: VicRect, y0: number, floorH: number, wall:
 const VIC_CHIMNEY: readonly (readonly [number, number])[] = [[1, 0], [0.62, 1], [0, 1]];
 
 // vicYard dresses an industrial yard w by d (centred on its frame's origin) in place of another
-// city's containers: barrels, crates, timber, sacks and coal.
+// city's containers: barrels, packing cases, timber, sacks and coal.
 // (Its ground is laid out in cells about 4 m square, each a pile of one kind, some left bare for
 // the carts; a timber yard's derrick crane over one now and then.)
 export function vicYard(s: Batch, w: number, d: number, y0: number, rnd: VicRand) {
@@ -611,8 +611,17 @@ export function vicYard(s: Batch, w: number, d: number, y0: number, rnd: VicRand
     if (k < 0.24) {   // barrels, standing, a few stacked on their sides on top
       for (let a = 0; a < 3; a++) for (let c = 0; c < 2; c++) if (rnd() < 0.85) s.cyl(x - 1 + a, y0 + 0.5, z - 0.5 + c, 0.38, 1.0, rnd() < 0.5 ? VIC.oak : 0x5e3e26, 6);
       if (rnd() < 0.6) s.cyl(x, y0 + 1.4, z, 0.38, 1.0, VIC.oak, 6, 0, Math.PI / 2);
-    } else if (k < 0.46) {   // crates, stacked
-      for (let c = 0; c < 4; c++) { const h = rnd() < 0.5 ? 2 : 1; for (let l = 0; l < h; l++) s.box(x - 0.8 + (c % 2) * 1.6, y0 + 0.45 + l * 0.92, z - 0.7 + Math.floor(c / 2) * 1.4, 1.3, 0.9, 1.1, vicShade(0x9a7a50, 0.85 + rnd() * 0.3), (rnd() - 0.5) * 0.2); }
+    } else if (k < 0.46) {
+      // Packing cases, stacked: weathered deal, grey-brown, with dark battens round each end (new
+      // pale cases with no battens read as cardboard cartons).
+      for (let c = 0; c < 4; c++) {
+        const h = rnd() < 0.5 ? 2 : 1, cx = x - 0.8 + (c % 2) * 1.6, cz = z - 0.7 + Math.floor(c / 2) * 1.4;
+        for (let l = 0; l < h; l++) {
+          const y = y0 + 0.45 + l * 0.92, rot = (rnd() - 0.5) * 0.2, ca = Math.cos(rot), sa = Math.sin(rot);
+          s.box(cx, y, cz, 1.3, 0.9, 1.1, vicShade(0x6e5c46, 0.85 + rnd() * 0.3), rot);
+          for (const e of [-0.52, 0.52]) s.box(cx + e * ca, y, cz - e * sa, 0.14, 0.94, 1.14, 0x3a2e24, rot);
+        }
+      }
     } else if (k < 0.66) {   // timber, in stacks of baulks with spacers
       const L = Math.min(cw, cd) - 0.6;
       for (let l = 0; l < 3; l++) { s.box(x, y0 + 0.2 + l * 0.5, z, L, 0.35, 2.4 - l * 0.4, vicShade(0xa88a5a, 0.9 + l * 0.05)); s.box(x, y0 + 0.42 + l * 0.5, z, 0.1, 0.1, 2.5 - l * 0.4, VIC.oak); }
