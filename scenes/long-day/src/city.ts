@@ -630,6 +630,20 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
     }
     for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt);
     g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
+    // The Victorian city's junction is setts laid in rings about its middle, in the tones of its
+    // streets' courses (buildStreet): the ring shrunk a course at a time and drawn a little above
+    // the one outside it, each wedge of it a lighter, darker or the middle tone.
+    if (CS.victorian) {
+      const R = Math.max(...ring.map(([x, z]) => Math.hypot(x - cx, z - cz)));
+      for (let k = 1; k * SETT_COURSE < R; k++) {
+        const f = 1 - k * SETT_COURSE / R, y = 0.003 + 0.002 * k;
+        const P = ring.map(([x, z]): [number, number] => [cx + (x - cx) * f, cz + (z - cz) * f]);
+        for (let i = 0; i < P.length; i++) {
+          const [a, b] = [P[i], P[(i + 1) % P.length]], r = hash2(n.id, k * 64 + i, (DC.plan as CityPlan).seed, 0x5e8);
+          g.tri(cx, y, cz, a[0], y, a[1], b[0], y, b[1], r < 0.33 ? shade(C.asphalt, 1.16) : r < 0.66 ? shade(C.asphalt, 0.86) : C.asphalt);
+        }
+      }
+    }
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook, !!CS.victorian);
   buildStopSigns(solid, G, n, ox, oz, !!CS.storybook, !!CS.victorian);
@@ -1683,6 +1697,7 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
     const pools = DC.pools.build(); if (pools) group.add(pools);
     const lampSites = DC.lampSites.slice();
     if (lampSites.length) LAMP_SITES.set(group, lampSites);   // their light: applyLampLight
+    if (plan.style.victorian) group.userData.lampPool = 0.45;   // (a gas flame lights less of the street than an electric lamp)
     group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (signMesh) signAtlas.detach(signMesh); plateMesh?.dispose(); LAMP_SITES.delete(group); };
     // Kept out of the scene (ChunkStreamer's cache): its lamps light nothing meanwhile. Its sign and
     // plate slots stay held, so it comes back as it was.
@@ -1697,7 +1712,6 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
 // ---- entrance doors -----------------------------------------------------------------------------
 // Where a kerb facility's front door is on each side of its block: found by building the block
 // (without signs) and looking in from the sidewalk at head height for the first wall that faces
-    if (plan.style.victorian) group.userData.lampPool = 0.45;   // (a gas flame lights less of the street than an electric lamp)
 // the street, near where a truck stopping on that side has its back. The chunk draws a door
 // there (entranceDoor), the driver walks to it (journey.ts DOOR_PROBE), and FrontDoorFx opens it.
 // Cached per block: a pure function of the city.
@@ -2210,7 +2224,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       const r = hash2(k, h + Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5e7);
       if (r < 0.5) continue;
       const v0 = h ? cl + (k % 2 ? 1.3 : -1.3) : KERB + 0.4, v1 = h ? STREET - KERB - 0.4 : cl + (k % 2 ? 1.3 : -1.3);
-      flat(k * SETT_COURSE + 0.01, (k + 1) * SETT_COURSE - 0.01, v0 + 0.01, v1 - 0.01, 0.003, shade(C.asphalt, r < 0.75 ? 1.08 : 0.92));
+      flat(k * SETT_COURSE + 0.01, (k + 1) * SETT_COURSE - 0.01, v0 + 0.01, v1 - 0.01, 0.003, shade(C.asphalt, r < 0.75 ? 1.16 : 0.86));
     }
     for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
   }
