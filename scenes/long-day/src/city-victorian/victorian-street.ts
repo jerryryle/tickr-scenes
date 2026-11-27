@@ -321,9 +321,14 @@ export function applySetts(mat: THREE.Material, sky: THREE.Color) {
       .replace("#include <color_fragment>", `#include <color_fragment>
   float stShine = 0.0;   // (the wet sheen's strength here: emissivemap_fragment below)
   float sett = abs(vSettAux.z - (${glsl(VIC_SETT)})) < 0.5 ? 1.0 : 0.0, flag = abs(vSettAux.z - (${glsl(VIC_FLAGS)})) < 0.5 ? 1.0 : 0.0;
+  // (Where the stones lie: x along the street, y across it; and a pixel's size on the ground each
+  // way, m. Both before the branch, as a derivative is undefined in one.)
+  vec2 d = length(vSettAux.xy) > 0.5 ? normalize(vSettAux.xy) : vec2(1.0, 0.0);
+  vec2 p = vec2(dot(vSettXZ, d), dot(vSettXZ, vec2(-d.y, d.x)));
+  vec2 px = vec2(fwidth(p.x), fwidth(p.y));
+  // (Only on the ground's tops: a tagged box's sides, such as a pavement's at a driveway, are plain stone.)
+  if (dot(normalize(vNormal), (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz) < 0.5) sett = flag = 0.0;
   if (sett + flag > 0.5) {
-    vec2 d = length(vSettAux.xy) > 0.5 ? normalize(vSettAux.xy) : vec2(1.0, 0.0);
-    vec2 p = vec2(dot(vSettXZ, d), dot(vSettXZ, vec2(-d.y, d.x)));   // (x: along the street, y: across it)
     vec2 size = sett > 0.5 ? vec2(${glsl(S.u)}, ${glsl(S.v)}) : vec2(${glsl(F.u)}, ${glsl(F.v)});
     // (The rows: courses across the road (by x) for setts, along the kerb (by y) for flags; then the
     // stones along each row, its joints set off by the row.)
@@ -335,8 +340,7 @@ export function applySetts(mat: THREE.Material, sky: THREE.Color) {
     // (How far from the stone's joints, m, each way: x along the street, y across.)
     vec2 eR = vec2(R.y, R.z) * rowSize, eC = vec2(C.y, C.z) * stoneSize;
     vec2 e = sett > 0.5 ? vec2(min(eR.x, eR.y), min(eC.x, eC.y)) : vec2(min(eC.x, eC.y), min(eR.x, eR.y));
-    // (A pixel's size on the ground each way, m; how much of the pattern shows each way.)
-    vec2 px = vec2(fwidth(p.x), fwidth(p.y));
+    // (How much of the pattern shows each way.)
     vec2 fade = sett > 0.5 ? vec2(${glsl(S.fade[0])}, ${glsl(S.fade[1])}) : vec2(${glsl(F.fade[0])}, ${glsl(F.fade[1])});
     vec2 show = 1.0 - smoothstep(vec2(fade.x), vec2(fade.y), px / size);
     vec2 jw = max(vec2(${pick("jw")}), 0.7 * px);
@@ -367,6 +371,6 @@ export function applySetts(mat: THREE.Material, sky: THREE.Color) {
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   if (stShine > 0.0) totalEmissiveRadiance += uSettSky * stShine * (0.06 + 0.94 * pow(1.0 - max(dot(normal, normalize(vViewPosition)), 0.0), 4.0));`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|setts-v11";
+  mat.customProgramCacheKey = () => prevKey() + "|setts-v12";
   mat.needsUpdate = true;
 }

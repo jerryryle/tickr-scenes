@@ -217,9 +217,11 @@ containers, car parks, painted lines, cars or modern signs. Its trades and stree
 names (`VIC_LABEL` in `src/facilities.ts`, the city file).
 
 1. `victorian-buildings-town.ts` draws its buildings: terraces with bays and area railings, shop
-   rows and pubs, banks, a department store and Gothic chambers downtown, churches and a town hall
-   in the big blocks, warehouses with hoists, mills with chimneys, back yards, garden squares and
-   a toll lodge on every road out. Its facade tiles are the `VICT_` ones in `src/facadeart.ts`,
+   rows and pubs, banks, a department store and Gothic chambers downtown, chapels and merchants'
+   warehouses in the block middles, walled yards with stables behind the shops, warehouses with
+   hoists, mills with chimneys, back yards, railed parks and a toll lodge on every road out. A
+   church, a town hall or a grand block is drawn only on a block middle of 26 by 14 m or more,
+   which no catalogue city has (`vicTower`). Its facade tiles are the `VICT_` ones in `src/facadeart.ts`,
    and its skyline is the `spires` backdrop. Its streets are built up to their corners
    (`buildLots` in `src/city.ts`): a corner holds one building fronting both streets
    (`vicCorner`), a pub, shop or bank with its door in a canted corner, or where people live
