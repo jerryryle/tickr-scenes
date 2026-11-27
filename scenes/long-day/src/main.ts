@@ -491,7 +491,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // yard ("worksYard"), its dock ("worksDock") or the top of its brewhouse ("worksTop").
       const B = plan.graph.blocks[plan.worksBlock], an = B.anchor!, G = plan.graph;
       const P = (a: number, n: number) => G.facePt(an.face, a + an.delta, n);
-      const [ca, cn, cy, la, ln, ly] = DEBUG_VIEW === "worksVats" ? [44, -15, 6, 41, 9, 5] : DEBUG_VIEW === "worksSpools" ? [24, -10, 5, 20.5, 13, 9] : DEBUG_VIEW === "worksEngine" ? [40, -13, 6, 44, 17, 9] : DEBUG_VIEW === "worksYard" ? [38, -9, 3.5, 41, 7, 2] : DEBUG_VIEW === "worksDock" ? [24, -12, 3.5, 20.5, 13, 3.5]
+      const [ca, cn, cy, la, ln, ly] = DEBUG_VIEW === "worksVats" ? [44, -15, 6, 41, 9, 5] : DEBUG_VIEW === "worksSpools" ? [24, -10, 5, 20.5, 13, 9] : DEBUG_VIEW === "worksEngine" ? [43, -11, 11, 44, 16, 7.5] : DEBUG_VIEW === "worksYard" ? [40, -5, 8, 40, 7, 1] : DEBUG_VIEW === "worksDock" ? [24, -12, 3.5, 20.5, 13, 3.5]
         : DEBUG_VIEW === "worksTop" ? [26, -22, 14, 22, 20, 21] : DEBUG_VIEW === "worksHigh" ? [30 + Math.cos(tourT * 0.15) * 60, 25 + Math.sin(tourT * 0.15) * 60, 38, 30, 22, 4] : [18 + tourT * 1.5, -48, 12, 30 + tourT * 0.4, 20, 8];
       const C0 = P(ca, cn), C1 = P(la, ln);
       cx = C1.x; cz = C1.z;

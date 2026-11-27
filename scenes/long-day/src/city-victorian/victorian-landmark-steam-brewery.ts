@@ -65,7 +65,7 @@ const BR_COL = {
   brick: VIC.red, brickDark: 0x6c2a1e, stock: VIC.stock, stone: VIC.stone, slate: VIC.slate, lead: 0x6a7078,
   iron: VIC.iron, black: VIC.black, copper: 0xc8783a, copperDark: 0x8a4a24, timber: VIC.timber, louvre: 0x5a4632,
   stave: 0x8c5c30, white: 0xefeadf, dark: 0x16130f, green: VIC.green, gilt: VIC.gilt, hay: 0xc8a850, horse: 0x5a3a22,
-  smoke: 0x55504a, steam: 0xeeeae2,
+  smoke: 0x55504a, steam: 0xeeeae2, fire: 0xff9a3a, setts: 0x6c665c,
 };
 
 // BREWERY_DOCK holds the colours city.ts breweryDock dresses the brewery's dock in.
@@ -221,6 +221,8 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
       const [x, , z] = brAt(F, ac, fn + 1.9, 0);
       s.lathe("copper", [[0, 0], [0.85, 0], [1, 0.12], [1, 0.55], [0.86, 0.75], [0.55, 0.92], [0.2, 1]], x, BR_GROUND, z, 1.15, 3.6, BR_COL.copper, 10);
       s.cyl(x, BR_GROUND + 0.3, z, 1.18, 0.6, BR_COL.copperDark, 10);                                    // its brick setting
+      // (Its fire door glows at night, as a lamp does: aux z -2.)
+      const ax = s.aux.clone(); s.aux.set(0, 0, -2); brBox(s, F, ac - 0.3, ac + 0.3, BR_GROUND + 0.08, BR_GROUND + 0.5, fn + 0.64, fn + 0.72, BR_COL.fire); s.aux.copy(ax);
       s.cyl(x, BR_GROUND + 3.6 + (C.top - 3.6) / 2, z, 0.22, C.top - 3.6, BR_COL.copper, 6);             // the vapour pipe up through the roof
       s.cyl(x, C.top + 1.1, z, 0.3, 1.4, BR_COL.copper, 6); s.cone(x, C.top + 2.1, z, 0.5, 0.6, BR_COL.copperDark, 6);
     }
@@ -357,6 +359,8 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
       for (let row = 0; row < rows; row++) for (let i = 0; i < rows - row; i++) brCask(s, F, a0 + i * d + row * r, nB, BR_GROUND + r + row * r * 1.75);
     for (const [a, n] of [[43.6, 2.0], [44.4, 2.4], [43.9, 3.2], [32.9, 11.6], [33.8, 11.9]] as const) brCask(s, F, a, n, BR_GROUND + BR.caskL / 2, true);
   }
+  // The yard is paved in setts (a hair over the block's base, which it would flicker against).
+  brBox(s, F, 32.8, 51, BR_GROUND, BR_GROUND + 0.015, 0.6, 41.5, BR_COL.setts);
   // A low brick wall with iron railings runs along the street in front of the yard.
   brBox(s, F, 32.8, BR.stable.a0, BR_GROUND, 0.6, 0.3, 0.6, BR_COL.brick);
   brBox(s, F, 32.8, BR.stable.a0, 0.6, 0.68, 0.26, 0.64, BR_COL.stone);
@@ -391,7 +395,7 @@ export class SteamBreweryFx {
 
   clear() {
     for (const o of [...this.group.children]) { this.group.remove(o); o.traverse((c) => { if (c instanceof THREE.Mesh) c.geometry.dispose(); }); }
-    this.puffs?.dispose();
+    if (this.puffs) { (this.puffs.material as THREE.Material).dispose(); this.puffs.dispose(); }
     this.wheel = this.beam = this.connRod = this.pistonRod = this.cowl = null; this.casks = []; this.puffs = null; this.sources = []; this.F = null; this.built = "";
   }
 
@@ -458,7 +462,7 @@ export class SteamBreweryFx {
     const Ch = BR.chimney;
     src(brAt(F, Ch.a, Ch.n, Ch.h + 0.9), 9, 0.11, 1.5, 6, 18, BR_COL.smoke);
     src(brAt(F, (K.a0 + K.a1) / 2, (K.n0 + K.n1) / 2, K.top + K.rise + 2.6), 5, 0.16, 0.8, 4, 6, 0xd8d4cc);
-    for (const ac of BR.copper.arches) src(brAt(F, ac, BR.copper.n0 + 1.9, BR.copper.top + 2.4), 4, 0.22, 0.55, 4, 3, BR_COL.steam);
+    for (const ac of BR.copper.arches) src(brAt(F, ac, BR.copper.n0 + 1.9, BR.copper.top + 2.4), 4, 0.22, 0.32, 3.5, 3, BR_COL.steam);
     src(brAt(F, BR.cyl.a, BR.beam.n, BR.cyl.y1 + 0.3), 3, BR_ENGINE_RATE / (2 * Math.PI), 0.5, 2.2, 1.5, BR_COL.steam, true);
     const n = this.sources.reduce((s, x) => s + x.k, 0);
     this.puffs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff }), n);
