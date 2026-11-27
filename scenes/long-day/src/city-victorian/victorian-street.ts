@@ -267,51 +267,92 @@ export function vicFingerPost(s: Batch, x: number, z: number, y0: number, fx: nu
 // ---- the setts and the flags ---------------------------------------------------------------------
 // A Victorian street's road and junctions are granite setts, and its pavements York stone flags.
 // city.ts tags their ground (aux.z VIC_SETT or VIC_FLAGS, aux.xy the way along the street in the
-// world), and applySetts draws the stones on the ground's material from the world position: each
-// kind in rows of stones STONES gives (along by across, in metres), broken bond, each stone a little
-// lighter or darker than the next, with joints between. Setts lie in courses across the road, flags
-// with their long side along the kerb. Where a stone comes to less than about two pixels the
-// pattern fades to the stones' mean tone, so far streets read as even stone and never shimmer.
+// world), and applySetts draws the stones on the ground's material from the world position.
+// Both are laid in rows, broken bond: setts in courses across the road, flags in courses along the
+// kerb. Each row's width and each stone's length vary about the sizes STONES gives (irr: the share
+// of a size a joint may stray), so a course of flags reads as quarried stone laid by hand. Each
+// stone is a little lighter or darker than the next, with joints between. A flag also takes a warm
+// or cool cast, a mottle, edges worn darker, and now and then a crack across it. Each way on its
+// own, as a low camera sees the ground foreshortened, a joint is drawn at least about a pixel wide,
+// and the pattern fades to the stones' mean tone where a stone comes to less than about two pixels
+// that way, so far streets read as even stone and never shimmer.
 export const VIC_SETT = -7, VIC_FLAGS = -8;
-// (Per kind: size along and across, the tone's spread, how dark a joint is, the joint's width, and
-// the pixel's share of a stone over which the pattern fades.)
-const STONES = { sett: { u: 0.25, v: 0.4, lo: 0.88, hi: 1.1, joint: 0.6, jw: 0.02, fade: [0.18, 0.42] }, flag: { u: 0.9, v: 0.6, lo: 0.92, hi: 1.07, joint: 0.66, jw: 0.012, fade: [0.12, 0.35] } };
+// (Per kind: size along the street and across it, m; how far a row's and a stone's joints may stray;
+// the tone's spread; how dark a joint is; the joint's width, m; and the pixel's share of a stone over
+// which the pattern fades.)
+const STONES = {
+  sett: { u: 0.25, v: 0.4, rowIrr: 0.1, irr: 0.2, lo: 0.88, hi: 1.1, joint: 0.6, jw: 0.02, fade: [0.18, 0.42] },
+  flag: { u: 1.0, v: 0.7, rowIrr: 0.6, irr: 0.7, lo: 0.82, hi: 1.1, joint: 0.62, jw: 0.012, fade: [0.12, 0.35] },
+};
 const glsl = (x: number) => x.toFixed(3);
+const SETT_GLSL = `
+float stHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
+float stHash2(vec2 v) { return fract(sin(dot(mod(v, 1024.0), vec2(12.9898, 78.233))) * 43758.5453); }
+// (Joint k of a row of stones a unit long, strayed by up to irr / 2 either way; the stone t falls in:
+// its index, and how far t is past its near joint and short of its far one, in units.)
+float stJoint(float k, float irr, float seed) { return k + (stHash(mod(k, 4096.0) * 1.73 + seed) - 0.5) * irr; }
+vec3 stCell(float t, float irr, float seed) {
+  float k = floor(t), b0 = stJoint(k, irr, seed), b1 = stJoint(k + 1.0, irr, seed);
+  if (t < b0) { b1 = b0; b0 = stJoint(k - 1.0, irr, seed); k -= 1.0; }
+  else if (t > b1) { b0 = b1; b1 = stJoint(k + 2.0, irr, seed); k += 1.0; }
+  return vec3(k, t - b0, b1 - t);
+}
+float stNoise(vec2 q) {
+  vec2 i = floor(q), f = fract(q); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(stHash2(i), stHash2(i + vec2(1.0, 0.0)), f.x), mix(stHash2(i + vec2(0.0, 1.0)), stHash2(i + vec2(1.0, 1.0)), f.x), f.y);
+}`;
 export function applySetts(mat: THREE.Material) {
   const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
   const S = STONES.sett, F = STONES.flag;
+  const pick = (k: keyof typeof S) => `(sett > 0.5 ? ${glsl(S[k] as number)} : ${glsl(F[k] as number)})`;
   mat.onBeforeCompile = (shader, renderer) => {
     prev(shader, renderer);
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nattribute vec3 aAux;\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSettAux = aAux; vSettXZ = (modelMatrix * vec4(transformed, 1.0)).xz;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;" + SETT_GLSL)
       .replace("#include <color_fragment>", `#include <color_fragment>
   float sett = abs(vSettAux.z - (${glsl(VIC_SETT)})) < 0.5 ? 1.0 : 0.0, flag = abs(vSettAux.z - (${glsl(VIC_FLAGS)})) < 0.5 ? 1.0 : 0.0;
   if (sett + flag > 0.5) {
     vec2 d = length(vSettAux.xy) > 0.5 ? normalize(vSettAux.xy) : vec2(1.0, 0.0);
     vec2 p = vec2(dot(vSettXZ, d), dot(vSettXZ, vec2(-d.y, d.x)));   // (x: along the street, y: across it)
     vec2 size = sett > 0.5 ? vec2(${glsl(S.u)}, ${glsl(S.v)}) : vec2(${glsl(F.u)}, ${glsl(F.v)});
-    vec2 c = p / size;
-    if (sett > 0.5) c.y += 0.5 * floor(c.x); else c.x += 0.5 * floor(c.y);   // (broken bond)
-    vec2 cell = floor(c), f = fract(c);
-    float h = fract(sin(dot(mod(cell, 1024.0), vec2(12.9898, 78.233))) * 43758.5453);
-    // (Each way on its own, as a low camera sees the ground foreshortened: a pixel's size on the
-    // ground that way, m; the joints across it are drawn at least about that wide, and fade out as a pixel comes to a given share of a stone's side that way (fade).)
+    // (The rows: courses across the road (by x) for setts, along the kerb (by y) for flags; then the
+    // stones along each row, its joints set off by the row.)
+    float rowSize = sett > 0.5 ? size.x : size.y, stoneSize = sett > 0.5 ? size.y : size.x;
+    vec3 R = stCell((sett > 0.5 ? p.x : p.y) / rowSize, ${pick("rowIrr")}, 0.0);
+    vec3 C = stCell((sett > 0.5 ? p.y : p.x) / stoneSize + stHash(R.x * 3.1), ${pick("irr")}, R.x * 7.7);
+    vec2 id = vec2(R.x, C.x);
+    float h = stHash2(id);
+    // (How far from the stone's joints, m, each way: x along the street, y across.)
+    vec2 eR = vec2(R.y, R.z) * rowSize, eC = vec2(C.y, C.z) * stoneSize;
+    vec2 e = sett > 0.5 ? vec2(min(eR.x, eR.y), min(eC.x, eC.y)) : vec2(min(eC.x, eC.y), min(eR.x, eR.y));
+    // (A pixel's size on the ground each way, m; how much of the pattern shows each way.)
     vec2 px = vec2(fwidth(p.x), fwidth(p.y));
     vec2 fade = sett > 0.5 ? vec2(${glsl(S.fade[0])}, ${glsl(S.fade[1])}) : vec2(${glsl(F.fade[0])}, ${glsl(F.fade[1])});
     vec2 show = 1.0 - smoothstep(vec2(fade.x), vec2(fade.y), px / size);
-    float jw0 = sett > 0.5 ? ${glsl(S.jw)} : ${glsl(F.jw)};
-    vec2 jw = max(vec2(jw0), 0.7 * px);
-    vec2 e = min(f, 1.0 - f) * size;
+    vec2 jw = max(vec2(${pick("jw")}), 0.7 * px);
     float joint = max((1.0 - smoothstep(jw.x * 0.5, jw.x * 1.25, e.x)) * show.x, (1.0 - smoothstep(jw.y * 0.5, jw.y * 1.25, e.y)) * show.y);
-    float detail = max(show.x, show.y);
-    float tone = mix(1.0, sett > 0.5 ? mix(${glsl(S.lo)}, ${glsl(S.hi)}, h) : mix(${glsl(F.lo)}, ${glsl(F.hi)}, h), min(show.x, show.y))
-      * mix(1.0, sett > 0.5 ? ${glsl(S.joint)} : ${glsl(F.joint)}, joint);
-    diffuseColor.rgb *= mix(sett > 0.5 ? 0.95 : 0.98, tone, detail);
+    float detail = max(show.x, show.y), inner = min(show.x, show.y);
+    vec3 tone = vec3(mix(${pick("lo")}, ${pick("hi")}, h));
+    if (flag > 0.5) {
+      // (A flag's cast, warm or cool; its mottle; its edges worn darker; and a crack across one in
+      // six, from side to side of its row at a slant.)
+      tone *= mix(vec3(1.05, 1.0, 0.93), vec3(0.95, 0.99, 1.05), stHash2(id + 17.0));
+      tone *= 0.93 + 0.14 * stNoise(p * 4.0 + id * 5.3);
+      tone *= 1.0 - 0.1 * (1.0 - smoothstep(0.0, 0.09, min(e.x, e.y)));
+      if (stHash2(id + 3.0) > 0.83) {
+        float len = (C.y + C.z) * stoneSize, w = (R.y + R.z) * rowSize, slope = (stHash2(id + 9.0) - 0.5) * 1.6;
+        float u = C.y * stoneSize - len * (0.3 + 0.4 * stHash2(id + 11.0)), v = R.y * rowSize - w * 0.5;
+        float cw = max(0.008, 0.6 * min(px.x, px.y));
+        joint = max(joint, (1.0 - smoothstep(cw * 0.5, cw * 1.25, abs(u - v * slope) / sqrt(1.0 + slope * slope))) * inner * 0.8);
+      }
+    }
+    tone = mix(vec3(1.0), tone, inner) * mix(1.0, ${pick("joint")}, joint);
+    diffuseColor.rgb *= mix(vec3(sett > 0.5 ? 0.95 : 0.97), tone, detail);
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|setts-v7";
+  mat.customProgramCacheKey = () => prevKey() + "|setts-v9";
   mat.needsUpdate = true;
 }
