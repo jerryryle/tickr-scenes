@@ -203,8 +203,8 @@ export const vicTrough = vsPiece(0.7, (s, y0) => {
 // (fx, fz) (towards the traffic coming up, which reads it) and reaching from the post towards the
 // road (rx, rz): a tall post on a flared foot, its finial a ring and a gilt point, and an arm with
 // a pointed end on a bracket. The arm's face is w long and h high with its middle at height y over
-// the ground and `reach` from the post; the sign's lettering is a quad of its own (countryworld.ts),
-// laid on that face.
+// the ground and `reach` from the post; the sign's lettering is a quad of its own on each of the
+// arm's two faces (countryworld.ts).
 export function vicFingerPost(s: Batch, x: number, z: number, y0: number, fx: number, fz: number, rx: number, rz: number, y: number, w: number, h: number, reach: number) {
   // (Local frame: +z the way the arm faces, +x along the arm, towards the road.)
   const rot = Math.atan2(fx, fz), ax = Math.cos(rot) * rx - Math.sin(rot) * rz, f = Math.sign(ax) || 1;
@@ -215,12 +215,15 @@ export function vicFingerPost(s: Batch, x: number, z: number, y0: number, fx: nu
     s.cyl(0, y0 + y - h / 2 - 0.08, 0, 0.12, 0.08, VS_GILT, 6);
     s.cyl(0, y0 + top + 0.2, 0, 0.16, 0.04, VS_IRON, 8, Math.PI / 2);
     s.cone(0, y0 + top + 0.46, 0, 0.08, 0.24, VS_GILT, 4);
-    // The arm: its back board, a raised rim round its face, and its point.
+    // The arm: its iron core, a raised rim round each face, and its point. Both faces are white for
+    // their lettering, the back's 2 cm behind the core (countryworld.ts letters both).
     const c = f * reach;
     s.box(c, y0 + y, -0.02, w, h + 0.08, 0.05, VS_IRON_DARK);
-    s.box(c, y0 + y, 0.01, w - 0.04, h + 0.02, 0.02, VS_BOARD);
     s.boxR(c + f * (w / 2 + 0.12), y0 + y, -0.02, 0.24, 0.24, 0.05, VS_IRON_DARK, 0, 0, Math.PI / 4);
-    s.boxR(c + f * (w / 2 + 0.1), y0 + y, 0.01, 0.2, 0.2, 0.02, VS_BOARD, 0, 0, Math.PI / 4);
+    for (const z of [0.01, -0.055]) {
+      s.box(c, y0 + y, z, w - 0.04, h + 0.02, 0.02, VS_BOARD);
+      s.boxR(c + f * (w / 2 + 0.1), y0 + y, z, 0.2, 0.2, 0.02, VS_BOARD, 0, 0, Math.PI / 4);
+    }
     // (Its bracket under the arm, from the post out.)
     s.boxR(f * 0.35, y0 + y - h / 2 - 0.2, -0.02, 0.05, 0.7, 0.05, VS_IRON, 0, 0, -f * 0.9);
   });

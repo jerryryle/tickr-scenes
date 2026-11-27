@@ -1344,7 +1344,8 @@ export class CountryWorld {
       vicFingerPost(s, x, z, 0, -Math.cos(h), Math.sin(h), rx - x, rz - z, g.y, g.w, g.h, reach);
       const words = p.kind === "welcome" ? text.replace(/^WELCOME TO /, "") : p.kind === "leave" ? `BOROUGH OF ${text.replace(/^LEAVING /, "")}` : text;
       const uv = this.slot(words, { bg: "#ece4cc", fg: "#1c1d20", logo: false });
-      if (uv) this.signAt(g, uv);
+      // (Lettered on both faces, as a finger post is: the drive the other way passes its back.)
+      if (uv) { this.signAt(g, uv); this.sign(g.s - 0.06, g.n, g.y, g.w, g.h, uv, 1); }
       return;
     }
     // (The storybook city's own signs, welcoming and leaving, are magenta, edged in butter, on striped posts.)
