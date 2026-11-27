@@ -200,12 +200,15 @@ export function vicLot(s: Batch, b: VicRect, y0: number, district: VicDistrict, 
 
 // A terrace: one or two houses across the lot (two when it is 10 m wide), each with its door beside
 // the party wall it shares with the next, a canted bay in the other bay, two or three storeys of
-// sash windows, the ground floor often stuccoed. A sunken area with railings lies in front, bridged
-// to each door by a step; a slate roof with its ridge along the street, a chimney stack on each party
-// wall and now and then a dormer.
+// sash windows, the ground floor often stuccoed. A sunken area with railings lies in front, out to
+// the back of the pavement and bridged to each door by a step; a slate roof with its ridge along the
+// street, a chimney stack on each party wall and now and then a dormer.
+// (A lot stands VIC_SET in from the back of the pavement, city.ts buildLots; the area, its railings
+// and the steps reach out over that strip, so no verge shows between them and the pavement.)
+const VIC_SET = 0.38;
 function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], rnd: VicRand, door: VicDoor) {
   const X0 = b.x0 - 0.26, X1 = b.x1 + 0.26, W = X1 - X0, D = b.z1 - b.z0;
-  const area = D >= 7 ? 1.4 : D >= 5.5 ? 0.9 : 0, zf = b.z0 + area, hd = Math.min(D - area, 9.5), zb = zf + hd;
+  const area = D >= 7 ? 1.4 : D >= 5.5 ? 0.9 : 0, zf = b.z0 + area, hd = Math.min(D - area, 9.5), zb = zf + hd, zs = b.z0 - VIC_SET;
   const n = W >= 10 ? 2 : 1, hw = W / n, storeys = rnd() < 0.5 ? 3 : 2, fh = 3.15 + (rnd() - 0.5) * 0.1;
   const brick = vPick(rnd, walls), render = vIsRender(brick), stuccoGround = !render && rnd() < 0.6;
   const groundCol = stuccoGround ? VIC.stucco : brick, vUp = (render ? 2 : 0) + (rnd() < 0.5 ? 1 : 0), vGround = (render || stuccoGround ? 2 : 0) + (rnd() < 0.5 ? 1 : 0);
@@ -228,7 +231,7 @@ function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
       vicBayWindow(s, a0 + 0.2, a1 - 0.2, zf, y0, bays2 ? 2 : 1, fh + (bays2 ? 0 : 0.25), Math.min(0.75, area > 0 ? area - 0.3 : 0.6), groundCol, FACADE.VICT_SASH, vGround, VIC.lead);
     }
     // the step to the door, bridging the area, and the door's flags
-    s.box(dm, y0 + 0.07, (b.z0 + zf) / 2 - 0.05, 1.3, 0.14, zf - b.z0 + 0.1, VIC.flag);
+    s.box(dm, y0 + 0.07, (zs + zf) / 2, 1.3, 0.14, zf - zs, VIC.flag);
     if (dormers) vicDormer(s, (vicBayX(hx0, hx1, dk === 0 ? bays - 1 : 0)[0] + vicBayX(hx0, hx1, dk === 0 ? bays - 1 : 0)[1]) / 2, zf + 0.9, top + 0.25, 1.3, 1.3, VIC.white, roof);
   }
   // the cornice, the roof and the stacks on the party walls (clear of the neighbours' at the lot's ends)
@@ -239,11 +242,11 @@ function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
     const x = vClamp(X0 + i * hw, X0 + 0.5, X1 - 0.5);
     vicStack(s, x, zf + hd / 2, top + rh * 0.55, 0.7, 1.5, rh * 0.45 + 1.2, brick, 2 + Math.floor(rnd() * 3));
   }
-  // the area, sunk, behind its railings
+  // the area, sunk, behind its railings (or, with no room for one, flags up to the wall)
   if (area > 0) {
-    s.box((X0 + X1) / 2, y0 + 0.012, (b.z0 + zf) / 2 + 0.05, W - 0.1, 0.02, zf - b.z0 - 0.1, VIC.soot);
-    vicRailings(s, X1 - 0.08, b.z0 + 0.1, X0 + 0.08, b.z0 + 0.1, y0, 1.0, VIC.black, doors.map((x) => [X1 - 0.08 - x - 0.75, X1 - 0.08 - x + 0.75] as [number, number]));
-  }
+    s.box((X0 + X1) / 2, y0 + 0.012, (zs + zf) / 2, W - 0.04, 0.02, zf - zs, VIC.soot);
+    vicRailings(s, X1 - 0.08, zs + 0.1, X0 + 0.08, zs + 0.1, y0, 1.0, VIC.black, doors.map((x) => [X1 - 0.08 - x - 0.75, X1 - 0.08 - x + 0.75] as [number, number]));
+  } else s.box((X0 + X1) / 2, y0 + 0.01, (zs + zf) / 2, W - 0.02, 0.02, zf - zs, VIC.flag);
 }
 // A villa: a detached house set back behind a garden wall and railings, double-fronted (its door
 // in the middle under a gabled porch), two-storey canted bays either side, a hipped or front-gabled
@@ -265,6 +268,7 @@ function vicVilla(s: Batch, b: VicRect, y0: number, walls: readonly number[], rn
   const dm = (d0 + d1) / 2;
   vicGable(s, dm - 0.85, zf - 1.0, dm + 0.85, zf, y0 + 2.75, 0.7, roof, VIC.white, true, 0.1);
   s.box(dm, y0 + 0.08, zf - 0.5, 1.6, 0.16, 1.0, VIC.flag);
+  if (set === 0) s.box(dm, y0 + 0.01, (zf - 1 + b.z0 - VIC_SET) / 2, 1.4, 0.02, zf - 1 - b.z0 + VIC_SET, VIC.flag);   // (its path out to the pavement)
   // the roof: a gable to the street on half of them, else hipped
   const w = x1 - x0, d = zb - zf;
   if (rnd() < 0.5) {
@@ -272,9 +276,10 @@ function vicVilla(s: Batch, b: VicRect, y0: number, walls: readonly number[], rn
     s.box((x0 + x1) / 2, top + 0.2, zf - 0.38, w * 0.85, 0.14, 0.06, VIC.white);   // the bargeboard's foot
   } else vicHip(s, x0 - 0.3, zf - 0.3, x1 + 0.3, zb + 0.3, top, Math.min(w, d) * 0.42, roof);
   for (const x of [x0 + 0.5, x1 - 0.5]) vicStack(s, x, (zf + zb) / 2 + 1, top, 0.7, 1.3, Math.min(w, d) * 0.42 + 1.0, wall, 2);
-  // the front garden: a low wall with railings on it, a gap at the path, the path
+  // the front garden: a low wall with railings on it at the back of the pavement, a gap at the
+  // path, the path
   if (set > 0) {
-    const gz = b.z0 + 0.12, gaps: [number, number][] = [[x1 + 0.4 - dm - 0.8, x1 + 0.4 - dm + 0.8]];
+    const gz = b.z0 - VIC_SET + 0.16, gaps: [number, number][] = [[x1 + 0.4 - dm - 0.8, x1 + 0.4 - dm + 0.8]];
     for (const [t0, t1] of [[0, gaps[0][0]], [gaps[0][1], W]]) s.box(x1 + 0.4 - (t0 + t1) / 2, y0 + 0.25, gz, t1 - t0, 0.5, 0.3, render ? VIC.stucco : wall);
     vicRailings(s, b.x1, gz, b.x0, gz, y0 + 0.5, 0.75, VIC.black, gaps, 0.5);
     s.box(dm, y0 + 0.01, (gz + zf) / 2, 1.4, 0.02, zf - gz, VIC.flag);
