@@ -244,7 +244,7 @@ function vicTerrace(s: Batch, b: VicRect, y0: number, walls: readonly number[], 
   }
   // the area, sunk, behind its railings (or, with no room for one, flags up to the wall)
   if (area > 0) {
-    s.box((X0 + X1) / 2, y0 + 0.012, (zs + zf) / 2, W - 0.04, 0.02, zf - zs, VIC.soot);
+    s.box((X0 + X1) / 2, y0 + 0.012, (zs + zf) / 2 + 0.01, W - 0.04, 0.02, zf - zs - 0.02, VIC.soot);   // (its front clear of the steps')
     vicRailings(s, X1 - 0.08, zs + 0.1, X0 + 0.08, zs + 0.1, y0, 1.0, VIC.black, doors.map((x) => [X1 - 0.08 - x - 0.75, X1 - 0.08 - x + 0.75] as [number, number]));
   } else s.box((X0 + X1) / 2, y0 + 0.01, (zs + zf) / 2, W - 0.02, 0.02, zf - zs, VIC.flag);
 }
@@ -275,7 +275,7 @@ function vicVilla(s: Batch, b: VicRect, y0: number, walls: readonly number[], rn
     vicGable(s, x0, zf, x1, zb, top, w * 0.42, roof, wall, true, 0.35);
     s.box((x0 + x1) / 2, top + 0.2, zf - 0.38, w * 0.85, 0.14, 0.06, VIC.white);   // the bargeboard's foot
   } else vicHip(s, x0 - 0.3, zf - 0.3, x1 + 0.3, zb + 0.3, top, Math.min(w, d) * 0.42, roof);
-  for (const x of [x0 + 0.5, x1 - 0.5]) vicStack(s, x, (zf + zb) / 2 + 1, top, 0.7, 1.3, Math.min(w, d) * 0.42 + 1.0, wall, 2);
+  for (const x of [x0 + 0.5, x1 - 0.5]) vicStack(s, x, (zf + zb) / 2 + 1, top + 0.05, 0.7, 1.3, Math.min(w, d) * 0.42 + 1.0, wall, 2);
   // the front garden: a low wall with railings on it at the back of the pavement, a gap at the
   // path, the path
   if (set > 0) {
@@ -511,9 +511,10 @@ function vicTownHall(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
   const tzc = z0 - 0.6 + t / 2, cy = ty + 1.8;
   vicBox(s, cx - t / 2 + 0.1, tzc - t / 2 + 0.1, cx + t / 2 - 0.1, tzc + t / 2 - 0.1, ty, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 3.6 }], stone);
   for (const [nx, nz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
-    const fx = cx + nx * (t / 2 + 0.02), fz = tzc + nz * (t / 2 + 0.02), rot = nx !== 0 ? Math.PI / 2 : 0;
-    s.cyl(fx, cy, fz, 1.5, 0.08, VIC.gilt, 16, Math.PI / 2, 0, rot);
-    s.cyl(fx + nx * 0.03, cy, fz + nz * 0.03, 1.3, 0.08, VIC.white, 16, Math.PI / 2, 0, rot);
+    // (A dial's axis turned out of the face: about x for a face to z, about z for one to x.)
+    const fx = cx + nx * (t / 2 + 0.02), fz = tzc + nz * (t / 2 + 0.02), rx = nz !== 0 ? Math.PI / 2 : 0, rz = nx !== 0 ? Math.PI / 2 : 0;
+    s.cyl(fx, cy, fz, 1.5, 0.08, VIC.gilt, 16, rx, rz);
+    s.cyl(fx + nx * 0.03, cy, fz + nz * 0.03, 1.3, 0.08, VIC.white, 16, rx, rz);
     s.box(fx + nx * 0.08 + (nz !== 0 ? 0.3 : 0), cy + 0.1, fz + nz * 0.08 + (nx !== 0 ? 0.3 : 0), nz !== 0 ? 0.7 : 0.03, 0.1, nx !== 0 ? 0.7 : 0.03, VIC.black);
     s.box(fx + nx * 0.08, cy + 0.45, fz + nz * 0.08, nz !== 0 ? 0.08 : 0.03, 0.95, nx !== 0 ? 0.08 : 0.03, VIC.black);
   }
@@ -591,7 +592,7 @@ export function vicWorks(s: Batch, b: VicRect, y0: number, floorH: number, wall:
   const cx = end ? X1 - 2.5 : X0 + 2.5, cz = b.z1 - 2.2, ch = 20 + n * 2.5 + rnd() * 6;
   s.box(cx, y0 + 1.6, cz, 3.0, 3.2, 3.0, vicShade(wall, 0.9));
   s.lathe("vicChimney", VIC_CHIMNEY, cx, y0 + 3.2, cz, 1.25, ch, wall, 8);
-  s.cyl(cx, y0 + 3.2 + ch - 0.4, cz, 1.0, 0.8, vicShade(wall, 0.6), 8);
+  s.cyl(cx, y0 + 3.2 + ch - 0.35, cz, 1.0, 0.8, vicShade(wall, 0.6), 8);   // (its top over the shaft's)
   s.cyl(cx, y0 + 3.2 + ch - 1.6, cz, 0.95, 0.35, vicShade(wall, 0.75), 8);
 }
 const VIC_CHIMNEY: readonly (readonly [number, number])[] = [[1, 0], [0.62, 1], [0, 1]];
