@@ -268,8 +268,9 @@ export class StreetLife implements LifeHook {
     const fw = SPECS[st.truck].fifthWheel, peds = this.crowd.obstacles;
     // (Its trailer's axles, stepped on as the cab goes, dragged along the line to the kingpin: as
     // journey.ts hitchStep and truck.ts draw it.)
-    let ax = 0, az = 0;
-    if (fw !== undefined) { const th0 = j.pose.h + j.hitchYaw, kx0 = j.pose.x + pfx * fw, kz0 = j.pose.z + pfz * fw; ax = kx0 - Math.cos(th0) * KINGPIN_TO_AXLES; az = kz0 + Math.sin(th0) * KINGPIN_TO_AXLES; }
+    // (And where its trailer is now: kingpin, and its heading.)
+    let ax = 0, az = 0, kx0 = 0, kz0 = 0, tx0 = 0, tz0 = 0;
+    if (fw !== undefined) { const th0 = j.pose.h + j.hitchYaw; kx0 = j.pose.x + pfx * fw; kz0 = j.pose.z + pfz * fw; tx0 = Math.cos(th0); tz0 = -Math.sin(th0); ax = kx0 - tx0 * KINGPIN_TO_AXLES; az = kz0 - tz0 * KINGPIN_TO_AXLES; }
     // (Held for good, out of a gridlock, the clowns come for what holds it up: clowns.ts.)
     const zs = this.traffic.truckZoneStop();
     let stop = ow === null ? zs : zs === null ? ow : Math.min(ow, zs);
@@ -325,17 +326,20 @@ export class StreetLife implements LifeHook {
           waits = hit && pedWaits(k);
         }
         // (And a vehicle standing there, waiting at its line, say, that its trailer would cut in
-        // across; or one ahead of its nose now.)
+        // across; or one ahead of its nose now. Only nearer than the trailer is to it now, as for
+        // the cab below: it slides on past one it is alongside already, and draws away from one
+        // standing close behind it.)
         for (let k = 0; k < C.length && !hit; k++) {
           const ex = C[k].x - kx, ez = C[k].z - kz;
           if (Math.abs(ex) > 20 || Math.abs(ez) > 20) continue;
           if (this.traffic.speedOf(C[k].owner) > 0.5 && (C[k].x - j.pose.x) * pfx + (C[k].z - j.pose.z) * pfz <= E.front + 0.5) continue;
-          // (One waiting at its line for the truck by its junction booking: only if the trailer would
-          // touch it, not merely pass close, as for the cab below; a trailer swinging across a car
-          // waiting in the oncoming lane would hit it all the same.)
-          const pad = this.traffic.waitsForTruck(C[k].owner) ? -0.02 : 0.3;
-          const b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
-          hit = Math.hypot(ex - tx * b, ez - tz * b) < TRAILER.hw + C[k].r + pad;
+          // (One waiting at its line for the truck by its junction booking, or holding there for its
+          // turn to book: only if the trailer would touch it, not merely pass close, as for the cab
+          // below; a trailer swinging across a car waiting in the oncoming lane would hit it all the
+          // same.)
+          const pad = this.traffic.waitsForTruck(C[k].owner) || this.traffic.holdsAtLine(C[k].owner) ? -0.02 : 0.3, touch = TRAILER.hw + C[k].r;
+          const then = this.trailerDist(kx, kz, tx, tz, C[k].x, C[k].z), now = this.trailerDist(kx0, kz0, tx0, tz0, C[k].x, C[k].z);
+          hit = (then < touch + pad && then < now - 0.05) || (now < touch && then < touch && then < now + 0.05);
           waits = hit && this.traffic.waitsOnTruck(C[k].owner);
         }
         for (let k = 0; k < TP.length && !hit; k++) {
@@ -402,6 +406,12 @@ export class StreetLife implements LifeHook {
   private bodyDist(q: { x: number; z: number }, fx: number, fz: number, front: number, rear: number, x: number, z: number): number {
     const dx = x - q.x, dz = z - q.z, a = Math.max(rear, Math.min(front, dx * fx + dz * fz));
     return Math.hypot(dx - fx * a, dz - fz * a);
+  }
+  // How far (x, z) is from the middle line of a tractor's trailer, its kingpin at (kx, kz) and its
+  // heading (tx, tz).
+  private trailerDist(kx: number, kz: number, tx: number, tz: number, x: number, z: number): number {
+    const ex = x - kx, ez = z - kz, b = Math.max(TRAILER.rear, Math.min(TRAILER.front, ex * tx + ez * tz));
+    return Math.hypot(ex - tx * b, ez - tz * b);
   }
   // Whether (x, z) is within r of the truck's body standing at q (heading fx, fz; 1.25 m either side).
   private nearBody(q: Pose, fx: number, fz: number, front: number, rear: number, x: number, z: number, r: number): boolean {

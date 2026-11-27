@@ -47,11 +47,12 @@ import type { VisitSpec } from "../src/visits.ts";
     if (walksInto(at(3.5, 1.4), o)) errs.push("reversing: someone walking away from the truck's swing holds it");
     if (!walksInto(at(2.0, 0), o)) errs.push("reversing: someone standing in the truck's swing doesn't hold it");
   }
-  // (Then three in Ravensgate, among its horse-drawn traffic: the carriage's horses reach past a
-  // truck's nose, box16's and the tractor's most.)
+  // (Then four in Ravensgate, among its horse-drawn traffic: the carriage's horses reach past a
+  // truck's nose, box16's and the tractor's most. Seed 1's tractor once stood 72 s at 1.6 min, with
+  // a horse-drawn van beside it on the side it was to turn to, each waiting on the other.)
   const VIC: Record<number, VisitSpec> = { 0: { city: "victorian-ravensgate" } };
   const runs: [number, Record<number, VisitSpec> | undefined][] = [659803215, 7, 8, 5, 11, 1, 2, 3, 4, 6, 9, 10, 12, 13, 14].map((s) => [s, undefined]);
-  for (const [s, truck] of [[13, "box26"], [9, "tractor"], [21, "box16"]] as const) runs.push([s, { 0: { ...VIC[0], truck } }]);
+  for (const [s, truck] of [[13, "box26"], [9, "tractor"], [21, "box16"], [1, "tractor"]] as const) runs.push([s, { 0: { ...VIC[0], truck } }]);
   for (const [seed, visits] of runs) {
     const scene = new THREE.Scene(), mat = new THREE.MeshBasicMaterial(), traffic = new Traffic(scene, mat, null);
     const j = new Journey(readConfig({ seed } as SceneEnv), 0, "autumn", visits);
