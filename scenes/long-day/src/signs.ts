@@ -16,7 +16,7 @@ import { FAC, facilityAt, facilityName, hasSign, isRyderFacility } from "./facil
 import type { FacilityDef } from "./facilities.ts";
 
 const SIGN_W = 256, SIGN_H = 32, SIGN_COLS = 4, SIGN_ROWS = 64;   // 256 name slots: room for the chunks ChunkStreamer keeps cached
-export const AD_W = 256, AD_H = 96, AD_COLS = 4, AD_ROWS = 6, AD_Y0 = SIGN_ROWS * SIGN_H;
+export const AD_W = 256, AD_H = 96, AD_COLS = 4, AD_ROWS = 7, AD_Y0 = SIGN_ROWS * SIGN_H;
 const ATLAS_W = 1024, ATLAS_H = AD_Y0 + AD_ROWS * AD_H;
 
 // An atlas material's texture coordinates, interpolated at the centroid of the samples a pixel
@@ -291,6 +291,15 @@ const ghost = (lines: string[]): Ad => (g) => {
   g.fillStyle = "rgba(238,226,196,0.55)";
   lines.forEach((t, i) => fitAtlasText(g, t, AD_W / 2, AD_H / (lines.length + 1) * (i + 1), 232, i === 0 ? 30 : 20));
 };
+// A Victorian wall advertisement, freshly painted: a dark ground inside a cream line, the name in
+// cream serif capitals over a smaller line of what it sells.
+const vicWall = (bg: string, lines: [string, string]): Ad => (g) => {
+  g.fillStyle = bg; g.fillRect(0, 0, AD_W, AD_H);
+  g.strokeStyle = "#e8dcbc"; g.lineWidth = 3; g.strokeRect(7, 7, AD_W - 14, AD_H - 14);
+  g.fillStyle = "#efe4c6";
+  fitAtlasText(g, lines[0], AD_W / 2, 38, 220, 34, "bold", "serif");
+  fitAtlasText(g, lines[1], AD_W / 2, 70, 220, 17, "bold", "serif");
+};
 
 const ADS: Ad[] = [
   // Ryder.
@@ -329,6 +338,10 @@ const ADS: Ad[] = [
 ];
 export const AD_BATON_MARK = ADS.length - 1, AD_RYDER = [0, 1, 2], AD_GHOST = [ADS.length - 3, ADS.length - 2], AD_BATON = [ADS.length - 6, ADS.length - 5];
 export const AD_BILLBOARD = ADS.map((_, i) => i).filter((i) => !AD_GHOST.includes(i) && i !== AD_BATON_MARK);
+// The Victorian city's wall advertisements, which it paints where another city has a ghost sign
+// (decor.ts). They follow the rest, so no other pool holds them.
+export const AD_VIC_WALL = [ADS.length, ADS.length + 1];
+ADS.push(vicWall("#1e2a22", ["RYDER & CO.", "CARRIERS · REMOVALS BY ROAD & RAIL"]), vicWall("#2a1612", ["STEAM BREWERY", "FINE ALES · PORTER · STOUT"]));
 
 const SIGN_BOARDS = ["#1f4f8f", "#2e6b3a", "#7a2e2e", "#3b3b42", "#8a5a1a", "#1d6f78", "#5b2d77", "#b0522a"];
 const VIC_BOARDS = ["#1e3a2a", "#4a1620", "#1c2640", "#141416", "#3a2418"];

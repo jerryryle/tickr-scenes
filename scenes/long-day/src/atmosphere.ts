@@ -41,7 +41,8 @@ export function applyLampGlow(mat: THREE.Material) {
 // Streetlight on people and things: the pools below are painted on the ground, so anything
 // standing in one (the driver, a load, pedestrians) gets the same warm light from the nearest
 // lamps through this. City chunks register their lamp heads (LAMP_SITES: an object and its lamps
-// in its own coordinates); updateLampLights picks the few nearest a point each frame.
+// in its own coordinates, and how strong their light is, userData.lampPool, 1 if unset);
+// updateLampLights picks the few nearest a point each frame.
 export const LAMP_SITES = new Map<THREE.Object3D, number[]>();
 const LAMP_N = 32;
 const LAMP_LIGHTS = { value: Array.from({ length: LAMP_N }, () => new THREE.Vector4(0, -100, 0, 0)) };
@@ -55,7 +56,7 @@ export const HEAD_Y = { value: Array.from({ length: HEAD_N }, () => 0) };
 export const INTERIOR_LIGHT = { value: Array.from({ length: 10 }, () => new THREE.Vector4()) };
 const lampTmp = new THREE.Vector3();
 export function updateLampLights(at: THREE.Vector3) {
-  const best: { d: number; x: number; y: number; z: number }[] = [];
+  const best: { d: number; x: number; y: number; z: number; w: number }[] = [];
   if (LAMPS_ON.value > 0) for (const [obj, lamps] of LAMP_SITES) {
     if (!obj.parent) continue;
     obj.updateWorldMatrix(true, false);
@@ -63,7 +64,7 @@ export function updateLampLights(at: THREE.Vector3) {
       lampTmp.set(lamps[i], lamps[i + 1], lamps[i + 2]).applyMatrix4(obj.matrixWorld);
       const d = Math.hypot(lampTmp.x - at.x, lampTmp.z - at.z);
       if (d > 110) continue;
-      best.push({ d, x: lampTmp.x, y: lampTmp.y, z: lampTmp.z });
+      best.push({ d, x: lampTmp.x, y: lampTmp.y, z: lampTmp.z, w: obj.userData.lampPool ?? 1 });
     }
   }
   // (Ties broken by position: LAMP_SITES's order depends on which chunks were built when, and a
@@ -71,7 +72,7 @@ export function updateLampLights(at: THREE.Vector3) {
   best.sort((a, b) => a.d - b.d || a.x - b.x || a.z - b.z || a.y - b.y);
   for (let i = 0; i < LAMP_N; i++) {
     const b = best[i];
-    LAMP_LIGHTS.value[i].set(b ? b.x : 0, b ? b.y : -100, b ? b.z : 0, b ? 1 : 0);
+    LAMP_LIGHTS.value[i].set(b ? b.x : 0, b ? b.y : -100, b ? b.z : 0, b ? b.w : 0);
   }
 }
 export function applyLampLight(mat: THREE.Material) {

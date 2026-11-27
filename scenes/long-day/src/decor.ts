@@ -18,7 +18,7 @@ import type { FacilityId } from "./facilities.ts";
 import { hash2 } from "./rng.ts";
 import { vicBench, vicCabShelter, vicDustBin, vicHitchPost, vicNewsStand, vicPillarBox, vicPump, vicTrough } from "./city-victorian/victorian-street.ts";
 import type { VicPiece } from "./city-victorian/victorian-street.ts";
-import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, signAtlas, SignAtlas } from "./signs.ts";
+import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_VIC_WALL, AD_W, signAtlas, SignAtlas } from "./signs.ts";
 
 interface RoofSpot { r: Rect; top: number }
 // What stands on the pavement, as circles (x, z, radius, chunk-local), recorded while a probe
@@ -175,12 +175,12 @@ export function drawBillboard(s: Batch, r: Rect, top: number, side: number, ad: 
   DC.quads.push({ x: x + nx * 0.15, y: base + h / 2, z: z + nz * 0.15, w, h, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pool[ad[1] % pool.length] as never) });
   DC.ads = true;
 }
-// A faded painted sign high on a blank wall.
+// A faded painted sign high on a blank wall (in the Victorian city, a freshly painted one).
 export function ghostSign(r: Rect, side: number, y: number, rnd: Rand) {
   const [nx, nz] = SIDE_N[side], w = Math.min(10, wallLen(r, side) - 2);
   if (w < 5) return;
   const [x, z] = onWall(r, side, range(rnd, -0.15, 0.15) * (wallLen(r, side) - w), 0.04);
-  DC.quads.push({ x, y, z, w, h: w * 0.375, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pick(rnd, AD_GHOST)) });
+  DC.quads.push({ x, y, z, w, h: w * 0.375, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pick(rnd, CS.victorian ? AD_VIC_WALL : AD_GHOST)) });
   DC.ads = true;
 }
 

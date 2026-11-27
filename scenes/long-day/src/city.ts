@@ -21,7 +21,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
-import { VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
+import { VIC_GASLIGHT, VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
@@ -630,6 +630,20 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
     }
     for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt);
     g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
+    // The Victorian city's junction is setts laid in rings about its middle, in the tones of its
+    // streets' courses (buildStreet): the ring shrunk a course at a time and drawn a little above
+    // the one outside it, each wedge of it a lighter, darker or the middle tone.
+    if (CS.victorian) {
+      const R = Math.max(...ring.map(([x, z]) => Math.hypot(x - cx, z - cz)));
+      for (let k = 1; k * SETT_COURSE < R; k++) {
+        const f = 1 - k * SETT_COURSE / R, y = 0.003 + 0.002 * k;
+        const P = ring.map(([x, z]): [number, number] => [cx + (x - cx) * f, cz + (z - cz) * f]);
+        for (let i = 0; i < P.length; i++) {
+          const [a, b] = [P[i], P[(i + 1) % P.length]], r = hash2(n.id, k * 64 + i, (DC.plan as CityPlan).seed, 0x5e8);
+          g.tri(cx, y, cz, a[0], y, a[1], b[0], y, b[1], r < 0.33 ? shade(C.asphalt, 1.16) : r < 0.66 ? shade(C.asphalt, 0.86) : C.asphalt);
+        }
+      }
+    }
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook, !!CS.victorian);
   buildStopSigns(solid, G, n, ox, oz, !!CS.storybook, !!CS.victorian);
@@ -1683,6 +1697,7 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
     const pools = DC.pools.build(); if (pools) group.add(pools);
     const lampSites = DC.lampSites.slice();
     if (lampSites.length) LAMP_SITES.set(group, lampSites);   // their light: applyLampLight
+    if (plan.style.victorian) group.userData.lampPool = 0.45;   // (a gas flame lights less of the street than an electric lamp)
     group.userData.onDispose = () => { for (const k of slots) signAtlas.release(k); if (signMesh) signAtlas.detach(signMesh); plateMesh?.dispose(); LAMP_SITES.delete(group); };
     // Kept out of the scene (ChunkStreamer's cache): its lamps light nothing meanwhile. Its sign and
     // plate slots stay held, so it comes back as it was.
@@ -2209,7 +2224,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
       const r = hash2(k, h + Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5e7);
       if (r < 0.5) continue;
       const v0 = h ? cl + (k % 2 ? 1.3 : -1.3) : KERB + 0.4, v1 = h ? STREET - KERB - 0.4 : cl + (k % 2 ? 1.3 : -1.3);
-      flat(k * SETT_COURSE + 0.01, (k + 1) * SETT_COURSE - 0.01, v0 + 0.01, v1 - 0.01, 0.003, shade(C.asphalt, r < 0.75 ? 1.08 : 0.92));
+      flat(k * SETT_COURSE + 0.01, (k + 1) * SETT_COURSE - 0.01, v0 + 0.01, v1 - 0.01, 0.003, shade(C.asphalt, r < 0.75 ? 1.16 : 0.86));
     }
     for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
   }
@@ -3694,7 +3709,7 @@ function breweryDock(s: Batch, L: DockLayout, quads: Quad[], uv: ReturnType<Sign
     const y = P + doorH + 0.9, n = L.wall - 0.55;
     fspan(s, side, la - 0.04, la + 0.04, y - 0.5, y - 0.05, L.wall - 0.06, L.wall - 0.01, iron);
     fspan(s, side, la - 0.03, la + 0.03, y - 0.05, y + 0.02, n, L.wall - 0.01, iron);
-    const ax = s.aux.clone(); s.aux.set(0, 0, -2); fspan(s, side, la - 0.15, la + 0.15, y - 0.45, y - 0.08, n - 0.15, n + 0.15, BREWERY_DOCK.lamp); s.aux.copy(ax);
+    const ax = s.aux.clone(); s.aux.set(0, 0, VIC_GASLIGHT); fspan(s, side, la - 0.15, la + 0.15, y - 0.45, y - 0.08, n - 0.15, n + 0.15, BREWERY_DOCK.lamp); s.aux.copy(ax);
     fspan(s, side, la - 0.2, la + 0.2, y - 0.08, y, n - 0.2, n + 0.2, iron);
     const [lx, lz] = frontPt(side, la, n); DC.lampSites.push(lx, y - 0.3, lz);
   }

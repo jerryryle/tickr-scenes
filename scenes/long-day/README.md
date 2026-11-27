@@ -223,7 +223,9 @@ names (`VIC_LABEL` in `src/facilities.ts`, the city file).
    and its skyline is the `spires` backdrop.
 2. `victorian-street.ts` draws its street pieces: gas lamps, the Westminster semaphore signals
    and halt posts that stand for signals and stop signs (`src/signals.ts`), and the period street
-   furniture (`src/decor.ts`). Its roads are granite setts and its pavements York stone.
+   furniture (`src/decor.ts`). Its roads are granite setts and its pavements York stone. Its gas
+   lamps glow a dim orange (`VIC_GASLIGHT`) and light less of the street than electric ones
+   (`lampPool` in `src/atmosphere.ts`), and its blank walls carry painted advertisements.
 3. `victorian-vehicles.ts` holds its traffic, which is all horse-drawn but the odd penny-farthing
    and traction engine; `src/horse.ts` is the horse every one of them uses.
 4. `victorian-landmark-steam-brewery.ts` is its landmark, the steam brewery on

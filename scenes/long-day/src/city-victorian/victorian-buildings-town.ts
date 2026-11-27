@@ -24,12 +24,15 @@ export type VicDoor = (x0: number, x1: number, n: number, painted?: boolean) => 
 // The palette: stock brick, red brick, stucco, Portland stone, slate, soot, cast iron painted
 // green or black, gilt, and the gas lamps' warm light.
 export const VIC = {
-  stock: 0xb8a27a, red: 0x8e3b2a, stucco: 0xe8dfc8, stone: 0xd2c7ac, slate: 0x4a5058, soot: 0x3a3632,
+  stock: 0xb8a27a, red: 0x8e3b2a, stucco: 0xdcd2b8, stone: 0xd2c7ac, slate: 0x4a5058, soot: 0x3a3632,
   iron: 0x23302a, black: 0x1c1d20, green: 0x2e4a36, maroon: 0x6a1f2a, navy: 0x24324e, gilt: 0xc9a44a,
   timber: 0x6a4a30, cream: 0xefe6cf, lamp: 0xffd27a, chimneyPot: 0xa8583a, glass: 0x2a3440,
   slateDark: 0x3c4148, lead: 0x6a7078, brickDark: 0x6a3024, oak: 0x7a5434, coal: 0x222226, canvas: 0xd8ceb4,
   bronze: 0x3e5e4a, copper: 0x5e9a84, gravel: 0xbcae8e, flag: 0x9c968a, white: 0xeee8da, sack: 0xb8a078,
 };
+// A gas flame's tag (aux z): glass drawn with it glows a dim orange after dark (facade.ts), where
+// another city's lamp heads (aux z -2) glow a bright white.
+export const VIC_GASLIGHT = -5;
 // These are the street's colours, laid over city.ts's C while a Victorian city is built
 // (setCityStyle): granite setts for the road, York stone flags for the pavements, granite kerbs,
 // no painted markings to speak of, black iron poles and warm gas lamps.
@@ -183,9 +186,9 @@ function vicRailings(s: Batch, ax: number, az: number, bx: number, bz: number, y
     vicQuad(s, [px - tx * w, y, pz - tz * w], [px + tx * w, y, pz + tz * w], [px + tx * w, y + h + 0.1, pz + tz * w], [px - tx * w, y + h + 0.1, pz - tz * w], col, [nx, 0, nz]);
   }
 }
-// A gas lantern glowing after dark (aux -2, as every city's lamp heads), its cap and finial.
+// A gas lantern glowing after dark (VIC_GASLIGHT), its cap and finial.
 function vicLantern(s: Batch, x: number, y: number, z: number, r = 0.2) {
-  s.aux.set(0, 0, -2); s.box(x, y, z, r * 1.6, r * 2.4, r * 1.6, VIC.lamp); s.aux.set(0, 0, -1);
+  s.aux.set(0, 0, VIC_GASLIGHT); s.box(x, y, z, r * 1.6, r * 2.4, r * 1.6, VIC.lamp); s.aux.set(0, 0, -1);
   s.cone(x, y + r * 1.6, z, r * 1.2, r * 0.9, VIC.black, 4, 0, Math.PI / 4);
 }
 // A dormer on a slope: its front wall (a window from the sash tile) at z, w across, h tall from y.
