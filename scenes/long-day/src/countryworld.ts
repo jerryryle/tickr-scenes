@@ -108,8 +108,9 @@ const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf
   macadam: 0x6e665a };
 // Where a Victorian city has crept in further than this (CountryRoad.periodAt), the road keeps
 // nothing modern by it: no painted lines, utility poles, pylons, wind turbines, steel silos or
-// billboards, and its signs are finger posts (vicFingerPost).
-const PERIOD_MODERN = 0.3;
+// billboards, and its signs are finger posts (vicFingerPost). The truck turns into a carriage at the
+// same point: its cab, back doors and exhaust change at half (truck.ts), as the oncoming traffic does.
+const PERIOD_MODERN = 0.5;
 // The colour a of the way to b by k (0..1), channel by channel.
 function lerpColor(a: number, b: number, k: number) {
   const ch = (sh: number) => Math.round(((a >> sh) & 255) * (1 - k) + ((b >> sh) & 255) * k) << sh;
@@ -1344,7 +1345,8 @@ export class CountryWorld {
       vicFingerPost(s, x, z, 0, -Math.cos(h), Math.sin(h), rx - x, rz - z, g.y, g.w, g.h, reach);
       const words = p.kind === "welcome" ? text.replace(/^WELCOME TO /, "") : p.kind === "leave" ? `BOROUGH OF ${text.replace(/^LEAVING /, "")}` : text;
       const uv = this.slot(words, { bg: "#ece4cc", fg: "#1c1d20", logo: false });
-      if (uv) this.signAt(g, uv);
+      // (Lettered on both faces, as a finger post is: the drive the other way passes its back.)
+      if (uv) { this.signAt(g, uv); this.sign(g.s - 0.06, g.n, g.y, g.w, g.h, uv, 1); }
       return;
     }
     // (The storybook city's own signs, welcoming and leaving, are magenta, edged in butter, on striped posts.)
