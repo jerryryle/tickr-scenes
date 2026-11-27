@@ -32,6 +32,9 @@
 #   make draftroads SCENE=long-day [ARGS="<road id> ..."]
 #                              draft the roads' maps into scenes/long-day/src/roads/
 #                              (tools/draftroads.ts)
+#   make relot SCENE=long-day ARGS="<city id> ..."
+#                              write a catalogue city's lotted blocks' contents afresh from the rules
+#                              into its contents file (tools/relot.ts); then clearstops and tractorturns
 #   make clearstops SCENE=long-day [ARGS="<city id> ..."] [DOORS=1]
 #                              move the pavements' furniture, trees and lamps out of every kerb
 #                              stop's work area in the catalogue cities' files (tools/clearstops.ts);
@@ -82,7 +85,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/* $(1)-packed/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); case "$$n" in *.tmp) continue;; esac; d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns clearstops vicjunctions maps FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns clearstops vicjunctions relot maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -247,6 +250,15 @@ clearstops: | $(DEPS)
 	@$(call node-bundle,build/$(SCENE)-clearstops/scene.ts,build/$(SCENE)-clearstops/clearstops.mjs)
 	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-clearstops/clearstops.mjs --list; fi; } | \
 	  xargs -P $(TEST_JOBS) -I{} node build/$(SCENE)-clearstops/clearstops.mjs {} $(if $(DOORS),--doors)
+
+# A catalogue city's lotted blocks relotted from the rules (scenes/<scene>/tools/relot.ts), each city
+# named in ARGS in a process of its own, TEST_JOBS at a time.
+relot: | $(DEPS)
+	@test -n "$(ARGS)" || { echo "usage: make relot SCENE=<scene> ARGS='<city id> ...'" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-relot
+	@$(FLATTEN) scenes/$(SCENE)/tools/relot.ts --root scenes/$(SCENE)/src > build/$(SCENE)-relot/scene.ts
+	@$(call node-bundle,build/$(SCENE)-relot/scene.ts,build/$(SCENE)-relot/relot.mjs)
+	@printf '%s\n' $(ARGS) | xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-relot/relot.mjs
 
 # The moves a tractor-trailer never takes (scenes/<scene>/tools/tractorturns.ts), written into each
 # catalogue city's file, each city in a process of its own, TEST_JOBS at a time; ARGS names the
