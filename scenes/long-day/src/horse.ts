@@ -11,7 +11,8 @@
 //
 // The body is lofted from elliptical rings along its length (loft), flat-shaded like the rest of the
 // scene. It wears a carriage horse's harness: a collar and hames, a cart saddle with its girth and
-// tugs, a crupper and breeching, and a bridle with blinkers, its reins run back to the hames. Each
+// tugs, a crupper and breeching, and a bridle with blinkers, its reins run back to the hames; a
+// ridden horse wears a bridle and girth alone (HorseLook ridden). Each
 // leg is two parts, the upper hung from its elbow or stifle and the lower from its knee or hock,
 // set by two-bone inverse kinematics on each hoof's place (poseLeg).
 import * as THREE from "three@0.187.0";
@@ -25,8 +26,9 @@ export const HORSE = { back: 1.45, front: 0.95, withers: 1.62, width: 0.62, hitc
 // left, fore right, hind left, hind right) and the four lower legs in the same order.
 export const HORSE_PARTS = 11;
 export interface HorseState { odo: number; v: number; t: number; seed: number }
-// A coat (the body's colour), its mane, tail and lower legs' colour, and its harness's.
-export interface HorseLook { coat: number; mane: number; harness: number }
+// A coat (the body's colour), its mane, tail and lower legs' colour, and its harness's. A `ridden`
+// horse wears only a bridle without blinkers and a girth (its rider's part carries the saddle).
+export interface HorseLook { coat: number; mane: number; harness: number; ridden?: boolean }
 export const HORSE_COATS: readonly HorseLook[] = [
   { coat: 0x6a3e24, mane: 0x241812, harness: 0x1a1412 },   // bay
   { coat: 0x3a2618, mane: 0x16100c, harness: 0x1a1412 },   // dark brown
@@ -132,6 +134,7 @@ export function horseParts(look: HorseLook): ((b: Batch) => void)[] {
       hsLoft(b, [[-1.06, 1.36, z * 0.18, 0.12, 0.2], [-0.98, 1.12, z * 0.2, 0.13, 0.2], [-0.87, 0.94, z * 0.17, 0.1, 0.12]], 8, coat);
       hsLoft(b, [[-1.26, 1.3, z * 0.13, 0.1, 0.12], [-1.2, 1.05, z * 0.16, 0.11, 0.14], [-1.1, 0.84, z * 0.16, 0.08, 0.09]], 8, coat);   // (the back of the thigh, down from the buttock)
     }
+    if (look.ridden) { hsBand(b, -0.1, 0.07, H, -Math.PI - 0.5, 0.5); return; }
     // The collar, round the neck's foot in front of the shoulders and leaning back, its hames up
     // its sides to brass tips, and a terret on top for the reins.
     const cx = 0.44, cy = 1.47, ux = -0.78, uy = 0.63, ra = 0.215, rb = 0.36, n = 14;
@@ -183,15 +186,17 @@ export function horseParts(look: HorseLook): ((b: Batch) => void)[] {
       const [ex, ey] = o(0.66, 2.1);
       b.cone(ex, ey + 0.06, z * 0.05, 0.03, 0.14, coat, 5, z * 0.2, 0, -0.25);
       // Eyes behind blinkers, the bridle's cheek straps and browband, its noseband, the bit's rings,
-      // and the reins back along the neck to the hames.
+      // and the reins back along the neck to the hames (a ridden horse's eyes go bare, and its reins
+      // are its rider's).
       const [yx, yy] = o(0.77, 1.93);
       b.box(yx, yy, z * 0.097, 0.03, 0.025, 0.01, hsEYE);
-      b.boxR(yx - 0.02, yy + 0.005, z * 0.118, 0.11, 0.09, 0.012, H, 0, z * 0.15, 0);
+      if (!look.ridden) b.boxR(yx - 0.02, yy + 0.005, z * 0.118, 0.11, 0.09, 0.012, H, 0, z * 0.15, 0);
       const [cx0, cy0] = o(0.68, 2.03), [cx1, cy1] = o(0.9, 1.6);
       hsRod(b, [cx0, cy0, z * 0.092], [cx1, cy1, z * 0.07], 0.03, 0.012, H);
       const [nx, ny] = o(0.885, 1.69);
       hsRod(b, [nx, ny, z * 0.075], [nx + 0.07, ny + 0.035, z * 0.06], 0.035, 0.012, H);
       b.cyl(cx1 + 0.01, cy1 - 0.01, z * 0.072, 0.022, 0.01, hsBRASS, 8, Math.PI / 2);
+      if (look.ridden) continue;
       const [rx, ry] = o(0.32, 1.74);
       hsRod(b, [cx1 + 0.01, cy1 - 0.01, z * 0.075], [0.5 - px + 0.04, 1.66 - py, z * 0.12], 0.02, 0.01, H);
       hsRod(b, [0.5 - px + 0.04, 1.66 - py, z * 0.12], [rx, ry, z * 0.1], 0.02, 0.01, H);
