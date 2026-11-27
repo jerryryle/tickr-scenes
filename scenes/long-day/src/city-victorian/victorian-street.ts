@@ -263,3 +263,39 @@ export function vicFingerPost(s: Batch, x: number, z: number, y0: number, fx: nu
     s.boxR(f * 0.35, y0 + y - h / 2 - 0.2, -0.02, 0.05, 0.7, 0.05, VS_IRON, 0, 0, -f * 0.9);
   });
 }
+
+// ---- the setts -------------------------------------------------------------------------------------
+// A Victorian street's road and junctions are granite setts. city.ts tags their ground (aux.z
+// VIC_SETT, aux.xy the way along the street in the world), and applySetts draws the stones on the ground's
+// material from the world position: courses SETT_W wide across the road, each stone SETT_L long and
+// a little lighter or darker than the next, broken bond, with dark joints between. Where a stone
+// comes to less than about two pixels the pattern fades to the stones' mean tone, so far streets
+// read as even stone and never shimmer.
+export const VIC_SETT = -7;
+const SETT_W = 0.25, SETT_L = 0.4;
+export function applySetts(mat: THREE.Material) {
+  const prev = mat.onBeforeCompile.bind(mat), prevKey = mat.customProgramCacheKey.bind(mat);
+  mat.onBeforeCompile = (shader, renderer) => {
+    prev(shader, renderer);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nattribute vec3 aAux;\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvSettAux = aAux; vSettXZ = (modelMatrix * vec4(transformed, 1.0)).xz;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vSettAux;\nvarying vec2 vSettXZ;")
+      .replace("#include <color_fragment>", `#include <color_fragment>
+  if (abs(vSettAux.z - (${VIC_SETT.toFixed(1)})) < 0.5) {
+    vec2 d = length(vSettAux.xy) > 0.5 ? normalize(vSettAux.xy) : vec2(1.0, 0.0);
+    vec2 p = vec2(dot(vSettXZ, d), dot(vSettXZ, vec2(-d.y, d.x)));   // (x: along the street, across the courses)
+    vec2 c = vec2(p.x / ${SETT_W.toFixed(2)}, p.y / ${SETT_L.toFixed(2)});
+    c.y += 0.5 * floor(c.x);
+    vec2 cell = floor(c), f = fract(c);
+    float h = fract(sin(dot(mod(cell, 1024.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float edge = min(min(f.x, 1.0 - f.x) * ${SETT_W.toFixed(2)}, min(f.y, 1.0 - f.y) * ${SETT_L.toFixed(2)});
+    float detail = 1.0 - smoothstep(0.4, 1.3, max(fwidth(c.x), fwidth(c.y)));
+    float tone = mix(0.88, 1.1, h) * mix(1.0, 0.6, 1.0 - smoothstep(0.02, 0.05, edge));
+    diffuseColor.rgb *= mix(0.95, tone, detail);
+  }`);
+  };
+  mat.customProgramCacheKey = () => prevKey() + "|setts-v1";
+  mat.needsUpdate = true;
+}

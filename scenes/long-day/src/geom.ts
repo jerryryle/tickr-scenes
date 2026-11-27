@@ -64,6 +64,7 @@ export function frameApply(f: Frame2, x: number, z: number): [number, number] {
 // (city.ts cityBatches clears it; inFrame keeps `frames`, the parts' frames being drawn in, inner
 // last): trees' trunks (x, z pairs) and buildings' footprints (four corners each, x, z pairs).
 // (lots: each block lot's four corners in tile coordinates, city.ts buildLots, for the city maps: tools/mapsvg.ts.)
+const TRI_PLAIN = { x: 0, y: 0, z: -1 };
 export const PLACED = { frames: [] as Frame2[], trees: [] as number[], foot: [] as number[], lots: [] as number[] };
 // (x, z) in the frame being drawn in, in the tile's coordinates.
 export function toTile(x: number, z: number): [number, number] {
@@ -157,7 +158,8 @@ export class Batch {
 
   // One flat-shaded triangle facing up (or towards `face`), wound so whatever order its corners
   // come in, as given: no dy.
-  tri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, color: number, face: [number, number, number] = [0, 1, 0]) {
+  // (`tagged`: it carries the batch's aux, as the primitives do; else the untextured default.)
+  tri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, color: number, face: [number, number, number] = [0, 1, 0], tagged = false) {
     if (BATCH.dry) return;
     this.reserve(3);
     const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
@@ -165,11 +167,12 @@ export class Batch {
     const l = (nx * face[0] + ny * face[1] + nz * face[2] < 0 ? -1 : 1) * (Math.hypot(nx, ny, nz) || 1); nx /= l; ny /= l; nz /= l;
     if (l < 0) { [bx, by, bz, cx, cy, cz] = [cx, cy, cz, bx, by, bz]; }
     this.c.set(color);
-    const { pos, nrm, col, auxArr } = this;
+    const { pos, nrm, col, auxArr } = this, A = tagged ? this.aux : TRI_PLAIN;
+    if (tagged) this.auxUsed = true;
     let o = this.n * 3;
     for (const [x, y, z] of [[ax, ay, az], [bx, by, bz], [cx, cy, cz]]) {
       pos[o] = x; pos[o + 1] = y; pos[o + 2] = z; nrm[o] = nx; nrm[o + 1] = ny; nrm[o + 2] = nz;
-      col[o] = this.c.r; col[o + 1] = this.c.g; col[o + 2] = this.c.b; auxArr[o] = 0; auxArr[o + 1] = 0; auxArr[o + 2] = -1;
+      col[o] = this.c.r; col[o + 1] = this.c.g; col[o + 2] = this.c.b; auxArr[o] = A.x; auxArr[o + 1] = A.y; auxArr[o + 2] = A.z;
       o += 3;
     }
     this.n += 3;

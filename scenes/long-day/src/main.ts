@@ -61,6 +61,7 @@ import { Ambient } from "./ambient.ts";
 import { SEA_ALONG, SeaLife } from "./sealife.ts";
 import { KnittingWorksFx } from "./city-storybook/storybook-landmark-knitting-works.ts";
 import { SteamBreweryFx } from "./city-victorian/victorian-landmark-steam-brewery.ts";
+import { applySetts } from "./city-victorian/victorian-street.ts";
 import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 
@@ -1075,6 +1076,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const facadeMat = makeFacadeMaterial();
       applyCutaway(facadeMat); applyDriverSpot(facadeMat);
       for (const m of [facadeMat, engine.mats.ground, engine.mats.solid, seaLife.surface]) applyLampLight(m);   // streetlights and headlights light the world (the sea and the harbour too: their material is the ground's clone, made before this)
+      applySetts(engine.mats.ground);   // (the Victorian city's road: victorian-street.ts)
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));

@@ -22,7 +22,7 @@ import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
 import { VIC_GASLIGHT, VIC_STREET, vicBackYard, vicCorner, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
-import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
+import { VIC_SETT, vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
 import { FACADE_TILE } from "./facadeart.ts";
@@ -628,22 +628,12 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
         slab(g, [a, e0, e1, d], CURB_H + 0.004, CURB_H + 0.012, C.curb);
       }
     }
-    for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt);
-    g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt);
-    // The Victorian city's junction is setts laid in rings about its middle, in the tones of its
-    // streets' courses (buildStreet): the ring shrunk a course at a time and drawn a little above
-    // the one outside it, each wedge of it a lighter, darker or the middle tone.
-    if (CS.victorian) {
-      const R = Math.max(...ring.map(([x, z]) => Math.hypot(x - cx, z - cz)));
-      for (let k = 1; k * SETT_COURSE < R; k++) {
-        const f = 1 - k * SETT_COURSE / R, y = 0.003 + 0.002 * k;
-        const P = ring.map(([x, z]): [number, number] => [cx + (x - cx) * f, cz + (z - cz) * f]);
-        for (let i = 0; i < P.length; i++) {
-          const [a, b] = [P[i], P[(i + 1) % P.length]], r = hash2(n.id, k * 64 + i, (DC.plan as CityPlan).seed, 0x5e8);
-          g.tri(cx, y, cz, a[0], y, a[1], b[0], y, b[1], r < 0.33 ? shade(C.asphalt, 1.16) : r < 0.66 ? shade(C.asphalt, 0.86) : C.asphalt);
-        }
-      }
-    }
+    // (The Victorian city's is laid in setts, in courses across its first arm: victorian-street.ts applySetts.)
+    const vs = !!CS.victorian;
+    if (vs) g.aux.set(Math.cos(A[0].h), -Math.sin(A[0].h), VIC_SETT);
+    for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt, undefined, vs);
+    g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt, undefined, vs);
+    g.aux.set(0, 0, -1);
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook, !!CS.victorian);
   // (A Victorian junction's constable, drawn where its poles would stand, stands in its gas light.)
@@ -2266,8 +2256,8 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
     }
   }
 }
-// The Victorian city's setts are laid in courses SETT_COURSE across (m), its pavement flags FLAG_LEN long.
-const SETT_COURSE = 0.6, FLAG_LEN = 1.2;
+// The Victorian city's pavement flags are FLAG_LEN long.
+const FLAG_LEN = 1.2;
 function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
   loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[]; furniture?: [FurnitureItem[], FurnitureItem[]] | null }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
@@ -2279,20 +2269,15 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     const [ax, az] = P(u0, v0), [bx, bz] = P(u1, v0), [cx, cz] = P(u1, v1), [dx, dz] = P(u0, v1);
     g.tri(ax, y, az, bx, y, bz, cx, y, cz, color); g.tri(ax, y, az, cx, y, cz, dx, y, dz, color);
   };
-  // The street's asphalt (kerb to kerb, and under the sidewalks).
+  // The street's asphalt (kerb to kerb, and under the sidewalks). The Victorian city's is granite
+  // setts (C.asphalt their middle tone), laid in courses across the road (the stones themselves
+  // drawn by the ground's shader: victorian-street.ts applySetts), with a channel of flat granite
+  // along each kerb.
+  // (aux.xy: the way along the street in the world, through the frames it is drawn in.)
+  if (CS.victorian) { const r = PLACED.frames.reduce((t, f) => t + f.rot, 0); g.aux.set(axis ? Math.sin(r) : Math.cos(r), axis ? Math.cos(r) : -Math.sin(r), VIC_SETT); }
   box(g, mid, -0.05, cl, len, 0.1, STREET, C.asphalt);
-  // The Victorian city's road is granite setts (C.asphalt their middle tone), laid in courses
-  // across the road. Each course is laid in two halves, each a patch of its own tone, lighter,
-  // darker or the middle one; and there is a channel of flat granite along each kerb.
-  if (CS.victorian) {
-    for (let k = Math.ceil(a0 / SETT_COURSE); (k + 1) * SETT_COURSE <= a1; k++) for (const h of [0, 1]) {
-      const r = hash2(k, h + Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5e7);
-      if (r < 0.5) continue;
-      const v0 = h ? cl + (k % 2 ? 1.3 : -1.3) : KERB + 0.4, v1 = h ? STREET - KERB - 0.4 : cl + (k % 2 ? 1.3 : -1.3);
-      flat(k * SETT_COURSE + 0.01, (k + 1) * SETT_COURSE - 0.01, v0 + 0.01, v1 - 0.01, 0.003, shade(C.asphalt, r < 0.75 ? 1.16 : 0.86));
-    }
-    for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
-  }
+  g.aux.set(0, 0, -1);
+  if (CS.victorian) for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
   // The frontages in this segment's `along` coordinate.
   const alOf = (f: Frontage) => (f === loF ? loAl : hiAl);
   const drive = (f: Frontage): [number, number] | null => {
