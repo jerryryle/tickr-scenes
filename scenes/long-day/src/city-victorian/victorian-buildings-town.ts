@@ -497,12 +497,13 @@ function vicTownHall(s: Batch, b: VicRect, y0: number, hs: number, walls: readon
   const x0 = cx - W / 2, x1 = cx + W / 2, z0 = cz - D / 2, z1 = cz + D / 2;
   const lw = walls.filter(vIsRender), stone = lw.length ? vPick(rnd, lw) : VIC.stone, roof = vPick(rnd, VIC_SLATES), v = Math.floor(rnd() * 4);
   const floors = 3 + (hs > 0.6 ? 1 : 0);
-  const top = vicBox(s, x0, z0, x1, z1, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 5 }, { tile: FACADE.VICT_GRAND, v, floors: floors - 1, floorH: 4.4 }], stone);
+  const top = vicBox(s, x0, z0, x1, z1, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 5, color: vicShade(stone, 0.86) }, { tile: FACADE.VICT_GRAND, v, floors: floors - 1, floorH: 4.4 }], stone);
   s.box(cx, top - 0.25, cz, W + 0.4, 0.5, D + 0.4, vicShade(stone, 0.9));
+  s.box(cx, y0 + 5.0, cz, W + 0.24, 0.3, D + 0.24, vicShade(stone, 0.92));   // the string course over the rusticated ground floor
   vicMansard(s, x0 + 0.2, z0 + 0.2, x1 - 0.2, z1 - 0.2, top, 3.2, 1.1, roof);
   // the clock tower, square, its clock on each face, the belfry and the dome
-  const t = 5.6, ty = vicBox(s, cx - t / 2, z0 - 0.3, cx + t / 2, z0 - 0.3 + t, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 5 }, { tile: FACADE.VICT_GRAND, v, floors: floors + 1, floorH: 4.4 }], stone);
-  const tzc = z0 - 0.3 + t / 2, cy = ty + 1.8;
+  const t = 6.2, ty = vicBox(s, cx - t / 2, z0 - 0.6, cx + t / 2, z0 - 0.6 + t, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 5, color: vicShade(stone, 0.86) }, { tile: FACADE.VICT_GRAND, v, floors: floors + 2, floorH: 4.4 }], stone);
+  const tzc = z0 - 0.6 + t / 2, cy = ty + 1.8;
   vicBox(s, cx - t / 2 + 0.1, tzc - t / 2 + 0.1, cx + t / 2 - 0.1, tzc + t / 2 - 0.1, ty, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 3.6 }], stone);
   for (const [nx, nz] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
     const fx = cx + nx * (t / 2 + 0.02), fz = tzc + nz * (t / 2 + 0.02), rot = nx !== 0 ? Math.PI / 2 : 0;
@@ -525,8 +526,10 @@ function vicGrandBlock(s: Batch, b: VicRect, y0: number, hs: number, walls: read
   const W = Math.min(b.x1 - b.x0, 44), D = Math.min(b.z1 - b.z0, 28), cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
   const x0 = cx - W / 2, x1 = cx + W / 2, z0 = cz - D / 2, z1 = cz + D / 2;
   const wall = vPick(rnd, walls), roof = vPick(rnd, VIC_SLATES), v = Math.floor(rnd() * 4), floors = vClamp(Math.round(4 + hs * 2), 4, 6);
-  const top = vicBox(s, x0, z0, x1, z1, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 4.8 }, { tile: FACADE.VICT_GRAND, v, floors: floors - 1, floorH: 3.8 }], wall);
+  const ground = vIsRender(wall) ? vicShade(wall, 0.86) : VIC.stone;
+  const top = vicBox(s, x0, z0, x1, z1, y0, [{ tile: FACADE.VICT_GRAND, v, floors: 1, floorH: 4.8, color: ground }, { tile: FACADE.VICT_GRAND, v, floors: floors - 1, floorH: 3.8 }], wall);
   s.box(cx, top - 0.25, cz, W + 0.45, 0.5, D + 0.45, vicShade(VIC.stone, 0.95));
+  s.box(cx, y0 + 4.8, cz, W + 0.24, 0.3, D + 0.24, vicShade(VIC.stone, 0.92));   // the string course over the ground floor
   vicMansard(s, x0 + 0.2, z0 + 0.2, x1 - 0.2, z1 - 0.2, top, 3.0, 1.0, roof);
   const pw = Math.min(8, W / 4);
   for (const px of [x0 + pw / 2, x1 - pw / 2]) for (const pz of [z0 + pw / 2, z1 - pw / 2]) {
