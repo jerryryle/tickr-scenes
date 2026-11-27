@@ -513,8 +513,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // Circling low over a point ("at:x,z"), a junction's poles and its traffic; or, given a
       // heading too ("at:x,z,h"), from a fixed spot in the street 16 m out that way and 5 m up. The
       // point is in the journey's coordinates, moved to the world's as the jam shot's is.
-      const p = truck.root.position;
-      cx = DEBUG_AT[0] + p.x - journey.pose.x; cz = DEBUG_AT[1] + p.z - journey.pose.z;
+      const o = worldOffset();
+      cx = DEBUG_AT[0] + o[0]; cz = DEBUG_AT[1] + o[1];
       const a = tourT * 0.25;
       if (DEBUG_AT.length > 2) { const h = DEBUG_AT[2]; cam.position.set(cx + Math.cos(h) * 16, 5, cz - Math.sin(h) * 16); cam.lookAt(cx, 1.2, cz); }
       else { cam.position.set(cx + Math.cos(a) * 30, 22, cz + Math.sin(a) * 30); cam.lookAt(cx, 0, cz); }
@@ -620,7 +620,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // has stood held 5 s.)
       // (The journey's coordinates, the world's less however far the world has been moved: rebase.)
       const J = DEBUG_JAM_SHOT ? DEBUG_JAM_SHOT.split(",").map(Number) : null;
-      const at = J ? [J[0] + p.x - journey.pose.x, J[1] + p.z - journey.pose.z, J[2]] : (journey.st.jamT ?? 0) > 5 ? [p.x, p.z, truck.heading] : null;
+      const o = worldOffset(), at = J ? [J[0] + o[0], J[1] + o[1], J[2]] : (journey.st.jamT ?? 0) > 5 ? [p.x, p.z, truck.heading] : null;
       if ((!jamShot || J) && at) {   // (the given spot: each frame, as the world may move under it)
         const [x, z, h] = at, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h), nose = truckLayout(truck.model).front;
         jamShot = { x: x + fx * (nose + 14) + rx * 2.5, y: 4.5, z: z + fz * (nose + 14) + rz * 2.5, lx: x + fx * (nose - 1), lz: z + fz * (nose - 1) };
@@ -724,11 +724,20 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (prev) return { road: prev, u: prev.duration + st.cityTime + journey.frac, s: prev.SB + sArr };
     return { road: arr, u: st.cityTime + journey.frac, s: arr.SB + sArr };
   }
+  // How far the world stands from the journey's coordinates (the debug shots placed in them, "at:"
+  // and the jam shot's given spot). It changes only when the world is moved (rebase), so it is taken
+  // once after each move: the truck's smoothed place less its journey pose differs a little from
+  // frame to frame while it drives, and a camera placed by it each frame shook.
+  let worldOff: [number, number] | null = null;
+  function worldOffset(): [number, number] {
+    const p = truck.root.position;
+    return worldOff ??= [p.x - journey.pose.x, p.z - journey.pose.z];
+  }
   // The world moved by (dx, dz): the next city took over out on the road. Everything on screen
   // that isn't placed from the journey each frame moves with it, so nothing visibly changes.
   // (The road itself is placed from the journey: pickRoad.)
   function rebase(dx: number, dz: number) {
-    director.rebase(dx, dz); puffs.rebase(dx, dz); atmosphere.rebase(dx, dz);
+    director.rebase(dx, dz); puffs.rebase(dx, dz); atmosphere.rebase(dx, dz); worldOff = null;
     lastX += dx; lastZ += dz;
   }
   // The skyline's height and whose it is: the city's own in town, sinking away on the road out and

@@ -141,8 +141,10 @@ export const signalCycleIndex = (n: CNode, time: number) => Math.floor(time / si
 // A pose (lamp LAMP_POSE) is geometry drawn only while its phase has the junction: from the start
 // of its green to the start of the next phase's, through its yellow and all-red (a Victorian
 // constable's pose for that phase). It is shaded as if lit, by a fixed light and darker after dark.
-const LAMP_POSE = 6, POSE_NIGHT = 0.3;   // (POSE_NIGHT: how bright a pose is after dark, by NIGHT_GLOW)
-const lampTag = (lamp: 0 | 1 | 2 | typeof LAMP_POSE, offset: number, hide = false) => (lamp + (hide ? 3 : 0)) * 64 + offset;
+// (POSE_NIGHT: how bright a pose is after dark, by NIGHT_GLOW. A LAMP_POSE_GLOW part of a pose, the
+// constable's bull's-eye lantern, is dull brass by day and glows after dark.)
+const LAMP_POSE = 6, LAMP_POSE_GLOW = 7, POSE_NIGHT = 2.2;
+const lampTag = (lamp: 0 | 1 | 2 | typeof LAMP_POSE | typeof LAMP_POSE_GLOW, offset: number, hide = false) => (lamp + (hide ? 3 : 0)) * 64 + offset;
 
 // Journey time modulo SIGNAL_WRAP, so the shader's float32 time stays exact on long runs.
 const signalUniforms = { uSignalTime: { value: 0 } };
@@ -174,7 +176,7 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>
   vShade = 1.0;
   if (aAux.y < 0.5) {
-    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0, pose = lamp > ${(LAMP_POSE - 0.5).toFixed(1)} ? 1.0 : 0.0, hide = lamp > 2.5 ? 1.0 : 0.0;
+    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0, pose = lamp > ${(LAMP_POSE - 0.5).toFixed(1)} ? 1.0 : 0.0, glow = lamp > ${(LAMP_POSE_GLOW - 0.5).toFixed(1)} ? 1.0 : 0.0, hide = lamp > 2.5 ? 1.0 : 0.0;
     lamp -= hide * 3.0;
     float phases = floor(aAux.z / 4.0) + 2.0, phase = aAux.z - (phases - 2.0) * 4.0;
     float t = mod(uSignalTime + off, phases * ${SIG_SLOT.toFixed(1)});
@@ -194,7 +196,7 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
     }
     vLit = pose > 0.5 ? holds : (abs(state - lamp) < 0.5 ? 1.0 : 0.0);
     if (hide > 0.5 && vLit < 0.5) transformed = vec3(0.0);
-    if (pose > 0.5) vShade = (0.55 + 0.45 * max(dot(normal, vec3(0.32, 0.84, 0.43)), 0.0)) * mix(1.0, ${POSE_NIGHT.toFixed(2)}, uNight);
+    if (pose > 0.5) vShade = glow > 0.5 ? mix(0.6, 1.8, uNight) : (0.55 + 0.45 * max(dot(normal, vec3(0.32, 0.84, 0.43)), 0.0)) * mix(1.0, ${POSE_NIGHT.toFixed(2)}, uNight);
   } else if (aAux.y < 1.5) {
     vLit = lampHash(floor(uSignalTime * 9.0) + aAux.x * 7.13) > 0.975 ? 0.25 : 1.0;
   } else if (aAux.y < 2.5) {
@@ -209,7 +211,7 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <common>", "#include <common>\nvarying float vLit;\nvarying float vShade;")
       .replace("#include <color_fragment>", "#include <color_fragment>\n  diffuseColor.rgb *= mix(0.12, 1.0, vLit) * vShade;");
   };
-  mat.customProgramCacheKey = () => "signal-lamp-v7";
+  mat.customProgramCacheKey = () => "signal-lamp-v8";
   return mat;
 }
 
@@ -512,7 +514,7 @@ export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode,
     const poses = [];
     for (let p = 0; p < phases; p++) {
       const held = n.arms.find((_, j) => n.phaseOf[j] !== p);
-      if (held) poses.push({ yaw: held.h, tag: () => lamps.aux.set(lampTag(LAMP_POSE, offset), -(n.id + 1), p + 4 * (phases - 2)) });
+      if (held) poses.push({ yaw: held.h, tag: (glow = false) => lamps.aux.set(lampTag(glow ? LAMP_POSE_GLOW : LAMP_POSE, offset), -(n.id + 1), p + 4 * (phases - 2)) });
     }
     vicConstable(lamps, n.x - ox, n.z - oz, poses);
     lamps.aux.set(0, 0, -1);

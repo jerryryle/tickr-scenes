@@ -646,6 +646,8 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
     }
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook, !!CS.victorian);
+  // (A Victorian junction's constable, drawn where its poles would stand, stands in its gas light.)
+  if (CS.victorian && n.control === "signal" && !signalPoles(G, n).length) DC.lampSites.push(n.x - ox, CURB_H + 4.4, n.z - oz);
   buildStopSigns(solid, G, n, ox, oz, !!CS.storybook, !!CS.victorian);
   // (Their poles and posts, for the driver's walks and the street life.)
   for (const p of signalPoles(G, n)) pavementObstacle(p.px - ox, p.pz - oz, 0.16);

@@ -111,19 +111,27 @@ function bobbyBoxes(): number[] {
     F.mesh.getMatrixAt(i, m); F.mesh.getColorAt(i, c); m.decompose(p, q, sc); e.setFromQuaternion(q, "XYZ");
     out.push(p.x, p.y, p.z, sc.x, sc.y, sc.z, c.getHex(), e.x, e.y, e.z);
   }
+  // (His white gloves for point duty, on the ends of his sleeves: Figures draws no hands.)
+  for (const h of [F.handL, F.handR]) out.push(h[0], h[1], h[2], 0.1, 0.1, 0.1, VS_GLOVE, 0, 0, 0);
   F.mesh.geometry.dispose();
   return vsBobby = out;
 }
 // vicConstable draws him at (x, z), once for each of `poses`: the heading he faces (Frame2's sense)
-// and the tag that shows that pose.
-export function vicConstable(lamps: Batch, x: number, z: number, poses: { yaw: number; tag: () => void }[]) {
+// and the tag that shows that pose (tag(true): the part of it that glows after dark). He wears white
+// gloves for point duty, and a bull's-eye lantern on his belt glows after dark; the junction's gas
+// light falls on him (city.ts registers a lamp over him), so he and his signals read at night.
+export function vicConstable(lamps: Batch, x: number, z: number, poses: { yaw: number; tag: (glow?: boolean) => void }[]) {
   if (BATCH.dry) return;   // (a probe build, where every Batch drops what it is given and Figures cannot pose him)
   const B = bobbyBoxes();
   for (const { yaw, tag } of poses) {
     tag();
-    vsLocal(lamps, x, z, yaw, () => { for (let i = 0; i < B.length; i += 10) lamps.boxR(B[i], B[i + 1], B[i + 2], B[i + 3], B[i + 4], B[i + 5], B[i + 6], B[i + 7], B[i + 8], B[i + 9]); });
+    vsLocal(lamps, x, z, yaw, () => {
+      for (let i = 0; i < B.length; i += 10) lamps.boxR(B[i], B[i + 1], B[i + 2], B[i + 3], B[i + 4], B[i + 5], B[i + 6], B[i + 7], B[i + 8], B[i + 9]);
+      tag(true); lamps.box(0.2, VS_BELT, 0.1, 0.1, 0.13, 0.1, VS_BULLSEYE);
+    });
   }
 }
+const VS_GLOVE = 0xf4f1e8, VS_BELT = 0.98, VS_BULLSEYE = 0xffb04a;
 const VS_BOARD = 0xece4cc;
 
 // ---- street furniture ------------------------------------------------------------------------------
