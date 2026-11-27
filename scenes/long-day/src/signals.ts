@@ -15,6 +15,7 @@ import { inPoly, polyDist, sidewalkCorner } from "./citygraph.ts";
 import { STOP_BACK, Path, LANE_KERB, LANE_INNER } from "./route.ts";
 import { SPECS } from "./truck.ts";
 import { SB } from "./city-storybook/storybook-buildings-town.ts";
+import { vicHaltPost, vicSignal } from "./city-victorian/victorian-street.ts";
 
 const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_SLOT = 13;
 export const SIGNAL_CYCLE = 2 * SIG_SLOT;            // a two-phase intersection's cycle
@@ -134,8 +135,9 @@ export function signalGreenLeft(n: CNode, phase: number, time: number, seed: num
 export const signalCycleIndex = (n: CNode, time: number) => Math.floor(time / signalCycle(n));
 
 // Lamp tags: aux.x = lamp (0 red, 1 yellow, 2 green) * 64 + offset; aux.y = -(its node's id + 1);
-// aux.z = phase + 4 * (phases - 2).
-const lampTag = (lamp: 0 | 1 | 2, offset: number) => lamp * 64 + offset;
+// aux.z = phase + 4 * (phases - 2). With `hide`, the lamp is 3 more: geometry drawn only while its
+// state shows (a Victorian signal's semaphore arm in each of its positions) instead of dimmed.
+const lampTag = (lamp: 0 | 1 | 2, offset: number, hide = false) => (lamp + (hide ? 3 : 0)) * 64 + offset;
 
 // Journey time modulo SIGNAL_WRAP, so the shader's float32 time stays exact on long runs.
 const signalUniforms = { uSignalTime: { value: 0 } };
@@ -164,7 +166,8 @@ varying float vLit;
 float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>
   if (aAux.y < 0.5) {
-    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0;
+    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0, hide = lamp > 2.5 ? 1.0 : 0.0;
+    lamp -= hide * 3.0;
     float phases = floor(aAux.z / 4.0) + 2.0, phase = aAux.z - (phases - 2.0) * 4.0;
     float t = mod(uSignalTime + off, phases * ${SIG_SLOT.toFixed(1)});
     float slot = floor(t / ${SIG_SLOT.toFixed(1)}), w = t - slot * ${SIG_SLOT.toFixed(1)};
@@ -179,6 +182,7 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       state = abs(phase - pz) < 0.5 ? pc : (fz < -0.5 || abs(phase - fz) < 0.5 ? fc : 0.0);
     }
     vLit = abs(state - lamp) < 0.5 ? 1.0 : 0.0;
+    if (hide > 0.5 && vLit < 0.5) transformed = vec3(0.0);
   } else if (aAux.y < 1.5) {
     vLit = lampHash(floor(uSignalTime * 9.0) + aAux.x * 7.13) > 0.975 ? 0.25 : 1.0;
   } else if (aAux.y < 2.5) {
@@ -193,7 +197,7 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <common>", "#include <common>\nvarying float vLit;")
       .replace("#include <color_fragment>", "#include <color_fragment>\n  diffuseColor.rgb *= mix(0.12, 1.0, vLit);");
   };
-  mat.customProgramCacheKey = () => "signal-lamp-v5";
+  mat.customProgramCacheKey = () => "signal-lamp-v6";
   return mat;
 }
 
@@ -212,8 +216,9 @@ const candyPole = (b: Batch, x: number, z: number, y0: number, y1: number, r: nu
 // white, bolted to the front of its post (the post hidden behind it, seen only below it), with a
 // plain grey back.
 const STOP_GLYPHS = [["###", "#..", "###", "..#", "###"], ["###", ".#.", ".#.", ".#.", ".#."], ["###", "#.#", "#.#", "#.#", "###"], ["###", "#.#", "###", "#..", "#.."]];
-// (Where its posts stand, world (x, z), one per approach: stopSignPosts.)
-export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number, story = false) {
+// (Where its posts stand, world (x, z), one per approach: stopSignPosts.) The Victorian city's
+// (`vic`) is a cast-iron post with a painted HALT board as wide (victorian-street.ts vicHaltPost).
+export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number, story = false, vic = false) {
   if (n.control !== "stop") return;
   const y0 = 2.15, post = 0.04, posts = stopSignPosts(G, n);
   n.arms.forEach((arm, i) => {
@@ -223,6 +228,7 @@ export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number,
     // traffic's right is (rx, rz).
     const ux = Math.cos(arm.h), uz = -Math.sin(arm.h), rx = -uz, rz = ux;
     const px = at[0] - ox, pz = at[1] - oz;
+    if (vic) { vicHaltPost(solid, px, pz, ux, uz, y0, STOP_PLATE); return; }
     if (story) { candyPole(solid, px, pz, 0, y0 + 0.45, post + 0.02, 0.6, SB.red, SB.cream); solid.ico(px, y0 + 0.5, pz, 0.08, SB.mustard); }
     else solid.cyl(px, (y0 + 0.2) / 2, pz, post, y0 + 0.2, POLE, 6);
     // A polygon of `sides` and circumradius R, d in front of the post's axis, facing (fx, fz). With
@@ -482,7 +488,10 @@ export function signalPoleOk(G: CityGraph, near: Iterable<number>, x: number, z:
 // its head's face, a box or in the storybook (`story`) a ball, so its top reads from the overhead
 // camera. `plates`: for the name plates on the mast arms, each
 // naming the cross street to the traffic coming up to it.
-export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false) {
+// The Victorian city's (`vic`) are of the Westminster kind of 1868, each standing where a pole
+// would, with no mast arm and no name plate: a tall iron column with red and green gas lamps and a
+// semaphore arm out over the kerb (victorian-street.ts vicSignal), tagged as the heads' lamps are.
+export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false, vic = false) {
   if (n.control !== "signal") return;
   const offset = signalOffset(n, seed), armY = 6.2;
   for (const { i, px: wx, pz: wz, h, toCentre } of signalPoles(G, n)) {
@@ -490,6 +499,10 @@ export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode,
     const fx = Math.cos(h), fz = -Math.sin(h), reach = toCentre + 0.4;
     // The arm reaches back over the lanes (to the traffic's left).
     const ax = -Math.sin(h), az = -Math.cos(h), armH = Math.atan2(-az, ax);
+    if (vic) {
+      vicSignal(solid, lamps, px, pz, fx, fz, ax, az, (k, hide) => lamps.aux.set(lampTag(k, offset, hide), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2)));
+      continue;
+    }
     if (story) {
       candyPole(solid, px, pz, 0, armY + 0.1, 0.16, 1.0, SB.pink, SB.cream);
       solid.ico(px, armY + 0.3, pz, 0.26, SB.mustard);

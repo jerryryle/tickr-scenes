@@ -374,7 +374,7 @@ export const ROAD_R53: RoadMap = {
     { kind: "distance", s: 640, side: 1, len: 40, variant: 0, text: "RAVENSGATE  2 MI", way: -1 },
     { kind: "welcome", s: 4040, side: 1, len: 40, variant: 2, text: "WELCOME TO RAVENSGATE", way: -1 },
     { kind: "leave", s: 240, side: 1, len: 40, variant: 2, text: "LEAVING RAVENSGATE", way: 1 },
-    { kind: "distance", s: 640, side: 1, len: 40, variant: 0, text: "GRAND CENTRAL  2 MI", way: 1 },
+    { kind: "distance", s: 640, side: 1, len: 40, variant: 2, text: "GRAND CENTRAL  2 MI", way: 1 },
     { kind: "watertower", s: 1133.45, side: -1, len: 90, variant: 1, way: 1 },
     { kind: "truckstop", s: 1643.43, side: 1, len: 260, variant: 0, way: 1 },
     { kind: "gas", s: 2134.26, side: -1, len: 110, variant: 3, way: 1 },

@@ -273,7 +273,7 @@ export const ROAD_R60: RoadMap = {
     { kind: "distance", s: 640, side: 1, len: 40, variant: 0, text: "RAVENSGATE  1 MI", way: -1 },
     { kind: "welcome", s: 2780, side: 1, len: 40, variant: 2, text: "WELCOME TO RAVENSGATE", way: -1 },
     { kind: "leave", s: 240, side: 1, len: 40, variant: 2, text: "LEAVING RAVENSGATE", way: 1 },
-    { kind: "distance", s: 640, side: 1, len: 40, variant: 0, text: "SAGUARO SPRINGS  1 MI", way: 1 },
+    { kind: "distance", s: 640, side: 1, len: 40, variant: 2, text: "SAGUARO SPRINGS  1 MI", way: 1 },
     { kind: "truckstop", s: 1234.09, side: 1, len: 260, variant: 0, way: 1 },
     { kind: "billboards", s: 1663.81, side: -1, len: 320, variant: 1, way: 1 },
     { kind: "welcome", s: 2780, side: 1, len: 40, variant: 0, text: "WELCOME TO SAGUARO SPRINGS", way: 1 },
