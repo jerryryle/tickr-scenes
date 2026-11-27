@@ -211,7 +211,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   steamerTrunk: { size: [1.0, 0.62, 0.56], build: (b, x, y, z, i) => {
     b.box(x, y + 0.3, z, 0.98, 0.6, 0.54, vpick([0x5e3e24, 0x3a4a3a, 0x6a2a22], i));
     for (const dx of [-0.3, 0.3]) b.box(x + dx, y + 0.3, z, 0.06, 0.61, 0.56, 0xb88e5a);
-    for (const yy of [0.04, 0.42, 0.58]) b.box(x, y + yy, z, 1.0, 0.04, 0.56, 0xb88e5a);
+    for (const yy of [0.04, 0.42, 0.583]) b.box(x, y + yy, z, 1.0, 0.04, 0.56, 0xb88e5a);   // (the top band's top 3 mm over the lid's)
     for (const sx of [-1, 1]) for (const yy of [0.04, 0.58]) for (const sz of [-1, 1]) b.box(x + sx * 0.48, y + yy, z + sz * 0.26, 0.06, 0.06, 0.06, VC.brass);
     for (const sx of [-1, 1]) b.box(x + sx * 0.505, y + 0.32, z, 0.02, 0.04, 0.2, 0x2a1a10);
     b.box(x, y + 0.42, z + 0.283, 0.08, 0.1, 0.01, VC.brass);
@@ -268,7 +268,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.box(x - 0.8, y + 0.21, z, 0.4, 0.42, 0.52, wood);
     b.box(x - 0.1, y + 0.18, z, 1.0, 0.36, 0.42, wood);
     b.box(x + 0.7, y + 0.21, z, 0.58, 0.42, 0.52, wood);
-    b.box(x + 0.97, y + 0.22, z, 0.06, 0.44, 0.56, 0x2a1810);
+    b.box(x + 0.97, y + 0.225, z, 0.06, 0.43, 0.56, 0x2a1810);   // (its foot 1 cm off the case's underside)
     for (const s of [-1, 1]) b.ico(x + 1.0, y + 0.36, z + s * 0.2, 0.04, VC.brass);
     b.cyl(x + 0.66, y + 0.425, z, 0.19, 0.01, VC.cream, 16);
     b.cyl(x + 0.82, y + 0.426, z, 0.1, 0.01, 0x2a3a7a, 10);
@@ -311,7 +311,7 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
   } },
   // A gramophone: a mahogany box with a black record on its turntable and a great brass horn.
   gramophone: { size: [0.64, 0.66, 0.4], build: (b, x, y, z) => {
-    b.box(x - 0.14, y + 0.08, z, 0.34, 0.16, 0.34, 0x5a2a18);
+    b.box(x - 0.14, y + 0.09, z, 0.34, 0.14, 0.34, 0x5a2a18);   // (standing in its plinth, not flush with its underside)
     b.box(x - 0.14, y + 0.012, z, 0.36, 0.024, 0.36, 0x3e1c10);
     b.cyl(x - 0.14, y + 0.165, z, 0.15, 0.01, 0x161616, 16);
     b.cyl(x - 0.14, y + 0.171, z, 0.05, 0.004, 0xb83228, 8);
