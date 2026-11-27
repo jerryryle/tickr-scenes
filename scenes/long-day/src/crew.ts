@@ -108,6 +108,22 @@ export class Crew {
       this.jackHandle.position.set(JACK_PIVOT[0], JACK_PIVOT[1], 0);
       this.tools.palletJack.add(this.jackHandle);
     }
+    // In a Victorian city the hand truck is a wooden sack truck in the same frame: oak rails with
+    // turned grips past the top rung, iron-tyred wheels and an iron nose plate (update shows one
+    // or the other).
+    {
+      const b = new Batch(), OAK = 0x9a6e40, IRON = 0x2e2e30;
+      for (const z of [-0.2, 0.2]) {
+        b.cyl(0, 0, z, HT_WHEEL, 0.05, IRON, 10, Math.PI / 2); b.cyl(0, 0, z, HT_WHEEL * 0.55, 0.055, OAK, 8, Math.PI / 2);
+        b.box(0.02, 0.57, z * 0.9, 0.05, 1.3, 0.05, OAK);
+        b.box(0.02, HT_GRIP[1] + 0.06, z * 0.9, 0.035, 0.14, 0.035, 0x5a3a22);
+      }
+      for (const y of [0.3, 0.65, HT_GRIP[1] - 0.04]) b.box(0.02, y, 0, 0.03, 0.04, 0.36, OAK);
+      b.box(0.14, HT_PLATE + 0.015, 0, 0.24, 0.03, 0.4, IRON);
+      b.box(0.02, 0, 0, 0.03, 0.03, 0.46, IRON);
+      const sack = b.build(material)!; sack.visible = false;
+      this.tools.handTruck.add(sack);
+    }
     // Forklift in its own frame: origin on the ground under the fork heels, forks along +x.
     {
       const YEL = 0xe8a317, DARK = 0x2a2b2e, b = new Batch();
@@ -180,6 +196,7 @@ export class Crew {
     this.stagedShown.length = 0;
     this.herd?.hide();
     this.tools.handTruck.visible = this.tools.palletJack.visible = false;
+    { const [modern, sack] = this.tools.handTruck.children, vic = !!j.plan?.style.victorian; modern.visible = !vic; sack.visible = vic; }
     this.forklift.visible = false; this.stackWorking = false;
     this.forkDoor = 0; this.forkSpot = null; this.mateSpot = null;
     this.gagPoint = null;
