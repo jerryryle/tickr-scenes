@@ -14,7 +14,7 @@ import * as THREE from "three@0.187.0";
 import { GATE_LEN, LEAF_HANDLE_Y, LEAF_OPEN, truckLayout } from "./truck.ts";
 import type { TruckLayout, TruckModel } from "./truck.ts";
 import { DOCK_DEPTH, DOCK_PLATFORM } from "./facilities.ts";
-import { CARGO_BY_ID, slotAlign, slotEnd, TRUCK_SLOTS } from "./cargo.ts";
+import { CARGO_BY_ID, slotAlign, slotEnd, TRUCK_SLOTS, WHEELED } from "./cargo.ts";
 import type { Handling } from "./cargo.ts";
 import { DWELL } from "./journey.ts";
 import type { StackMode, Stop } from "./journey.ts";
@@ -1189,7 +1189,7 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
   // walk ramp: never turned in the bed, but drawn straight down the ramp and on past its foot
   // (outOfBed) and pushed straight up it (intoBed), the driver below it, as the hot tub on its jack
   // is; drawn out of a doorway, not turned round in there (flipIn), and turned only out on the street.)
-  const wideCrate = L.loader === "ramp" && cargo.handling === "push" && stop.cargo !== "motorcycles" && size[2] / 2 + 0.4 + BODY_R + 0.05 > L.hw;
+  const wideCrate = L.loader === "ramp" && cargo.handling === "push" && !WHEELED.has(stop.cargo) && size[2] / 2 + 0.4 + BODY_R + 0.05 > L.hw;
   const walk = (group: ChoreGroup, a: [number, number, number], b: [number, number, number], speed: number, extra: Partial<Chore> = {}) => {
     const team = !!extra.helper && !!extra.item, last = out[out.length - 1];
     // (Going nowhere, straight after a walk that ends here with the same in hand: none. Stood still
@@ -1623,14 +1623,14 @@ export function planChores(model: TruckModel, stop: Stop, dockStair: number | nu
     // (Not a motorcycle: wheeled beside the driver, it goes up and down the ramp at their side.)
     // (Nor what's on the pallet jack too wide to turn round in the bed, a hot tub: pushed up it,
     // the driver below, and drawn back down it, never turned in the bed.)
-    const drawnBy = (item: ItemKind | null, t: Chore["tool"]) => ramp && ((!!t && !(t === "handTruck" && !item)) || (!!item && ((cargo.handling === "push" && stop.cargo !== "motorcycles" && !wideCrate) || cargo.handling === "roll")));
+    const drawnBy = (item: ItemKind | null, t: Chore["tool"]) => ramp && ((!!t && !(t === "handTruck" && !item)) || (!!item && ((cargo.handling === "push" && !WHEELED.has(stop.cargo) && !wideCrate) || cargo.handling === "roll")));
     // (Up the ramp, a rolled load is pushed ahead of the driver, straight up and on to its place, as
     // anyone rolls a tyre or a drum up a slope; drawn, and turned round in the bed, only coming down.)
     const drawnUp = (item: ItemKind | null, t: Chore["tool"]) => drawnBy(item, t) && !(item && cargo.handling === "roll");
     // (A motorcycle wheeled at the driver's right (crew.ts pushLoad), facing up the walk ramp both
     // ways (walked up it, backed down it): the driver keeps BIKE_RAMP_Z off its middle the other
     // way, so the two of them are on it.)
-    const bike = (item: ItemKind | null) => ramp && !!item && stop.cargo === "motorcycles";
+    const bike = (item: ItemKind | null) => ramp && !!item && WHEELED.has(stop.cargo);
     // Up it, lined up on it well short of its foot (`upFrom`), the driver walks round what's held
     // and backs up the ramp with it.
     // A team lift: on and off it by a wide turn behind it, as wide as the two carriers and the load

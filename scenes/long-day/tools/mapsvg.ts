@@ -190,7 +190,7 @@ export const mapPath = (F: CityHead) => `build/long-day-maps/city-${F.style}/${F
 // The world map (docs/long-day-cities.md, "Maps"): the world graph alone, one node a city at its place
 // (world-roads.ts WORLD_PLACES), coloured by style, and one line a road, labelled with its id and
 // length; a road driven one way only has an arrow at the city it runs into.
-const STYLE_FILL: Record<string, string> = { coastal: "#2f78b8", metro: "#6b6b8a", desert: "#d9a441", brick: "#a0522d", mainstreet: "#4f9a3c", port: "#1f6f78", storybook: "#d83a9a" };
+const STYLE_FILL: Record<string, string> = { coastal: "#2f78b8", metro: "#6b6b8a", desert: "#d9a441", brick: "#a0522d", mainstreet: "#4f9a3c", port: "#1f6f78", storybook: "#d83a9a", victorian: "#6a5a4a" };
 export function worldSvg(): string {
   // (Scaled to fit 1400 units across, the places' own units being arbitrary.)
   const span = Math.max(1, ...Object.values(WORLD_PLACES).flat()), S = 1400 / span, at = (id: string) => WORLD_PLACES[id].map((v) => v * S + 80) as [number, number];

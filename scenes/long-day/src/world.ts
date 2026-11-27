@@ -49,9 +49,9 @@ export const CATALOGUE: CityHead[] = [
   "port-rainier-bay",
   "storybook-fizzlebury",
   "storybook-higgle-on-the-wobble",
-  "storybook-snickerwick",
   "storybook-tumbledown-tuft",
   "storybook-wumbleton",
+  "victorian-ravensgate",
 ].map((id) => {
   const F = CITY_HEADS[id];
   if (!F) throw new Error(`world.ts: no city ${id} in src/city-*/`);

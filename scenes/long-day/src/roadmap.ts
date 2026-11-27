@@ -53,7 +53,9 @@ export interface RoadMap {
   heading: number[]; height: number[]; hill: number[];
   // The land every 10 m from gate a: how much of it is b's (the rest a's), how much of the
   // storybook's look creeps in, and how much of it is coast, the sea on side `coastSide`.
-  blend: number[]; story?: number[]; coast?: number[]; coastSide?: 1 | -1;
+  // (`period`: how much of the Victorian city has crept in, which turns the trucks into carriages
+  // over the last stretch before one: truck.ts carriage.)
+  blend: number[]; story?: number[]; period?: number[]; coast?: number[]; coastSide?: 1 | -1;
   biomes: [string, string];   // a's land and b's (country.ts BiomeId)
   pieces: RoadMapPiece[];
   items: RoadItems;

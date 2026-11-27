@@ -13,7 +13,7 @@ import type { Steps } from "./slices.ts";
 import { readConfig } from "./env.ts";
 import { DEBUG_VISIT } from "./debug.ts";
 import { parseVisitSpecs, visitOf } from "./visits.ts";
-import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCENARIO, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_STOP, DEBUG_STOP_LEAD, DEBUG_VIEW } from "./debug.ts";
+import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_EYE_SECS, DEBUG_EYES, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCENARIO, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_STOP, DEBUG_STOP_LEAD, DEBUG_VIEW } from "./debug.ts";
 import { SCENARIOS } from "./scenarios.ts";
 import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
@@ -60,6 +60,9 @@ import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
 import { SEA_ALONG, SeaLife } from "./sealife.ts";
 import { KnittingWorksFx } from "./city-storybook/storybook-landmark-knitting-works.ts";
+import { SteamBreweryFx } from "./city-victorian/victorian-landmark-steam-brewery.ts";
+import { carriageAt } from "./carriage.ts";
+import { applySetts, SETT_WET } from "./city-victorian/victorian-street.ts";
 import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 
@@ -84,7 +87,8 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let other: Truck | null = null;
   const backdrop = new Backdrop();
   let seekMs = 0;   // the last seek's cost (debug HUD)
-  let traffic: Traffic, crowd: Crowd, ambient: Ambient, seaLife: SeaLife, worksFx: KnittingWorksFx, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
+  let worldOff: [number, number] | null = null;   // (worldOffset's, taken afresh after each move of the world and each city built)
+  let traffic: Traffic, crowd: Crowd, ambient: Ambient, seaLife: SeaLife, worksFx: KnittingWorksFx, breweryFx: SteamBreweryFx, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
   let freewayReach: FreewayReach, cityCars: FreewayTraffic, roadCars: FreewayTraffic;
   let roadFrame: { road: CountryRoad; F: Frame } | null = null;
   let atmosphere: Atmosphere;
@@ -165,19 +169,23 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return best;
   }
   function buildCity() {
+    worldOff = null;
     streamer?.clear();
     buildSea();
     seaLife.build(journey.plan);
-    FIG_STYLE.storybook = !!journey.plan.style.storybook;
-    if (traffic) traffic.ryderToon = journey.plan.style.storybook ? 1 : 0;
-    worksFx.build(journey.plan, (bx, bz) => { const L = siteLayout(journey.plan, bx, bz); return L.kind === "dock" ? L : null; });
+    FIG_STYLE.storybook = !!journey.plan.style.storybook; FIG_STYLE.victorian = !!journey.plan.style.victorian;
+    if (traffic) { traffic.ryderToon = journey.plan.style.storybook ? 1 : 0; traffic.ryderCarriage = journey.plan.style.victorian ? 1 : 0; }
+    const dockOf = (bx: number, bz: number) => { const L = siteLayout(journey.plan, bx, bz); return L.kind === "dock" ? L : null; };
+    if (journey.plan.style.storybook) worksFx.build(journey.plan, dockOf); else worksFx.clear();
+    breweryFx.build(journey.plan, dockOf);
     engine.seaFar = journey.plan.outline.sea === null ? 0 : SEA_FAR;
     engine.setSky(journey.plan.style.sky);
     // (Already up on the road in, as the town's skyline rose: backdropState.)
     if (backdrop.built !== `${journey.plan.style.id}/${journey.st.citySeed}`) backdrop.build(journey.plan.style, journey.st.citySeed);
     // Each chunk's tall parts go into the occlusion map the camera consults (occlusion.ts).
-    const toon = journey.plan.style.storybook ? 1 : 0;   // (the storybook's parked trucks are cartoons: truck.ts toonWarp)
-    const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(toon ? st.map((x) => ({ ...x, toon })) : st));
+    // (The storybook's parked trucks are cartoons, the Victorian city's carriages: truck.ts makeToon, makeCarriage.)
+    const toon = journey.plan.style.storybook ? 1 : 0, carriage = journey.plan.style.victorian ? 1 : 0;
+    const build = makeCityChunkBuilder(mats, journey.plan, (st) => fleet.build(toon || carriage ? st.map((x) => ({ ...x, toon, carriage })) : st));
     const withOcclusion = function* (cx: number, cz: number): ChunkBuild {
       const g = yield* build(cx, cz);
       // (The block holds its sign slots and lamp sites from here: dropped at this yield, as
@@ -276,11 +284,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   }
 
   // The trucks turn cartoonish (truck.ts toonWarp) wholly in the storybook city, and on the
-  // drive to or from it as the land does (CountryRoad.storyAt).
+  // drive to or from it as the land does (CountryRoad.storyAt); and into carriages (truck.ts
+  // makeCarriage) in the Victorian city and on the road as it creeps in (CountryRoad.periodAt).
+  // The carriage comes in over the short stretch carriage.ts carriageAt gives.
   function setToon() {
     const road = journey.st.mode === "country" ? journey.country : null;
     const k = road ? road.storyAt(journey.countryS) : journey.plan.style.storybook ? 1 : 0;
-    truck.toon = k; if (other) other.toon = k;
+    const c = road ? carriageAt(road.periodAt(journey.countryS)) : journey.plan.style.victorian ? 1 : 0;
+    truck.toon = k; truck.carriage = c; if (other) { other.toon = k; other.carriage = c; }
   }
   function newTruck(model: TruckModel) {
     const t = new Truck(kit, model, puffs);
@@ -482,11 +493,14 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const a = tourT * 0.12;
       cam.position.set(cx + Math.cos(a) * 55, 38, cz + Math.sin(a) * 55); cam.lookAt(cx, 0, cz);
     } else if (DEBUG_VIEW.startsWith("works") && plan.worksBlock >= 0) {
-      // These show the storybook city's knitting works from across its street, drifting along it ("works"), or
-      // close on the vats ("worksVats") or the spools ("worksSpools").
+      // These show the storybook city's knitting works or the Victorian city's steam brewery from across its
+      // street, drifting along it ("works"), or circling high ("worksHigh"); close on the knitting works' vats
+      // ("worksVats") or spools ("worksSpools"); close on the brewery's engine ("worksEngine"), its cooperage
+      // yard ("worksYard"), its dock ("worksDock") or the top of its brewhouse ("worksTop").
       const B = plan.graph.blocks[plan.worksBlock], an = B.anchor!, G = plan.graph;
       const P = (a: number, n: number) => G.facePt(an.face, a + an.delta, n);
-      const [ca, cn, cy, la, ln, ly] = DEBUG_VIEW === "worksVats" ? [44, -15, 6, 41, 9, 5] : DEBUG_VIEW === "worksSpools" ? [24, -10, 5, 20.5, 13, 9] : DEBUG_VIEW === "worksHigh" ? [30 + Math.cos(tourT * 0.15) * 60, 25 + Math.sin(tourT * 0.15) * 60, 38, 30, 22, 4] : [18 + tourT * 1.5, -48, 12, 30 + tourT * 0.4, 20, 8];
+      const [ca, cn, cy, la, ln, ly] = DEBUG_VIEW === "worksVats" ? [44, -15, 6, 41, 9, 5] : DEBUG_VIEW === "worksSpools" ? [24, -10, 5, 20.5, 13, 9] : DEBUG_VIEW === "worksEngine" ? [43, -11, 11, 44, 16, 7.5] : DEBUG_VIEW === "worksYard" ? [40, -5, 8, 40, 7, 1] : DEBUG_VIEW === "worksDock" ? [24, -12, 3.5, 20.5, 13, 3.5]
+        : DEBUG_VIEW === "worksTop" ? [26, -22, 14, 22, 20, 21] : DEBUG_VIEW === "worksHigh" ? [30 + Math.cos(tourT * 0.15) * 60, 25 + Math.sin(tourT * 0.15) * 60, 38, 30, 22, 4] : [18 + tourT * 1.5, -48, 12, 30 + tourT * 0.4, 20, 8];
       const C0 = P(ca, cn), C1 = P(la, ln);
       cx = C1.x; cz = C1.z;
       cam.position.set(C0.x, cy, C0.z); cam.lookAt(C1.x, ly, C1.z);
@@ -496,11 +510,20 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const e = gateEnd(plan.graph.gates[0]), fx = Math.cos(e.h), fz = -Math.sin(e.h), d = 45 - tourT * 2;
       cx = e.x; cz = e.z;
       cam.position.set(e.x + fx * d - fz * 3, 5, e.z + fz * d + fx * 3); cam.lookAt(e.x - fx * 20, 7, e.z - fz * 20);
+    } else if (DEBUG_EYES) {
+      // Fixed shots in turn ("eye:x,y,z,tx,ty,tz;..."), to see one place from several sides.
+      const e = DEBUG_EYES[Math.min(DEBUG_EYES.length - 1, Math.floor(tourT / DEBUG_EYE_SECS))];
+      cx = e[3]; cz = e[5];
+      cam.position.set(e[0], e[1], e[2]); cam.lookAt(e[3], e[4], e[5]);
     } else if (DEBUG_AT) {
-      // Circling low over a point ("at:x,z"), a junction's poles and its traffic.
-      cx = DEBUG_AT[0]; cz = DEBUG_AT[1];
+      // Circling low over a point ("at:x,z"), a junction's poles and its traffic; or, given a
+      // heading too ("at:x,z,h"), from a fixed spot in the street 16 m out that way and 5 m up. The
+      // point is in the journey's coordinates, moved to the world's as the jam shot's is.
+      const o = worldOffset();
+      cx = DEBUG_AT[0] + o[0]; cz = DEBUG_AT[1] + o[1];
       const a = tourT * 0.25;
-      cam.position.set(cx + Math.cos(a) * 30, 22, cz + Math.sin(a) * 30); cam.lookAt(cx, 0, cz);
+      if (DEBUG_AT.length > 2) { const h = DEBUG_AT[2]; cam.position.set(cx + Math.cos(h) * 16, 5, cz - Math.sin(h) * 16); cam.lookAt(cx, 1.2, cz); }
+      else { cam.position.set(cx + Math.cos(a) * 30, 22, cz + Math.sin(a) * 30); cam.lookAt(cx, 0, cz); }
     } else if (DEBUG_VIEW === "street") {
       cam.position.set(cx - 1.5, 3.2, cz + 150 - tourT * 3);
       cam.lookAt(cx - 1.5, 9, cz - 100);
@@ -603,7 +626,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // has stood held 5 s.)
       // (The journey's coordinates, the world's less however far the world has been moved: rebase.)
       const J = DEBUG_JAM_SHOT ? DEBUG_JAM_SHOT.split(",").map(Number) : null;
-      const at = J ? [J[0] + p.x - journey.pose.x, J[1] + p.z - journey.pose.z, J[2]] : (journey.st.jamT ?? 0) > 5 ? [p.x, p.z, truck.heading] : null;
+      const o = worldOffset(), at = J ? [J[0] + o[0], J[1] + o[1], J[2]] : (journey.st.jamT ?? 0) > 5 ? [p.x, p.z, truck.heading] : null;
       if ((!jamShot || J) && at) {   // (the given spot: each frame, as the world may move under it)
         const [x, z, h] = at, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h), nose = truckLayout(truck.model).front;
         jamShot = { x: x + fx * (nose + 14) + rx * 2.5, y: 4.5, z: z + fz * (nose + 14) + rz * 2.5, lx: x + fx * (nose - 1), lz: z + fz * (nose - 1) };
@@ -707,11 +730,19 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     if (prev) return { road: prev, u: prev.duration + st.cityTime + journey.frac, s: prev.SB + sArr };
     return { road: arr, u: st.cityTime + journey.frac, s: arr.SB + sArr };
   }
+  // How far the world stands from the journey's coordinates (the debug shots placed in them, "at:"
+  // and the jam shot's given spot). It changes only when the world is moved (rebase), so it is taken
+  // once after each move: the truck's smoothed place less its journey pose differs a little from
+  // frame to frame while it drives, and a camera placed by it each frame shook.
+  function worldOffset(): [number, number] {
+    const p = truck.root.position;
+    return worldOff ??= [p.x - journey.pose.x, p.z - journey.pose.z];
+  }
   // The world moved by (dx, dz): the next city took over out on the road. Everything on screen
   // that isn't placed from the journey each frame moves with it, so nothing visibly changes.
   // (The road itself is placed from the journey: pickRoad.)
   function rebase(dx: number, dz: number) {
-    director.rebase(dx, dz); puffs.rebase(dx, dz); atmosphere.rebase(dx, dz);
+    director.rebase(dx, dz); puffs.rebase(dx, dz); atmosphere.rebase(dx, dz); worldOff = null;
     lastX += dx; lastZ += dz;
   }
   // The skyline's height and whose it is: the city's own in town, sinking away on the road out and
@@ -1019,18 +1050,20 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // driver for a moment.
       const movers = engine.mats.ground.clone(); applyDriverSpot(movers); applyLampGlow(movers); applyLampLight(movers); applyPaintTint(movers);
       const people = engine.mats.ground.clone(); applyLampGlow(people); applyLampLight(people);
-      traffic = new Traffic(engine.scene, movers, (model, toon) => fleet.build([{ model, x: 0, z: 0, h: 0, toon }]));
+      traffic = new Traffic(engine.scene, movers, (model, toon, carriage) => fleet.vehicle(model, toon, carriage));
       crowd = new Crowd(engine.scene, people, movers);
       cityCars = new FreewayTraffic(engine.scene, movers); roadCars = new FreewayTraffic(engine.scene, movers);
       ambient = new Ambient(engine.scene, engine.mats.ground);
       seaLife = new SeaLife(engine.world, engine.mats.ground);
       worksFx = new KnittingWorksFx(engine.world, engine.mats.solid);
+      breweryFx = new SteamBreweryFx(engine.world, engine.mats.solid);
       // The clock first: attaching street life replays the city so far, and its vignettes and
       // pedestrians keep the hours.
       atmosphere = new Atmosphere(cfg, engine.scene, backdrop.scene);
       // (The vignettes keep the hours: they pass the city's clock, the sky runs on scene time. A
       // visit's spec may pin the hour it arrives at, the clock running on from there.)
       CLOCK.hourAt = (t) => atmosphere.hourAt(t - journey.st.clockBase + journey.cityStart(journey.st.city) - base);
+      CLOCK.glowAt = (h, w) => atmosphere.glowAt(h, w);
       atmosphere.hourPin = (t) => {
         const jt = base + t, N = journey.cityAt(jt), h = visitOf(cfg.seed, N).spec?.hour;
         return h === undefined ? null : (((h + (jt - journey.cityStart(N)) / 3600) % 24) + 24) % 24;
@@ -1042,6 +1075,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const facadeMat = makeFacadeMaterial();
       applyCutaway(facadeMat); applyDriverSpot(facadeMat);
       for (const m of [facadeMat, engine.mats.ground, engine.mats.solid, seaLife.surface]) applyLampLight(m);   // streetlights and headlights light the world (the sea and the harbour too: their material is the ground's clone, made before this)
+      applySetts(engine.mats.ground, engine.sky);   // (the Victorian city's road: victorian-street.ts)
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
@@ -1102,7 +1136,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       crowd.draw(alpha, shown);
       ambient.update(shown, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
       seaLife.update(shown);
-      worksFx.update(shown);
+      worksFx.update(shown); breweryFx.update(shown);
       if (!TOUR_VIEW) streamRound(true);
       prepareNextCity();
       {
@@ -1118,13 +1152,15 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);
       const sky = road ? skyTmp.setHex(journey.plan.style.sky).lerp(skyTmp2.setHex(road.inp.toStyle.sky), road.blendAt(journey.countryS)).getHex() : journey.plan.style.sky;
       atmosphere.update(t, engine, backdrop, sky, weather);
+      SETT_WET.value = weather.rain;   // (the Victorian city's wet stone: victorian-street.ts)
       truck.headlights = atmosphere.night > 0.3 || weather.fog > 0.5 || weather.rain > 0.5 || !!journey.country?.tunnelAt(journey.countryS, 40);
       LAMPS_ON.value = Math.max(THREE.MathUtils.clamp((atmosphere.night - 0.15) * 1.6, 0, 1), weather.fog > 0.5 || weather.rain > 0.5 ? 0.7 : 0);
       updateLampLights(truck.root.position);
       // The headlights' light on the road ahead (applyLampLight).
       {
-        const h = truck.heading, ahead = truck.frontX + 7.5, on = truck.headlights && atmosphere.night > 0.15;
-        HEAD_LIGHTS.value[0].set(truck.root.position.x + Math.cos(h) * ahead, truck.root.position.z - Math.sin(h) * ahead, h, on ? 1 : 0);
+        // (A carriage's oil lamps throw only a faint, short glow round its team.)
+        const h = truck.heading, ahead = truck.frontX + 7.5 - 5 * truck.carriage, on = truck.headlights && atmosphere.night > 0.15;
+        HEAD_LIGHTS.value[0].set(truck.root.position.x + Math.cos(h) * ahead, truck.root.position.z - Math.sin(h) * ahead, h, on ? 1 - 0.85 * truck.carriage : 0);
         HEAD_Y.value[0] = truck.root.position.y;   // (up on a freeway, a garage roof, a hill)
         if (!on) for (let k = 1; k < HEAD_LIGHTS.value.length; k++) HEAD_LIGHTS.value[k].w = 0;   // the other vehicles' too
         else {

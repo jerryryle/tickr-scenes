@@ -21,6 +21,7 @@ export interface StageSpec {
   units?: number;              // (default: the most one stop moves of it, at most 8)
   door?: boolean;              // a front door (default), or none (loads staged on the pavement)
   doorAt?: number;             // the door's middle along the truck (truck x; default: 2 m behind its back)
+  victorian?: boolean;         // in the Victorian city (tools/stage.ts "vic")
   doorHalf?: number;           // half the doorway's width (default: wide enough for a pallet)
   wider?: number;              // metres more pavement between the kerb and the building (default 0)
 }
@@ -76,6 +77,7 @@ export function makeStage(spec: StageSpec): Stage {
     // (The city's clock, for the crew's idle motion: the dwell's time.)
     get clockTime() { return st.simTime; },
     st, frac: 0, country: null, countryU: -1, chores, choreStart, path: null, kerbDoor, stackMode: null, kerbSide: kerbZ,
+    plan: { style: { victorian: !!spec.victorian } },   // (the city's style, which the crew dresses for: crew.ts)
     isDockStop: () => false, dockPlan: () => null, doorlessAhead: () => null, stackAhead: () => null,
     // (The front door as the journey has it: FrontDoorFx.)
     get frontDoorOpen() { return Object.getOwnPropertyDescriptor(Journey.prototype, "frontDoorOpen")!.get!.call(this); },

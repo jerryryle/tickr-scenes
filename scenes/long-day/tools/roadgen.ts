@@ -21,6 +21,9 @@ const FW_FLAT = 760;   // (country.ts FW_FLAT_IN: the land level under the freew
 // Both ends of a road that is driven both ways are straight and level for the arrival straight and
 // the straight before it, as gate b's end always was.
 const END_STRAIGHT = Math.max(STRAIGHT_OUT, ARRIVE_LEN + STRAIGHT_IN);
+// m: a Victorian city creeps in over this stretch short of where its arrival straight begins (or
+// past where the land seam leaves one), from none PERIOD_FROM short to all of it PERIOD_TO short.
+const PERIOD_FROM = 900, PERIOD_TO = 150;
 
 
 export interface RoadEnd { plan: CityPlan; gate: string }
@@ -60,6 +63,13 @@ export function draftRoad(r: WorldRoad, metres: number, A: RoadEnd, B: RoadEnd):
     const k = THREE.MathUtils.clamp((to ? s - b0 : b1 - s) / (b1 - b0), 0, 1);
     return k * k * (1.6 - 0.6 * k);
   };
+  // How much of a Victorian city at either end has crept in: none until PERIOD_FROM short of its
+  // gate, all of it from PERIOD_TO short of it, so the carriage is whole before the arrival straight.
+  const period = (s: number) => {
+    const to = !!PB.style.victorian, from = !!PA.style.victorian;
+    const k = (d: number) => smooth(THREE.MathUtils.clamp((PERIOD_FROM - d) / (PERIOD_FROM - PERIOD_TO), 0, 1));
+    return Math.max(to ? k(SB - s) : 0, from ? k(s - LAND_SEAM) : 0);
+  };
   const blend = (s: number) => {
     if (bioB === "storybook" && bioA !== "storybook") return story(s);
     if (bioA === "storybook" && bioB !== "storybook") return 1 - story(s);
@@ -92,11 +102,14 @@ export function draftRoad(r: WorldRoad, metres: number, A: RoadEnd, B: RoadEnd):
   // Into a freeway city, nothing that stops the truck or sprawls by the road out where the freeway
   // and the flyover are.
   if (toFreeway) for (const p of [...pieces]) if (p.s + p.len > SB - 1150) pieces.splice(pieces.indexOf(p), 1);
+  // Near a Victorian city, nothing of the modern road: no truck stop, rail crossing or work zone
+  // where the period has crept in.
+  for (const p of [...pieces]) if ((PB.style.victorian && p.s + p.len > SB - PERIOD_FROM - 100) || (PA.style.victorian && p.s < LAND_SEAM + PERIOD_FROM + 100)) pieces.splice(pieces.indexOf(p), 1);
   // Signs: leaving, the distance, and the welcome, for each way the road is driven.
   const signs = (way: 1 | -1, from: CityPlan, to: CityPlan, fw: boolean) => {
-    add({ kind: "leave", s: LAND_SEAM + 60, side: 1, len: 40, variant: from.style.storybook ? 1 : 0, text: `LEAVING ${from.name.toUpperCase()}` }, way);
-    if (SB > 1700) add({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: 0, text: `${to.name.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` }, way);
-    add({ kind: "welcome", s: L - (fw ? 940 : 230), side: 1, len: 40, variant: to.style.storybook ? 1 : 0, text: `WELCOME TO ${to.name.toUpperCase()}`, n: fw ? -12 : undefined }, way);   // (into a freeway city it stands on the left: the freeway is on the right)
+    add({ kind: "leave", s: LAND_SEAM + 60, side: 1, len: 40, variant: from.style.storybook ? 1 : from.style.victorian ? 2 : 0, text: `LEAVING ${from.name.toUpperCase()}` }, way);
+    if (SB > 1700) add({ kind: "distance", s: LAND_SEAM + 460, side: 1, len: 40, variant: from.style.victorian ? 2 : 0, text: `${to.name.toUpperCase()}  ${Math.max(1, Math.round((L - LAND_SEAM - 460) / 1609))} MI` }, way);
+    add({ kind: "welcome", s: L - (fw ? 940 : 230), side: 1, len: 40, variant: to.style.storybook ? 1 : to.style.victorian ? 2 : 0, text: `WELCOME TO ${to.name.toUpperCase()}`, n: fw ? -12 : undefined }, way);   // (into a freeway city it stands on the left: the freeway is on the right)
   };
   signs(1, PA, PB, toFreeway);
   if (twoWay) signs(-1, PB, PA, false);
@@ -273,12 +286,13 @@ export function draftRoad(r: WorldRoad, metres: number, A: RoadEnd, B: RoadEnd):
   const nl = Math.ceil(L / LAND_DS) + 1, r3 = (x: number) => Math.round(x * 1000) / 1000;
   const blendS = Array.from({ length: nl }, (_, j) => r3(blend(j * LAND_DS)));
   const storyS = Array.from({ length: nl }, (_, j) => r3(story(j * LAND_DS)));
+  const periodS = Array.from({ length: nl }, (_, j) => r3(period(j * LAND_DS)));
   const coastS = Array.from({ length: nl }, (_, j) => r3(coastAt(j * LAND_DS)));
   void fileB;
   return {
     id: r.id, key, length: L, ...(toFreeway ? { freeway: true as const } : {}),
     heading: Array.from(H, (x) => Math.round(x * 1e6) / 1e6), height: Array.from(Y, (y) => Math.round(y * 100)), hill: Array.from(SM, r3),
-    blend: blendS, ...(storyS.some((x) => x > 0) ? { story: storyS } : {}), ...(coastS.some((x) => x > 0) ? { coast: coastS, coastSide: side } : {}),
+    blend: blendS, ...(storyS.some((x) => x > 0) ? { story: storyS } : {}), ...(periodS.some((x) => x > 0) ? { period: periodS } : {}), ...(coastS.some((x) => x > 0) ? { coast: coastS, coastSide: side } : {}),
     biomes: [bioA, bioB] as [BiomeId, BiomeId],
     pieces: pieces.map((p) => ({ ...p, s: Math.round(p.s * 100) / 100 })),
     items: { trees: [], rocks: [], ponds: [], turbines: [], pylons: [], farms: [], cows: [], poles: [], fences: [] },

@@ -32,6 +32,9 @@
 #   make draftroads SCENE=long-day [ARGS="<road id> ..."]
 #                              draft the roads' maps into scenes/long-day/src/roads/
 #                              (tools/draftroads.ts)
+#   make relot SCENE=long-day ARGS="<city id> ..."
+#                              write a catalogue city's lotted blocks' contents afresh from the rules
+#                              into its contents file (tools/relot.ts); then clearstops and tractorturns
 #   make clearstops SCENE=long-day [ARGS="<city id> ..."] [DOORS=1]
 #                              move the pavements' furniture, trees and lamps out of every kerb
 #                              stop's work area in the catalogue cities' files (tools/clearstops.ts);
@@ -39,6 +42,9 @@
 #   make tractorturns SCENE=long-day [ARGS="<city id> ..."]
 #                              write the moves a tractor-trailer never takes into the catalogue
 #                              cities' files (tools/tractorturns.ts)
+#   make vicjunctions SCENE=long-day [ARGS="<city id> ..."]
+#                              decide which of a Victorian city's junctions keep semaphores, have
+#                              a constable or are all-way stops, into its file (tools/vicjunctions.ts)
 #   make draftworld SCENE=long-day [ARGS="<seed>"]
 #                              draft the world graph's roads into
 #                              scenes/long-day/src/world-roads.ts (tools/draftworld.ts)
@@ -79,7 +85,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/* $(1)-packed/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); case "$$n" in *.tmp) continue;; esac; d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns clearstops maps FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns clearstops vicjunctions relot maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -245,6 +251,15 @@ clearstops: | $(DEPS)
 	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-clearstops/clearstops.mjs --list; fi; } | \
 	  xargs -P $(TEST_JOBS) -I{} node build/$(SCENE)-clearstops/clearstops.mjs {} $(if $(DOORS),--doors)
 
+# A catalogue city's lotted blocks relotted from the rules (scenes/<scene>/tools/relot.ts), each city
+# named in ARGS in a process of its own, TEST_JOBS at a time.
+relot: | $(DEPS)
+	@test -n "$(ARGS)" || { echo "usage: make relot SCENE=<scene> ARGS='<city id> ...'" >&2; exit 2; }
+	@mkdir -p build/$(SCENE)-relot
+	@$(FLATTEN) scenes/$(SCENE)/tools/relot.ts --root scenes/$(SCENE)/src > build/$(SCENE)-relot/scene.ts
+	@$(call node-bundle,build/$(SCENE)-relot/scene.ts,build/$(SCENE)-relot/relot.mjs)
+	@printf '%s\n' $(ARGS) | xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-relot/relot.mjs
+
 # The moves a tractor-trailer never takes (scenes/<scene>/tools/tractorturns.ts), written into each
 # catalogue city's file, each city in a process of its own, TEST_JOBS at a time; ARGS names the
 # cities, all of them by default.
@@ -254,6 +269,16 @@ tractorturns: | $(DEPS)
 	@$(call node-bundle,build/$(SCENE)-tractorturns/scene.ts,build/$(SCENE)-tractorturns/tractorturns.mjs)
 	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-tractorturns/tractorturns.mjs --list; fi; } | \
 	  xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-tractorturns/tractorturns.mjs
+
+# How each Victorian catalogue city's junctions are controlled (scenes/<scene>/tools/vicjunctions.ts),
+# written into its city file; ARGS names the cities, all the Victorian ones by default. Run
+# clearstops (with and without DOORS=1) and then tractorturns afterwards.
+vicjunctions: | $(DEPS)
+	@mkdir -p build/$(SCENE)-vicjunctions
+	@$(FLATTEN) scenes/$(SCENE)/tools/vicjunctions.ts --root scenes/$(SCENE)/src > build/$(SCENE)-vicjunctions/scene.ts
+	@$(call node-bundle,build/$(SCENE)-vicjunctions/scene.ts,build/$(SCENE)-vicjunctions/vicjunctions.mjs)
+	@{ if [ -n "$(ARGS)" ]; then printf '%s\n' $(ARGS); else node build/$(SCENE)-vicjunctions/vicjunctions.mjs --list; fi; } | \
+	  xargs -n 1 node build/$(SCENE)-vicjunctions/vicjunctions.mjs
 
 # The city maps (scenes/<scene>/tools/maps.ts), each city in a process of its own, TEST_JOBS at a
 # time; ARGS names the cities to draw, all of them by default.

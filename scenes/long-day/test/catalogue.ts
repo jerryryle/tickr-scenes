@@ -1,6 +1,6 @@
 // Test: every catalogue city (src/world.ts) loads from its file and is fit for normal play
 // (tools/cityfiles.ts cityProblems), its file reads back as written (the loader drops nothing, its
-// contents included), its id is its style and name, and every style has five cities.
+// contents included), its id is its style and name, and every style has its five cities (WANT gives the exceptions).
 import { CityPlan, fileOf } from "../src/city.ts";
 import type { CityFile } from "../src/cityfile.ts";
 import { STYLES } from "../src/styles.ts";
@@ -30,7 +30,9 @@ for (const F of CATALOGUE) {
   else if (JSON.stringify(contentsRowsOf(plan)) !== C) fails.push(`${F.id}: its contents do not read back as listed`);
   console.log(`${F.id}: ${plan.graph.nodes.length} nodes, ${plan.graph.streets.length} streets, ${plan.graph.blocks.length} blocks`);
 }
-for (const id of Object.keys(STYLES) as StyleId[]) if (citiesOfStyle(id).length !== 5) fails.push(`${id}: ${citiesOfStyle(id).length} cities, not 5`);
+// (Five of each, but the storybook's four and the one Victorian town that took the fifth's place.)
+const WANT: Partial<Record<StyleId, number>> = { storybook: 4, victorian: 1 };
+for (const id of Object.keys(STYLES) as StyleId[]) if (citiesOfStyle(id).length !== (WANT[id] ?? 5)) fails.push(`${id}: ${citiesOfStyle(id).length} cities, not ${WANT[id] ?? 5}`);
 for (const f of fails) console.log(`FAIL ${f}`);
 if (fails.length) (globalThis as any).process.exit(1);
 console.log(`ok: ${CATALOGUE.length} cities`);

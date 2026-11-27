@@ -15,6 +15,8 @@ import { inPoly, polyDist, sidewalkCorner } from "./citygraph.ts";
 import { STOP_BACK, Path, LANE_KERB, LANE_INNER } from "./route.ts";
 import { SPECS } from "./truck.ts";
 import { SB } from "./city-storybook/storybook-buildings-town.ts";
+import { vicConstable, vicSignal } from "./city-victorian/victorian-street.ts";
+import { NIGHT_GLOW } from "./atmosphere.ts";
 
 const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_SLOT = 13;
 export const SIGNAL_CYCLE = 2 * SIG_SLOT;            // a two-phase intersection's cycle
@@ -134,8 +136,15 @@ export function signalGreenLeft(n: CNode, phase: number, time: number, seed: num
 export const signalCycleIndex = (n: CNode, time: number) => Math.floor(time / signalCycle(n));
 
 // Lamp tags: aux.x = lamp (0 red, 1 yellow, 2 green) * 64 + offset; aux.y = -(its node's id + 1);
-// aux.z = phase + 4 * (phases - 2).
-const lampTag = (lamp: 0 | 1 | 2, offset: number) => lamp * 64 + offset;
+// aux.z = phase + 4 * (phases - 2). With `hide`, the lamp is 3 more: geometry drawn only while its
+// state shows (a Victorian signal's semaphore arm in each of its positions) instead of dimmed.
+// A pose (lamp LAMP_POSE) is geometry drawn only while its phase has the junction: from the start
+// of its green to the start of the next phase's, through its yellow and all-red (a Victorian
+// constable's pose for that phase). It is shaded as if lit, by a fixed light and darker after dark.
+// (POSE_NIGHT: how bright a pose is after dark, by NIGHT_GLOW. A LAMP_POSE_GLOW part of a pose, the
+// constable's bull's-eye lantern, is dull brass by day and glows after dark.)
+const LAMP_POSE = 6, LAMP_POSE_GLOW = 7, POSE_NIGHT = 2.2;
+const lampTag = (lamp: 0 | 1 | 2 | typeof LAMP_POSE | typeof LAMP_POSE_GLOW, offset: number, hide = false) => (lamp + (hide ? 3 : 0)) * 64 + offset;
 
 // Journey time modulo SIGNAL_WRAP, so the shader's float32 time stays exact on long runs.
 const signalUniforms = { uSignalTime: { value: 0 } };
@@ -154,21 +163,26 @@ export const NEON_STEADY = 1, NEON_BLINK = 2, NEON_CHASE = 3, FLAG_WAVE = 4;
 export function makeLampMaterial(): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
   mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, signalUniforms, preemptUniforms);
+    Object.assign(shader.uniforms, signalUniforms, preemptUniforms, { uNight: NIGHT_GLOW });
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>
 attribute vec3 aAux;
 uniform float uSignalTime;
+uniform float uNight;
 uniform vec4 uPre[${3}];
 varying float vLit;
+varying float vShade;
 float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       .replace("#include <begin_vertex>", `#include <begin_vertex>
+  vShade = 1.0;
   if (aAux.y < 0.5) {
-    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0;
+    float lamp = floor(aAux.x / 64.0), off = aAux.x - lamp * 64.0, pose = lamp > ${(LAMP_POSE - 0.5).toFixed(1)} ? 1.0 : 0.0, glow = lamp > ${(LAMP_POSE_GLOW - 0.5).toFixed(1)} ? 1.0 : 0.0, hide = lamp > 2.5 ? 1.0 : 0.0;
+    lamp -= hide * 3.0;
     float phases = floor(aAux.z / 4.0) + 2.0, phase = aAux.z - (phases - 2.0) * 4.0;
     float t = mod(uSignalTime + off, phases * ${SIG_SLOT.toFixed(1)});
     float slot = floor(t / ${SIG_SLOT.toFixed(1)}), w = t - slot * ${SIG_SLOT.toFixed(1)};
     float state = abs(slot - phase) > 0.5 ? 0.0 : (w < ${SIG_GREEN.toFixed(1)} ? 2.0 : (w < ${(SIG_GREEN + SIG_YELLOW).toFixed(1)} ? 1.0 : 0.0));
+    float holds = abs(slot - phase) < 0.5 ? 1.0 : 0.0;
     vec2 wxz = (modelMatrix * vec4(position, 1.0)).xz;
     for (int i = 0; i < 3; i++) {
       float tag = floor(uPre[i].z / 16.0), code = uPre[i].z - tag * 16.0;
@@ -177,8 +191,12 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
       float pz = floor((code - 1.0) / 4.0), pc = code - 1.0 - pz * 4.0;
       float fz = floor((uPre[i].w - 1.0) / 4.0) - 1.0, fc = uPre[i].w - 1.0 - (fz + 1.0) * 4.0;
       state = abs(phase - pz) < 0.5 ? pc : (fz < -0.5 || abs(phase - fz) < 0.5 ? fc : 0.0);
+      // (The requested phase has the junction once the phase it was taken from shows red.)
+      holds = abs(phase - pz) < 0.5 ? step(fc, 0.5) : (fz < -0.5 || abs(phase - fz) < 0.5 ? step(0.5, fc) : 0.0);
     }
-    vLit = abs(state - lamp) < 0.5 ? 1.0 : 0.0;
+    vLit = pose > 0.5 ? holds : (abs(state - lamp) < 0.5 ? 1.0 : 0.0);
+    if (hide > 0.5 && vLit < 0.5) transformed = vec3(0.0);
+    if (pose > 0.5) vShade = glow > 0.5 ? mix(0.6, 1.8, uNight) : (0.55 + 0.45 * max(dot(normal, vec3(0.32, 0.84, 0.43)), 0.0)) * mix(1.0, ${POSE_NIGHT.toFixed(2)}, uNight);
   } else if (aAux.y < 1.5) {
     vLit = lampHash(floor(uSignalTime * 9.0) + aAux.x * 7.13) > 0.975 ? 0.25 : 1.0;
   } else if (aAux.y < 2.5) {
@@ -190,10 +208,10 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
     vLit = 1.0;
   }`);
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying float vLit;")
-      .replace("#include <color_fragment>", "#include <color_fragment>\n  diffuseColor.rgb *= mix(0.12, 1.0, vLit);");
+      .replace("#include <common>", "#include <common>\nvarying float vLit;\nvarying float vShade;")
+      .replace("#include <color_fragment>", "#include <color_fragment>\n  diffuseColor.rgb *= mix(0.12, 1.0, vLit) * vShade;");
   };
-  mat.customProgramCacheKey = () => "signal-lamp-v5";
+  mat.customProgramCacheKey = () => "signal-lamp-v8";
   return mat;
 }
 
@@ -212,9 +230,10 @@ const candyPole = (b: Batch, x: number, z: number, y0: number, y1: number, r: nu
 // white, bolted to the front of its post (the post hidden behind it, seen only below it), with a
 // plain grey back.
 const STOP_GLYPHS = [["###", "#..", "###", "..#", "###"], ["###", ".#.", ".#.", ".#.", ".#."], ["###", "#.#", "#.#", "#.#", "###"], ["###", "#.#", "###", "#..", "#.."]];
-// (Where its posts stand, world (x, z), one per approach: stopSignPosts.)
-export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number, story = false) {
-  if (n.control !== "stop") return;
+// (Where its posts stand, world (x, z), one per approach: stopSignPosts.) The Victorian city
+// (`vic`) has no signs: its all-way stops are unmarked junctions, where traffic gives way in turn.
+export function buildStopSigns(solid: Batch, G: CityGraph, n: CNode, ox: number, oz: number, story = false, vic = false) {
+  if (n.control !== "stop" || vic) return;
   const y0 = 2.15, post = 0.04, posts = stopSignPosts(G, n);
   n.arms.forEach((arm, i) => {
     const at = posts.get(i);
@@ -482,14 +501,34 @@ export function signalPoleOk(G: CityGraph, near: Iterable<number>, x: number, z:
 // its head's face, a box or in the storybook (`story`) a ball, so its top reads from the overhead
 // camera. `plates`: for the name plates on the mast arms, each
 // naming the cross street to the traffic coming up to it.
-export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false) {
+// The Victorian city's (`vic`) are of the Westminster kind of 1868, each standing where a pole
+// would, with no mast arm and no name plate: a tall iron column with red and green gas lamps and a
+// semaphore arm out over the kerb (victorian-street.ts vicSignal), tagged as the heads' lamps are.
+// A Victorian junction whose city file gives it no poles has a constable on point duty in its
+// middle instead (vicConstable), in a pose for each phase: facing out along the first arm not in
+// that phase, whose traffic he holds while that phase goes.
+export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false, vic = false) {
   if (n.control !== "signal") return;
-  const offset = signalOffset(n, seed), armY = 6.2;
-  for (const { i, px: wx, pz: wz, h, toCentre } of signalPoles(G, n)) {
+  const offset = signalOffset(n, seed), armY = 6.2, poles = signalPoles(G, n), phases = Math.max(2, n.phases);
+  if (vic && !poles.length) {
+    const poses = [];
+    for (let p = 0; p < phases; p++) {
+      const held = n.arms.find((_, j) => n.phaseOf[j] !== p);
+      if (held) poses.push({ yaw: held.h, tag: (glow = false) => lamps.aux.set(lampTag(glow ? LAMP_POSE_GLOW : LAMP_POSE, offset), -(n.id + 1), p + 4 * (phases - 2)) });
+    }
+    vicConstable(lamps, n.x - ox, n.z - oz, poses);
+    lamps.aux.set(0, 0, -1);
+    return;
+  }
+  for (const { i, px: wx, pz: wz, h, toCentre } of poles) {
     const arm = n.arms[i], px = wx - ox, pz = wz - oz;
     const fx = Math.cos(h), fz = -Math.sin(h), reach = toCentre + 0.4;
     // The arm reaches back over the lanes (to the traffic's left).
     const ax = -Math.sin(h), az = -Math.cos(h), armH = Math.atan2(-az, ax);
+    if (vic) {
+      vicSignal(solid, lamps, px, pz, fx, fz, ax, az, (k, hide) => lamps.aux.set(lampTag(k, offset, hide), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2)));
+      continue;
+    }
     if (story) {
       candyPole(solid, px, pz, 0, armY + 0.1, 0.16, 1.0, SB.pink, SB.cream);
       solid.ico(px, armY + 0.3, pz, 0.26, SB.mustard);

@@ -11,10 +11,11 @@ import { STYLE_BRICK } from "./city-brick/brick-style.ts";
 import { STYLE_MAINSTREET } from "./city-mainstreet/mainstreet-style.ts";
 import { STYLE_PORT } from "./city-port/port-style.ts";
 import { STYLE_STORYBOOK } from "./city-storybook/storybook-style.ts";
+import { STYLE_VICTORIAN } from "./city-victorian/victorian-style.ts";
 
-export type StyleId = "coastal" | "metro" | "desert" | "brick" | "mainstreet" | "port" | "storybook";
+export type StyleId = "coastal" | "metro" | "desert" | "brick" | "mainstreet" | "port" | "storybook" | "victorian";
 export type TreeKind = "broad" | "palm" | "conifer" | "tuft" | "pancake" | "droop" | "spiral";
-type BackdropKind = "bridge" | "skyline" | "mesas" | "stacks" | "farmhills" | "evergreens" | "storyhills";
+type BackdropKind = "bridge" | "skyline" | "mesas" | "stacks" | "farmhills" | "evergreens" | "storyhills" | "spires";
 
 export interface CityStyle {
   id: StyleId;
@@ -41,6 +42,7 @@ export interface CityStyle {
   rail?: boolean;                     // rail spurs through industrial yards
   townSquare?: boolean;               // courthouse clock tower and a water tower with the town name
   storybook?: boolean;                // it is set for the fantasy city: bent towers, tuft trees, striped hills, the knitting works
+  victorian?: boolean;                // it is set for the nineteenth-century city: terraces and spires, gas lamps, horse-drawn traffic, the steam brewery, and the trucks become carriages there
   snowTufts?: boolean;                // (it is set for a storybook city under snow: its trees keep their colours, capped with snow)
   // How likely each street layout is (city.ts CityPlan.layout): the square grid, a grid bent out
   // of square, an organic town with no grid. Relative weights; organic only where nothing needs a
@@ -58,6 +60,7 @@ export const STYLES: Record<StyleId, CityStyle> = {
   mainstreet: STYLE_MAINSTREET,
   port: STYLE_PORT,
   storybook: STYLE_STORYBOOK,
+  victorian: STYLE_VICTORIAN,
 };
 
 // The storybook city comes now and then (visits.ts plans it): never one of the first two cities, never

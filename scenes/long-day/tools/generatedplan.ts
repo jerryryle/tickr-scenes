@@ -175,7 +175,7 @@ export class GeneratedPlan extends CityPlan {
       } });
   }
   // Whether the town's style may have a river through it (in half its towns, warped or organic).
-  private get riverStyle(): boolean { return this.style.id === "port" || this.style.id === "brick" || this.style.id === "coastal"; }
+  private get riverStyle(): boolean { return this.style.id === "port" || this.style.id === "brick" || this.style.id === "coastal" || this.style.id === "victorian"; }
   // One-way streets downtown, in about two cities in three: between two downtown blocks, each
   // lattice line one way, the next the other (as downtown grids are), clear of the gate streets'
   // lines, the elevated and cable-car lines, the freeway's line and the river's quays. +1: driven

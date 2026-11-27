@@ -43,7 +43,8 @@ export interface RoadSign { s: number; n: number; y: number; w: number; h: numbe
 export function pieceSigns(p: RoadPiece): RoadSign[] {
   const S = p.s, side = p.side;
   switch (p.kind) {
-    case "leave": case "distance": case "welcome": return [{ s: S, n: p.n ?? 11, y: 5.2, w: 12.8, h: 1.6 }];
+    // (A Victorian city's, variant 2, are finger posts: their arms' faces. countryworld.ts greenSign.)
+    case "leave": case "distance": case "welcome": return [p.variant === 2 ? { s: S, n: p.n ?? 8.3, y: 3.2, w: 4.0, h: 0.5 } : { s: S, n: p.n ?? 11, y: 5.2, w: 12.8, h: 1.6 }];
     case "billboards": return [0, 1, 2].map((k) => ({ s: S + 30 + k * 110 - 0.05, n: (k % 2 ? -1 : 1) * 22, y: 9.0, w: 14.6, h: 5.0, billboard: true }));
     case "truckstop": return [{ s: S - 60, n: TS_SIGN_N, y: 14.2, w: 9.0, h: 1.1 }];
     case "construction": return [{ s: S, n: 9, y: 2.6, w: 5.2, h: 0.7 }];
@@ -271,7 +272,7 @@ export const BORE_HALF = 5.2, BORE_H = 6.6, CUT_N = 7.6, CUT_RUN = 80;
 export const OVER_DECK = 6.6, OVER_HALF = 7, OVER_ABUT = 10.5;
 export const tunnelTop = (p: RoadPiece) => 11 + 3 * p.variant;   // the hill over a tunnel's portals
 
-export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook" };
+export const BIOME_OF: Record<StyleId, BiomeId> = { coastal: "coastal", metro: "forest", desert: "desert", brick: "farmland", mainstreet: "prairie", port: "wetlands", storybook: "storybook", victorian: "farmland" };
 
 // City N's hash key: its catalogue city's (visits.ts), what every default rule about the city hashes.
 export function citySeedOf(seed: number, N: number) { return cityHeadOf(seed, N).key; }
@@ -297,6 +298,7 @@ export interface RoadView {
   tunnelAt(s: number, margin?: number): RoadPiece | null;
   coastAt(s: number): number;
   storyAt(s: number): number;
+  periodAt(s: number): number;
   biomeAt(s: number, n?: number): BiomeId;
   climateAt(s: number, n?: number): Climate;
   clearAt(s: number, n: number): boolean;
@@ -317,7 +319,7 @@ export class RoadGeo implements RoadView {
   readonly shapes: RoadPiece[];               // tunnels and overpasses (the land they shape)
   private X: Float64Array; private Z: Float64Array; private H: Float64Array;
   private Y: Float64Array; private SM: Float64Array; private PM: Float64Array;
-  private blend: Float32Array; private story: Float32Array | null; private coast: Float32Array | null;
+  private blend: Float32Array; private story: Float32Array | null; private period: Float32Array | null; private coast: Float32Array | null;
   readonly coastSide: 1 | -1;
   // The world placement: local (x, z) turned by th, then moved by (tx, tz).
   private tc = 1; private ts = 0; private th = 0; private tx = 0; private tz = 0;
@@ -339,6 +341,7 @@ export class RoadGeo implements RoadView {
     for (let i = 0; i < n; i++) this.Y[i] = map.height[i] / 100;
     this.blend = Float32Array.from(map.blend);
     this.story = map.story ? Float32Array.from(map.story) : null;
+    this.period = map.period ? Float32Array.from(map.period) : null;
     this.coast = map.coast ? Float32Array.from(map.coast) : null;
     this.coastSide = map.coastSide ?? -1;
     this.shapes = this.pieces.filter((p) => p.kind === "tunnel" || p.kind === "overpass").map((p) => this.inMap(p));
@@ -421,10 +424,12 @@ export class RoadGeo implements RoadView {
     if (this.ferry && s1 > this.ferry.q0 && s0 < this.ferry.q1) lo = Math.min(lo, this.waterY - 1);
     return lo - 1;
   }
-  // How much of the land at s is coast (its sea on side coastSide); of b's land; of the storybook's.
+  // How much of the land at s is coast (its sea on side coastSide); of b's land; of the storybook's;
+  // of the Victorian city's.
   coastAt(s: number) { return this.land(this.coast, s); }
   blendAt(s: number) { return this.land(this.blend, s); }
   storyAt(s: number) { return this.land(this.story, s); }
+  periodAt(s: number) { return this.land(this.period, s); }
   isA(s: number, n = 0) { return hash2(Math.floor(s / 12), Math.floor(n / 12), this.key, 0xb10) >= this.blendAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.isA(s, n) ? this.bioA : this.bioB; }
   climateAt(s: number, n = 0): Climate { return this.isA(s, n) ? this.climA : this.climB; }
@@ -545,6 +550,7 @@ export class MirrorView implements RoadView {
   tunnelAt(s: number, margin = 0) { return this.base.tunnelAt(2 * this.c - s, margin); }
   coastAt(s: number) { return this.base.coastAt(2 * this.c - s); }
   storyAt(s: number) { return this.base.storyAt(2 * this.c - s); }
+  periodAt(s: number) { return this.base.periodAt(2 * this.c - s); }
   biomeAt(s: number, n = 0) { return this.base.biomeAt(2 * this.c - s, -n); }
   climateAt(s: number, n = 0) { return this.base.climateAt(2 * this.c - s, -n); }
   clearAt(s: number, n: number) { return this.base.clearAt(2 * this.c - s, -n); }
@@ -772,12 +778,14 @@ export class CountryRoad {
     const rail = this.stops.find((s) => s.kind === "rail");
     this.trainT = rail ? rail.arrive + 2 : -1;
     // Oncoming cars: a meeting every 7 to 25 s, none while the crossing is closed, and none
-    // within sight of either city (they would drive into its gate street).
+    // within sight of either city (they would drive into its gate street). In a Victorian city's
+    // reach they are horse-drawn (countryworld.ts updateCars) and meet it as near as 150 m from
+    // its edge: at a walk or a trot, one goes no more than 60 m while it is in sight.
     const seed = this.inp.driveSeed, city = this.inp.city, h = (k: number) => hash3(city, k, 0, seed, 0xc0a7);
     this.meetings = [];
     for (let t = 8 + 10 * h(90), i = 0; t < this.D - 6; t += 7 + 18 * hash2(i++, 3, seed + city, 0xcab)) {
       const s = this.sAt(t);
-      if (s < 700 || s > this.SB - 260) continue;
+      if ((s < 700 || s > this.SB - 260) && !(this.periodAt(s) > 0 && s > this.landFrom + 150 && s < this.SB - 150)) continue;
       if (this.ferry && s > this.ferry.s - 500 && s < this.ferry.s + FERRY_LEN + 500) continue;   // (they would drive into the water)
       if (this.pieces.some((p) => (p.kind === "cattle" || p.kind === "tractor") && s > p.s - 450 && s < p.s + p.len + 350)) continue;   // (the herd on the road; the lane to pass in)
       if (rail) {
@@ -890,6 +898,7 @@ export class CountryRoad {
   tunnelAt(s: number, margin = 0) { return this.v.tunnelAt(s, margin); }
   coastAt(s: number) { return this.v.coastAt(s); }
   storyAt(s: number) { return this.v.storyAt(s); }
+  periodAt(s: number) { return this.v.periodAt(s); }
   biomeAt(s: number, n = 0): BiomeId { return this.v.biomeAt(s, n); }
   climateAt(s: number, n = 0): Climate { return this.v.climateAt(s, n); }
   clearAt(s: number, n: number) { return this.v.clearAt(s, n); }
@@ -1033,11 +1042,11 @@ export class CountryRoad {
     for (let i = 0; i < this.pieces.length; i++) {
       const p = this.pieces[i];
       const stop = this.stops.find((x) => x.kind === p.kind);
-      const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome";
+      const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome", fp = isSign && p.variant === 2 ? pieceSigns(p)[0] : null;   // (fp: a finger post's arm)
       if (p.away && (isSign || p.kind === "fwsign" || p.kind === "weigh" || p.kind === "tractor")) continue;   // (facing the other way)
       if (!stop && !isSign && hash2(i, Math.floor(p.s), this.geo.key, 0x5a0) > 0.7) continue;
       const F: Record<PieceKind, [number, number, number]> = {
-        leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
+        leave: fp ? [0, fp.n, fp.y] : [0, 11, 5], distance: fp ? [0, fp.n, fp.y] : [0, 11, 5], welcome: fp ? [0, fp.n, fp.y] : [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * (FORECOURT + 6), 3],
         tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0], cattle: [0, 0, 0], tractor: [0, 0, 0],

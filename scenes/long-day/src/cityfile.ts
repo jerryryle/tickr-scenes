@@ -56,7 +56,7 @@ export interface CityFileNode {
   id: number; x: number; z: number;
   k: [number, number];            // (It is the node's hash key, the old grid's ix and iz.)
   control?: Control;              // (It is "stop" or "none" where the junction has no signals.)
-  poles?: [number, number, number, number, number][];   // (Its signal poles: each [arm, x, z, heading, mast reach], signals.ts SignalPole.)
+  poles?: [number, number, number, number, number][];   // (Its signal poles: each [arm, x, z, heading, mast reach], signals.ts SignalPole. A Victorian signalled junction without them has a constable instead: tools/vicjunctions.ts.)
   stops?: [number, number, number][];                   // (Its stop signs' posts: each [arm, x, z].)
   // (The moves through it a tractor-trailer never takes, each as [street in, street out]. On each,
   // its trailer would swing across a corner and through what stands there. tools/tractorturns.ts

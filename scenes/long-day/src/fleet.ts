@@ -4,7 +4,9 @@
 // glass), so a whole lot of trucks costs a handful of draw calls. Lamps, the dashboard screen
 // and other unlit details are left out; parked trucks have their lights off anyway.
 import * as THREE from "three@0.187.0";
-import { Truck, TruckKit } from "./truck.ts";
+import { SPECS, Truck, TruckKit } from "./truck.ts";
+import { HorseTeam, teamLayout } from "./carriage.ts";
+import { HORSE_COATS } from "./horse.ts";
 import type { TruckModel } from "./truck.ts";
 import type { StallPose } from "./city.ts";
 
@@ -17,7 +19,7 @@ export class FleetBaker {
   build(stalls: StallPose[]): THREE.Object3D | null {
     const groups = new Map<THREE.Material, { part: FleetPart; stalls: StallPose[] }[]>();
     for (const st of stalls)
-      for (const part of this.partsFor(st.model, st.toon ?? 0)) {
+      for (const part of this.partsFor(st.model, st.toon ?? 0, st.carriage ?? 0, false)) {
         let list = groups.get(part.material);
         if (!list) groups.set(part.material, (list = []));
         const entry = list.find((e) => e.part === part);
@@ -55,13 +57,37 @@ export class FleetBaker {
   }
 
   // (A stall's `toon` is how cartoonish its truck is, in and near the storybook city (truck.ts
-  // toonWarp), and it is baked in its quarters.)
+  // toonWarp), and its `carriage` how much it is a carriage, in and near the Victorian city (truck.ts
+  // makeCarriage); each is baked in its quarters. A parked carriage stands unhitched, its shafts
+  // down; one in traffic is `hitched`, its team drawn live: vehicle.)
   private parts = new Map<string, FleetPart[]>();
-  private partsFor(model: TruckModel, toon: number): FleetPart[] {
-    const q = Math.round(THREE.MathUtils.clamp(toon, 0, 1) * 4) / 4, key = `${model}/${q}`;
+  private partsFor(model: TruckModel, toon: number, carriage: number, hitched: boolean): FleetPart[] {
+    const q = (k: number) => Math.round(THREE.MathUtils.clamp(k, 0, 1) * 4) / 4, key = `${model}/${q(toon)}/${q(carriage)}/${hitched}`;
     let p = this.parts.get(key);
-    if (!p) { const t = new Truck(this.kit, model); t.toon = q; t.update(0); p = this.flatten(t); this.parts.set(key, p); }
+    if (!p) { const t = new Truck(this.kit, model); t.toon = q(toon); t.carriage = q(carriage); t.hitched = hitched; t.update(0); p = this.flatten(t); this.parts.set(key, p); }
     return p;
+  }
+
+  // A Ryder truck in traffic (traffic.ts): baked as a parked one is, and as a carriage, hitched to
+  // its team, whose horses are drawn live (userData.team: pose them from how far it has come).
+  vehicle(model: TruckModel, toon: number, carriage: number): THREE.Object3D | null {
+    if (carriage <= 0) return this.build([{ model, x: 0, z: 0, h: 0, toon }]);
+    const parts = this.partsFor(model, toon, carriage, true);
+    const g = new THREE.Group();
+    for (const part of parts) {
+      const geo = new THREE.BufferGeometry();
+      part.names.forEach((n, ai) => geo.setAttribute(n, new THREE.BufferAttribute(part.arrays[ai].slice(), n === "uv" ? 2 : 3)));
+      geo.computeBoundingSphere();
+      g.add(new THREE.Mesh(geo, part.material));
+    }
+    const L = teamLayout(SPECS[model]), team = new HorseTeam(this.kit.paint, HORSE_COATS[(model.length * 3) % HORSE_COATS.length], L.horses.length);
+    g.add(...team.meshes);
+    const base = new THREE.Matrix4(), sc = L.scale * carriage;
+    g.userData.team = (odo: number, v: number, t: number, seed: number) => {
+      L.horses.forEach(([x, z], j) => { base.makeScale(sc, sc, sc).setPosition(x, 0, z); team.pose(j, base, odo / sc, v / sc, t, seed + j * 0.53); });
+      team.commit();
+    };
+    return g;
   }
 
   // One vertex array per material, in the truck's frame (origin at the rear axle, x forward).
@@ -71,15 +97,17 @@ export class FleetBaker {
     const m = new THREE.Matrix4(), nm = new THREE.Matrix3(), v = new THREE.Vector3();
     const keep = (mat: THREE.Material) => mat instanceof THREE.MeshLambertMaterial || (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map);
     const tint = new THREE.Color();
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, toon = 0, inst: THREE.Color | null = null) => {
+    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, world: THREE.Matrix4, infl: number[] | null = null, inst: THREE.Color | null = null) => {
       // (Every template's glass is the same see-through tint: one material is shared by all, so a lot whose
       // trucks come from different templates, as a country stop's cartoons do, draws its glass at once.)
       if (mat instanceof THREE.MeshBasicMaterial && mat.transparent && !mat.map) mat = this.glass ??= mat;
       const g = geo.index ? geo.toNonIndexed() : geo;
-      // (A cartoon's shape and colours come from its morph target, as far as the truck has it.)
+      // (A cartoon's or a carriage's shape and colours come from its morph targets, as far as the truck has each.)
       const morph = (n: string, a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, i: number, k: number) => {
-        const m = toon > 0 ? (g.morphAttributes as Record<string, THREE.BufferAttribute[] | undefined>)[n]?.[0] : undefined, b = a.getComponent(i, k);
-        return m ? b + m.getComponent(i, k) * toon : b;   // (the targets are relative)
+        const ms = (g.morphAttributes as Record<string, THREE.BufferAttribute[] | undefined>)[n];
+        let b = a.getComponent(i, k);
+        if (infl && ms) for (let j = 0; j < ms.length; j++) if (infl[j]) b += ms[j].getComponent(i, k) * infl[j];   // (the targets are relative)
+        return b;
       };
       const names = ["position", "normal", "color", "uv"].filter((n) => g.getAttribute(n));
       if (!names.includes("position") || !names.includes("normal")) return;
@@ -101,10 +129,10 @@ export class FleetBaker {
       if (g !== geo) g.dispose();
     };
     t.root.traverseVisible((o: any) => {
-      if (!o.isMesh || Array.isArray(o.material) || !keep(o.material)) return;
+      if (!o.isMesh || Array.isArray(o.material) || !keep(o.material) || o.userData.noBake) return;
       if (o.isInstancedMesh) {
-        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); if (o.instanceColor) o.getColorAt(i, tint); add(o.geometry, o.material, m.premultiply(o.matrixWorld), 0, o.instanceColor ? tint : null); }
-      } else add(o.geometry, o.material, o.matrixWorld, o.morphTargetInfluences?.[0] ?? 0);
+        for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); if (o.instanceColor) o.getColorAt(i, tint); add(o.geometry, o.material, m.premultiply(o.matrixWorld), null, o.instanceColor ? tint : null); }
+      } else add(o.geometry, o.material, o.matrixWorld, o.morphTargetInfluences ?? null);
     });
     const out: FleetPart[] = [];
     for (const [material, e] of byMat) {

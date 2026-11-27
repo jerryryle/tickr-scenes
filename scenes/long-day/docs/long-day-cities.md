@@ -55,7 +55,9 @@ Three alternatives lost.
 ## The catalogue
 
 The catalogue holds 35 cities: five for each real style (coastal, metro, desert, brick,
-mainstreet and port) and five storybook towns. A city's id is `<style>-<slug>`, where the slug is
+mainstreet and port), four storybook towns, and Ravensgate, the one Victorian town, which took
+the fifth storybook town's place on its roads. The Victorian style is a real style to the visit
+planner, so Ravensgate comes up as often as any other real city. A city's id is `<style>-<slug>`, where the slug is
 its name in lower-case kebab form, so "Higgle-on-the-Wobble" is `storybook-higgle-on-the-wobble`.
 A city is in the catalogue once its folder is in `src/city-<style>/` and `src/world.ts` lists its id.
 The visit planner picks from the list by position, so a new city goes at the end of it.
@@ -94,7 +96,7 @@ A city file is `<slug>.ts` and its contents file `<slug>-contents.ts`. An asset 
 is `<slug>-<asset type>-<asset name>.ts` in the city's folder, and an asset a style shares is
 `<style>-<asset type>-<asset name>.ts` in the style's folder. The asset type is a word such as
 `vehicle`, `vignette`, `landmark` or `buildings`. A style's own definition is `<style>-style.ts`,
-and `src/styles.ts` holds the shared `CityStyle` type and the list of the seven styles. Assets every
+and `src/styles.ts` holds the shared `CityStyle` type and the list of the eight styles. Assets every
 style uses, such as `cars.ts` and `boats.ts`, sit in `src/` itself.
 
 Every file exports a uniquely named constant, such as `CITY_METRO_GRAND_CENTRAL` or
@@ -311,7 +313,9 @@ looking from a to b. The map holds these fields.
    samples run from 40 m before gate a to 40 m past gate b, or past the end of the freeway stretch
    on a freeway city's way in.
 3. Its land every 10 m: how much of it is b's (the rest is a's), how much of the storybook's
-   creeps in, and how much of it is coast.
+   creeps in, how much of a Victorian city's has (`period`), and how much of it is coast. The
+   period rises from 900 m short of a Victorian city's gate to 150 m short of it, and the trucks
+   turn into carriages where it passes a half (`CARRIAGE_BAND` in `src/carriage.ts`).
 4. Its set pieces, each as `RoadPiece` in `src/country.ts` has it, plus the way it faces.
 5. Its items: trees, rocks, ponds, wind turbines, pylons, farms, grazing cows, utility poles and
    fence bays, each with its place and what it is.
@@ -442,6 +446,14 @@ on: no tool rewrites a file that exists. Replacing a city means drafting a new o
 4. `make tractorturns SCENE=long-day [ARGS="<city id> ..."]` runs `tools/tractorturns.ts`, which
    writes each city's `noTractor` lists afresh and changes nothing else in its file. Run it after a
    hand edit that moves a junction, a signal pole, a stop sign or a piece of street furniture.
+5. `make relot SCENE=long-day ARGS="<city id>"` runs `tools/relot.ts`, which writes the city's
+   lotted blocks' contents afresh from today's rules after a change to how blocks are lotted. A
+   lotted block is a shopping, downtown or residential block with its facility at the kerb, other
+   than the plaza; every other recipe keeps what the file has, and a hand edit to a lotted
+   block's recipes is lost. Every lotted block's detail is
+   drawn afresh, since a rule's recipe takes its frame from the city file's rounded layout. Then
+   redraft the doors and furniture (`make clearstops ... DOORS=1`, then `make clearstops`, in turn
+   until neither changes anything) and run step 4.
 
 `test/tractorturns.ts` checks that a city of each style lists the moves the sweep bans, that a
 tractor can still get in and out by every gate, and that a tractor driven through two towns keeps

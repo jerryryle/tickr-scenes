@@ -12,7 +12,7 @@ import { entryGateOf } from "./outlinegen.ts";
 // Whether a city has a freeway, and through which gate: about half of them (never in a small
 // Main Street town, nor across a metro's elevated lines). A pure function of the city's seed.
 export function ruleFreewayGate(citySeed: number, style: CityStyle): Gate | null {
-  if (style.id === "mainstreet" || style.storybook) return null;
+  if (style.id === "mainstreet" || style.storybook || style.victorian) return null;
   const g = entryGateOf(citySeed);
   if (style.elevated && (g.dir === 1 || g.dir === 3)) return null;
   return hash2(citySeed, 0xf3e, 0, 0x7a2) < 0.55 ? g : null;

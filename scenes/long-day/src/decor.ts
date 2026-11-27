@@ -16,7 +16,9 @@ import { BLOCK, CURB_H, LOT_TOP, STREET } from "./grid.ts";
 import type { District, Rand, Rect, StallPose } from "./city.ts";
 import type { FacilityId } from "./facilities.ts";
 import { hash2 } from "./rng.ts";
-import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_W, signAtlas, SignAtlas } from "./signs.ts";
+import { vicBench, vicCabShelter, vicDustBin, vicHitchPost, vicNewsStand, vicPillarBox, vicPump, vicTrough } from "./city-victorian/victorian-street.ts";
+import type { VicPiece } from "./city-victorian/victorian-street.ts";
+import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_VIC_WALL, AD_W, signAtlas, SignAtlas } from "./signs.ts";
 
 interface RoofSpot { r: Rect; top: number }
 // What stands on the pavement, as circles (x, z, radius, chunk-local), recorded while a probe
@@ -173,12 +175,12 @@ export function drawBillboard(s: Batch, r: Rect, top: number, side: number, ad: 
   DC.quads.push({ x: x + nx * 0.15, y: base + h / 2, z: z + nz * 0.15, w, h, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pool[ad[1] % pool.length] as never) });
   DC.ads = true;
 }
-// A faded painted sign high on a blank wall.
+// A faded painted sign high on a blank wall (in the Victorian city, a freshly painted one).
 export function ghostSign(r: Rect, side: number, y: number, rnd: Rand) {
   const [nx, nz] = SIDE_N[side], w = Math.min(10, wallLen(r, side) - 2);
   if (w < 5) return;
   const [x, z] = onWall(r, side, range(rnd, -0.15, 0.15) * (wallLen(r, side) - w), 0.04);
-  DC.quads.push({ x, y, z, w, h: w * 0.375, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pick(rnd, AD_GHOST)) });
+  DC.quads.push({ x, y, z, w, h: w * 0.375, rotY: faceYaw(nx, nz), ...signAtlas.adUV(pick(rnd, CS.victorian ? AD_VIC_WALL : AD_GHOST)) });
   DC.ads = true;
 }
 
@@ -224,7 +226,9 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   const ac = kerbAcross + inward * 0.7, y0 = CURB_H;   // 0.7 m in from the kerb face
   // Each kind drawn at p along, with what it stands in the walkers' way as (a bus shelter, long and
   // set back, as a row of circles along its roof; a bench, long and shallow, as a row along it).
-  const piece: Record<number, (p: number) => void> = {
+  // The Victorian city draws its own piece in each one's place, of about its footprint
+  // (VIC_FURNITURE), and records the same obstacles.
+  const piece: Record<number, (p: number) => void> = CS.victorian ? vicPieces(s, kerbAcross, inward, axis, y0, rec) : {
     [PK.hydrant]: (p) => { cyl(p, y0 + 0.35, ac, 0.13, 0.7, 0xc0392b); cyl(p, y0 + 0.74, ac, 0.16, 0.1, 0xc0392b); box(p, y0 + 0.45, ac, 0.42, 0.1, 0.1, 0xd04a3a); rec(p, ac, 0.45, PK.hydrant); },
     [PK.trash]: (p) => { cyl(p, y0 + 0.45, ac, 0.28, 0.9, 0x2e4a3a); cyl(p, y0 + 0.92, ac, 0.3, 0.06, 0x223a2e); rec(p, ac, 0.45, PK.trash); },
     [PK.bench]: (p) => {
@@ -290,6 +294,27 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
     try { piece[kind]?.(p); } finally { PAVEMENT.tag = null; }
     FURNITURE.out?.push(FURNITURE.street, kind, p, inward);
   }
+}
+
+// The Victorian city's pieces for streetFurniture, by kind: each drawn at p along the kerb at
+// kerbAcross, standing in from it towards `inward`, and recorded as the modern piece it replaces is.
+const VIC_FURNITURE: Record<number, VicPiece> = {
+  [PK.hydrant]: vicPump, [PK.trash]: vicDustBin, [PK.bench]: vicBench, [PK.mailbox]: vicPillarBox,
+  [PK.news]: vicNewsStand, [PK.meter]: vicHitchPost, [PK.shelter]: vicCabShelter, [PK.rack]: vicTrough,
+};
+function vicPieces(s: Batch, kerbAcross: number, inward: number, axis: 0 | 1, y0: number, rec: (p: number, across: number, r: number, kind?: number) => void): Record<number, (p: number) => void> {
+  const ac = kerbAcross + inward * 0.7;
+  const at = (kind: number, p: number) => { if (axis === 0) VIC_FURNITURE[kind](s, p, kerbAcross, 0, inward, y0); else VIC_FURNITURE[kind](s, kerbAcross, p, inward, 0, y0); };
+  return {
+    [PK.hydrant]: (p) => { at(PK.hydrant, p); rec(p, ac, 0.45, PK.hydrant); },
+    [PK.trash]: (p) => { at(PK.trash, p); rec(p, ac, 0.45, PK.trash); },
+    [PK.bench]: (p) => { at(PK.bench, p); for (const k of [-0.6, 0, 0.6]) rec(p + k, ac + inward * 0.2, 0.42, PK.bench); },
+    [PK.mailbox]: (p) => { at(PK.mailbox, p); rec(p, ac, 0.45, PK.mailbox); },
+    [PK.news]: (p) => { at(PK.news, p); rec(p, ac, 0.9, PK.news); },
+    [PK.meter]: (p) => { at(PK.meter, p); rec(p, kerbAcross + inward * 0.45, 0.15, PK.meter); },
+    [PK.shelter]: (p) => { at(PK.shelter, p); for (const k of [-1.425, -0.475, 0.475, 1.425]) rec(p + k, kerbAcross + inward * 1.05, 0.8, PK.shelter); },
+    [PK.rack]: (p) => { at(PK.rack, p); rec(p, ac, 1.05, PK.rack); },
+  };
 }
 
 // ---- signature pieces -------------------------------------------------------------------------------

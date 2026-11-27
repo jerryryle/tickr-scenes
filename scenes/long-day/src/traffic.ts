@@ -8,15 +8,16 @@
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
 import { storyRigs } from "./storyvehicles.ts";
+import { vicRigs } from "./city-victorian/victorian-vehicles.ts";
 import type { StoryRig } from "./storyvehicles.ts";
 import { SB } from "./city-storybook/storybook-buildings-town.ts";
 import { Batch, keepWarm } from "./geom.ts";
 import { CAR_SPECS, carModel, GLASS, headLamp, iceCreamTruck, tailLamp, TYRE } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
-import { SPECS, TRAILER } from "./truck.ts";
+import { SPECS, TRAILER, truckExtents } from "./truck.ts";
 import { KINGPIN_TO_AXLES } from "./hitch.ts";
 import type { TruckModel } from "./truck.ts";
-import { signalsInStep, signalState } from "./signals.ts";
+import { SIGNAL_CYCLE, signalCycle, signalsInStep, signalState } from "./signals.ts";
 import type { SignalPreempt } from "./signals.ts";
 import { CityPlan, pick } from "./city.ts";
 import { outOfSight } from "./citygraph.ts";
@@ -34,6 +35,11 @@ export interface Obstacle { x: number; z: number; r: number; still?: boolean; ow
 // The storybook city's traffic is its own contraptions (storyvehicles.ts) and nothing else but the
 // Ryder trucks, which are cartoonish there as the player's is (fleet.ts, `toon`).
 const STORY_TRAFFIC: Record<string, number> = { hamster: 1.4, strider: 1.4, caterpillar: 0.8, pogo: 1.2, unicycle: 1.0, balloon: 0.8, teacup: 1.2, snail: 0.7, ryder: 0.8 };
+// The Victorian city's traffic is horse-drawn and period (city-victorian/victorian-vehicles.ts),
+// with a steam traction engine now and then, and the Ryder trucks, which are carriages there. Goods
+// carts and vans are about half of it, as in a working town's streets; cabs are most of the rest,
+// and the four-wheeler outnumbers the hansom, as it did outside London.
+const VIC_TRAFFIC: Record<string, number> = { hansom: 1.0, growler: 1.2, omnibus: 0.6, dray: 0.9, coster: 0.9, coalcart: 0.8, horseback: 0.5, pennyfarthing: 0.2, traction: 0.12, ryder: 0.8 };
 interface VehicleKind {
   id: string; len: number; width: number; vmax: number; weight: number;
   colors: number[] | null;             // body tints; null keeps the painted colours
@@ -101,10 +107,12 @@ export class Traffic {
   private spare = new Map<string, THREE.Object3D[]>();   // these are models of Ryder trucks that left, kept for reuse (each is new GPU geometry)
   time = 0;   // render time (the police lights)
   ryderToon = 0;   // this is how cartoonish Ryder trucks in traffic are drawn (1 in the storybook city: truck.ts makeToon)
+  ryderCarriage = 0;   // and this how much they are carriages (1 in the Victorian city: truck.ts makeCarriage; their teams walk: draw)
+  private get ryderLook() { return `${this.ryderToon}/${this.ryderCarriage}`; }
   private drawn: number[] = [];   // per vehicle as last drawn: x, z, heading, half length
   readonly obstacles: Obstacle[] = [];      // this frame's vehicles, for pedestrians
 
-  constructor(private scene: THREE.Scene, material: THREE.Material, private ryder: ((model: TruckModel, toon: number) => THREE.Object3D | null) | null) {
+  constructor(private scene: THREE.Scene, material: THREE.Material, private ryder: ((model: TruckModel, toon: number, carriage: number) => THREE.Object3D | null) | null) {
     const kind = (id: string, len: number, width: number, vmax: number, weight: number, colors: number[] | null, cap: number, build: ((b: Batch) => void) | null) => {
       let mesh: THREE.InstancedMesh | null = null;
       if (build) {
@@ -136,6 +144,8 @@ export class Traffic {
       const cap = rig.id === "caterpillar" || rig.id === "balloon" ? 4 : 8;
       this.kinds.push({ id: rig.id, len: rig.len, width: rig.width, vmax: rig.vmax, weight: 0, colors: rigCols, mesh: null, cap, rig });
     }
+    // (And the Victorian city's (VIC_TRAFFIC), the same way, each with its own tints.)
+    for (const rig of vicRigs()) this.kinds.push({ id: rig.id, len: rig.len, width: rig.width, vmax: rig.vmax, weight: 0, colors: rig.colors, mesh: null, cap: rig.cap, rig });
     this.material = material;
     const bb = new Batch(); bb.box(0, 0, 0, 0.28, 0.14, 0.5, 0xffffff);
     const bm = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -148,7 +158,7 @@ export class Traffic {
 
   private release(g: THREE.Object3D) {
     g.removeFromParent();
-    const m = `${g.userData.model}/${g.userData.toon ?? 0}`;
+    const m = `${g.userData.model}/${g.userData.look}`;
     let list = this.spare.get(m);
     if (!list) this.spare.set(m, (list = []));
     list.push(g);
@@ -321,7 +331,7 @@ export class Traffic {
   // in sight down a long street).
   private count(id: string, near: { x: number; z: number } | null = null) { let n = 0; for (const c of this.cars) if (c.kind.id === id && (!near || Math.hypot(c.x - near.x, c.z - near.z) <= TRAFFIC_DESPAWN)) n++; return n; }
   private pickKind(plan: CityPlan): VehicleKind | null {
-    const w = (k: VehicleKind) => plan.style.storybook ? STORY_TRAFFIC[k.id] ?? 0 : k.weight;
+    const w = (k: VehicleKind) => plan.style.storybook ? STORY_TRAFFIC[k.id] ?? 0 : plan.style.victorian ? VIC_TRAFFIC[k.id] ?? 0 : k.weight;
     const pool = this.kinds.filter((k) => w(k) > 0 && (k.id !== "icecream" || plan.style.id !== "port"));
     let t = this.rnd() * pool.reduce((a, k) => a + w(k), 0);
     for (const k of pool) { if ((t -= w(k)) < 0) return k; }
@@ -501,7 +511,7 @@ export class Traffic {
     if (!n0) { this.truckBk = tc.bk = null; this.truckStillT = 0; return; }
     // (With the nodes on past it whose lines are inside it, booked with it: else it would come to
     // their lines still booked through this one, too late to stop at them or book in turn.)
-    const { n, also } = this.through(T.path, n0);
+    const { n, also, together } = this.through(G, T.path, n0, seed);
     const N = G.nodes[n.node], dLine = n.sLine - 0.6 - (T.s + T.front), short = dLine > -0.5, stopped = T.v < 0.3 && dLine < 2.5;
     // (How long it has stood at its line: at an all-way stop, anyone who has waited at the kerb
     // longer crosses first, as for a car: pedFirst.)
@@ -514,12 +524,13 @@ export class Traffic {
     } else if (N.control === "stop") { sigOk = stopped || !!tc.bk; first = false; }
     else if (T.path.yields.some((y) => y.node === n.node)) first = false;
     // (The nodes booked with it, by their own controls too: a red light there holds it at this
-    // one's line, rather than waiting in this junction for it; an all-way stop or a give-way there,
-    // it books at its line once there is a gap, not on its approach.)
+    // one's line, rather than waiting in this junction for it, where their lights show its way
+    // green together (through); an all-way stop or a give-way there, it books at its line once
+    // there is a gap, not on its approach.)
     let alsoRed = false;
     for (const a of also) {
       const A = G.nodes[a];
-      if (A.control === "signal") { const sg = T.path.signals.find((x) => x.node === a); if (!sg || signalState(A, sg.phase, simTime, seed, prs) === "red") sigOk = first = false, alsoRed = true; }
+      if (A.control === "signal" && together) { const sg = T.path.signals.find((x) => x.node === a); if (!sg || signalState(A, sg.phase, simTime, seed, prs) === "red") sigOk = first = false, alsoRed = true; }
       else if (A.control === "stop" || T.path.yields.some((y) => y.node === a)) first = false;
     }
     // (Behind a car in its lane holding at the line for its turn: the truck's comes after that
@@ -639,9 +650,14 @@ export class Traffic {
     return out;
   }
   // Node n on path P, run on through the nodes after it whose lines come before its far mouth (or
-  // within 2 m of it): as one, out at the last one's mouth; also: those nodes.
-  private thru = { P: null as Path | null, n0: null as Path["nodes"][number] | null, n: null as unknown as Path["nodes"][number], also: [] as number[] };
-  private through(P: Path, n: Path["nodes"][number]): { n: Path["nodes"][number]; also: number[] } {
+  // within 2 m of it): as one, out at the last one's mouth; also: those nodes. together: whether
+  // the lights among them, unpreempted, show P's way through each green at once for a second or
+  // more of their cycles. Two lights linked for the street between them (signals.ts linkSignals)
+  // never do for a way that turns onto that street from the first one's cross street. Held at the
+  // first line for all of their reds at once, the truck would then wait there for good (truckBook),
+  // so it goes on its own light instead and stops at each red inside, as a car does.
+  private thru = { P: null as Path | null, n0: null as Path["nodes"][number] | null, n: null as unknown as Path["nodes"][number], also: [] as number[], together: true };
+  private through(G: CityGraph, P: Path, n: Path["nodes"][number], seed: number): { n: Path["nodes"][number]; also: number[]; together: boolean } {
     // (Kept from the step before for the same node: a step makes no garbage.)
     const T = this.thru;
     if (T.P === P && T.n0 === n) return T;
@@ -651,6 +667,12 @@ export class Traffic {
     const also: number[] = [];
     for (let k = i + 1; k < P.nodes.length && P.nodes[k].sLine < m.sOut + 2; k++) { m = { ...m, sOut: Math.max(m.sOut, P.nodes[k].sOut) }; also.push(P.nodes[k].node); }
     T.n = m; T.also = also;
+    // (Over a whole number of every light's cycle, a second at a time.)
+    const lights = P.signals.filter((g) => g.node === n.node || also.includes(g.node));
+    let cycle = SIGNAL_CYCLE;
+    for (const g of lights) while (cycle % signalCycle(G.nodes[g.node])) cycle += SIGNAL_CYCLE;
+    T.together = lights.length < 2;
+    for (let t = 0; t < cycle && !T.together; t++) T.together = lights.every((g) => signalState(G.nodes[g.node], g.phase, t, seed, null) === "green");
     return T;
   }
   // Whether car c, at rel from its line going v, could book footprint fp through n now: every
@@ -793,6 +815,11 @@ export class Traffic {
   waitsForTruck(id: number | undefined): boolean {
     const c = id === undefined ? undefined : this.byId.get(id);
     return !!c && c.waitFor === -2 && c.v < 0.5;
+  }
+  // Whether car `id` stands holding at its junction's line for its turn to book (held).
+  holdsAtLine(id: number | undefined): boolean {
+    const c = id === undefined ? undefined : this.byId.get(id);
+    return !!c && !!c.held && c.v < 0.5;
   }
   // Whether booking owner o is behind car c on the same approach (from), still short of the line:
   // it can't come to the junction before c, so c doesn't wait for it, as from the lane beside.
@@ -1252,10 +1279,11 @@ export class Traffic {
       // (The truck about to turn, a car beside it on the side it turns to (into the inner lane for
       // a left, its rear across the kerb lane for a right), the truck's nose ahead of the car's
       // middle: it treats it as in its lane and drops back behind it. Further ahead than that, it
-      // goes on, and the truck waits for it: street life's truckStop.) (Both standing, the car beside
-      // it already: it goes on past, as the truck waits for it; neither would ever move first.)
-      const bothStill = c.v < 0.1 && Math.abs(this.truckPath?.v ?? 0) < 0.1;
-      if (isTruck && !o.still && !bothStill && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
+      // goes on, and the truck waits for it: street life's truckStop.) (The truck standing, the car
+      // beside it goes on past, as the truck waits for it. Held only while it stood too, it would edge
+      // on a few centimetres a step and stop again, a minute to get by.)
+      const truckStill = Math.abs(this.truckPath?.v ?? 0) < 0.1;
+      if (isTruck && !o.still && !truckStill && this.truckTurn !== 0 && side * this.truckTurn > 0 && Math.abs(side) < 4.5 && along > 0 && Math.abs(along) <= half + o.r && sameDirT) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (A parked truck alongside, not yet clear of it sideways: held there while it eases out.)
       if (o.still && Math.abs(along) <= half && Math.abs(side) < rLat + c.kind.width * 0.5) { gap = Math.min(gap, 0.5); truckAhead = Math.min(truckAhead, 0.5); }
       // (Something standing beside it, a parked truck or a car, that its body would swing into as
@@ -1271,8 +1299,9 @@ export class Traffic {
       let onWay = false;
       if (turningNow && !ped && along > half && along < look + o.r) { const q = p.peek(Math.min(c.s + along, p.length), this.gw1); onWay = Math.hypot(o.x - q.x, o.z - q.z) < rLat + c.kind.width * 0.5; }
       // (A car alongside, or the truck, level or ahead, in the lane this one's path is moving it
-      // into: it waits, so the other goes on by, and then moves over behind it.)
-      if (!ped && !o.sweep && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
+      // into: it waits, so the other goes on by, and then moves over behind it. Not the truck
+      // standing, which waits for this one in turn.)
+      if (!ped && !o.sweep && !(isTruck && truckStill) && Math.abs(latAhead) > 0.5 && Math.sign(side) === Math.sign(latAhead) && Math.abs(side) > 0.8 && along > -0.5 && along <= half + o.r && Math.abs(side - latAhead) < rLat + c.kind.width * 0.5 && o.owner !== ignoreId && 0.5 < gap) { gap = 0.5; gapOwner = o.owner ?? -1; }
       // (And the truck coming up close behind in that lane, moving: the car doesn't move over across
       // its nose, which can't stop in the room left (seed 2539665337's city 16: a van moving over to
       // turn, its tail swinging into the truck's nose). It waits, and moves over once the truck has
@@ -1335,7 +1364,9 @@ export class Traffic {
       // lane, until there is a gap.)
       if ((laneChanging || turning || (rightSoon && !passTruck)) && c.dodge < -1.5 && otherLaneBlocked && !turning) c.dodgeTarget = c.dodge;
       else if (laneChanging || turning || (rightSoon && !passTruck)) c.dodgeTarget = 0;
-      else if ((sameDir && truckBehind < 40 && this.truckTurn !== 1) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } }
+      // (The lane it is moving over into filled before it got half way: back into its own. Kept
+      // moving over, it would come up against what is there and stand half across both.)
+      else if ((sameDir && truckBehind < 40 && this.truckTurn !== 1) || stillAhead < 35 || truckClose || (gap < 12 && c.stillT > 1.5)) { if (c.dodge < -1.5 || !otherLaneBlocked) { c.dodgeTarget = -3; c.holdT = 4; } else c.dodgeTarget = 0; }
       else if ((c.holdT -= dt) <= 0 && (c.dodge > -1.5 || !otherLaneBlocked)) c.dodgeTarget = 0;
     }
     if ((globalThis as any).TRAFFIC_DEBUG && gap < 4 && gapOwner < 0 && !gapPed && c.stillT > 4 && Math.floor(c.stillT * 10) % 20 === 0) (globalThis as any).TRAFFIC_DEBUG({ id: c.id, stillT: c.stillT, stillAhead, rightSoon, laneChanging, turning, merging, otherLaneBlocked, dodge: c.dodge, dodgeTarget: c.dodgeTarget, cable: c.cable, signal: hardStop < (c.next ? Infinity : p.length - 0.5), gap, cx: c.x, cz: c.z, ch: c.h, v: c.v, s: c.s, plen: p.length });
@@ -1516,10 +1547,11 @@ export class Traffic {
       if (c.model) {
         let g = this.groups.get(c.id);
         if (g && g.userData.model !== c.model) { this.release(g); this.groups.delete(c.id); g = undefined; }   // ids restart in each city
-        if (g && (g.userData.toon ?? 0) !== this.ryderToon) { this.release(g); this.groups.delete(c.id); g = undefined; }
-        if (!g) { g = this.spare.get(`${c.model}/${this.ryderToon}`)?.pop() ?? this.ryder?.(c.model, this.ryderToon) ?? undefined; if (!g) continue; g.userData.model = c.model; g.userData.toon = this.ryderToon; this.scene.add(g); this.groups.set(c.id, g); }
+        if (g && g.userData.look !== this.ryderLook) { this.release(g); this.groups.delete(c.id); g = undefined; }
+        if (!g) { g = this.spare.get(`${c.model}/${this.ryderLook}`)?.pop() ?? this.ryder?.(c.model, this.ryderToon, this.ryderCarriage) ?? undefined; if (!g) continue; g.userData.model = c.model; g.userData.look = this.ryderLook; this.scene.add(g); this.groups.set(c.id, g); }
         live.add(c.id);
         g.position.set(x, 0, z); g.rotation.set(0, h, 0); g.position.addScaledVector(this.v3.set(Math.cos(h), 0, -Math.sin(h)), -3.0);   // the model's origin is its rear axle
+        g.userData.team?.((c.podo ?? 0) + ((c.odo ?? 0) - (c.podo ?? 0)) * alpha, c.v, this.time, c.id * 0.37);   // (a carriage's horses: fleet.ts vehicle)
         continue;
       }
       if (c.kind.rig) {
@@ -1549,8 +1581,9 @@ export class Traffic {
         const key = -1 - L.car.id;
         let g = this.groups.get(key);
         if (g && g.userData.model !== L.car.model) { this.release(g); this.groups.delete(key); g = undefined; }
-        if (g && (g.userData.toon ?? 0) !== this.ryderToon) { this.release(g); this.groups.delete(key); g = undefined; }
-        if (!g) { g = this.spare.get(`${L.car.model}/${this.ryderToon}`)?.pop() ?? this.ryder?.(L.car.model, this.ryderToon) ?? undefined; if (!g) continue; g.userData.model = L.car.model; g.userData.toon = this.ryderToon; this.scene.add(g); this.groups.set(key, g); }
+        if (g && g.userData.look !== this.ryderLook) { this.release(g); this.groups.delete(key); g = undefined; }
+        if (!g) { g = this.spare.get(`${L.car.model}/${this.ryderLook}`)?.pop() ?? this.ryder?.(L.car.model, this.ryderToon, this.ryderCarriage) ?? undefined; if (!g) continue; g.userData.model = L.car.model; g.userData.look = this.ryderLook; this.scene.add(g); this.groups.set(key, g); }
+        g.userData.team?.(0, 0, this.time, L.car.id * 0.37);
         live.add(key);
         g.position.set(L.x, L.y, L.z); g.quaternion.copy(this.q); g.position.addScaledVector(this.v3.set(Math.cos(L.h), 0, -Math.sin(L.h)), -3.0);
         continue;
@@ -1654,10 +1687,11 @@ export function vehicleUnseen(G: CityGraph, eye: { x: number; z: number; h: numb
   for (const [u, v] of SIGHT_AT) { const a = u * len, b = v * width; if (!outOfSight(G, eye, x + fx * a + rx * b, z + fz * a + rz * b)) return false; }
   return true;
 }
-export function truckObstacles(model: TruckModel, x0: number, z0: number, h: number, trailerYaw: number, out: Obstacle[]) {
+// (`carriage`: in the Victorian city, its team's nose: truck.ts truckExtents.)
+export function truckObstacles(model: TruckModel, x0: number, z0: number, h: number, trailerYaw: number, out: Obstacle[], carriage = false) {
   const spec = SPECS[model], fx = Math.cos(h), fz = -Math.sin(h);
   const trailer = spec.fifthWheel !== undefined;
-  const front = spec.noseFront + 0.05, rear = trailer ? -1.5 : spec.cargo ? spec.cargo.x0 - 0.1 : -1.4;
+  const front = truckExtents(model, carriage).front, rear = trailer ? -1.5 : spec.cargo ? spec.cargo.x0 - 0.1 : -1.4;
   // (And one at the nose: the steps can end up to a step short of it, leaving its corners, which
   // swing out wide reversing into a bay, outside every circle.)
   let a = rear + 1.2;

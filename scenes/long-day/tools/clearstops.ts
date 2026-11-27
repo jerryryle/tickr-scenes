@@ -123,7 +123,7 @@ else {
       let lo = Infinity, hi = -Infinity;
       for (const m of models) {
         if (m === "tractor" && !reach.has(f)) continue;
-        const L = truckLayout(m), back = kerbStopAfter(G, f, m) + L.rear;
+        const L = truckLayout(m), back = kerbStopAfter(G, f, m, 0, !!plan.style.victorian) + L.rear;   // (a Victorian city's carriage stands short by its team: truck.ts truckExtents)
         const [a, b] = door ? [Math.min(back - BEHIND, door.a - PAST_DOOR), Math.max(back + 1, door.a + PAST_DOOR)] : [back - NO_DOOR, back + 1];
         lo = Math.min(lo, a); hi = Math.max(hi, b);
       }

@@ -210,6 +210,57 @@ make debug SCENE=long-day DEFINE="DEBUG_STYLE=storybook DEBUG_VIEW=worksHigh DEB
 make tool SCENE=long-day TOOL=whimsy SECS=14     # the art-direction sketch it started from
 ```
 
+The Victorian city is Ravensgate, a gaslit town of about 1850 to 1900 (`victorian` in
+`src/styles.ts`, `src/city-victorian/`). Nothing in it is modern: every block is lotted with period
+buildings and every facility but its brewery is a kerb stop, so it has no docks, yards, garages,
+containers, car parks, painted lines, cars or modern signs. Its trades and streets have period
+names (`VIC_LABEL` in `src/facilities.ts`, the city file).
+
+1. `victorian-buildings-town.ts` draws its buildings: terraces with bays and area railings, shop
+   rows and pubs, banks, a department store and Gothic chambers downtown, chapels and merchants'
+   warehouses in the block middles, walled yards with stables behind the shops, warehouses with
+   hoists, mills with chimneys, back yards, railed parks and a toll lodge on every road out. A
+   church, a town hall or a grand block is drawn only on a block middle of 26 by 14 m or more,
+   which no catalogue city has (`vicTower`). Its facade tiles are the `VICT_` ones in `src/facadeart.ts`,
+   and its skyline is the `spires` backdrop. Its streets are built up to their corners
+   (`buildLots` in `src/city.ts`). A corner holds one building fronting both streets
+   (`vicCorner`). It is a pub, shop or bank with its door in a canted corner, or, where people
+   live, mostly an end house of the row turned to face both streets.
+2. `victorian-street.ts` draws its street pieces: gas lamps, the signalled junctions' Westminster
+   semaphore columns and point-duty constables (`src/signals.ts`), and the period street furniture
+   (`src/decor.ts`). Its roads are granite setts and its pavements York stone. Its gas lamps glow
+   a dim orange (`VIC_GASLIGHT`) and light less of the street than electric ones (`lampPool` in
+   `src/atmosphere.ts`), and its blank walls carry painted advertisements.
+3. `victorian-vehicles.ts` holds its traffic, which is all horse-drawn but the odd penny-farthing
+   and traction engine; `src/horse.ts` is the horse every one of them uses.
+4. `victorian-landmark-steam-brewery.ts` is its landmark, the steam brewery on
+   `CityPlan.worksBlock`, with its beam engine, kiln cowl and rolling casks moved by
+   `SteamBreweryFx`.
+
+Ravensgate's junctions are controlled as a town of about 1870's were. A few of the most central
+downtown crossroads keep a semaphore column for each approach, after the one-off signal at Westminster
+in 1868. The other busy junctions have a police constable on point duty in the middle: those at a
+gate, those with downtown on a corner, and crossroads on a street that runs out of town with shops
+on two corners. He works the same signal phases the columns do and is posed by the same lamp tags,
+facing the traffic he holds with his right arm raised and waving the rest on with his left. Every
+other junction is an all-way stop with nothing drawn, where traffic gives way in turn. The split is
+written into the city file by `tools/vicjunctions.ts` (`make vicjunctions SCENE=long-day`), which
+keeps a junction's poles only where it keeps its semaphores.
+
+The trucks become horse-drawn carriages there, and on the drive to or from it over the 40 m or so
+where the road's `period` passes a half (`CountryRoad.periodAt`, `CARRIAGE_BAND` in `src/carriage.ts`).
+Near Ravensgate the country road loses its markings, poles, pylons, turbines and billboards, its
+signs are finger posts, and the oncoming traffic is horse-drawn. Its people dress for the period
+(`FIG_STYLE.victorian` in `src/figure.ts`), the crew as carters (`src/character.ts`), and it has
+vignettes of its own (a lamplighter, a chimney sweep, an organ grinder and others). It carries
+only period goods (`VIC_CARGO` in `src/cargo.ts`, `test/viccargo.ts`), by hand, sack truck or team
+lift, and the city after it gets the brewery's barrels. To look at it:
+
+```bash
+make debug SCENE=long-day DEFINE="DEBUG_VISIT=city=victorian-ravensgate DEBUG_VIEW=street"
+make tool SCENE=long-day TOOL=vicbuildings SECS=40   # also vicstreets, vicrides, vicpeople, vicwonders, carriages
+```
+
 `src/vignettes.ts` holds the street vignettes (a dog at a "no dogs" sign, a dog walker towed by a
 pack, a wet-paint bench, window washers, a crossing guard, a food truck's queue, snow and night
 scenes and the rest), each chosen for its district, hour, weather and season and placed on real
