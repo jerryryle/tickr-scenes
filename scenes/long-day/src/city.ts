@@ -2168,7 +2168,7 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
   }
 }
 // The Victorian city's setts are laid in courses SETT_COURSE across (m), its pavement flags FLAG_LEN long.
-const SETT_COURSE = 0.5, FLAG_LEN = 1.2;
+const SETT_COURSE = 0.6, FLAG_LEN = 1.2;
 function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
   loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[]; furniture?: [FurnitureItem[], FurnitureItem[]] | null }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
@@ -2238,9 +2238,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
         const c0 = lo === 0 ? 0 : edge + 0.25, c1 = lo === 0 ? edge : STREET, cw = (c1 - c0) / 2, y = CURB_H + 0.002;
         for (let j = 0; j < 2; j++) for (let k = Math.floor(p0 / FLAG_LEN - j / 2); (k + j / 2) * FLAG_LEN < p1; k++) {
           const r = hash2(k, j + Math.round(c0), (DC.plan as CityPlan).seed, 0xf1a6);
-          if (r > 0.5) continue;
+          if (r > 0.36) continue;
           const u0 = Math.max(p0, (k + j / 2) * FLAG_LEN) + 0.015, u1 = Math.min(p1, (k + 1 + j / 2) * FLAG_LEN) - 0.015;
-          if (u1 - u0 > 0.05) flat(u0, u1, c0 + j * cw + 0.015, c0 + (j + 1) * cw - 0.015, y, shade(C.sidewalk, r < 0.3 ? 1.1 : 0.9));
+          if (u1 - u0 > 0.05) flat(u0, u1, c0 + j * cw + 0.015, c0 + (j + 1) * cw - 0.015, y, shade(C.sidewalk, r < 0.2 ? 1.1 : 0.9));
         }
         // (The granite kerb's face, under its edge strip.)
         box(g, (p0 + p1) / 2, CURB_H / 2, lo === 0 ? KERB + 0.003 : STREET - KERB - 0.003, p1 - p0, CURB_H, 0.006, C.curb);

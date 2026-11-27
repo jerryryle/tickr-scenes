@@ -261,7 +261,7 @@ export const ROAD_R20: RoadMap = {
     { kind: "distance", s: 640, side: 1, len: 40, variant: 0, text: "RAVENSGATE  1 MI", way: -1 },
     { kind: "welcome", s: 2460, side: 1, len: 40, variant: 2, text: "WELCOME TO RAVENSGATE", way: -1 },
     { kind: "leave", s: 240, side: 1, len: 40, variant: 2, text: "LEAVING RAVENSGATE", way: 1 },
-    { kind: "distance", s: 640, side: 1, len: 40, variant: 0, text: "NORTH HARBOR  1 MI", way: 1 },
+    { kind: "distance", s: 640, side: 1, len: 40, variant: 2, text: "NORTH HARBOR  1 MI", way: 1 },
     { kind: "billboards", s: 1159.1, side: 1, len: 320, variant: 3, way: 1 },
     { kind: "watertower", s: 1603.35, side: -1, len: 90, variant: 0, way: 1 },
     { kind: "welcome", s: 2460, side: 1, len: 40, variant: 0, text: "WELCOME TO NORTH HARBOR", way: 1 },

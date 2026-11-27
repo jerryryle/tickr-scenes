@@ -1,10 +1,10 @@
 // Test scene: the Victorian city's street pieces (victorian-street.ts) close up, for judging them at
 // the board's resolution: the gas lamp by day and by night, the Westminster signal showing stop,
-// caution and go, the halt post, each piece of street furniture, and the finger post and
-// milestone of the road in. They stand along a kerb of York stone on granite setts, with a box
+// caution and go, the halt post, each piece of street furniture, and the finger post of the road
+// in (its arm unlettered here). They stand along a kerb of York stone on granite setts, with a box
 // truck's height (a 3.6 m post) at the end of the row for scale. It shows one view a second.
 // Build and render it with
-//   make tool SCENE=long-day TOOL=vicstreets SECS=20   -> build/long-day-vicstreets/vicstreets.png
+//   make tool SCENE=long-day TOOL=vicstreets SECS=17   -> build/long-day-vicstreets/vicstreets.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { makeLampMaterial, setSignalTime } from "../src/signals.ts";

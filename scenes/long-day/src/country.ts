@@ -43,7 +43,8 @@ export interface RoadSign { s: number; n: number; y: number; w: number; h: numbe
 export function pieceSigns(p: RoadPiece): RoadSign[] {
   const S = p.s, side = p.side;
   switch (p.kind) {
-    case "leave": case "distance": case "welcome": return [{ s: S, n: p.n ?? 11, y: 5.2, w: 12.8, h: 1.6 }];
+    // (A Victorian city's, variant 2, are finger posts: their arms' faces. countryworld.ts greenSign.)
+    case "leave": case "distance": case "welcome": return [p.variant === 2 ? { s: S, n: p.n ?? 8.3, y: 3.2, w: 4.0, h: 0.5 } : { s: S, n: p.n ?? 11, y: 5.2, w: 12.8, h: 1.6 }];
     case "billboards": return [0, 1, 2].map((k) => ({ s: S + 30 + k * 110 - 0.05, n: (k % 2 ? -1 : 1) * 22, y: 9.0, w: 14.6, h: 5.0, billboard: true }));
     case "truckstop": return [{ s: S - 60, n: TS_SIGN_N, y: 14.2, w: 9.0, h: 1.1 }];
     case "construction": return [{ s: S, n: 9, y: 2.6, w: 5.2, h: 0.7 }];
@@ -1039,11 +1040,11 @@ export class CountryRoad {
     for (let i = 0; i < this.pieces.length; i++) {
       const p = this.pieces[i];
       const stop = this.stops.find((x) => x.kind === p.kind);
-      const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome";
+      const isSign = p.kind === "leave" || p.kind === "distance" || p.kind === "welcome", fp = isSign && p.variant === 2 ? pieceSigns(p)[0] : null;   // (fp: a finger post's arm)
       if (p.away && (isSign || p.kind === "fwsign" || p.kind === "weigh" || p.kind === "tractor")) continue;   // (facing the other way)
       if (!stop && !isSign && hash2(i, Math.floor(p.s), this.geo.key, 0x5a0) > 0.7) continue;
       const F: Record<PieceKind, [number, number, number]> = {
-        leave: [0, 11, 5], distance: [0, 11, 5], welcome: [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
+        leave: fp ? [0, fp.n, fp.y] : [0, 11, 5], distance: fp ? [0, fp.n, fp.y] : [0, 11, 5], welcome: fp ? [0, fp.n, fp.y] : [0, p.n ?? 11, 5], truckstop: [stop ? SWAP_AHEAD / 2 : 70, stop ? APRON : 45, 2],
         rail: [0, 0, 2.5], construction: [p.len / 2, 10, 1.5], billboards: [140, -22, 8], attraction: [50, p.side * 40, 7],
         weigh: [100, 22, 2], fruit: [40, p.side * 13, 2], watertower: [45, p.side * 32, 14], bridge: [60, 0, 4], gas: [40, p.side * (FORECOURT + 6), 3],
         tunnel: [0, 0, 4], overpass: [p.len / 2, 0, 2], fwsign: [0, p.n ?? 0, 4], ferry: [0, 0, 0], cattle: [0, 0, 0], tractor: [0, 0, 0],
