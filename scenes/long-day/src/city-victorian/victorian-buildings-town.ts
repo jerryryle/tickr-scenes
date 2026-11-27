@@ -70,10 +70,8 @@ function vicBox(s: Batch, x0: number, z0: number, x1: number, z1: number, y0: nu
       const [ax, az] = corners[sd], [bx, bz] = corners[(sd + 1) % 4], L = Math.hypot(bx - ax, bz - az);
       if (flank && sd % 2 === 1) {
         if (flank === (sd === 1 ? "x0" : "x1")) continue;
-        // (A blank side is the tile's plain strip left of its window, 28 px of 128, laid in pieces
-        // about as wide as that strip is on a front.)
-        const m = Math.max(1, Math.round(L / 0.8));
-        for (let j = 0; j < m; j++) s.wall(ax + (bx - ax) * j / m, az + (bz - az) * j / m, ax + (bx - ax) * (j + 1) / m, az + (bz - az) * (j + 1) / m, y, y + h, col, tile, 0, 0.22, 0, band.floors);
+        // (A blank side is the band's wall with no window, VICT_PLAIN, at a front's scale.)
+        s.wall(ax, az, bx, bz, y, y + h, col, FACADE.VICT_PLAIN + FACADE_KINDS * band.v, 0, L / BAY, 0, band.floors);
         continue;
       }
       const bays = Math.max(1, Math.round(L / (sd % 2 ? BAY : bay)));

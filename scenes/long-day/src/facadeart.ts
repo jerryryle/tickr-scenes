@@ -646,8 +646,11 @@ const faVictMill: FaKind = (p, v, rnd) => {
   p.rect(x - 6, y + h, w + 12, 5, FA_VSTONE, FA_TRIM); p.paint(x - 6, y + h + 4, w + 12, 1, "rgba(0,0,0,0.3)");
 };
 
+// A wall with no window (VICT_PLAIN).
+const faVictPlain: FaKind = (p, v, rnd) => faVWall(p, v, rnd);
+
 const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon, faStorybook, faStoryShop, faStoryDoor,
-  faVictSash, faVictShop, faVictDoor, faVictGothic, faVictWarehouse, faVictGrand, faVictMill, faVictShopWin];
+  faVictSash, faVictShop, faVictDoor, faVictGothic, faVictWarehouse, faVictGrand, faVictMill, faVictShopWin, faVictPlain];
 
 
 // The whole atlas, on two new canvases.

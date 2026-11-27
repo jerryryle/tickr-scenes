@@ -11,10 +11,11 @@ export const FACADE = {
   // (VICT_DOOR), pointed Gothic windows (VICT_GOTHIC), a warehouse's stacked loading doors
   // (VICT_WAREHOUSE), a grand building's pedimented windows between pilasters (VICT_GRAND), a
   // mill's rows of arched iron-framed windows (VICT_MILL), and the shopfront's plate glass with no
-  // door, for its other bays (VICT_SHOPWIN).
+  // door, for its other bays (VICT_SHOPWIN), and the wall with no window, for a terrace's blank
+  // end walls (VICT_PLAIN).
   // (Their variants come in pairs: 0 and 1 for brick, 2 and 3 for stucco or stone. The Victorian
   // buildings pick a wall's variants by what it is: victorian-buildings-town.ts.)
-  VICT_SASH: 19, VICT_SHOP: 20, VICT_DOOR: 21, VICT_GOTHIC: 22, VICT_WAREHOUSE: 23, VICT_GRAND: 24, VICT_MILL: 25, VICT_SHOPWIN: 26,
+  VICT_SASH: 19, VICT_SHOP: 20, VICT_DOOR: 21, VICT_GOTHIC: 22, VICT_WAREHOUSE: 23, VICT_GRAND: 24, VICT_MILL: 25, VICT_SHOPWIN: 26, VICT_PLAIN: 27,
 } as const;
 // The atlas has room for this many kinds (a tile's kind is its id modulo this; facadeart.ts).
 export const FACADE_KINDS = 32;
