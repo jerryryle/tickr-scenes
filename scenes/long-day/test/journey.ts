@@ -93,17 +93,19 @@ import { Journey } from "../src/journey.ts";
     }
     if (j.st.mode === "country" && pmode !== "country") {
       // The train must cross only while the truck waits at the crossing, and only near it.
-      const r = j.country!, rp = r.pieces.find((p) => p.kind === "rail");
+      // (The track lies at the piece's start as its map has it: on a drive against the map's way,
+      // the reversed piece's far end.)
+      const r = j.country!, rp = r.pieces.find((p) => p.kind === "rail"), rs = rp ? (rp.away ? rp.s + rp.len : rp.s) : 0;
       if (rp && r.trainT >= 0) {
         const len = 9 * 17, q = { x: 0, z: 0, h: 0, k: 0 }, tq = { x: 0, z: 0, h: 0, k: 0 };
         let worst = 1e9, roll = 0;
         for (let u = r.trainT; u < r.trainT + (150 + len + 240) / 20; u += 0.25) {
           const front = -150 + 20 * (u - r.trainT), s = r.sAt(u);
-          if (front > -10 && front - len < 10 && s > rp.s - 8) roll = Math.max(roll, s - rp.s);
+          if (front > -10 && front - len < 10 && s > rs - 8) roll = Math.max(roll, s - rs);
           r.center(s, q);
-          for (let n = front - len; n <= front; n += 8) { if (n < -240 || n > 240) continue; r.point(rp.s, n, tq); const d = Math.hypot(q.x - tq.x, q.z - tq.z); if (Math.abs(s - rp.s) > 40) worst = Math.min(worst, d); }
+          for (let n = front - len; n <= front; n += 8) { if (n < -240 || n > 240) continue; r.point(rs, n, tq); const d = Math.hypot(q.x - tq.x, q.z - tq.z); if (Math.abs(s - rs) > 40) worst = Math.min(worst, d); }
         }
-        console.log(`TRAIN c${j.st.city} rail@${rp.s.toFixed(0)} tt${r.trainT.toFixed(0)} dur${r.duration.toFixed(0)} SB${r.SB.toFixed(0)} rollThrough ${roll.toFixed(1)} nearestAway ${worst.toFixed(0)}m`);
+        console.log(`TRAIN c${j.st.city} rail@${rs.toFixed(0)} tt${r.trainT.toFixed(0)} dur${r.duration.toFixed(0)} SB${r.SB.toFixed(0)} rollThrough ${roll.toFixed(1)} nearestAway ${worst.toFixed(0)}m`);
         if (roll > 0) err(`truck drives through the crossing while the train passes (c${j.st.city})`);
       }
     }
