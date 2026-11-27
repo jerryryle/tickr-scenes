@@ -4,23 +4,23 @@
 // in (its arm unlettered here). They stand along a kerb of York stone on granite setts, with a box
 // truck's height (a 3.6 m post) at the end of the row for scale. It shows one view a second.
 // Build and render it with
-//   make tool SCENE=long-day TOOL=vicstreets SECS=17   -> build/long-day-vicstreets/vicstreets.png
+//   make tool SCENE=long-day TOOL=vicstreets SECS=18   -> build/long-day-vicstreets/vicstreets.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { makeLampMaterial, setSignalTime } from "../src/signals.ts";
-import { vicBench, vicCabShelter, vicDustBin, vicFingerPost, vicHaltPost, vicHitchPost, vicLamp, vicNewsStand, vicPillarBox, vicPump, vicSignal, vicTrough } from "../src/city-victorian/victorian-street.ts";
+import { vicBench, vicBollard, vicCabShelter, vicDustBin, vicFingerPost, vicHaltPost, vicHitchPost, vicLamp, vicNewsStand, vicPillarBox, vicSignal, vicStreetPump, vicTrough } from "../src/city-victorian/victorian-street.ts";
 import type { VicPiece } from "../src/city-victorian/victorian-street.ts";
 import { VIC_STREET } from "../src/city-victorian/victorian-buildings-town.ts";
 
 const CURB = 0.15;
 // Where each piece stands along the kerb (x), the kerb at z = 0, the pavement at z > 0.
 const PIECES: [string, VicPiece, number][] = [
-  ["pump", vicPump, 0], ["bin", vicDustBin, 4], ["bench", vicBench, 8], ["pillar", vicPillarBox, 12],
-  ["news", vicNewsStand, 16], ["hitch", vicHitchPost, 20], ["shelter", vicCabShelter, 25], ["trough", vicTrough, 31],
+  ["pump", vicStreetPump, 0], ["bin", vicDustBin, 4], ["bench", vicBench, 8], ["pillar", vicPillarBox, 12],
+  ["news", vicNewsStand, 16], ["hitch", vicHitchPost, 20], ["shelter", vicCabShelter, 25], ["trough", vicTrough, 31], ["bollard", vicBollard, 35],
 ];
 const LAMP_X = -6, SIG_X = [40, 46, 52], HALT_X = 58, FINGER_X = 66;
 
-// Night: what aux.z -2 (streetlight glass) glows by, as the city's facade material does.
+// Night: what aux.z -5 (gas lantern glass) glows by, as the city's facade material does.
 const NIGHT = { value: 0 };
 function glowMaterial() {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
@@ -28,7 +28,7 @@ function glowMaterial() {
     shader.uniforms.uNight = NIGHT;
     shader.vertexShader = shader.vertexShader.replace("#include <common>", "#include <common>\nattribute vec3 aAux;\nvarying float vTag;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvTag = aAux.z;");
     shader.fragmentShader = shader.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vTag;\nuniform float uNight;")
-      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n  if (vTag < -1.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.86, 0.55) * 1.3;");
+      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n  if (vTag < -4.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.66, 0.2) * 1.05;");
   };
   return mat;
 }

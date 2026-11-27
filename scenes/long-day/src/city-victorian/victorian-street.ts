@@ -6,13 +6,16 @@
 // and lettering.
 // The file imports only geometry, so city.ts and the others can import it at load.
 import { Batch } from "../geom.ts";
-import { VIC } from "./victorian-buildings-town.ts";
+import { hash2 } from "../rng.ts";
+import { VIC, VIC_GASLIGHT } from "./victorian-buildings-town.ts";
 
 // The street's iron is painted a dark green, a shade lighter than VIC.iron so that it reads against
-// a dark pavement on the board; its trim is gilt, its pillar boxes are post-office red.
+// a dark pavement on the board; its trim is gilt, its pillar boxes are post-office red. Bollards,
+// pumps and hitching posts are plain black iron, so that the green stays with the lamps and signals.
 const VS_IRON = 0x2c3a31, VS_IRON_DARK = 0x1f2822, VS_GILT = VIC.gilt, VS_RED = 0xb3221c, VS_GRANITE = 0x8e8a82, VS_TIMBER = VIC.timber;
-// (A gas lamp's glass by day: pale, warm when it glows after dark.)
-const VS_LAMP_GLASS = 0xe6dcb8;
+const VS_BLACK = 0x26272a;
+// (A gas lamp's glass by day is clear, so it shows a pale grey; it glows orange after dark.)
+const VS_LAMP_GLASS = 0xb4b8aa;
 
 // vsLocal runs fn, which draws into b about the origin, and then moves what it drew to (x, z)
 // turned by rot (Frame2's sense: local +x goes to (cos rot, -sin rot), local +z to (sin rot, cos rot)).
@@ -37,14 +40,14 @@ const VS_LANTERN = [[0.25, 0], [0.62, 0.25], [1, 1]] as const;
 // foot, a slim shaft with a gilt collar and a ladder bar for the lamplighter's ladder, and a tapered
 // glazed lantern with a pointed cap and a finial. Its ladder bar runs along the kerb (across the
 // way to the road head (hx, hz), where another city's streetlight hangs its head). The glass glows
-// after dark (aux -2, as every city's streetlight heads do). It returns where its light is.
+// a gas flame's orange after dark (VIC_GASLIGHT). It returns where its light is.
 export function vicLamp(s: Batch, px: number, pz: number, hx: number, hz: number, y0: number): [number, number, number] {
   vsLocal(s, px, pz, Math.atan2(hx - px, hz - pz), () => {
     s.lathe("vicFoot", VS_FOOT, 0, y0, 0, 0.17, 0.7, VS_IRON, 6);
     s.cyl(0, y0 + 2.0, 0, 0.05, 2.7, VS_IRON, 6);
     s.cyl(0, y0 + 3.36, 0, 0.08, 0.06, VS_GILT, 6);
     s.box(0, y0 + 3.22, 0, 0.66, 0.04, 0.04, VS_IRON);
-    s.aux.set(0, 0, -2); s.lathe("vicLantern", VS_LANTERN, 0, y0 + 3.4, 0, 0.25, 0.72, VS_LAMP_GLASS, 4, Math.PI / 4); s.aux.set(0, 0, -1);
+    s.aux.set(0, 0, VIC_GASLIGHT); s.lathe("vicLantern", VS_LANTERN, 0, y0 + 3.4, 0, 0.25, 0.72, VS_LAMP_GLASS, 4, Math.PI / 4); s.aux.set(0, 0, -1);
     s.cone(0, y0 + 4.25, 0, 0.3, 0.26, VS_IRON, 4, 0, Math.PI / 4);
     s.cone(0, y0 + 4.48, 0, 0.05, 0.2, VS_GILT, 4);
   });
@@ -117,17 +120,27 @@ export function vicHaltPost(solid: Batch, px: number, pz: number, ux: number, uz
 export type VicPiece = (s: Batch, x: number, z: number, ix: number, iz: number, y0: number) => void;
 const vsPiece = (d: number, draw: (s: Batch, y0: number) => void): VicPiece => (s, x, z, ix, iz, y0) => vsLocal(s, x + ix * d, z + iz * d, Math.atan2(ix, iz), () => draw(s, y0));
 
-// A parish pump (for a hydrant): an iron column with a domed cap, its spout over a granite step on
-// the road side and its long handle up on the other.
-export const vicPump = vsPiece(0.7, (s, y0) => {
-  s.box(0, y0 + 0.06, -0.15, 0.5, 0.12, 0.5, VS_GRANITE);
-  s.lathe("vicFoot", VS_FOOT, 0, y0 + 0.12, 0.1, 0.17, 0.3, VS_IRON, 6);
-  s.cyl(0, y0 + 0.86, 0.1, 0.11, 1.0, VS_IRON, 6);
-  s.cone(0, y0 + 1.46, 0.1, 0.15, 0.2, VS_IRON, 6);
-  s.cone(0, y0 + 1.6, 0.1, 0.05, 0.14, VS_GILT, 4);
-  s.boxR(0, y0 + 0.82, -0.08, 0.07, 0.07, 0.32, VS_IRON, -0.5, 0, 0);
-  s.boxR(0, y0 + 1.4, 0.36, 0.05, 0.05, 0.6, VS_IRON, -0.55, 0, 0);
+// A street pump: a tall black iron column on a granite step, its spout over the step on the road
+// side, its long handle raised on the other, and a cap with a knob on top.
+export const vicStreetPump = vsPiece(0.7, (s, y0) => {
+  s.box(0, y0 + 0.06, -0.15, 0.56, 0.12, 0.56, VS_GRANITE);
+  s.lathe("vicFoot", VS_FOOT, 0, y0 + 0.12, 0.1, 0.17, 0.3, VS_BLACK, 6);
+  s.cyl(0, y0 + 1.05, 0.1, 0.1, 1.5, VS_BLACK, 6);
+  s.cyl(0, y0 + 1.83, 0.1, 0.16, 0.06, VS_BLACK, 6);
+  s.cone(0, y0 + 1.86, 0.1, 0.12, 0.16, VS_BLACK, 6);
+  s.cyl(0, y0 + 1.99, 0.1, 0.07, 0.12, VS_BLACK, 4);
+  s.boxR(0, y0 + 0.9, -0.08, 0.07, 0.07, 0.36, VS_BLACK, -0.4, 0, 0);
+  s.boxR(0, y0 + 1.45, 0.42, 0.05, 0.05, 0.7, VS_BLACK, 0.5, 0, 0);
 });
+// A cast-iron bollard: a short black post with a collar and a knob on top.
+export const vicBollard = vsPiece(0.7, (s, y0) => {
+  s.cyl(0, y0 + 0.4, 0, 0.12, 0.8, VS_BLACK, 6);
+  s.cyl(0, y0 + 0.82, 0, 0.15, 0.06, VS_BLACK, 6);
+  s.cyl(0, y0 + 0.92, 0, 0.09, 0.14, VS_BLACK, 4);
+});
+// For a hydrant: a bollard, as stood along any street, or one time in five a street pump. (A town
+// had a pump to a street or two, where a modern one has a hydrant on every pavement: decor.ts.)
+export const vicPump: VicPiece = (s, x, z, ix, iz, y0) => (hash2(Math.round(x), Math.round(z), 0, 0x9b1) < 0.2 ? vicStreetPump : vicBollard)(s, x, z, ix, iz, y0);
 // A street orderly's dust bin (for a trash can): a timber box with a sloped lid and iron bands.
 export const vicDustBin = vsPiece(0.7, (s, y0) => {
   s.box(0, y0 + 0.4, 0, 0.62, 0.8, 0.5, VS_TIMBER);
@@ -162,19 +175,19 @@ export const vicNewsStand = vsPiece(0.7, (s, y0) => {
   s.box(0.25, y0 + 0.5, 0.1, 0.9, 1.0, 0.55, VIC.green);
   s.boxR(0.25, y0 + 1.04, 0.05, 0.94, 0.06, 0.6, 0x3a2e22, -0.25, 0, 0);
   s.box(0.25, y0 + 1.45, 0.36, 0.9, 0.8, 0.05, VIC.green);
-  vsPane(s, 0.25, y0 + 1.6, 0.334, 0.78, 0.36, 0xefe8d4, 0, -1);
-  vsPane(s, 0.25, y0 + 1.66, 0.332, 0.62, 0.08, 0x1a1a1a, 0, -1);
-  vsPane(s, 0.25, y0 + 1.53, 0.332, 0.5, 0.05, 0xa82218, 0, -1);
+  vsPane(s, 0.25, y0 + 1.6, 0.331, 0.78, 0.36, 0xefe8d4, 0, -1);
+  vsPane(s, 0.25, y0 + 1.66, 0.328, 0.62, 0.08, 0x1a1a1a, 0, -1);
+  vsPane(s, 0.25, y0 + 1.53, 0.328, 0.5, 0.05, 0xa82218, 0, -1);
   // (The placard board: two boards leaning together, the day's headlines pasted on the road side.)
   for (const k of [-1, 1]) s.boxR(-0.5, y0 + 0.45, k * 0.12, 0.5, 0.9, 0.03, 0x3a2e22, k * 0.25, 0, 0);
   s.boxR(-0.5, y0 + 0.5, -0.135, 0.42, 0.6, 0.01, 0xefe8d4, -0.25, 0, 0);
 });
-// A cast-iron hitching post (for a parking meter): a slim post with a ring for the reins and a
-// gilt finial on top.
+// A cast-iron hitching post (for a parking meter): a slim black post with a ring for the reins and
+// a knob on top.
 export const vicHitchPost = vsPiece(0.45, (s, y0) => {
-  s.cyl(0, y0 + 0.5, 0, 0.05, 1.0, VS_IRON, 6);
-  s.cone(0, y0 + 1.06, 0, 0.07, 0.14, VS_GILT, 4);
-  s.box(0, y0 + 0.86, -0.08, 0.02, 0.12, 0.12, VS_IRON_DARK);
+  s.cyl(0, y0 + 0.5, 0, 0.05, 1.0, VS_BLACK, 6);
+  s.cone(0, y0 + 1.04, 0, 0.07, 0.1, VS_BLACK, 4);
+  s.box(0, y0 + 0.86, -0.08, 0.02, 0.12, 0.12, VS_BLACK);
 });
 // A cabmen's shelter (for a bus shelter): a green timber hut with panelled walls, a band of windows,
 // a pitched roof with deep eaves and a little ventilator on its ridge.

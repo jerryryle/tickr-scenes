@@ -21,7 +21,7 @@ import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
 import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
-import { VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
+import { VIC_GASLIGHT, VIC_STREET, vicBackYard, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
@@ -1697,6 +1697,7 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
 // ---- entrance doors -----------------------------------------------------------------------------
 // Where a kerb facility's front door is on each side of its block: found by building the block
 // (without signs) and looking in from the sidewalk at head height for the first wall that faces
+    if (plan.style.victorian) group.userData.lampPool = 0.45;   // (a gas flame lights less of the street than an electric lamp)
 // the street, near where a truck stopping on that side has its back. The chunk draws a door
 // there (entranceDoor), the driver walks to it (journey.ts DOOR_PROBE), and FrontDoorFx opens it.
 // Cached per block: a pure function of the city.
@@ -3694,7 +3695,7 @@ function breweryDock(s: Batch, L: DockLayout, quads: Quad[], uv: ReturnType<Sign
     const y = P + doorH + 0.9, n = L.wall - 0.55;
     fspan(s, side, la - 0.04, la + 0.04, y - 0.5, y - 0.05, L.wall - 0.06, L.wall - 0.01, iron);
     fspan(s, side, la - 0.03, la + 0.03, y - 0.05, y + 0.02, n, L.wall - 0.01, iron);
-    const ax = s.aux.clone(); s.aux.set(0, 0, -2); fspan(s, side, la - 0.15, la + 0.15, y - 0.45, y - 0.08, n - 0.15, n + 0.15, BREWERY_DOCK.lamp); s.aux.copy(ax);
+    const ax = s.aux.clone(); s.aux.set(0, 0, VIC_GASLIGHT); fspan(s, side, la - 0.15, la + 0.15, y - 0.45, y - 0.08, n - 0.15, n + 0.15, BREWERY_DOCK.lamp); s.aux.copy(ax);
     fspan(s, side, la - 0.2, la + 0.2, y - 0.08, y, n - 0.2, n + 0.2, iron);
     const [lx, lz] = frontPt(side, la, n); DC.lampSites.push(lx, y - 0.3, lz);
   }

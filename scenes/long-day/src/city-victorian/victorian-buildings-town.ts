@@ -28,6 +28,9 @@ export const VIC = {
   slateDark: 0x3c4148, lead: 0x6a7078, brickDark: 0x6a3024, oak: 0x7a5434, coal: 0x222226, canvas: 0xd8ceb4,
   bronze: 0x3e5e4a, copper: 0x5e9a84, gravel: 0xbcae8e, flag: 0x9c968a, white: 0xeee8da, sack: 0xb8a078,
 };
+// A gas flame's tag (aux z): glass drawn with it glows a dim orange after dark (facade.ts), where
+// another city's lamp heads (aux z -2) glow a bright white.
+export const VIC_GASLIGHT = -5;
 // These are the street's colours, laid over city.ts's C while a Victorian city is built
 // (setCityStyle): granite setts for the road, York stone flags for the pavements, granite kerbs,
 // no painted markings to speak of, black iron poles and warm gas lamps.
@@ -172,9 +175,9 @@ function vicRailings(s: Batch, ax: number, az: number, bx: number, bz: number, y
     vicQuad(s, [px - tx * w, y, pz - tz * w], [px + tx * w, y, pz + tz * w], [px + tx * w, y + h + 0.1, pz + tz * w], [px - tx * w, y + h + 0.1, pz - tz * w], col, [nx, 0, nz]);
   }
 }
-// A gas lantern glowing after dark (aux -2, as every city's lamp heads), its cap and finial.
+// A gas lantern glowing after dark (VIC_GASLIGHT), its cap and finial.
 function vicLantern(s: Batch, x: number, y: number, z: number, r = 0.2) {
-  s.aux.set(0, 0, -2); s.box(x, y, z, r * 1.6, r * 2.4, r * 1.6, VIC.lamp); s.aux.set(0, 0, -1);
+  s.aux.set(0, 0, VIC_GASLIGHT); s.box(x, y, z, r * 1.6, r * 2.4, r * 1.6, VIC.lamp); s.aux.set(0, 0, -1);
   s.cone(x, y + r * 1.6, z, r * 1.2, r * 0.9, VIC.black, 4, 0, Math.PI / 4);
 }
 // A dormer on a slope: its front wall (a window from the sash tile) at z, w across, h tall from y.

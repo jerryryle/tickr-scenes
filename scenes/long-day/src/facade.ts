@@ -66,7 +66,7 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
       // After dark (atmosphere.ts): about half the windows lit, one room per bay and floor (offices
       // and lobbies: two per bay, and more of them lit), in warm lamplight, cool office light or
       // a television's blue (the Victorian city's tiles: only gaslight), each a little brighter or dimmer; and the streetlight heads
-      // (aux.z = -2) glowing. The mask says which pixels are glass and how brightly they glow
+      // (aux.z = -2) glowing, gas lanterns (aux.z = -5) a dimmer orange. The mask says which pixels are glass and how brightly they glow
       // (blinds, curtains).
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   {
@@ -81,10 +81,11 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
     lc = mix(lc, warm * vec3(1.0, 0.92, 0.8), step(18.5, kind) * step(kind, 26.5));   // (the Victorian city's kinds: warm gaslight only)
     float bright = 0.7 + 0.45 * fract(r2 * 7.0);
     totalEmissiveRadiance += uNight * glass * lit * lc * 0.85 * bright;
-    if (vAux.z < -1.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.86, 0.55) * 1.3;
+    if (vAux.z < -4.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.66, 0.2) * 1.05;
+    else if (vAux.z < -1.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.86, 0.55) * 1.3;
   }`);
   };
-  mat.customProgramCacheKey = () => "facade-v9";
+  mat.customProgramCacheKey = () => "facade-v10";
   return mat;
 }
 
