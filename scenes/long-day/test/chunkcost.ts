@@ -1,7 +1,8 @@
 // Test: this measures what a city chunk costs the board, style by style: its triangles (mean, 95th percentile
 // and the most of any chunk) and meshes (draw calls), over every chunk of a city of each style.
-// The storybook city (styles.ts) is built from curved, bulging parts; it must cost no more than
-// BUDGET times the dearest of the real styles, by mean and by 95th percentile, or this fails.
+// The storybook city (styles.ts) is built from curved, bulging parts, and the Victorian city from
+// roofs, stacks and spires; each must cost no more than BUDGET times the dearest of the other
+// styles, by mean and by 95th percentile, or this fails.
 // The optional args are seed (default 1) and cities per style (default 2).
 import * as THREE from "three@0.187.0";
 import { CityPlan, makeCityChunkBuilder, cityDistance, CITY_LO, CITY_HI } from "../src/city.ts";
@@ -9,6 +10,7 @@ import { citySeedOf } from "../src/country.ts";
 import { STYLES } from "../src/styles.ts";
 import type { StyleId } from "../src/styles.ts";
 import { BLOCK, RING } from "../src/grid.ts";
+import { CATALOGUE } from "../src/world.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const SEED = argv[0] ? Number(argv[0]) : 1, PER = argv[1] ? Number(argv[1]) : 2;
@@ -17,10 +19,14 @@ const BUDGET = 1.2;
 const mat = { ground: new THREE.MeshLambertMaterial(), solid: new THREE.MeshLambertMaterial(), lamp: new THREE.MeshBasicMaterial() };
 const pct = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
 const rows: { id: string; mean: number; p95: number; max: number; meshes: number }[] = [];
-for (const id of Object.keys(STYLES) as StyleId[]) {
+// (Each style over the journey's first cities, which are catalogue cities of other styles drawn in
+// its; and each of the Victorian city's own catalogue cities, drawn from their files, as "vic:<id>".)
+const runs: [string, CityPlan[]][] = (Object.keys(STYLES) as StyleId[]).map((id) => [id, Array.from({ length: PER }, (_, k) => new CityPlan(citySeedOf(SEED, 1 + k * 7), STYLES[id]))]);
+for (const F of CATALOGUE.filter((c) => c.style === "victorian")) runs.push([`vic:${F.id.replace(/^victorian-/, "")}`, [new CityPlan(F.key, STYLES.victorian)]]);
+for (const [id, plans] of runs) {
   const tris: number[] = [], meshes: number[] = [];
-  for (let k = 0; k < PER; k++) {
-    const plan = new CityPlan(citySeedOf(SEED, 1 + k * 7), STYLES[id]), build = makeCityChunkBuilder(mat, plan);
+  for (const plan of plans) {
+    const build = makeCityChunkBuilder(mat, plan);
     plan.climate = { season: "autumn", weather: "clear", snowCover: false };
     for (let cx = CITY_LO - RING; cx <= CITY_HI + RING; cx++) for (let cz = CITY_LO - RING; cz <= CITY_HI + RING; cz++) {
       if (cityDistance(cx, cz) > 0) continue;   // (it counts the city's own chunks: the outskirts are alike everywhere)
@@ -35,11 +41,16 @@ for (const id of Object.keys(STYLES) as StyleId[]) {
   const mean = tris.reduce((a, b) => a + b, 0) / tris.length;
   rows.push({ id, mean, p95: pct(tris, 0.95), max: Math.max(...tris), meshes: meshes.reduce((a, b) => a + b, 0) / meshes.length });
 }
-for (const r of rows) console.log(`${r.id.padEnd(11)} triangles/chunk mean ${r.mean.toFixed(0).padStart(6)}  p95 ${String(r.p95).padStart(6)}  max ${String(r.max).padStart(6)}  meshes ${r.meshes.toFixed(1)}`);
-const real = rows.filter((r) => r.id !== "storybook"), sb = rows.find((r) => r.id === "storybook");
-if (sb) {
+for (const r of rows) console.log(`${r.id.padEnd(15)} triangles/chunk mean ${r.mean.toFixed(0).padStart(6)}  p95 ${String(r.p95).padStart(6)}  max ${String(r.max).padStart(6)}  meshes ${r.meshes.toFixed(1)}`);
+// (The fantasy and period cities, storybook and the Victorian ones, are held to the dearest of the others.)
+const real = rows.filter((r) => r.id !== "storybook" && !r.id.startsWith("vic"));
+let failed = false;
+for (const id of ["storybook", ...rows.filter((r) => r.id.startsWith("vic")).map((r) => r.id)]) {
+  const sb = rows.find((r) => r.id === id);
+  if (!sb) continue;
   const mean = Math.max(...real.map((r) => r.mean)), p95 = Math.max(...real.map((r) => r.p95));
   const ok = sb.mean <= BUDGET * mean && sb.p95 <= BUDGET * p95;
-  console.log(`storybook: mean ${(sb.mean / mean).toFixed(2)}x, p95 ${(sb.p95 / p95).toFixed(2)}x the dearest real style (budget ${BUDGET}x)`);
-  if (!ok) { console.log("FAIL: the storybook city costs too much"); proc.exit(1); }
+  console.log(`${id}: mean ${(sb.mean / mean).toFixed(2)}x, p95 ${(sb.p95 / p95).toFixed(2)}x the dearest real style (budget ${BUDGET}x)`);
+  if (!ok) { console.log(`FAIL: the ${id} city costs too much`); failed = true; }
 }
+if (failed) proc.exit(1);

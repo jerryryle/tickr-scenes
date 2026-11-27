@@ -3,8 +3,8 @@
 // along a granite-setted street, with the facade atlas and the city's own facade material, and
 // shows one view a second: first its facade tiles (three frames of colour, one of masks), then each
 // kind from the pavement and from above, then a few of them after dark with their windows and lamps
-// lit, and last the "spires" backdrop round the horizon. Build and render it with
-//   make tool SCENE=long-day TOOL=vicbuildings SECS=31   -> build/long-day-vicbuildings/vicbuildings.png
+// lit, and last the "spires" backdrop round the horizon, two ways. Build and render it with
+//   make tool SCENE=long-day TOOL=vicbuildings SECS=32   -> build/long-day-vicbuildings/vicbuildings.png
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
 import { mulberry32 } from "../src/rng.ts";
@@ -86,7 +86,7 @@ export default function createScene({ sys }: SceneInputs): Scene {
         { pos: [150, 4, 16], at: [180, 10, 45] }, above(270, 45, 26), { pos: [300, 7, 30], at: [313, 1, 43] },
         above(380, 45, 34), { pos: [462, 5, 38], at: [482, 2, 54] }, { pos: [452, 2.0, 44], at: [485, 3, 52] },
         { ...street(30), night: true }, { ...street(130), night: true }, { ...street(220), night: true }, { ...above(30, 6), night: true },
-        { pos: [200, 30, -60], at: [200, 40, 300], fov: 40 });
+        { pos: [200, 2, -60], at: [200, 12, -900], fov: 40 }, { pos: [200, 2, -60], at: [900, 12, -60], fov: 40 });
       void xr; void xc; void xd; void xi;
     },
     render(ctx, f) {

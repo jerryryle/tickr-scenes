@@ -718,3 +718,37 @@ export function vicGate(s: Batch, x: number, z: number, fx: number, fz: number, 
   PLACED.frames.pop();
   s.transformFrom(n0, F);
 }
+
+// ---- the town's square ------------------------------------------------------------------------
+// vicMonument draws the middle of the town's square (city.ts buildPlaza) at (x, y, z), R across:
+// inside a ring of iron railings, either the Queen in bronze on a tall stepped plinth with lamps at
+// its corners, or a drinking fountain under a Gothic canopy of four columns and a spire.
+export function vicMonument(s: Batch, x: number, y: number, z: number, R: number, rnd: VicRand) {
+  const rr = R + 1.2;
+  for (let i = 0; i < 4; i++) {   // the railings' four quarters, a gate's gap between each
+    const a0 = (i / 4) * Math.PI * 2 + 0.22, a1 = ((i + 1) / 4) * Math.PI * 2 - 0.22, k = 6;
+    for (let j = 0; j < k; j++) {
+      const t0 = a0 + (a1 - a0) * j / k, t1 = a0 + (a1 - a0) * (j + 1) / k;
+      vicRailings(s, x + Math.cos(t1) * rr, z + Math.sin(t1) * rr, x + Math.cos(t0) * rr, z + Math.sin(t0) * rr, y, 1.1, VIC.black, [], 0.5);
+    }
+  }
+  s.cyl(x, y + 0.12, z, R, 0.24, VIC.flag, 16);
+  if (rnd() < 0.5) {
+    // the statue: steps, a pedestal with its cornice, the figure in her robes and crown, an orb
+    s.box(x, y + 0.45, z, 4.2, 0.4, 4.2, VIC.stone); s.box(x, y + 0.85, z, 3.4, 0.4, 3.4, VIC.stone);
+    s.box(x, y + 2.6, z, 2.2, 3.1, 2.2, VIC.stone); s.box(x, y + 4.25, z, 2.6, 0.3, 2.6, vicShade(VIC.stone, 0.9));
+    s.cone(x, y + 5.6, z, 0.9, 2.6, VIC.bronze, 8); s.box(x, y + 6.6, z, 0.9, 1.0, 0.6, VIC.bronze);
+    s.ico(x, y + 7.35, z, 0.32, VIC.bronze); s.cyl(x, y + 7.72, z, 0.24, 0.18, VIC.gilt, 6);
+    s.ico(x + 0.55, y + 6.4, z - 0.25, 0.16, VIC.gilt); s.cyl(x - 0.55, y + 6.6, z - 0.1, 0.04, 1.6, VIC.bronze, 4);
+    for (const [px, pz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { s.cyl(x + px * 1.9, y + 2.0, z + pz * 1.9, 0.09, 2.4, VIC.black, 5); vicLantern(s, x + px * 1.9, y + 3.4, z + pz * 1.9, 0.2); }
+  } else {
+    // the drinking fountain: a granite basin, four columns, the arches' block and a spire with its cross
+    s.cyl(x, y + 0.5, z, 1.6, 0.8, 0x8a8680, 10); s.cyl(x, y + 0.92, z, 1.4, 0.06, 0x4a7a98, 10);
+    s.cyl(x, y + 1.6, z, 0.4, 1.3, 0x8a8680, 8);
+    for (const [px, pz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) s.cyl(x + px * 1.9, y + 2.1, z + pz * 1.9, 0.18, 4.0, 0xa83a2a, 8);
+    s.box(x, y + 4.6, z, 4.6, 1.0, 4.6, VIC.stone);
+    for (const [px, pz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) s.cone(x + px * 2.1, y + 5.6, z + pz * 2.1, 0.3, 1.4, VIC.stone, 4, 0, Math.PI / 4);
+    s.cone(x, y + 8.1, z, 2.2, 6.0, VIC.slate, 8, 0, Math.PI / 8);
+    s.box(x, y + 11.4, z, 0.08, 0.8, 0.08, VIC.gilt); s.box(x, y + 11.55, z, 0.4, 0.08, 0.08, VIC.gilt);
+  }
+}

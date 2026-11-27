@@ -78,7 +78,43 @@ export class Backdrop {
         }
         break;
       }
-      case "spires": // (the Victorian city's skyline: victorian-buildings-town.ts paints it; for now its chimneys)
+      case "spires": {
+        // The Victorian city's is a smoky town round the horizon: rows of slate roofs, church towers
+        // with their spires, a dome or two on a drum, mill chimneys with smoke hanging off them, and
+        // gasholders in their iron frames.
+        ridge(18, 34, col, BACKDROP_R + 200);
+        const roofC = haze(0x3e444c, 0.35), wallC = (k: number) => haze(shade(col, 0.8 + k * 0.3), 0.32), smoke = haze(0x8e8a84, 0.12);
+        for (let i = 0; i < 110; i++) {   // the town's roofs, in rows
+          const a = (i / 110) * Math.PI * 2 + r() * 0.03, d = BACKDROP_R + 40 + r() * 160, [x, z] = at(a, d), w = 30 + r() * 40, h = 18 + r() * 22, dd = 16 + r() * 10;
+          b.box(x, h / 2, z, w, h, dd, wallC(r()), -a + Math.PI / 2);
+          b.prism(x, h + dd * 0.22, z, w, dd * 0.44, dd + 1, roofC, -a + Math.PI / 2);
+        }
+        for (let i = 0; i < 16; i++) {   // church towers and their spires
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 20 + r() * 120), th = 50 + r() * 35, tw = 10 + r() * 5, sh = 50 + r() * 60, c = wallC(0.3 + r() * 0.3);
+          b.box(x, th / 2, z, tw, th, tw, c, -a);
+          if (r() < 0.75) b.cone(x, th + sh / 2, z, tw * 0.62, sh, haze(0x3a4048, 0.32), 8, 0, -a + Math.PI / 8);
+          else for (const [px, pz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) b.cone(x + px * tw * 0.4, th + 5, z + pz * tw * 0.4, 1.6, 10, c, 4);   // a tower with pinnacles
+        }
+        for (let i = 0; i < 2; i++) {   // a dome on its drum, its lantern
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 60 + r() * 60), R = 22 + r() * 8, c = wallC(0.6);
+          b.box(x, 25, z, R * 3, 50, R * 2.4, c, -a);
+          b.cyl(x, 50 + R * 0.5, z, R, R, c, 14);
+          b.lathe("bdDome", [[1, 0], [0.92, 0.4], [0.7, 0.72], [0.36, 0.94], [0.14, 1]], x, 50 + R, z, R * 1.04, R * 1.1, haze(0x6a7a78, 0.3), 14);
+          b.cyl(x, 50 + R * 2.1 + 4, z, 3.4, 8, c, 8); b.cone(x, 50 + R * 2.1 + 12, z, 3.6, 8, haze(0x6a7a78, 0.3), 8);
+        }
+        for (let i = 0; i < 26; i++) {   // mill chimneys, smoke drifting off the tops of most
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + r() * 150), h = 80 + r() * 70, rr = 3.6 + r() * 2;
+          b.lathe("bdChimney", [[1, 0], [0.6, 1], [0, 1]], x, 0, z, rr, h, haze(0x6a3e30, 0.32), 6);
+          if (r() < 0.7) for (let k = 0; k < 4; k++) b.ico(x - Math.sin(a) * k * 14 + Math.cos(a) * k * 4, h + 7 + k * 5, z + Math.cos(a) * k * 14 + Math.sin(a) * k * 4, 8 + k * 3.5, smoke, 0.55, k);
+        }
+        for (let i = 0; i < 3; i++) {   // gasholders: the bell, the iron frame of columns round it, its rings
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 30 + r() * 80), R = 32 + r() * 12, H = 40 + r() * 20, iron = haze(0x4a3028, 0.32);
+          b.cyl(x, H * 0.45, z, R, H * 0.9, haze(0x5e625a, 0.32), 14);
+          for (let k = 0; k < 10; k++) { const t = (k / 10) * Math.PI * 2; b.box(x + Math.cos(t) * (R + 2), H / 2 + 3, z + Math.sin(t) * (R + 2), 2.2, H + 6, 2.2, iron); }
+          for (const y of [H * 0.55, H + 5]) b.tubeSeg(x, y, z, R + 2.3, 2, iron, 14);
+        }
+        break;
+      }
       case "stacks": {
         ridge(15, 35, col);
         for (let i = 0; i < 60; i++) {
