@@ -134,7 +134,7 @@ export function horseParts(look: HorseLook): ((b: Batch) => void)[] {
       hsLoft(b, [[-1.06, 1.36, z * 0.18, 0.12, 0.2], [-0.98, 1.12, z * 0.2, 0.13, 0.2], [-0.87, 0.94, z * 0.17, 0.1, 0.12]], 8, coat);
       hsLoft(b, [[-1.26, 1.3, z * 0.13, 0.1, 0.12], [-1.2, 1.05, z * 0.16, 0.11, 0.14], [-1.1, 0.84, z * 0.16, 0.08, 0.09]], 8, coat);   // (the back of the thigh, down from the buttock)
     }
-    if (look.ridden) { hsBand(b, -0.1, 0.07, H, -Math.PI - 0.5, 0.5); return; }
+    if (look.ridden) { hsBand(b, -0.3, 0.07, H, -Math.PI - 0.5, 0.5); return; }
     // The collar, round the neck's foot in front of the shoulders and leaning back, its hames up
     // its sides to brass tips, and a terret on top for the reins.
     const cx = 0.44, cy = 1.47, ux = -0.78, uy = 0.63, ra = 0.215, rb = 0.36, n = 14;
