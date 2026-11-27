@@ -71,10 +71,12 @@ export const DRIVER_LOOK: Look = { jacket: 0x23365e, trousers: 0x3b3f46, boots: 
 export const WORKER_LOOK: Look = { jacket: 0x6b6f75, trousers: 0x34383e, boots: 0x3a2e22, gloves: 0x8a8f55, skin: 0x8a5a3c, hat: 0xf2c200, hatPatch: 0xf2c200, vest: 0xff7a1a, hardHat: true };
 
 // The crew's period dress (Character.period), worn in the Victorian city and on the road into it:
-// a carter's collarless shirt with its sleeves rolled to the elbow, a waistcoat, a neckerchief,
-// trousers and boots, under a bowler or a flat cap, and for the mate a leather apron.
-interface PeriodLook { shirt: number; waistcoat: number; neck: number; trousers: number; boots: number; hat: number; bowler: boolean; apron?: number }
-export const CARTER_DRIVER: PeriodLook = { shirt: 0xe6e0d0, waistcoat: 0x3e3428, neck: 0xa82a2a, trousers: 0x4a4436, boots: 0x2a201a, hat: 0x1e1c1a, bowler: true };
+// a carman's collarless shirt, a waistcoat, a neckerchief, trousers and boots, under a bowler or a
+// flat cap. The driver drives the van from its open box in all weathers, so he wears a fustian
+// jacket open over the waistcoat, as carriers' vanmen did. The mate works in shirtsleeves rolled
+// to the elbow and a leather apron.
+interface PeriodLook { shirt: number; waistcoat: number; neck: number; trousers: number; boots: number; hat: number; bowler: boolean; apron?: number; jacket?: number }
+export const CARTER_DRIVER: PeriodLook = { shirt: 0xe6e0d0, waistcoat: 0x3a3026, neck: 0xa82a2a, trousers: 0x3a3630, boots: 0x2a201a, hat: 0x1e1c1a, bowler: true, jacket: 0x6a5638 };
 export const CARTER_MATE: PeriodLook = { shirt: 0xd4cebe, waistcoat: 0x4a4a42, neck: 0x2a4a7a, trousers: 0x3a3a36, boots: 0x2a201a, hat: 0x4a4238, bowler: false, apron: 0x7a5434 };
 
 export class Character {
@@ -102,7 +104,10 @@ export class Character {
     this.root.add(this.hips);
     this.hips.position.y = HIP_Y;
     // Pelvis and torso.
-    part(this.hips, (b) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, look.trousers), (b, p) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, p.trousers));
+    part(this.hips, (b) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, look.trousers), (b, p) => {
+      b.box(0, 0.02, 0, 0.22, 0.18, 0.34, p.trousers);
+      if (p.jacket !== undefined) b.box(0, -0.02, 0, 0.27, 0.2, 0.43, p.jacket);   // the jacket's skirt, over the seat
+    });
     this.hips.add(this.torso);
     part(this.torso, (b) => {
       b.box(0, 0.3, 0, 0.24, 0.52, 0.4, look.jacket);
@@ -112,9 +117,15 @@ export class Character {
       b.box(0.121, 0.3, 0, 0.01, 0.4, 0.02, 0x1b2a49);                 // zip
     }, (b, p) => {
       b.box(0, 0.3, 0, 0.24, 0.52, 0.4, p.shirt);
-      b.box(0, 0.28, 0, 0.26, 0.4, 0.42, p.waistcoat);                 // the waistcoat, its buttons and watch chain
-      for (const y of [0.18, 0.28, 0.38]) b.box(0.132, y, 0, 0.01, 0.025, 0.025, 0x1a1612);
-      b.box(0.132, 0.24, -0.08, 0.01, 0.015, 0.1, 0xc8a040);
+      if (p.jacket !== undefined) {
+        // The jacket to the shoulders, open down the front on the shirt and the waistcoat.
+        b.box(0, 0.3, 0, 0.26, 0.53, 0.42, p.jacket);
+        b.box(0.131, 0.49, 0, 0.01, 0.1, 0.12, p.shirt);
+        b.box(0.131, 0.28, 0, 0.01, 0.34, 0.16, p.waistcoat);
+      } else b.box(0, 0.28, 0, 0.26, 0.4, 0.42, p.waistcoat);
+      const wf = p.jacket !== undefined ? 0.137 : 0.132;               // the waistcoat's buttons and watch chain
+      for (const y of [0.18, 0.28, 0.38]) b.box(wf, y, 0, 0.01, 0.025, 0.025, 0x1a1612);
+      b.box(wf, 0.24, -0.05, 0.01, 0.015, 0.07, 0xc8a040);
       b.box(0.01, 0.565, 0, 0.17, 0.07, 0.19, p.neck);                 // the neckerchief, knotted at the front
       b.box(0.1, 0.52, 0, 0.05, 0.07, 0.06, p.neck);
       if (p.apron !== undefined) b.box(0.14, 0.12, 0, 0.02, 0.66, 0.34, p.apron);   // a leather apron
@@ -150,13 +161,18 @@ export class Character {
       if (p.bowler) { b.box(0, 0.286, 0, 0.3, 0.02, 0.29, p.hat); b.box(-0.005, 0.347, 0, 0.23, 0.11, 0.22, p.hat); b.box(-0.005, 0.412, 0, 0.17, 0.04, 0.16, p.hat); }
       else { b.box(0.005, 0.316, 0, 0.25, 0.062, 0.24, p.hat); b.box(0.15, 0.289, 0, 0.11, 0.02, 0.21, p.hat); }
     }));
-    // Arms: in period dress the shirtsleeves are rolled to the elbow and the hands bare.
+    // Arms: in period dress the hands are bare, and the jacket's sleeves reach the wrist or the
+    // shirtsleeves are rolled to the elbow.
     for (const [sh, el, hand, z] of [[this.shL, this.elL, this.handL, -0.25], [this.shR, this.elR, this.handR, 0.25]] as const) {
       this.torso.add(sh); sh.position.set(0, 0.5, z);
-      part(sh, (b) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, look.jacket), (b, p) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, p.shirt));
+      part(sh, (b) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, look.jacket), (b, p) => b.box(0, -0.14, 0, 0.115, 0.3, 0.115, p.jacket ?? p.shirt));
       sh.add(el); el.position.y = -0.29;
       part(el, (b) => { b.box(0, -0.13, 0, 0.1, 0.27, 0.1, look.jacket); b.box(0, -0.31, 0, 0.11, 0.1, 0.12, look.gloves); },
-        (b, p) => { b.box(0, -0.04, 0, 0.115, 0.08, 0.115, p.shirt); b.box(0, -0.155, 0, 0.09, 0.2, 0.09, look.skin); b.box(0, -0.31, 0, 0.1, 0.1, 0.11, look.skin); });
+        (b, p) => {
+          if (p.jacket !== undefined) b.box(0, -0.125, 0, 0.105, 0.27, 0.105, p.jacket);
+          else { b.box(0, -0.04, 0, 0.115, 0.08, 0.115, p.shirt); b.box(0, -0.155, 0, 0.09, 0.2, 0.09, look.skin); }
+          b.box(0, -0.31, 0, 0.1, 0.1, 0.11, look.skin);
+        });
       el.add(hand); hand.position.y = -0.32;
     }
     // Legs: in period dress, ankle boots.
