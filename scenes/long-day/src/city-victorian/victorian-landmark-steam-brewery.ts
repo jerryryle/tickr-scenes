@@ -24,7 +24,7 @@ import { FACADE } from "../facadetiles.ts";
 import { puffScale } from "../puffs.ts";
 import type { CityPlan } from "../city.ts";
 import type { DockLayout } from "../facilities.ts";
-import { VIC } from "./victorian-buildings-town.ts";
+import { VIC, VIC_GASLIGHT } from "./victorian-buildings-town.ts";
 
 type BrP3 = [number, number, number];
 // A frame to draw in (as the knitting works' WorksFrame): P maps (a, n) along the site's frontage
@@ -225,8 +225,8 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
       const [x, , z] = brAt(F, ac, fn + 1.9, 0);
       s.lathe("copper", [[0, 0], [0.85, 0], [1, 0.12], [1, 0.55], [0.86, 0.75], [0.55, 0.92], [0.2, 1]], x, BR_GROUND, z, 1.15, 3.6, BR_COL.copper, 10);
       s.cyl(x, BR_GROUND + 0.3, z, 1.18, 0.6, BR_COL.copperDark, 10);                                    // its brick setting
-      // (Its fire door glows at night, as a lamp does: aux z -2.)
-      const ax = s.aux.clone(); s.aux.set(0, 0, -2); brBox(s, F, ac - 0.3, ac + 0.3, BR_GROUND + 0.08, BR_GROUND + 0.5, fn + 0.64, fn + 0.72, BR_COL.fire); s.aux.copy(ax);
+      // (Its fire door glows orange at night, as a gas flame does: VIC_GASLIGHT.)
+      const ax = s.aux.clone(); s.aux.set(0, 0, VIC_GASLIGHT); brBox(s, F, ac - 0.3, ac + 0.3, BR_GROUND + 0.08, BR_GROUND + 0.5, fn + 0.64, fn + 0.72, BR_COL.fire); s.aux.copy(ax);
       s.cyl(x, BR_GROUND + 3.6 + (C.top - 3.6) / 2, z, 0.22, C.top - 3.6, BR_COL.copper, 6);             // the vapour pipe up through the roof
       s.cyl(x, C.top + 1.1, z, 0.3, 1.4, BR_COL.copper, 6); s.cone(x, C.top + 2.1, z, 0.5, 0.6, BR_COL.copperDark, 6);
     }
