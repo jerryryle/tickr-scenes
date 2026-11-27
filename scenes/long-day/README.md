@@ -223,9 +223,9 @@ names (`VIC_LABEL` in `src/facilities.ts`, the city file).
    church, a town hall or a grand block is drawn only on a block middle of 26 by 14 m or more,
    which no catalogue city has (`vicTower`). Its facade tiles are the `VICT_` ones in `src/facadeart.ts`,
    and its skyline is the `spires` backdrop. Its streets are built up to their corners
-   (`buildLots` in `src/city.ts`): a corner holds one building fronting both streets
-   (`vicCorner`), a pub, shop or bank with its door in a canted corner, or where people live
-   mostly an end house of the row turned to face both streets.
+   (`buildLots` in `src/city.ts`). A corner holds one building fronting both streets
+   (`vicCorner`). It is a pub, shop or bank with its door in a canted corner, or, where people
+   live, mostly an end house of the row turned to face both streets.
 2. `victorian-street.ts` draws its street pieces: gas lamps, the signalled junctions' Westminster
    semaphore columns and point-duty constables (`src/signals.ts`), and the period street furniture
    (`src/decor.ts`). Its roads are granite setts and its pavements York stone. Its gas lamps glow
