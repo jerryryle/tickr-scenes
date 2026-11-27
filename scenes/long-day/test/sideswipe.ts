@@ -32,7 +32,7 @@ import { SPECS, TRAILER, truckExtents } from "../src/truck.ts";
   const proc = (globalThis as any).process, OVERLAP_MAX = 0.4, errs: string[] = [];
   // (How deep vehicle c's box comes into the truck's (its cab's, and a tractor's trailer's).)
   const overlap = (j: Journey, c: any) => {
-    const E = truckExtents(j.st.truck), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), fw = SPECS[j.st.truck].fifthWheel;
+    const E = truckExtents(j.st.truck, !!j.plan.style.victorian), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), fw = SPECS[j.st.truck].fifthWheel;
     const box = (x: number, z: number, ax: number, az: number, a0: number, a1: number, w: number) => [[a0, -w], [a1, -w], [a1, w], [a0, w]].map(([a, b]) => [x + ax * a - az * b, z + az * a + ax * b]);
     const boxes = [box(j.pose.x, j.pose.z, fx, fz, fw !== undefined ? -1.5 : E.rear, E.front, 1.25)];
     if (fw !== undefined) { const th = h + j.hitchYaw; boxes.push(box(j.pose.x + fx * fw, j.pose.z + fz * fw, Math.cos(th), -Math.sin(th), TRAILER.rear, TRAILER.front, TRAILER.hw)); }

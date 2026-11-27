@@ -20,7 +20,7 @@ const KERB_MAX = 0.05;   // m
     const P: any = j.path, pc = P.pieces.find((q: any) => j.st.s >= q.s0 && j.st.s < q.s0 + q.len);
     // (A street's own lanes: not a ramp's shift off it, nor out of a bay.)
     if (!pc || pc.kind !== "line" || Math.max(Math.abs(pc.o0), Math.abs(pc.o1)) > 4.5 || (P.dockOut > 0 && j.st.s < P.dockOut + 20)) continue;
-    const G = j.plan.graph, m = j.st.truck, E = truckExtents(m), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
+    const G = j.plan.graph, m = j.st.truck, E = truckExtents(m, !!j.plan.style.victorian), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h);
     const { d, before } = G.locate(j.pose.x, j.pose.z, h);
     if (d < 0) continue;
     const id = d >> 1, st = G.streets[id];

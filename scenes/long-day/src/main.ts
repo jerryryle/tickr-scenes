@@ -86,6 +86,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   let other: Truck | null = null;
   const backdrop = new Backdrop();
   let seekMs = 0;   // the last seek's cost (debug HUD)
+  let worldOff: [number, number] | null = null;   // (worldOffset's, taken afresh after each move of the world and each city built)
   let traffic: Traffic, crowd: Crowd, ambient: Ambient, seaLife: SeaLife, worksFx: KnittingWorksFx, breweryFx: SteamBreweryFx, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
   let freewayReach: FreewayReach, cityCars: FreewayTraffic, roadCars: FreewayTraffic;
   let roadFrame: { road: CountryRoad; F: Frame } | null = null;
@@ -167,6 +168,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     return best;
   }
   function buildCity() {
+    worldOff = null;
     streamer?.clear();
     buildSea();
     seaLife.build(journey.plan);
@@ -733,7 +735,6 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   // and the jam shot's given spot). It changes only when the world is moved (rebase), so it is taken
   // once after each move: the truck's smoothed place less its journey pose differs a little from
   // frame to frame while it drives, and a camera placed by it each frame shook.
-  let worldOff: [number, number] | null = null;
   function worldOffset(): [number, number] {
     const p = truck.root.position;
     return worldOff ??= [p.x - journey.pose.x, p.z - journey.pose.z];

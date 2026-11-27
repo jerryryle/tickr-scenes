@@ -147,7 +147,7 @@ import { inPoly, polyDist } from "../src/citygraph.ts";
         }
       }
       steps++;
-      const m = j.st.truck, E = truckExtents(m), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h);
+      const m = j.st.truck, E = truckExtents(m, !!j.plan.style.victorian), h = j.pose.h, fx = Math.cos(h), fz = -Math.sin(h);
       // (Boxes: centre, forward, half length, half width.)
       const boxes: [number, number, number, number, number, number][] = [];
       const fw = SPECS[m].fifthWheel;
