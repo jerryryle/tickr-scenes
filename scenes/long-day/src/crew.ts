@@ -972,7 +972,7 @@ export class Crew {
       this.indoors = out < 0.3;
     }
     this.feetY = y;
-    this.mate.attached = false; this.wL = this.wR = 0; this.gripMate = null; this.pushLean = 0; this.hunch = 0;
+    this.mate.attached = false; this.wL = this.wR = 0; this.gripMate = null; this.pushLean = 0; this.hunch = 0; this.onBack = false;
     if (CARGO_BY_ID.get(stop.cargo)?.handling === "teamLift") this.teamMate(c, t, truck, stop);
     if (c.kind === "walk" && c.round) {
       // Walking round what's held: it turns about itself where it is, whoever is how near (placed
@@ -1030,6 +1030,8 @@ export class Crew {
       // (Hunched behind a tall load: knees bent, shoulders rounded, head down.)
       const k = this.hunch * w;
       P.drop = Math.max(P.drop, HUNCH_DROP * k); P.bend -= HUNCH_BEND * k; P.headP += HUNCH_HEAD * k;
+      // (A sack on the back: stooped forward under it, as carryLoad lays it there.)
+      if (this.onBack) { P.bend = BACK_BEND; P.drop = 0; P.headP = 0.2; }
     }
     // Legs: walking, a stride about whatever crouch the drop asks for; standing, the feet planted.
     if (walking || stepping) {
@@ -1039,7 +1041,7 @@ export class Crew {
     d.apply(P);
     if (walking || stepping) this.feetOnKerb(d, truck, P);
     // The head never in what's held: leaning in less, and the head up, until it's clear.
-    if (w > 0.001 && this.load?.group.visible) {
+    if (w > 0.001 && this.load?.group.visible && !this.onBack) {
       for (let i = 0; i < 8 && this.headInLoad(this.load); i++) { P.bend *= 0.7; P.headP = Math.min(P.headP, 0) * 0.5 - 0.06 * (i + 1); P.twist *= 0.7; d.apply(P); }
     }
     if (!walking && !stepping) {
@@ -1081,6 +1083,7 @@ export class Crew {
   private pushLean = 0;   // props: lean into a push this frame (added to the stoop)
   private htLead = HT_LEAD;   // props: the hand truck's wheels this far ahead of the driver this frame
   private hunch = 0;      // props: how far hunched down behind a tall load this frame (0..1)
+  private onBack = false; // props: a sack carried on the back this frame (carryLoad), stooped under it
 
   // The stop's planned path, worked out once per plan (crewpath.ts).
   private crewPath(truck: Truck, stop: Stop): CrewPath {
@@ -1905,6 +1908,18 @@ export class Crew {
   private carryLoad(truck: Truck, load: CarriedLoad, id: string, l: number, hh: number, w: number) {
     if (id === "trophy") { this.putLoad(truck, load, 0.1, 1.95, 0, 0); this.gripsAt(load, 0, 0.06, Math.min(0.12, w / 2), 1, 1); return; }
     if (id === "envelope") { this.putLoad(truck, load, 0.42, 1.0, 0.12, 0); this.gripsAt(load, 0, hh / 2, 0, 0, 1); return; }
+    if (BACK_CARRY.has(id)) {
+      // On the back, as a coalman carries a hundredweight: lying up the stooped back (work bends
+      // the body to BACK_BEND), its mouth over the shoulders, held by its top edge.
+      const s = Math.sin(-BACK_BEND), c = Math.cos(-BACK_BEND), d = 0.34, off = 0.13 + w / 2;
+      const cx = d * s - off * c, cy = HIP_Y + d * c + off * s;
+      const [px, pz] = this.fromDriver(cx - s * hh / 2, 0);
+      this.setTF(load.group, truck, px, this.drv[1] + cy - c * hh / 2, pz, this.drv[3], BACK_BEND);
+      load.animate?.(this.time);
+      this.gripsAt(load, w / 2 - 0.02, hh - 0.04, 0.13, 1, 1);
+      this.onBack = true;
+      return;
+    }
     const across = l > 0.6 && w >= 0.3, depth = across ? w : l, span = across ? l : w;   // (a thin carton, a TV's, edgeways, by its sides)
     const bottom = Math.max(0.15, Math.min(1.1 - hh / 2, CARRY_TOP - hh));   // (a tall one lower, its top below the chin)
     this.putLoad(truck, load, 0.22 + depth / 2, bottom, 0, across ? Math.PI / 2 : 0);
@@ -2459,6 +2474,8 @@ const DRIVER_INSET = 0.08;
 // Hunched behind a tall load on it: the hips this much lower, the back bent and the head bowed
 // this much more (rad).
 const HUNCH_DROP = 0.12, HUNCH_BEND = 0.14, HUNCH_HEAD = 0.18;
+// Sacks carried on the back (carryLoad), and how far forward the body stoops under them (rad).
+const BACK_CARRY = new Set(["coalSacks"]), BACK_BEND = -0.45;
 // The pallet jack: its fork rollers ahead of the steering wheel, its handle's length and pivot,
 // the steering wheel ahead of the driver's feet and the handle's height above them.
 const JACK_FORKS = [-0.25, 0.25];   // the pallet jack's forks, either side of its middle
