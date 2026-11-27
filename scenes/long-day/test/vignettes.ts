@@ -13,6 +13,7 @@ import { CLOCK, VIG_KINDS } from "../src/vignettes.ts";
 import type { KerbParked } from "../src/vignettes.ts";
 import { SIM_DT } from "../src/journey.ts";
 import { FIG_STYLE } from "../src/figure.ts";
+import { NIGHT_GLOW } from "../src/atmosphere.ts";
 
 const proc = (globalThis as any).process;
 const runs: [StyleId, number, string, string, boolean][] = [
@@ -31,6 +32,7 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
   const towns = citiesOfStyle(style), plan = new CityPlan(towns[i % towns.length].key, STYLES[style]);   // (the catalogue's cities of the style in turn)
   plan.climate = { season: season as any, weather: weather as any, snowCover: snow };
   CLOCK.hourAt = () => hour;
+  NIGHT_GLOW.value = hour >= 17.5 && hour < 19.5 ? 0.4 : hour >= 19.5 || hour < 6 ? 1 : 0;   // (the street lamps coming on at dusk, as the atmosphere has them in autumn)
   FIG_STYLE.victorian = style === "victorian";   // (dressed as main.ts dresses them)
   const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshLambertMaterial({ vertexColors: true }));   // (with the props material, as in the scene)
   crowd.reset(77 + i);
