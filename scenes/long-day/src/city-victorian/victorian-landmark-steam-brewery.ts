@@ -48,8 +48,8 @@ export const BREWERY = {
   wheel: { a: 41, n: 17.0, y: 4.0, r: 3.0, crank: 1.2 },
   cyl: { a: 50, y0: 0.13, y1: 5.6, r: 0.75 },
   kiln: { a0: 41, a1: 50, n0: 30, n1: 39, top: 11, rise: 7.5 },
-  boiler: { a0: 32.8, a1: 39.5, n0: 31, n1: 40.5, top: 5.2 },
-  chimney: { a: 36, n: 36.5, h: 34, r0: 1.7, r1: 1.1 },
+  boiler: { a0: 32.8, a1: 39.5, n0: 31, n1: 36.8, top: 5.2 },
+  chimney: { a: 36, n: 39.3, h: 34, r0: 1.7, r1: 1.1 },
   stable: { a0: 45.5, a1: 50.5, n0: 2.5, n1: 11, eaves: 4.6, ridge: 7.0 },
   cooperage: { a0: 32.8, a1: 36.5, n0: 3, n1: 9.5, top: 3.2 },
   ramp: { n: 6, aTop: 45.5, yTop: 3.0, aFoot: 37.8 },
@@ -291,12 +291,14 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
     s.cyl(x, kt + K.rise + 0.35, z, 0.75, 0.3, BR_COL.white, 10);
   }
 
-  // The boiler house is low, with the chimney at its back: octagonal, tapering, with a corbelled
-  // stone cap and an iron band.
+  // The boiler house is low, with the chimney standing free at its back on its square base, the
+  // flue from the boilers running into it low down: octagonal, tapering, with a corbelled stone cap
+  // and an iron band.
   { const Bo = BR.boiler, [x0, z0, x1, z1] = rect(Bo.a0, Bo.a1, Bo.n0, Bo.n1);
     const bt = facadeBox(s, x0, z0, x1, z1, BR_GROUND, [{ tile: FACADE.VICT_MILL, floors: 1, floorH: Bo.top - BR_GROUND }], BR_COL.stock);
     brHipRoof(s, F, Bo.a0 - 0.3, Bo.a1 + 0.3, Bo.n0 - 0.3, Bo.n1 + 0.3, bt, 1.6, BR_COL.slate);
     const Ch = BR.chimney, [x, , z] = brAt(F, Ch.a, Ch.n, 0);
+    brBox(s, F, Ch.a - 0.9, Ch.a + 0.9, BR_GROUND, 2.4, Bo.n1, Ch.n, BR_COL.brickDark);
     s.box(x, BR_GROUND + 3, z, Ch.r0 * 2 + 0.6, 6, Ch.r0 * 2 + 0.6, BR_COL.brickDark, brRot(F));
     s.lathe("chimney", [[1, 0], [Ch.r1 / Ch.r0, 1]], x, BR_GROUND + 6, z, Ch.r0, Ch.h - 6, BR_COL.brick, 8, Math.PI / 8);
     s.cyl(x, Ch.h - 1.3, z, Ch.r1 + 0.08, 0.35, BR_COL.black, 8, 0, 0, Math.PI / 8);
@@ -335,13 +337,17 @@ export function buildBreweryStatic(s: Batch, F: BreweryFrame, L: DockLayout): nu
     brBox(s, F, S.a0 - 0.1, S.a0 - 0.02, R.yTop + 1.3, R.yTop + 1.45, R.n - 0.8, R.n + 0.8, BR_COL.stone);
   }
 
-  // The cooperage is a timber lean-to with its door to the ramp's foot; casks roll down the ramp's
-  // two rails from the cask loft, on timber trestles, and in at its door.
-  { const Co = BR.cooperage, R = BR.ramp;
+  // The cooperage is a boarded shed with its gable to the street, a slate roof and a brick stack at
+  // the back for the fire the coopers fire their casks over, and its door to the ramp's foot; casks
+  // roll down the ramp's two rails from the cask loft, on timber trestles, and in at its door.
+  { const Co = BR.cooperage, R = BR.ramp, am = (Co.a0 + Co.a1) / 2, pitch = 1.7;
     brBox(s, F, Co.a0, Co.a1, BR_GROUND, Co.top, Co.n0, Co.n1, BR_COL.timber);
     for (let a = Co.a0 + 0.5; a < Co.a1; a += 0.9) brBox(s, F, a - 0.05, a + 0.05, BR_GROUND, Co.top, Co.n0 - 0.04, Co.n0, 0x4e3624);   // its boards
     brBox(s, F, Co.a1, Co.a1 + 0.04, BR_GROUND, 1.45, R.n - 0.7, R.n + 0.7, BR_COL.dark);
-    brBox(s, F, Co.a0 - 0.25, Co.a1 + 0.25, Co.top, Co.top + 0.15, Co.n0 - 0.5, Co.n1 + 0.3, BR_COL.slate);
+    const [rx, , rz] = brAt(F, am, (Co.n0 + Co.n1) / 2, 0);
+    s.prism(rx, Co.top + pitch / 2, rz, Co.n1 - Co.n0 + 0.5, pitch, Co.a1 - Co.a0 + 0.5, BR_COL.slate, brRot(F) + Math.PI / 2);
+    brTri(s, brAt(F, Co.a0, Co.n0 - 0.04, Co.top), brAt(F, Co.a1, Co.n0 - 0.04, Co.top), brAt(F, am, Co.n0 - 0.04, Co.top + pitch), brAt(F, am, Co.n0 + 2, Co.top), BR_COL.timber);
+    brBox(s, F, Co.a0 + 0.5, Co.a0 + 1.3, Co.top - 0.5, Co.top + pitch + 1.0, Co.n1 - 1.6, Co.n1 - 0.9, BR_COL.brick);
     const len = R.aTop - R.aFoot, rise = R.yTop - BR_GROUND;
     for (const dn of [-0.38, 0.38]) {
       brRod(s, brAt(F, R.aFoot, R.n + dn, BR_GROUND + 0.06), brAt(F, R.aTop, R.n + dn, R.yTop), 0.07, BR_COL.timber, 4);

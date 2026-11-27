@@ -79,36 +79,53 @@ export class Backdrop {
         break;
       }
       case "spires": {
-        // The Victorian city's is a smoky town round the horizon: rows of slate roofs, church towers
-        // with their spires, a dome or two on a drum, mill chimneys with smoke hanging off them, and
-        // gasholders in their iron frames.
-        ridge(18, 34, col, BACKDROP_R + 200);
-        const roofC = haze(0x3e444c, 0.35), wallC = (k: number) => haze(shade(col, 0.8 + k * 0.3), 0.32), smoke = haze(0x8e8a84, 0.12);
-        for (let i = 0; i < 110; i++) {   // the town's roofs, in rows
-          const a = (i / 110) * Math.PI * 2 + r() * 0.03, d = BACKDROP_R + 40 + r() * 160, [x, z] = at(a, d), w = 30 + r() * 40, h = 18 + r() * 22, dd = 16 + r() * 10;
-          b.box(x, h / 2, z, w, h, dd, wallC(r()), -a + Math.PI / 2);
-          b.prism(x, h + dd * 0.22, z, w, dd * 0.44, dd + 1, roofC, -a + Math.PI / 2);
+        // The Victorian city's is a smoky town round the horizon in its true proportions, though half as
+        // tall again as life so it reads from the streets: rows of brick terraces under steep slate
+        // roofs, some end-on with their gables out, with stacks on their ridges; mills, each with its
+        // chimney; church towers and their spires; a domed hall; and gasholders in their iron frames.
+        // A row's roof rises half as high as its walls, as a terrace's does, so from the road in the
+        // town reads as roofs, gables and stacks; walls much taller than that read as tower blocks.
+        ridge(8, 18, col, BACKDROP_R + 220);   // (only filling the gaps)
+        const roofC = (k: number) => haze(shade(0x3a3f46, 0.85 + k * 0.3), 0.3), brick = (k: number) => haze(shade(0x6e4636, 0.8 + k * 0.35), 0.36);
+        const smoke = haze(0x8e8a84, 0.12), along = (a: number, x: number, z: number, u: number) => [x - Math.sin(a) * u, z + Math.cos(a) * u] as const;
+        for (let i = 0; i < 170; i++) {   // the town's terraces, in rows round the horizon
+          const a = (i / 170) * Math.PI * 2 + r() * 0.02, [x, z] = at(a, BACKDROP_R + 30 + r() * 170), w = 26 + r() * 30, h = 14 + r() * 8, dd = 14 + r() * 6, rise = dd * 0.5, c = brick(r());
+          if (r() < 0.35) {
+            // (A row end-on, its gable to the town's edge: the roof's ends are a brick parapet a
+            // little proud of the slates.)
+            b.box(x, h / 2, z, w, h, dd, c, -a);
+            b.prism(x, h + rise / 2, z, w, rise, dd + 1, roofC(r()), -a);
+            b.prism(x, h + (rise - 0.4) / 2, z, w + 1.2, rise - 0.4, dd - 0.2, c, -a);
+            continue;
+          }
+          b.box(x, h / 2, z, w, h, dd, c, -a + Math.PI / 2);
+          b.prism(x, h + rise / 2, z, w, rise, dd + 1, roofC(r()), -a + Math.PI / 2);
+          for (const u of [-0.3, 0.05, 0.38]) { const [sx, sz] = along(a, x, z, w * u); b.box(sx, h + rise + 1, sz, 2.2, 4, 1.4, brick(0.2), -a + Math.PI / 2); }
         }
-        for (let i = 0; i < 16; i++) {   // church towers and their spires
-          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 20 + r() * 120), th = 50 + r() * 35, tw = 10 + r() * 5, sh = 50 + r() * 60, c = wallC(0.3 + r() * 0.3);
+        for (let i = 0; i < 14; i++) {   // church towers and their spires
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 20 + r() * 120), th = 34 + r() * 16, tw = 9 + r() * 4, sh = 38 + r() * 28, c = haze(shade(0x8a8070, 0.85 + r() * 0.3), 0.34);
           b.box(x, th / 2, z, tw, th, tw, c, -a);
-          if (r() < 0.75) b.cone(x, th + sh / 2, z, tw * 0.62, sh, haze(0x3a4048, 0.32), 8, 0, -a + Math.PI / 8);
-          else for (const [px, pz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) b.cone(x + px * tw * 0.4, th + 5, z + pz * tw * 0.4, 1.6, 10, c, 4);   // a tower with pinnacles
+          if (r() < 0.75) b.cone(x, th + sh / 2, z, tw * 0.6, sh, roofC(0.4), 8, 0, -a + Math.PI / 8);
+          else for (const [px, pz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) b.cone(x + px * tw * 0.4, th + 4.5, z + pz * tw * 0.4, 1.4, 9, c, 4);   // a tower with pinnacles
         }
-        for (let i = 0; i < 2; i++) {   // a dome on its drum, its lantern
-          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 60 + r() * 60), R = 22 + r() * 8, c = wallC(0.6);
-          b.box(x, 25, z, R * 3, 50, R * 2.4, c, -a);
-          b.cyl(x, 50 + R * 0.5, z, R, R, c, 14);
-          b.lathe("bdDome", [[1, 0], [0.92, 0.4], [0.7, 0.72], [0.36, 0.94], [0.14, 1]], x, 50 + R, z, R * 1.04, R * 1.1, haze(0x6a7a78, 0.3), 14);
-          b.cyl(x, 50 + R * 2.1 + 4, z, 3.4, 8, c, 8); b.cone(x, 50 + R * 2.1 + 12, z, 3.6, 8, haze(0x6a7a78, 0.3), 8);
+        for (let i = 0; i < 2; i++) {   // a hall under its dome, on a drum, with its lantern
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 60 + r() * 60), R = 13 + r() * 4, H = 28, c = haze(0x9a9080, 0.34), lead = haze(0x6a7a78, 0.3);
+          b.box(x, H / 2, z, R * 5, H, R * 3, c, -a + Math.PI / 2);
+          b.prism(x, H + 4, z, R * 5, 8, R * 3 + 1, roofC(0.5), -a + Math.PI / 2);
+          b.cyl(x, H + R * 0.5, z, R, R, c, 14);
+          b.lathe("bdDome", [[1, 0], [0.92, 0.4], [0.7, 0.72], [0.36, 0.94], [0.14, 1]], x, H + R, z, R * 1.04, R * 1.1, lead, 14);
+          b.cyl(x, H + R * 2.1 + 3, z, 2.2, 6, c, 8); b.cone(x, H + R * 2.1 + 8.5, z, 2.5, 5, lead, 8);
         }
-        for (let i = 0; i < 26; i++) {   // mill chimneys, smoke drifting off the tops of most
-          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + r() * 150), h = 80 + r() * 70, rr = 3.6 + r() * 2;
-          b.lathe("bdChimney", [[1, 0], [0.6, 1], [0, 1]], x, 0, z, rr, h, haze(0x6a3e30, 0.32), 6);
-          if (r() < 0.7) for (let k = 0; k < 4; k++) b.ico(x - Math.sin(a) * k * 14 + Math.cos(a) * k * 4, h + 7 + k * 5, z + Math.cos(a) * k * 14 + Math.sin(a) * k * 4, 8 + k * 3.5, smoke, 0.55, k);
+        for (let i = 0; i < 18; i++) {   // mills, each with its chimney at one end, smoke drifting off most
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + r() * 150), L = 60 + r() * 45, H = 25 + r() * 8, k = r() < 0.5 ? -1 : 1;
+          b.box(x, H / 2, z, L, H, 22, brick(r() * 0.6), -a + Math.PI / 2);
+          b.prism(x, H + 2.5, z, L, 5, 23, roofC(0.3), -a + Math.PI / 2);
+          const [cx, cz] = along(a, x, z, k * (L / 2 + 6)), h = 65 + r() * 40;
+          b.lathe("bdChimney", [[1, 0], [0.6, 1], [0, 1]], cx, 0, cz, 3.6 + r() * 1.1, h, haze(0x6a3e30, 0.32), 6);
+          if (r() < 0.7) for (let j = 0; j < 4; j++) b.ico(cx - Math.sin(a) * j * 14 + Math.cos(a) * j * 4, h + 7 + j * 5, cz + Math.cos(a) * j * 14 + Math.sin(a) * j * 4, 8 + j * 3.5, smoke, 0.55, j);
         }
         for (let i = 0; i < 3; i++) {   // gasholders: the bell, the iron frame of columns round it, its rings
-          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 30 + r() * 80), R = 32 + r() * 12, H = 40 + r() * 20, iron = haze(0x4a3028, 0.32);
+          const a = r() * Math.PI * 2, [x, z] = at(a, BACKDROP_R + 30 + r() * 80), R = 24 + r() * 10, H = 30 + r() * 16, iron = haze(0x4a3028, 0.32);
           b.cyl(x, H * 0.45, z, R, H * 0.9, haze(0x5e625a, 0.32), 14);
           for (let k = 0; k < 10; k++) { const t = (k / 10) * Math.PI * 2; b.box(x + Math.cos(t) * (R + 2), H / 2 + 3, z + Math.sin(t) * (R + 2), 2.2, H + 6, 2.2, iron); }
           for (const y of [H * 0.55, H + 5]) b.tubeSeg(x, y, z, R + 2.3, 2, iron, 14);
