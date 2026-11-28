@@ -27,8 +27,10 @@ export const PAVE_ASPHALT = -11, PAVE_CONCRETE = -12, PAVE_MACADAM = -13;
 // too; the concrete has only a few small ones.
 // (The asphalt's grain, m; its patches' grid along and across the street, m, and the share of cells
 // with one; the slabs' length along the sidewalk, m; the pixel's share of a feature over which it
-// fades; and the puddles' noise, a cycle per so many m, with the level each surface's stand over.)
-const MP = { grain: 0.06, patchU: 9.0, patchV: 3.2, patchOdds: 0.1, slab: 1.5, fade: [0.2, 0.5], puddleScale: 0.45, asphaltPuddle: 0.74, concretePuddle: 0.76 };
+// fades; the sealed cracks' gate, the level of a slow noise over which a stretch of them fades in
+// and out, and how much they darken; and the puddles' noise, a cycle per so many m, with the level
+// each surface's stand over.)
+const MP = { grain: 0.06, patchU: 9.0, patchV: 3.2, patchOdds: 0.07, crackGate: [0.74, 0.82], crackDark: 0.3, slab: 1.5, fade: [0.2, 0.5], puddleScale: 0.45, asphaltPuddle: 0.74, concretePuddle: 0.76 };
 const mp3 = (x: number) => x.toFixed(3);
 const MP_GLSL = `
 // (A sealed crack along the isoline 0.5 of noise n: its darkness at this pixel, given n's change
@@ -79,9 +81,9 @@ export function applyModernPaving(mat: THREE.Material) {
         tone *= mix(1.0, ph < 0.33 ? 1.18 : 0.76 + 0.08 * ph, inside);
         tone *= 1.0 - 0.2 * (1.0 - smoothstep(0.0, max(aw, 0.05), abs(e))) * clamp(0.1 / px, 0.0, 1.0);
       }
-      // (The sealed cracks: dark glossy lines where they run, in stretches here and there.)
-      float crack = mpCrack(cn, cnw, px) * smoothstep(0.55, 0.7, stNoise(vSettXZ * 0.06 + 77.0)) * (1.0 - mac);
-      tone *= 1.0 - 0.55 * crack;
+      // (The sealed cracks: faint glossy lines where they run, in a stretch now and then.)
+      float crack = mpCrack(cn, cnw, px) * smoothstep(${mp3(MP.crackGate[0])}, ${mp3(MP.crackGate[1])}, stNoise(vSettXZ * 0.06 + 77.0)) * (1.0 - mac);
+      tone *= 1.0 - ${mp3(MP.crackDark)} * crack;
       diffuseColor.rgb *= tone;
       if (uSettWet > 0.0) {
         // (The puddles' level falls as the rain sets in, so they spread.)
