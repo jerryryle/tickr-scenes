@@ -32,9 +32,10 @@
 #   make draftroads SCENE=long-day [ARGS="<road id> ..."]
 #                              draft the roads' maps into scenes/long-day/src/roads/
 #                              (tools/draftroads.ts)
-#   make relot SCENE=long-day ARGS="<city id> ..."
+#   make relot SCENE=long-day ARGS="<city id> ..." [SITES=1]
 #                              write a catalogue city's lotted blocks' contents afresh from the rules
-#                              into its contents file (tools/relot.ts); then clearstops and tractorturns
+#                              into its contents file (tools/relot.ts); with SITES=1, only the blocks
+#                              whose listed site the rules no longer place; then clearstops and tractorturns
 #   make clearstops SCENE=long-day [ARGS="<city id> ..."] [DOORS=1]
 #                              move the pavements' furniture, trees and lamps out of every kerb
 #                              stop's work area in the catalogue cities' files (tools/clearstops.ts);
@@ -258,7 +259,7 @@ relot: | $(DEPS)
 	@mkdir -p build/$(SCENE)-relot
 	@$(FLATTEN) scenes/$(SCENE)/tools/relot.ts --root scenes/$(SCENE)/src > build/$(SCENE)-relot/scene.ts
 	@$(call node-bundle,build/$(SCENE)-relot/scene.ts,build/$(SCENE)-relot/relot.mjs)
-	@printf '%s\n' $(ARGS) | xargs -P $(TEST_JOBS) -n 1 node build/$(SCENE)-relot/relot.mjs
+	@printf '%s\n' $(ARGS) | xargs -P $(TEST_JOBS) -I{} node build/$(SCENE)-relot/relot.mjs {} $(if $(SITES),--sites)
 
 # The moves a tractor-trailer never takes (scenes/<scene>/tools/tractorturns.ts), written into each
 # catalogue city's file, each city in a process of its own, TEST_JOBS at a time; ARGS names the

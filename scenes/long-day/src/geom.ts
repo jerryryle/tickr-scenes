@@ -241,6 +241,11 @@ export class Batch {
   get vertexCount() { return this.n; }
   // Vertices written so far (a mark for transformFrom).
   mark() { return this.n; }
+  // Scale the vertices written since mark n0 by k about (cx, cy, cz) (normals keep: the scale is uniform).
+  scaleFrom(n0: number, k: number, cx: number, cy: number, cz: number) {
+    const P = this.pos;
+    for (let o = n0 * 3; o < this.n * 3; o += 3) { P[o] = cx + (P[o] - cx) * k; P[o + 1] = cy + (P[o + 1] - cy) * k; P[o + 2] = cz + (P[o + 2] - cz) * k; }
+  }
   // Put the vertices written since mark n0 into frame f (positions and normals).
   transformFrom(n0: number, f: Frame2) {
     const c = Math.cos(f.rot), s = Math.sin(f.rot), P = this.pos, N = this.nrm;

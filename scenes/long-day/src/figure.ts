@@ -16,6 +16,12 @@ export const HAIRS = [0x2a1a10, 0x5a3a1a, 0x111111, 0xc8a050, 0x8a3a1a, 0xaaaaaa
 // people dress for it (Figures.person).
 export const FIG_STYLE = { storybook: false, victorian: false };
 const STORY_CLOTHES = [0xe8333a, 0x1fb5b0, 0x9a6cf0, 0xf2c230, 0xff7fb5, 0x5fd3a0, 0xff9a2e, 0x2b3f8a];
+// The storybook wardrobe's body colours: the town's accents (shirts, smocks, skirts and trousers),
+// with cream for stripes; and its hats, the stovepipe, the floppy brim and the tasselled cap
+// (which read at the board's scale) twice as often as the rest.
+const STORY_BODY = [0xe8333a, 0xff8a1e, 0xf2c230, 0x14a3a0, 0x7a4fd8, 0xd83a9a, 0x2b3f8a, 0x5fd3a0];
+const STORY_CREAM = 0xfff3dc;
+const STORY_HATS = [0, 0, 1, 1, 2, 2, 3, 4, 5];
 export const UMBRELLAS = [0x1a1a1a, 0xc0392b, 0x2e86c1, 0xf1c40f, 0x16a085, 0x8e44ad, 0xff8fb0];
 
 // A person's pose. Swings are about the body's side axis from hanging straight down (+ forward,
@@ -45,6 +51,7 @@ export interface Body {
   dress?: VicDress | "own";
   vicHat?: VicHat;                  // their hat, in place of the one their dress gives them
   parasol?: number;                 // a parasol of this colour, held up by a woman in Victorian dress
+  jig?: number;                     // the storybook costume's swing phase (rad): the stride's, or time standing (storyOutfit)
 }
 // The Victorian wardrobe (Figures.vicPerson): men in a frock coat, a sack coat, a jacket and flat
 // cap, or shirtsleeves with a waistcoat and apron; women in a long full skirt; children; a bobby.
@@ -89,6 +96,7 @@ export class Figures {
   n = 0; g = 0; b = 0;
   readonly handL: V3 = [0, 0, 0]; readonly handR: V3 = [0, 0, 0]; readonly head: V3 = [0, 0, 0];
   readonly footL: V3 = [0, 0, 0]; readonly footR: V3 = [0, 0, 0]; readonly hipC: V3 = [0, 0, 0];
+  readonly kneeL: V3 = [0, 0, 0]; readonly kneeR: V3 = [0, 0, 0];
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private q2 = new THREE.Quaternion(); private e = new THREE.Euler();
   private p3 = new THREE.Vector3(); private s3 = new THREE.Vector3(); private d3 = new THREE.Vector3(); private col = new THREE.Color();
   private end: V3 = [0, 0, 0];
@@ -177,32 +185,71 @@ export class Figures {
   }
 
   // In the storybook city (FIG_STYLE, main.ts sets it with the city), people are dressed for the
-  // place: each has a hat or hairdo and a scarf or bow tie of their own (picked from their colours, so it
-  // stays theirs frame to frame and on a scrub). It is off for figures that are in costume already.
+  // place (storyPerson). It is off for figures that are in costume already.
   costumes = true;
-  // A person. Afterwards handL/handR, footL/footR, head and hipC hold where those ended up.
+  // A person. Afterwards handL/handR, footL/footR, kneeL/kneeR, head and hipC hold where those ended up.
   person(b: Body) {
     if (FIG_STYLE.victorian && this.costumes && b.dress !== "own") { this.vicPerson(b); return; }
+    if (FIG_STYLE.storybook && this.costumes) { this.storyPerson(b); return; }
     this.personBody(b);
-    if (FIG_STYLE.storybook && this.costumes && b.hat === undefined) this.storyOutfit(b);
   }
-  private storyOutfit(b: Body) {
+  // The storybook wardrobe, everything picked from the person's own colours, so it stays theirs
+  // frame to frame and on a scrub. Shirt and trousers come from the town's accents (STORY_BODY).
+  // Some are round and short, some lanky. A third wear long striped stockings, a quarter a short
+  // flared smock, another quarter a bell skirt to the knee, and everyone long shoes curling up at
+  // the toe. Each has a hat or hairdo and a scarf or bow tie (storyOutfit), unless given a hat.
+  private storyPerson(b: Body) {
+    const k = ((b.shirt * 7 + b.pants * 13 + b.skin * 3 + b.hair) >>> 0) % 997, h = Math.imul(k + 1, 2654435761) >>> 0;
+    const pk = (i: number) => STORY_BODY[(h >>> (i * 3)) % STORY_BODY.length];
+    const adult = (b.s ?? 1) >= 0.8, shape = adult ? (h >>> 20) % 5 : 2;
+    const top = pk(1), q: Body = { ...b, shirt: top, pants: pk(2) === top ? pk(3) : pk(2) };
+    if (shape === 0) { q.s = (b.s ?? 1) * 0.9; q.bulk = (b.bulk ?? 1) * 1.3; }          // round and short
+    else if (shape === 1) { q.s = (b.s ?? 1) * 1.1; q.bulk = (b.bulk ?? 1) * 0.8; }     // lanky
+    if (b.hip !== undefined && q.s !== b.s) q.hip = b.hip * q.s! / (b.s ?? 1);
+    this.personBody(q);
+    const s = q.s ?? 1, yaw = b.yaw, fx = Math.cos(yaw), fz = -Math.sin(yaw), dress = (h >>> 9) % 4, trim = pk(4) === top ? STORY_CREAM : pk(4);
+    // (Over the hips along the thighs' mean line: a smock or a skirt's tiers.)
+    const lq = q.legs ?? [0, 0], m = (lq[0] + lq[1]) / 2, sm = Math.sin(m), cm = Math.cos(m), [px, py, pz] = this.hipC;
+    const L = (u: number, sx: number, sy: number, sz: number, c: number) => this.box(px + fx * sm * u * s, py - cm * u * s, pz + fz * sm * u * s, sx * s, sy * s, sz * s, yaw, m, c, -(b.tilt ?? 0));
+    if (dress === 0) { L(0.02, 0.3, 0.2, 0.44, top); L(0.14, 0.36, 0.1, 0.5, trim); }                       // a smock, flared at its hem
+    else if (dress === 1) { L(0.06, 0.34, 0.16, 0.44, pk(5)); L(0.22, 0.5, 0.2, 0.6, pk(5)); L(0.33, 0.52, 0.03, 0.62, STORY_CREAM); }   // a bell skirt, hemmed
+    // Stockings: the shin in three stripes.
+    if ((h >>> 13) % 3 === 0) for (const [kn, ft] of [[this.kneeL, this.footL], [this.kneeR, this.footR]] as const) {
+      for (let i = 0; i < 3; i++) {
+        const u0 = 0.1 + i * 0.3, u1 = u0 + 0.3, at = (u: number) => [kn[0] + (ft[0] - kn[0]) * u, kn[1] + (ft[1] - kn[1]) * u, kn[2] + (ft[2] - kn[2]) * u];
+        const a = at(u0), c = at(u1);
+        this.seg(a[0], a[1], a[2], c[0], c[1], c[2], 0.135 * s, i % 2 ? STORY_CREAM : trim);
+      }
+    }
+    // Long shoes, their toes curling up.
+    const shoe = (h >>> 16) % 2 ? 0x2a2440 : pk(6);
+    for (const ft of [this.footL, this.footR]) {
+      this.box(ft[0] + fx * 0.08 * s, ft[1] + 0.03 * s, ft[2] + fz * 0.08 * s, 0.3 * s, 0.07 * s, 0.13 * s, yaw, 0, shoe);
+      this.box(ft[0] + fx * 0.26 * s, ft[1] + 0.07 * s, ft[2] + fz * 0.26 * s, 0.1 * s, 0.05 * s, 0.11 * s, yaw, -0.6, shoe);
+    }
+    if (b.hat === undefined) this.storyOutfit(q, k);   // (a hat given is the costume's: personBody draws it)
+  }
+  // The hat or hairdo, and the scarf or bow tie. Its loose parts swing with `jig`: the spring cap's
+  // ball bobs, the tassel swings, the stovepipe sways and a wave runs down the scarf's tail.
+  private storyOutfit(b: Body, k: number) {
     const s = b.s ?? 1, yaw = b.yaw + (b.turn ?? 0), lean = b.lean ?? 0, [hx, hy, hz] = this.head;
     const fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw);
-    const k = ((b.shirt * 7 + b.pants * 13 + b.skin * 3 + b.hair) >>> 0) % 997, kind = k % 6;
+    const kind = STORY_HATS[k % STORY_HATS.length], jig = b.jig ?? 0;
     const C = STORY_CLOTHES, a = C[k % C.length], c2 = C[(k >> 3) % C.length];
     const H = (i: number) => hy + (0.15 + i) * s;
-    if (kind === 0) {   // kind 0 is a tall striped stovepipe, bending back
-      for (let i = 0; i < 6; i++) this.box(hx - fx * i * i * 0.012 * s, H(0.03 + i * 0.12), hz - fz * i * i * 0.012 * s, 0.2 * s, 0.125 * s, 0.2 * s, yaw, -lean + 0.1 + i * 0.05, i % 2 ? 0xffffff : a);
+    if (kind === 0) {   // kind 0 is a tall striped stovepipe, bending back and swaying
+      const sway = 1 + 0.6 * Math.sin(2 * jig - 0.8);
+      for (let i = 0; i < 6; i++) this.box(hx - fx * i * i * 0.012 * sway * s, H(0.03 + i * 0.12), hz - fz * i * i * 0.012 * sway * s, 0.2 * s, 0.125 * s, 0.2 * s, yaw, -lean + 0.1 + i * 0.05 * sway, i % 2 ? 0xffffff : a);
       this.box(hx, hy + 0.13 * s, hz, 0.36 * s, 0.03 * s, 0.36 * s, yaw, -lean, a);
     } else if (kind === 1) {   // kind 1 is a floppy wide-brimmed hat with a tall crooked crown
       this.box(hx, hy + 0.14 * s, hz, 0.58 * s, 0.03 * s, 0.58 * s, yaw, -lean + 0.12, a);
       for (let i = 0; i < 4; i++) this.box(hx + rx * i * 0.03 * s, H(0.07 + i * 0.1), hz + rz * i * 0.03 * s, (0.22 - i * 0.03) * s, 0.11 * s, (0.22 - i * 0.03) * s, yaw, -lean, a, 0.25 * i);
       this.box(hx, hy + 0.17 * s, hz, 0.24 * s, 0.05 * s, 0.24 * s, yaw, -lean, c2);
-    } else if (kind === 2) {   // kind 2 is a knitted cap with its long tassel and a pompom
+    } else if (kind === 2) {   // kind 2 is a knitted cap with its long tassel swinging and a pompom
       this.box(hx, hy + 0.15 * s, hz, 0.24 * s, 0.12 * s, 0.23 * s, yaw, -lean, a);
-      this.box(hx - fx * 0.1 * s, hy + 0.42 * s, hz - fz * 0.1 * s, 0.05 * s, 0.45 * s, 0.05 * s, yaw, -lean + 0.5, a);
-      this.box(hx - fx * 0.24 * s, hy + 0.66 * s, hz - fz * 0.24 * s, 0.14 * s, 0.14 * s, 0.14 * s, yaw, 0, c2);
+      const ang = 0.8 - lean + 0.25 * Math.sin(2 * jig - 1.0), bx = -Math.sin(ang), by = Math.cos(ang), y0 = hy + 0.2 * s;
+      this.box(hx + fx * bx * 0.225 * s, y0 + by * 0.225 * s, hz + fz * bx * 0.225 * s, 0.05 * s, 0.45 * s, 0.05 * s, yaw, ang, a);
+      this.box(hx + fx * bx * 0.48 * s, y0 + by * 0.48 * s, hz + fz * bx * 0.48 * s, 0.14 * s, 0.14 * s, 0.14 * s, yaw, 0, c2);
     } else if (kind === 3) {   // kind 3 is a tower of curls with a bow on top
       for (let i = 0; i < 4; i++) this.box(hx + Math.sin(i * 2) * 0.06 * s, H(0.03 + i * 0.13), hz + Math.cos(i * 2) * 0.06 * s, (0.3 - i * 0.05) * s, 0.14 * s, (0.3 - i * 0.05) * s, yaw + i * 0.4, -lean, b.hair);
       this.box(hx, hy + 0.68 * s, hz, 0.24 * s, 0.08 * s, 0.06 * s, yaw, 0, a);
@@ -211,12 +258,13 @@ export class Figures {
       this.box(hx + fx * 0.22 * s, hy + 0.26 * s, hz + fz * 0.22 * s, 0.2 * s, 0.05 * s, 0.05 * s, yaw, -lean - 0.6, a);
       this.box(hx, hy + 0.33 * s, hz, 0.06 * s, 0.06 * s, 0.06 * s, yaw, 0, 0xffffff);
     } else {   // kind 5 is a cap with a spring and a ball bobbing on it
+      const bob = 0.08 * Math.sin(2 * jig - 1.2), st = 1 + bob / 0.27;
       this.box(hx, hy + 0.15 * s, hz, 0.25 * s, 0.1 * s, 0.24 * s, yaw, -lean, a);
-      for (let i = 0; i < 3; i++) this.box(hx + Math.sin(i * 2.1) * 0.04 * s, hy + (0.25 + i * 0.09) * s, hz + Math.cos(i * 2.1) * 0.04 * s, 0.03 * s, 0.09 * s, 0.03 * s, yaw + i, 0.5, 0x2a2440);
-      this.box(hx, hy + 0.55 * s, hz, 0.13 * s, 0.13 * s, 0.13 * s, yaw, 0, c2);
+      for (let i = 0; i < 3; i++) this.box(hx + Math.sin(i * 2.1) * 0.04 * s, hy + (0.25 + i * 0.09 * st) * s, hz + Math.cos(i * 2.1) * 0.04 * s, 0.03 * s, 0.09 * st * s, 0.03 * s, yaw + i, 0.5, 0x2a2440);
+      this.box(hx, hy + (0.55 + bob) * s, hz, 0.13 * s, 0.13 * s, 0.13 * s, yaw, 0, c2);
     }
-    if ((k >> 2) % 2) {   // this is a long striped scarf, trailing behind
-      for (let i = 0; i < 5; i++) this.box(hx - fx * (0.12 + i * 0.07) * s + rx * 0.05 * s, hy - (0.2 + i * 0.09) * s, hz - fz * (0.12 + i * 0.07) * s + rz * 0.05 * s, 0.08 * s, 0.1 * s, 0.12 * s, b.yaw, 0.6, i % 2 ? 0xffffff : c2);
+    if ((k >> 2) % 2) {   // this is a long striped scarf, trailing behind, a wave running down it
+      for (let i = 0; i < 5; i++) this.box(hx - fx * (0.12 + i * 0.07) * s + rx * 0.05 * s, hy - (0.2 + i * 0.09 - 0.03 * i * Math.sin(2 * jig - 0.5 * i)) * s, hz - fz * (0.12 + i * 0.07) * s + rz * 0.05 * s, 0.08 * s, 0.1 * s, 0.12 * s, b.yaw, 0.6, i % 2 ? 0xffffff : c2);
     } else this.box(hx + fx * 0.12 * s, hy - 0.2 * s, hz + fz * 0.12 * s, 0.05 * s, 0.1 * s, 0.3 * s, b.yaw, 0, c2);   // otherwise this is a big bow tie
   }
   // In the Victorian city (FIG_STYLE.victorian, main.ts sets it with the city) everyone is in
@@ -318,8 +366,9 @@ export class Figures {
     for (let i = 0; i < 2; i++) {
       const k = i === 0 ? -1 : 1, px = b.x + rx * k * 0.1 * s, pz = b.z + rz * k * 0.1 * s;
       let e: V3;
-      if (b.shins) { const kn = this.limb(px, hy, pz, yaw, legs[i], 0.45 * s, 0.13 * s, b.pants, lo[i], k); e = this.limb(kn[0], kn[1], kn[2], yaw, b.shins[i], 0.43 * s, 0.12 * s, b.pants, lo[i] * 0.5, k); }
-      else e = this.limb(px, hy, pz, yaw, legs[i], 0.86 * s, 0.13 * s, b.pants, lo[i], k);
+      const kn = i === 0 ? this.kneeL : this.kneeR;
+      if (b.shins) { const q = this.limb(px, hy, pz, yaw, legs[i], 0.45 * s, 0.13 * s, b.pants, lo[i], k); kn[0] = q[0]; kn[1] = q[1]; kn[2] = q[2]; e = this.limb(kn[0], kn[1], kn[2], yaw, b.shins[i], 0.43 * s, 0.12 * s, b.pants, lo[i] * 0.5, k); }
+      else { e = this.limb(px, hy, pz, yaw, legs[i], 0.86 * s, 0.13 * s, b.pants, lo[i], k); kn[0] = (px + e[0]) / 2; kn[1] = (hy + e[1]) / 2; kn[2] = (pz + e[2]) / 2; }
       const f = i === 0 ? this.footL : this.footR; f[0] = e[0]; f[1] = e[1]; f[2] = e[2];
     }
     // Torso and head, pitched forward about the hips and rolled to the right.
@@ -387,8 +436,42 @@ export class Figures {
   }
 }
 
-// Walking: legs and arms swinging with `phase` (metres walked), as the crowd walks.
-export function walkSwing(phase: number, run = false): { legs: [number, number]; arms: [number, number]; bob: number } {
-  const w = Math.sin(phase * (run ? 3.2 : 4.6)), sw = w * (run ? 0.75 : 0.5);
-  return { legs: [-sw, sw], arms: [sw * 0.8, -sw * 0.8], bob: Math.abs(w) * (run ? 0.08 : 0.04) };
+// Walking: legs and arms swinging with `phase` (metres walked), as the crowd walks. The body is
+// lowest at contact, the legs spread widest, and highest as they pass. In the storybook city (and
+// not running) the walk is a cartoon's: quicker steps, the swinging knee folding, a bouncing-ball
+// bob that rounds over at passing and bounces sharply at contact, arms pumping with bent elbows, a
+// waddle, the chest out in a strut, and the head nodding a beat behind. `jig` is the stride's phase
+// for the costume's loose parts (Figures.storyOutfit), and `hip` the hip height for the jointed legs.
+export interface Swing {
+  legs: [number, number]; arms: [number, number]; bob: number;
+  shins?: [number, number]; fore?: [number, number]; tilt?: number; lean?: number; nod?: number; jig: number; hip?: number;
+}
+// A walking body's pose from a swing, for a person of scale s (the bob is added to their feet's y by the caller).
+export function swingBody(w: Swing, s = 1): Partial<Body> {
+  const b: Partial<Body> = { legs: w.legs, arms: w.arms, jig: w.jig };
+  if (w.shins) { b.shins = w.shins; b.hip = (w.hip ?? 0.86) * s; }
+  if (w.fore) b.fore = w.fore;
+  if (w.lean !== undefined) b.lean = w.lean;
+  if (w.tilt !== undefined) { b.tilt = w.tilt; b.nod = w.nod; }
+  return b;
+}
+export function walkSwing(phase: number, run = false, story = FIG_STYLE.storybook): Swing {
+  if (story && !run) {
+    const k = phase * 5.4, w = Math.sin(k), c = Math.cos(k), sw = 0.4 * w, am = 0.7 * w;
+    return { legs: [-sw, sw], shins: [-sw - 0.9 * Math.max(0, -c), sw - 0.9 * Math.max(0, c)], arms: [am, -am], fore: [am + 0.7, -am + 0.7],
+      bob: 0.12 * Math.abs(c), tilt: 0.07 * w, lean: -0.06, nod: 0.08 * Math.abs(Math.cos(k - 0.6)), jig: k, hip: 0.88 };
+  }
+  const k = phase * (run ? 3.2 : 4.6), w = Math.sin(k), sw = w * (run ? 0.75 : 0.5);
+  return { legs: [-sw, sw], arms: [sw * 0.8, -sw * 0.8], bob: Math.abs(Math.cos(k)) * (run ? 0.08 : 0.04), jig: k };
+}
+// Standing about at time t: the weight shifting from foot to foot. In the storybook city they
+// fidget too, now and then tapping a toe for a moment and bouncing on their heels, each in their own
+// time (`seed`), and their costumes swing as they do.
+export function standIdle(b: Body, t: number, seed: number) {
+  b.tilt = 0.05 * Math.sin(t * 1.1 + seed);
+  if (!FIG_STYLE.storybook) return;
+  b.jig = t * 1.5 + seed;
+  const tap = (t + seed) % 5, heel = (t + seed * 1.7) % 4;
+  if (tap < 1.2) { const k = 0.5 - 0.5 * Math.cos(tap * Math.PI * 2 * 3); b.legs = [0, 0.12 * k]; b.shins = [0, -0.25 * k]; b.hip = 0.88 * (b.s ?? 1); }
+  if (heel < 0.4) b.y = (b.y ?? CURB_H) + 0.05 * Math.sin(heel / 0.4 * Math.PI);
 }

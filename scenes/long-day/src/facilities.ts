@@ -10,7 +10,9 @@ import { CityPlan } from "./city.ts";
 import type { District } from "./city.ts";
 
 export type FacilityId = keyof typeof FAC;
-export interface FacilityDef { label: string; w: Partial<Record<District, number>>; dock?: boolean }
+// `story`: one of the storybook city's own trades, drawn by district only in a storybook city, where
+// no other is drawn (facilityAt).
+export interface FacilityDef { label: string; w: Partial<Record<District, number>>; dock?: boolean; story?: true }
 
 export const FAC = {
   // Industrial sources and receivers.
@@ -128,19 +130,66 @@ export const FAC = {
   shipChandler: { label: "Ship Chandler", w: {} },
   seafood: { label: "Seafood", w: {} },
   surfShop: { label: "Surf Shop", w: {} },
+  // The storybook city's trades (docs/long-day-cities.md, "The storybook city's trades"). A
+  // storybook city has these and its knitting works, and no others; each has its emblem over its
+  // front door (storybook-trades.ts).
+  sbGumdropMill: { label: "Gumdrop Mill", w: { industrial: 3 }, story: true },
+  sbFizzWorks: { label: "Fizzy-Pop Works", w: { industrial: 3 }, story: true },
+  sbSpinnery: { label: "Yarn Spinnery", w: { industrial: 2.5 }, story: true },
+  sbSpringWorks: { label: "Spring & Sprocket Works", w: { industrial: 2.5 }, story: true },
+  sbBubbleWorks: { label: "Bubble Blowery", w: { industrial: 2 }, story: true },
+  sbJammery: { label: "Snorkberry Jammery", w: { industrial: 2, commercial: 0.4 }, story: true },
+  sbRainbowRefinery: { label: "Rainbow Refinery", w: { industrial: 1.5 }, story: true },
+  sbClockery: { label: "Tick-Tock Clockery", w: { industrial: 1.2, commercial: 0.8 }, story: true },
+  sbTruckRoost: { label: "Ryder Truck Roost", w: { industrial: 2.5 }, story: true },
+  sbCloudLaundry: { label: "Cloud Laundry", w: { industrial: 1, commercial: 1.2 }, story: true },
+  sbHatStacker: { label: "Hat Stacker", w: { commercial: 2 }, story: true },
+  sbSweetShop: { label: "Sweet Shoppe", w: { commercial: 2.5 }, story: true },
+  sbToyShop: { label: "Whirligig Toys", w: { commercial: 2 }, story: true },
+  sbGadgetry: { label: "Gizmos & Gadgetry", w: { commercial: 2 }, story: true },
+  sbBakery: { label: "Bun Bakery", w: { commercial: 2.5, residential: 0.4 }, story: true },
+  sbTeaHouse: { label: "Tea House", w: { commercial: 2, downtown: 1 }, story: true },
+  sbNoodlery: { label: "Noodle Nook", w: { commercial: 2, downtown: 1 }, story: true },
+  sbFizzParlour: { label: "Fizz Parlour", w: { commercial: 2, downtown: 0.8 }, story: true },
+  sbScarfShop: { label: "Scarves for All Weathers", w: { commercial: 1.5 }, story: true },
+  sbSnoozery: { label: "Snooze Shop", w: { commercial: 1.2 }, story: true },
+  sbPartyShop: { label: "Hullabaloo Party Shop", w: { commercial: 1.2 }, story: true },
+  sbScoopery: { label: "Scoop-de-Loop", w: { commercial: 1.2 }, story: true },
+  sbCornerNook: { label: "Pickle & Fizz", w: { commercial: 2, residential: 0.8 }, story: true },
+  sbEmporium: { label: "Thingamajiggery", w: { commercial: 3 }, story: true },
+  sbTinklery: { label: "Tinklebox Maker", w: { commercial: 1 }, story: true },
+  sbDoodads: { label: "Department of Doodads", w: { downtown: 4, commercial: 1 }, story: true },
+  sbTippyTower: { label: "Tippy Tower", w: { downtown: 4 }, story: true },
+  sbUpsideInn: { label: "Upside Inn", w: { downtown: 3 }, story: true },
+  sbPlayhouse: { label: "Playhouse", w: { downtown: 1.2, commercial: 0.3 }, story: true },
+  sbMuseum: { label: "Museum of Mismatched Mittens", w: { downtown: 1 }, story: true },
+  sbPodHouse: { label: "Pod House", w: { residential: 12 }, story: true },
+  sbTeeterFlats: { label: "Teetering Flats", w: { residential: 4 }, story: true },
+  sbSchool: { label: "School", w: { residential: 1.2 }, story: true },
+  sbTrufflunkGrove: { label: "Trufflunk Grove", w: { park: 1.5 }, story: true },
+  sbSnorkberryPatch: { label: "Snorkberry Patch", w: { park: 1.5 }, story: true },
+  sbKiteMeadow: { label: "Kite Meadow", w: { park: 1 }, story: true },
+  sbGazebo: { label: "Jubilee Gazebo", w: { park: 1 }, story: true },
 } satisfies Record<string, FacilityDef>;
 
 const FAC_IDS = Object.keys(FAC) as FacilityId[];
-const FAC_BY_DISTRICT = new Map<District, { ids: FacilityId[]; cum: number[]; total: number }>();
-for (const d of ["downtown", "commercial", "residential", "industrial", "park"] as District[]) {
-  const ids: FacilityId[] = [], cum: number[] = [];
-  let total = 0;
-  for (const id of FAC_IDS) {
-    const w = (FAC[id] as FacilityDef).w[d] ?? 0;
-    if (w > 0) { total += w; ids.push(id); cum.push(total); }
+export const isStoryFacility = (id: FacilityId) => (FAC[id] as FacilityDef).story === true;
+// The draw by district: a storybook city's from its own trades, every other city's from the rest.
+type DistrictDraw = Map<District, { ids: FacilityId[]; cum: number[]; total: number }>;
+const drawTable = (story: boolean): DistrictDraw => {
+  const out: DistrictDraw = new Map();
+  for (const d of ["downtown", "commercial", "residential", "industrial", "park"] as District[]) {
+    const ids: FacilityId[] = [], cum: number[] = [];
+    let total = 0;
+    for (const id of FAC_IDS) {
+      const w = isStoryFacility(id) === story ? (FAC[id] as FacilityDef).w[d] ?? 0 : 0;
+      if (w > 0) { total += w; ids.push(id); cum.push(total); }
+    }
+    out.set(d, { ids, cum, total });
   }
-  FAC_BY_DISTRICT.set(d, { ids, cum, total });
-}
+  return out;
+};
+const FAC_BY_DISTRICT = drawTable(false), STORY_BY_DISTRICT = drawTable(true);
 
 export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
   const own = plan.fileFacility(bx, bz);
@@ -149,8 +198,11 @@ export function facilityAt(plan: CityPlan, bx: number, bz: number): FacilityId {
   if (plan.style.victorian && plan.worksBlock >= 0 && plan.blockOf(bx, bz)?.id === plan.worksBlock) return "steamBrewery";
   const park = !!plan.blockOf(bx, bz)?.park, wf = park ? null : waterfrontAt(plan, bx, bz);
   if (wf) return wf;
-  const t = FAC_BY_DISTRICT.get(park ? "park" : plan.district(bx, bz))!;
-  const r = hash2(bx, bz, plan.seed, 0xfac) * t.total;
+  return districtFacility(!!plan.style.storybook, park ? "park" : plan.district(bx, bz), hash2(bx, bz, plan.seed, 0xfac));
+}
+// The facility a district draws for uniform random u, from the storybook city's trades or the rest.
+export function districtFacility(story: boolean, district: District, u: number): FacilityId {
+  const t = (story ? STORY_BY_DISTRICT : FAC_BY_DISTRICT).get(district)!, r = u * t.total;
   let i = 0;
   while (i < t.cum.length - 1 && t.cum[i] <= r) i++;
   return t.ids[i];
@@ -193,20 +245,28 @@ const wrapIndex = (n: number, len: number) => ((n % len) + len) % len;
 export const streetNameEW = (iz: number) => `${ordinal(wrapIndex(iz, 48) + 1)} St`;
 export const streetNameNS = (ix: number) => `${AVENUES[wrapIndex(ix, AVENUES.length)]} Ave`;
 
-// These are the storybook city's names for its trades (a few of each), in place of the usual ones.
+// These are the storybook city's names for its trades: a few of each that some of its blocks take,
+// the rest being a proprietor's or a place's name and the trade's label (facilityName).
 const STORY_NAMES: Partial<Record<FacilityId, string[]>> = {
-  retail: ["Whatnots & Whosits", "The Thingamajiggery", "Oddments Emporium"], grocery: ["Grubbleworth's Grocery", "The Turnip Tumble"],
-  cornerStore: ["Pickle & Fizz", "The Snack Nook"], restaurant: ["The Wobbly Noodle", "Soup on a Stilt"], diner: ["The Flapjack Flip"],
-  bar: ["The Hiccup Inn", "Fizzwhistle Tavern"], bakery: ["The Bakery of Bewildering Buns", "Crumplecrust Bakers"], cafe: ["Topsy Tea & Toast", "The Kettle Wobble"],
-  hardware: ["Gizmos & Gadgetry", "Sprocket & Spring"], florist: ["Petal Puzzle Florist"], iceCream: ["Scoop-de-Loop"], toyStore: ["The Whirligig Shop"],
-  outfitter: ["Scarves for All Weathers", "Hat Hat Hats"], pharmacy: ["Dr. Dibble's Remedies"], barber: ["Snip-Snap Barbers"], laundromat: ["Sock Swap Suds"],
-  office: ["Department of Doodads"], officeTower: ["The Tippy Tower"], hotel: ["The Upside Inn"], museum: ["Museum of Mismatched Mittens"],
-  school: ["Twiddledee Primary"], theater: ["The Tumbledown Playhouse"], dentist: ["Smilewhistle Dental"], musicStore: ["Kazoo & Co."],
-  doughnutShop: ["The Holy Holey Doughnut"], deli: ["The Pickled Pickle"], bigBox: ["Everything Bigger"],
+  sbEmporium: ["Whatnots & Whosits", "The Thingamajiggery", "Oddments Emporium"], sbCornerNook: ["Pickle & Fizz", "The Snack Nook"],
+  sbNoodlery: ["The Wobbly Noodle", "Soup on a Stilt"], sbFizzParlour: ["The Hiccup Inn", "Fizzwhistle Parlour"],
+  sbBakery: ["The Bakery of Bewildering Buns", "Crumplecrust Bakers"], sbTeaHouse: ["Topsy Tea & Toast", "The Kettle Wobble"],
+  sbGadgetry: ["Gizmos & Gadgetry", "Sprocket & Spring"], sbToyShop: ["The Whirligig Shop"], sbScarfShop: ["Scarves for All Weathers"],
+  sbHatStacker: ["Hat Hat Hats", "The Tottering Topper"], sbScoopery: ["Scoop-de-Loop"], sbSnoozery: ["The Forty Winks"],
+  sbDoodads: ["Department of Doodads", "Ministry of Whatsits"], sbTippyTower: ["The Tippy Tower"], sbUpsideInn: ["The Upside Inn"],
+  sbMuseum: ["Museum of Mismatched Mittens"], sbSchool: ["Twiddledee Primary", "Twiddledum Academy"], sbPlayhouse: ["The Tumbledown Playhouse"],
+  sbTinklery: ["Kazoo & Co.", "The Tinklebox"], sbSweetShop: ["The Gobstopper Shoppe", "Sugar Plum Sweets"], sbPartyShop: ["Hullabaloo Party Shop"],
+  sbCloudLaundry: ["Sock Swap Suds", "The Fluff & Fold"], sbClockery: ["Tick-Tock Clockery"], sbGazebo: ["Jubilee Gazebo"],
 };
+const STORY_PEOPLE = ["Grubbleworth's", "Mrs. Fizzlewig's", "Old Snoodle's", "Bumbleby's", "Dr. Dibble's", "Twitchet's", "Nana Wobble's", "Pockle's"];
+const STORY_PLACES = ["Wibbly", "Upper Tuft", "Gumdrop Hill", "Puddleby", "Lower Wobble", "Topsy", "Snorkel Green", "Higgledy"];
+const STORY_STREETS = ["Wobble Way", "Tuftington Lane", "Gumdrop Row", "Curlicue Close", "Snorkberry Rise", "Fiddle Street", "Bumble Bend", "Puddle Lane"];
+// (The public places, which go by their place's name and never a proprietor's.)
+const STORY_PUBLIC = new Set<FacilityId>(["sbDoodads", "sbTippyTower", "sbMuseum", "sbSchool", "sbPlayhouse", "sbTrufflunkGrove", "sbSnorkberryPatch", "sbKiteMeadow", "sbGazebo", "sbUpsideInn"]);
 // These are the Victorian city's trades: every facility a period label in place of its modern one
 // (so no "Data Center" or "Motel" stands in a gaslit street), with a few names of its own for some.
-const VIC_LABEL: Record<FacilityId, string> = {
+// (The storybook city's own trades are never in it, so they have none.)
+const VIC_LABEL: Record<Exclude<FacilityId, `sb${string}`>, string> = {
   dc: "Goods Depot", ryderWarehouse: "Ryder & Sons Carriers", parcelHub: "Parcels Office", tireDist: "Wheelwright", bottling: "Mineral Water Works",
   brewery: "Ale Stores", coldStorage: "Ice House", lumberYard: "Timber Yard", chemPlant: "Alkali Works", factory: "Manufactory", mill: "Corn Mill",
   paperMill: "Paper Mill", applianceWh: "Ironmongery Stores", furnitureWh: "Cabinet Works", foodServiceWh: "Provision Stores", motoDepot: "Livery Stables",
@@ -248,14 +308,17 @@ export function facilityName(plan: CityPlan, id: FacilityId, bx: number, bz: num
     if (own && h(7) < 0.6) return own[Math.floor(h(8) * own.length)];
     if (id === "residence" || id === "apartment") return `${2 + Math.floor(h(3) * 60)} ${VIC_STREETS[Math.floor(h(9) * VIC_STREETS.length)]}`;
     // (Ryder's own premises go by the firm's name alone; a public body or a market takes its place's.)
-    const label = VIC_LABEL[id];
+    const label = VIC_LABEL[id as keyof typeof VIC_LABEL] ?? (FAC[id] as FacilityDef).label;
     if (isRyderFacility(id)) return label;
     return h(4) < 0.5 && !VIC_PUBLIC.has(id) ? `${VIC_PEOPLE[Math.floor(h(5) * VIC_PEOPLE.length)]} ${label}` : `${VIC_PLACES[Math.floor(h(6) * VIC_PLACES.length)]} ${label}`;
   }
   if (plan.style.storybook) {
     if (id === "knittingWorks") return `${plan.name} Knitting Works`;
-    const sn = STORY_NAMES[id];
+    if (isHome(id)) return `${1 + Math.floor(h(3) * 99)} ${STORY_STREETS[Math.floor(h(9) * STORY_STREETS.length)]}`;
+    const sn = STORY_NAMES[id], label = (FAC[id] as FacilityDef).label;
     if (sn && h(7) < 0.7) return sn[Math.floor(h(8) * sn.length)];
+    if (isRyderFacility(id)) return label;
+    return h(4) < 0.5 && !STORY_PUBLIC.has(id) ? `${STORY_PEOPLE[Math.floor(h(5) * STORY_PEOPLE.length)]} ${label}` : `${STORY_PLACES[Math.floor(h(6) * STORY_PLACES.length)]} ${label}`;
   }
   const label = (FAC[id] as FacilityDef).label;
   const jokes = IN_JOKES[id];
@@ -346,8 +409,9 @@ export function siteLayout(plan: CityPlan, bx: number, bz: number): SiteLayout {
   if (blk && (!blk.square || plan.style.storybook || plan.style.victorian) && (!anchored || !G.drivable(blk.anchor!.face))) return { kind: "kerb" };   // (the storybook city's blocks are all lotted: city.ts buildBlockPart)
   const fac = facilityAt(plan, bx, bz);
   // (In the Victorian city every facility but the brewery is at the kerb: it has no modern yards,
-  // garages, stands or rental lots.)
+  // garages, stands or rental lots. So it is in the storybook city, but for the knitting works.)
   if (plan.style.victorian && fac !== "steamBrewery") return { kind: "kerb" };
+  if (plan.style.storybook && fac !== "knittingWorks") return { kind: "kerb" };
   const h = (salt: number) => hash2(bx, bz, plan.seed, salt);
   let side = anchored ? blk!.sides.indexOf(blk!.anchor!.face) : Math.floor(h(0x51de) * 4);
   if (blk && !anchored) for (let k = 0; k < 4 && blk.sides[side] !== undefined && !G.drivable(blk.sides[side]); k++) side = (side + 1) % 4;
@@ -403,5 +467,9 @@ const palletDoor = (id: FacilityId) => {
   return PALLET_DOOR.has(id);
 };
 export const wideDoor = (id: FacilityId) => WIDE_DOOR.has(id) || palletDoor(id);
-export const isRyderFacility = (id: FacilityId) => id === "rentalLot" || id === "ryderWarehouse" || id === "ryderService" || id === "ryderOffice";
-export const hasSign = (id: FacilityId) => id !== "residence" && id !== "apartment";
+export const isRyderFacility = (id: FacilityId) => id === "rentalLot" || id === "ryderWarehouse" || id === "ryderService" || id === "ryderOffice" || id === "sbTruckRoost";
+// Where trucks are swapped: a city's Ryder rental lots, which in a storybook city are its truck roosts.
+export const RENTAL_LOTS: FacilityId[] = ["rentalLot", "sbTruckRoost"];
+// Homes, which have no name sign and are named by their address.
+export const isHome = (id: FacilityId) => id === "residence" || id === "apartment" || id === "sbPodHouse" || id === "sbTeeterFlats";
+export const hasSign = (id: FacilityId) => !isHome(id);

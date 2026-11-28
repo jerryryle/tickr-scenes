@@ -366,16 +366,19 @@ function faPortGlass(p: FaPainter, cx: number, cy: number, r: number, curt: stri
   for (let y = -r; y < r; y++) { const h = y + 0.5, w = Math.sqrt(Math.max(0, r * r - h * h)), cw = Math.min(w, r * (0.18 + 0.22 * Math.abs(h) / r)); if (cw > 0.5) { p.rect(cx - w, cy + y, cw, 1, curt, FA_GLASS(l * 0.5)); p.rect(cx + w - cw, cy + y, cw, 1, curt, FA_GLASS(l * 0.5)); } }
   p.paint(cx - r * 0.45, cy - r * 0.55, Math.max(2, r * 0.25), 2, "rgba(255,255,255,0.45)");
 }
-const faStorybook: FaKind = (p, v, rnd) => {
+// faStoryWindow paints the storybook wall's window in one of four shapes, on a wall papered in pattern v.
+// STORYBOOK takes shape v, and STORY_ALT shape v + 1, so a building whose storeys take them by turns
+// shows two shapes up its height.
+function faStoryWindow(p: FaPainter, v: number, shape: number, rnd: () => number) {
   faStoryWall(p, v, rnd);
-  const t = FA_STORY_TRIM[v], cu = FA_STORY_CURT[v];
-  if (v === 0) {   // variant 0 is a porthole, crossed, in a riveted ring, with a little hood over it
+  const t = FA_STORY_TRIM[shape], cu = FA_STORY_CURT[shape];
+  if (shape === 0) {   // shape 0 is a porthole, crossed, in a riveted ring, with a little hood over it
     faRing(p, 64, 56, 31, 9, t); faPortGlass(p, 64, 56, 21, cu);
     p.rect(62, 35, 4, 42, t, FA_TRIM); p.rect(43, 54, 42, 4, t, FA_TRIM);
     for (let k = 0; k < 5; k++) { const hx = 44 + k * 10, c = k % 2 ? t : "#fff3dc"; p.rect(hx - 5, 14, 10, 6, c, FA_TRIM); p.disc(hx, 20, 5, c, FA_TRIM, 0); }   // this paints a scalloped hood
     p.rect(38, 12, 52, 3, t, FA_TRIM);
     p.rect(52, 96, 24, 8, "#e8333a", FA_TRIM); for (let i = 0; i < 4; i++) p.disc(55 + i * 6, 93, 4, ["#ff7fb5", "#f2c230", "#a6e05a", "#9a6cf0"][i], FA_TRIM);
-  } else if (v === 1) {   // variant 1 is a tall arch, its keystone, muntins and tied curtains; it has a box of flowers
+  } else if (shape === 1) {   // shape 1 is a tall arch, its keystone, muntins and tied curtains; it has a box of flowers
     p.arch(36, 10, 56, 90, t, FA_TRIM); p.paint(37, 11, 3, 88, "rgba(255,255,255,0.2)"); p.paint(88, 30, 3, 70, "rgba(0,0,0,0.18)");
     p.archGlass(43, 17, 42, 80, 1, FA_GL, FA_GL_DEEP);
     for (let y = 26; y < 97; y++) { const cw = Math.max(0, 9 - Math.abs(y - 60) * 0.25); p.rect(43, y, cw, 1, cu, FA_GLASS(0.5)); p.rect(85 - cw, y, cw, 1, cu, FA_GLASS(0.5)); }
@@ -384,40 +387,97 @@ const faStorybook: FaKind = (p, v, rnd) => {
     p.rect(32, 100, 64, 5, t, FA_TRIM); p.rect(40, 105, 48, 9, "#e8333a", FA_TRIM);
     for (let x = 40; x < 88; x += 6) p.paint(x, 105, 3, 9, "rgba(255,255,255,0.25)");
     for (let i = 0; i < 6; i++) p.disc(44 + i * 8, 99 - (i % 2) * 2, 4, ["#ff7fb5", "#f2c230", "#9a6cf0", "#a6e05a"][i % 4], FA_TRIM);
-  } else if (v === 2) {   // variant 2 has two small portholes out of line and a striped band round the storey
+  } else if (shape === 2) {   // shape 2 has two small portholes out of line and a striped band round the storey
     for (let x = 0; x < FA_S; x += 8) p.rect(x, 104, 8, 7, (x / 8) % 2 ? "#fff3dc" : t, FA_TRIM);
     faRing(p, 40, 44, 21, 7, t); faPortGlass(p, 40, 44, 14, cu);
-    faRing(p, 88, 66, 21, 7, t); faPortGlass(p, 88, 66, 14, FA_STORY_CURT[(v + 1) % 4], 0.8);
-  } else {   // variant 3 is a crooked window with muntins and a striped shutter hung off true
+    faRing(p, 88, 66, 21, 7, t); faPortGlass(p, 88, 66, 14, FA_STORY_CURT[(shape + 1) % 4], 0.8);
+  } else {   // shape 3 is a crooked window with muntins and a striped shutter hung off true
     for (let y = 0; y < 80; y++) { const dx = Math.round(y * 0.12); p.rect(30 + dx, 98 - y, 56, 1, t, FA_TRIM); if (y > 2 && y < 78) p.paint(30 + dx, 98 - y, 2, 1, "rgba(255,255,255,0.2)"); }
     for (let y = 6; y < 74; y++) { const dx = Math.round(y * 0.12); p.rect(37 + dx, 98 - y, 42, 1, y < 30 ? FA_GL_DEEP : FA_GL, FA_GLASS(y < 30 ? 0.75 : 1)); p.rect(37 + dx, 98 - y, 8, 1, cu, FA_GLASS(0.5)); p.rect(57 + dx, 98 - y, 2, 1, t, FA_TRIM); }
     for (let x = 37; x < 79; x++) p.rect(x + 5, 98 - 40, 1, 2, t, FA_TRIM);
     for (let y = 22; y < 100; y++) p.rect(92 + Math.round((100 - y) * 0.12), y, 14, 1, Math.floor(y / 8) % 2 ? "#ff7fb5" : "#fff3dc", FA_TRIM);
     p.rect(104, 30, 3, 3, "#2a2440", FA_TRIM); p.rect(104, 88, 3, 3, "#2a2440", FA_TRIM);   // these paint the hinges
   }
-};
-const faStoryShop: FaKind = (p, v, rnd) => {
+}
+const faStorybook: FaKind = (p, v, rnd) => faStoryWindow(p, v, v, rnd);
+const faStoryAlt: FaKind = (p, v, rnd) => faStoryWindow(p, v, (v + 1) % 4, rnd);
+// faStoryShopfront paints a shop's bay under a signboard and a scalloped valance: an arched window
+// with its display, and a round-topped door at the right (STORY_SHOP), or the window across the
+// whole bay (STORY_SHOPWIN). The display is the variant's: yarn and hats, jars on shelves, cakes on
+// stands, or cogs and bolts of cloth.
+function faStoryShopfront(p: FaPainter, v: number, rnd: () => number, door: boolean) {
   faStoryWall(p, (v + 2) % 4, rnd, "#f4eee4");
   const t = FA_STORY_TRIM[v], sc = [["#e8333a", "#fff3dc"], ["#1fb5b0", "#fff3dc"], ["#9a6cf0", "#f2c230"], ["#ff9a2e", "#fff3dc"]][v];
   // this paints a signboard and a scalloped, striped valance under it
   p.rect(0, 0, FA_S, 6, t, FA_TRIM); p.paint(0, 5, FA_S, 1, "rgba(0,0,0,0.3)");
   for (let x = 0; x < FA_S; x += 16) { const c = sc[(x / 16) % 2]; p.rect(x, 6, 16, 10, c, FA_TRIM); p.disc(x + 8, 16, 8, c, FA_TRIM, 0); p.paint(x, 6, 16, 2, "rgba(255,255,255,0.25)"); for (let y = 16; y < 24; y++) p.paint(x + 2, y, 12 - Math.abs(y - 16) * 1.5 > 0 ? 12 - Math.abs(y - 16) * 1.5 : 0, 1, "rgba(0,0,0,0.12)"); }
-  // the shop window is an arch with its frame bevelled, muntins and a display of yarn on a shelf
-  p.arch(4, 30, 86, 86, t, FA_TRIM); p.paint(5, 52, 3, 62, "rgba(255,255,255,0.22)"); p.paint(85, 52, 3, 62, "rgba(0,0,0,0.2)");
-  p.archGlass(9, 35, 76, 79, 0.75, "#4a6a7a", "#3b5664");
-  p.rect(46, 35, 2, 79, t, FA_TRIM); p.rect(9, 70, 76, 2, t, FA_TRIM);
-  p.rect(10, 102, 74, 3, "#8a5a34", FA_GLASS(0.6));
-  const goods = ["#ff7fb5", "#f2c230", "#6fe0e8", "#9a6cf0", "#a6e05a", "#ff9a2e"];
-  for (let i = 0; i < 7; i++) { const gx = 16 + i * 10, gy = 96 - (rnd() * 6 | 0), c = goods[(i + v) % 6]; p.disc(gx, gy, 5, c, FA_GLASS(0.8)); p.paint(gx - 2, gy - 3, 2, 2, "rgba(255,255,255,0.5)"); }
-  for (let i = 0; i < 4; i++) { const gx = 20 + i * 16; p.rect(gx, 80, 8, 10, goods[(i + v + 2) % 6], FA_GLASS(0.8)); p.rect(gx + 3, 78, 2, 2, "#ffffff", FA_GLASS(0.8)); }   // these are hats on stands
+  // the shop window is an arch with its frame bevelled and muntins
+  const wx = door ? 4 : 8, ww = door ? 86 : 112, gx0 = wx + 5, gw = ww - 10, gm = gx0 + gw / 2;
+  p.arch(wx, 30, ww, 86, t, FA_TRIM); p.paint(wx + 1, 52, 3, 62, "rgba(255,255,255,0.22)"); p.paint(wx + ww - 5, 52, 3, 62, "rgba(0,0,0,0.2)");
+  p.archGlass(gx0, 35, gw, 79, 0.75, "#4a6a7a", "#3b5664");
+  p.rect(gm - 1, 35, 2, 79, t, FA_TRIM); p.rect(gx0, 70, gw, 2, t, FA_TRIM);
+  p.rect(gx0 + 1, 102, gw - 2, 3, "#8a5a34", FA_GLASS(0.6));
+  const goods = ["#ff7fb5", "#f2c230", "#6fe0e8", "#9a6cf0", "#a6e05a", "#ff9a2e"], n = Math.floor(gw / 11);
+  for (let i = 0; i < n; i++) {
+    const gx = gx0 + 6 + i * (gw - 12) / Math.max(1, n - 1), c = goods[(i + v) % 6], c2 = goods[(i + v + 3) % 6];
+    if (v === 0) { const gy = 96 - (rnd() * 6 | 0); p.disc(gx, gy, 5, c, FA_GLASS(0.8)); p.paint(gx - 2, gy - 3, 2, 2, "rgba(255,255,255,0.5)"); }   // balls of yarn
+    else if (v === 1) { p.rect(gx - 3, 92, 7, 10, c, FA_GLASS(0.8)); p.rect(gx - 3, 90, 7, 2, "#fff3dc", FA_GLASS(0.8)); p.rect(gx - 3, 78, 6, 9, c2, FA_GLASS(0.8)); p.rect(gx - 3, 76, 6, 2, "#d4b050", FA_GLASS(0.8)); }   // jars on two shelves
+    else if (v === 2) { if (i % 2 === 0) { p.rect(gx - 1, 92, 2, 10, "#fff3dc", FA_GLASS(0.8)); p.rect(gx - 7, 84, 14, 8, c, FA_GLASS(0.8)); p.rect(gx - 5, 78, 10, 6, c2, FA_GLASS(0.8)); p.disc(gx, 77, 2, "#e8333a", FA_GLASS(0.8)); } }   // cakes on stands, a cherry on each
+    else { if (i % 2) { p.disc(gx, 94, 6, "#d4b050", FA_GLASS(0.8)); p.disc(gx, 94, 2, "#3b5664", FA_GLASS(0.7)); for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3; p.rect(gx + Math.cos(a) * 6 - 1, 94 + Math.sin(a) * 6 - 1, 3, 3, "#d4b050", FA_GLASS(0.8)); } } else { p.rect(gx - 5, 82, 10, 20, c, FA_GLASS(0.8)); for (let y = 84; y < 102; y += 4) p.paint(gx - 5, y, 10, 1, "rgba(255,255,255,0.35)"); } }   // cogs and bolts of cloth
+  }
+  if (v === 0) for (let i = 0; i < Math.floor(gw / 18); i++) { const gx = gx0 + 6 + i * 16; p.rect(gx, 80, 8, 10, goods[(i + v + 2) % 6], FA_GLASS(0.8)); p.rect(gx + 3, 78, 2, 2, "#ffffff", FA_GLASS(0.8)); }   // these are hats on stands
   // this paints a chequered stall riser
-  for (let x = 0; x < 92; x += 6) for (let y = 116; y < 128; y += 6) p.rect(x, y, 6, 6, ((x + y) / 6) % 2 ? t : "#fff3dc", FA_TRIM);
+  for (let x = wx - 4; x < wx + ww + 2; x += 6) for (let y = 116; y < 128; y += 6) p.rect(Math.max(0, x), y, 6, 6, ((x + y) / 6) % 2 ? t : "#fff3dc", FA_TRIM);
+  if (!door) return;
   // the door is round-topped and panelled, with a round light in it
   p.arch(95, 34, 30, 94, t, FA_TRIM); p.arch(98, 37, 24, 91, ["#5e3a28", "#2b3a55", "#6b1f1f", "#2f4a3a"][v], FA_TRIM);
   p.paint(98, 37, 2, 91, "rgba(255,255,255,0.15)");
   p.paint(101, 76, 18, 18, "rgba(0,0,0,0.15)"); p.paint(101, 100, 18, 22, "rgba(0,0,0,0.15)");
   p.disc(110, 56, 7, "#d4b050", FA_TRIM); p.disc(110, 56, 5, FA_GL, FA_GLASS(0.8));
   p.rect(116, 86, 3, 8, "#d4b050", FA_TRIM);
+}
+const faStoryShop: FaKind = (p, v, rnd) => faStoryShopfront(p, v, rnd, true);
+const faStoryShopWin: FaKind = (p, v, rnd) => faStoryShopfront(p, v, rnd, false);
+// A works' wall (STORY_WORKS) is boarded: upright planks, tinted, between ink-dark battens at the
+// tile's edges, a patch or two of odd planks nailed over them, and a window of the variant's: a
+// riveted porthole, an arched window crossed by its bars, a pair of little square ones, or a round
+// window under a striped hood.
+// A picket fence's run (STORY_PICKET), 1.2 m of it a tile: four pointed palings, tinted, on two rails,
+// the gaps between them and over their rails dark with the garden's shade. The palings lean left (v 0),
+// right (v 1), stand upright (v 2) or every way (v 3), so a fence of runs looks put up by hand.
+const faStoryPicket: FaKind = (p, v) => {
+  p.rect(0, 0, FA_S, FA_S, "#3e5a34", FA_TRIM);
+  for (const y of [52, 100]) p.wall(0, y, FA_S, 9, "#f8f4ec");
+  for (let i = 0; i < 4; i++) {
+    const lean = v === 0 ? -0.12 : v === 1 ? 0.12 : v === 2 ? 0 : [0.1, -0.06, 0.14, -0.1][i], x0 = 6 + i * 32;
+    for (let y = 8; y < FA_S; y++) {
+      const dx = Math.round((FA_S - y) * lean), w = y < 22 ? Math.max(2, Math.round((y - 8) * 20 / 14)) : 20;
+      p.wall(x0 + dx + (20 - w) / 2, y, w, 1, y < 22 ? "#fffaf2" : "#f8f4ec");
+    }
+    p.paint(x0 + 17 + Math.round(64 * lean), 24, 3, 104, "rgba(0,0,0,0.12)");
+  }
+};
+const faStoryWorks: FaKind = (p, v, rnd) => {
+  p.wall(0, 0, FA_S, FA_S, "#fbf8f2"); p.speckle(rnd, 60);
+  for (let x = 0; x < FA_S; x += 11) { p.paint(x, 0, 1, FA_S, "rgba(0,0,0,0.11)"); p.paint(x + 1, 0, 1, FA_S, "rgba(255,255,255,0.14)"); if (rnd() < 0.5) p.paint(x + 3, Math.floor(rnd() * 100), 6, 1, "rgba(0,0,0,0.12)"); }
+  for (const x of [0, FA_S - 5]) p.rect(x, 0, 5, FA_S, "#3a3050", FA_TRIM);
+  p.paint(0, 0, FA_S, 5, "rgba(0,0,0,0.18)"); p.paint(0, 118, FA_S, 10, "rgba(0,0,0,0.1)");
+  // the patches: a few odd planks, each its own colour, askew, with nail heads
+  const pc = ["#ff9a2e", "#1fb5b0", "#e8333a", "#9a6cf0"], px = v % 2 ? 14 : 84, py = v < 2 ? 88 : 14;
+  for (let k = 0; k < 3; k++) for (let y = 0; y < 8; y++) p.rect(px + k * 9 + Math.round(y * 0.3), py + y + k * 2, 8, 1, pc[(v + k) % 4], FA_TRIM);
+  for (let k = 0; k < 3; k++) p.rect(px + k * 9 + 3, py + k * 2 + 1, 2, 2, "#2a2440", FA_TRIM);
+  const t = FA_STORY_TRIM[v];
+  if (v === 0) { faRing(p, 64, 58, 26, 8, t); faPortGlass(p, 64, 58, 17, FA_STORY_CURT[v], 0.7); }
+  else if (v === 1) {
+    p.arch(40, 16, 48, 84, t, FA_TRIM); p.archGlass(46, 22, 36, 74, 0.7, FA_GL, FA_GL_DEEP);
+    for (let y = 40; y < 96; y += 14) p.rect(46, y, 36, 2, t, FA_TRIM);
+    p.rect(63, 22, 2, 74, t, FA_TRIM);
+  } else if (v === 2) {
+    for (const [x, y] of [[26, 34], [76, 44]]) { p.rect(x - 4, y - 4, 34, 34, t, FA_TRIM); p.pane(x, y, 26, 26, { light: 0.7, streak: false }); p.rect(x + 12, y, 2, 26, t, FA_TRIM); p.rect(x, y + 12, 26, 2, t, FA_TRIM); }
+  } else {
+    for (let k = 0; k < 6; k++) { const c = k % 2 ? "#fff3dc" : t; p.rect(38 + k * 9, 20, 9, 7, c, FA_TRIM); p.disc(42 + k * 9, 27, 4, c, FA_TRIM, 0); }
+    faRing(p, 64, 62, 24, 7, "#d4b050"); faPortGlass(p, 64, 62, 16, FA_STORY_CURT[(v + 1) % 4], 0.7);
+  }
 };
 const faStoryDoor: FaKind = (p, v, rnd) => {
   faStoryWall(p, (v + 1) % 4, rnd);
@@ -650,7 +710,8 @@ const faVictMill: FaKind = (p, v, rnd) => {
 const faVictPlain: FaKind = (p, v, rnd) => faVWall(p, v, rnd);
 
 const FA_KINDS: FaKind[] = [faOffice, faPunched, faDeco, faResidential, faStorefront, faIndustrial, faDock, faBlank, faBrick, faBrutalist, faCurtain, faApartment, faSiding, faDoor, faLobby, faRibbon, faStorybook, faStoryShop, faStoryDoor,
-  faVictSash, faVictShop, faVictDoor, faVictGothic, faVictWarehouse, faVictGrand, faVictMill, faVictShopWin, faVictPlain];
+  faVictSash, faVictShop, faVictDoor, faVictGothic, faVictWarehouse, faVictGrand, faVictMill, faVictShopWin, faVictPlain,
+  faStoryWorks, faStoryShopWin, faStoryAlt, faStoryPicket];
 
 
 // The whole atlas, on two new canvases.

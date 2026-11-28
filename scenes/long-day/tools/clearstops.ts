@@ -57,9 +57,15 @@ else if (csDoors) {
   let changed = 0, doors = 0, kept = 0, dirty = false;
   const blocks = file.blocks.map((b) => ({ ...b }));
   bare.graph.blocks.forEach((B, i) => {
-    const own = file.blocks[i].doors;
-    if (!own) return;
-    const now = fileDoorsOf(bare, B.kx, B.kz) ?? [];
+    const own = file.blocks[i].doors, now = fileDoorsOf(bare, B.kx, B.kz) ?? [];
+    // (A facility block with none listed that now has some, as one whose site has become a kerb
+    // stop, gets them added at its line's end.)
+    if (!own) {
+      if (!now.length) return;
+      changed += now.length; blocks[i].doors = now; dirty = true;
+      lines[blockLines[i]] = lines[blockLines[i]].replace(/ \},?$/, (m) => `, doors: ${fileItem(now)}${m}`);
+      return;
+    }
     doors += own.length;
     // (A door counts as moved as test/doors.ts judges it: more than 2 cm along or out, or another
     // panel or height. The centimetre a curved face's rounding gives is let be.)

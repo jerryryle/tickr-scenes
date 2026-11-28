@@ -4,7 +4,8 @@
 //   make stage [STAGE="box26 boxes drop"] [VIEW=quarter] [FROM=0] [SECS=12] [SPEED=1]
 //     -> build/long-day-stage/stage.mp4
 // STAGE: model cargo kind [nodoor | door=x (the door's middle along the truck)] [vic (in the
-// Victorian city: the truck a carriage, the street of setts and stone, truck.ts makeCarriage)]; VIEW: quarter (from behind, by the street), side (along the
+// Victorian city: the truck a carriage, the street of setts and stone, truck.ts makeCarriage)] [story (in the
+// storybook city: the truck a cartoon, the crew in storybook dress)]; VIEW: quarter (from behind, by the street), side (along the
 // truck's kerb side), rear (straight behind), top (straight down), near (close on the driver), corner (fixed on its back from the street side), into (fixed, in through its back), climb (fixed, side on to its back, close); FROM: seconds into the stop.
 import * as THREE from "three@0.187.0";
 import { Batch } from "../src/geom.ts";
@@ -15,6 +16,7 @@ import { CURB_H } from "../src/grid.ts";
 import { makeStage, stageSpec } from "../src/stage.ts";
 import { uploadable } from "../src/canvas.ts";
 import { FrontDoorFx } from "../src/dockfx.ts";
+import { FIG_STYLE } from "../src/figure.ts";
 
 const STAGE_SPEC: string = "box26 boxes drop";
 const STAGE_VIEW: string = "quarter";
@@ -24,10 +26,11 @@ const STAGE_SPEED: number = 1;
 export default function createScene({ sys, assets }: SceneInputs): Scene {
   let r: THREE.WebGLRenderer, scene: THREE.Scene, cam: THREE.PerspectiveCamera, crew: Crew, truck: Truck;
   let door: FrontDoorFx | null = null, shut: THREE.Mesh | null = null;
-  const words = STAGE_SPEC.split(/\s+/), vic = words.includes("vic");
-  const spec = { ...stageSpec(words.filter((w) => w !== "vic")), victorian: vic }, S = makeStage(spec), model = spec.model;
-  // (The street's, the pavement's and the building's colours: the Victorian city's setts, flags and brick.)
-  const STREET = vic ? 0x5c5852 : 0x34363a, PAVE = vic ? 0x8f897c : 0x9a9890, WALL = vic ? 0x8a4632 : 0x7a5040;
+  const words = STAGE_SPEC.split(/\s+/), vic = words.includes("vic"), story = words.includes("story");
+  const spec = { ...stageSpec(words.filter((w) => w !== "vic" && w !== "story")), victorian: vic, storybook: story }, S = makeStage(spec), model = spec.model;
+  // (The street's, the pavement's and the building's colours: the Victorian city's setts, flags and
+  // brick, or the storybook's plum street, pink pavement and pastel wall.)
+  const STREET = vic ? 0x5c5852 : story ? 0x5a4a6e : 0x34363a, PAVE = vic ? 0x8f897c : story ? 0xd9a9b8 : 0x9a9890, WALL = vic ? 0x8a4632 : story ? 0xc6e2a0 : 0x7a5040;
   let last = -1;
   return {
     async setup() {
@@ -60,6 +63,7 @@ export default function createScene({ sys, assets }: SceneInputs): Scene {
       LIVERY_ASSETS.forEach((n, i) => { images[n] = uploadable(imgs[i]); });
       truck = new Truck(new TruckKit(images), model, null); scene.add(truck.root);
       if (vic) truck.carriage = 1;
+      if (story) { truck.toon = 1; FIG_STYLE.storybook = true; }
       truck.follow(0, 0, 0, 0, 0);
       crew = new Crew(scene, new THREE.MeshLambertMaterial({ vertexColors: true }));
       // (The front door: swung open as the journey has it (FrontDoorFx), and shut, its panel.)

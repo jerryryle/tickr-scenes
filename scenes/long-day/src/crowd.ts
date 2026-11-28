@@ -8,7 +8,7 @@
 // converted to world each step.
 import * as THREE from "three@0.187.0";
 import { Rng } from "./rng.ts";
-import { FIG_STYLE, Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, VIC_PARASOLS, VIC_UMBRELLAS, walkSwing } from "./figure.ts";
+import { FIG_STYLE, Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, VIC_PARASOLS, VIC_UMBRELLAS, standIdle, swingBody, walkSwing } from "./figure.ts";
 import type { Body } from "./figure.ts";
 import { CLOCK, Vignettes, blockNear, crossing, crossSignal, districtAt, faceCorner, faceRef, sideFace } from "./vignettes.ts";
 import type { Adopt, KerbParked } from "./vignettes.ts";
@@ -171,8 +171,9 @@ export class Crowd {
     if (!B) return;
     const bx = B.kx, bz = B.kz, district = plan.district(bx, bz);
     if (district === "industrial" && r() < 0.6) return;
-    const vic = !!plan.style.victorian;   // (the Victorian city: nobody jogs, and no coffee in paper cups)
-    let kind: PedKind = r() < (district === "park" ? 0.4 : 0.14) ? (vic ? "walk" : "jog") : r() < 0.15 ? "dog" : "walk";
+    // (The Victorian city and the storybook one: nobody jogs, no coffee in paper cups, and children about.)
+    const vic = !!plan.style.victorian, sb = !!plan.style.storybook;
+    let kind: PedKind = r() < (district === "park" ? 0.4 : 0.14) ? (vic || sb ? "walk" : "jog") : r() < 0.15 ? "dog" : "walk";
     const fixed = (district === "downtown" || district === "commercial") && this.vendorCount < 2 && r() < 0.08;
     if (fixed) kind = r() < 0.55 ? "vendor" : "musician";
     else if (!this.peds.some((p) => p.kind === "chase") && r() < 0.04) kind = "chase";
@@ -200,7 +201,8 @@ export class Crowd {
       const hr = CLOCK.hourAt(this.time0), season = plan.climate?.season ?? "summer";
       if (kind === "walk" && wm.cloud < 0.6 && hr >= 10 && hr < 18 && season !== "winter" && r() < 0.5) p.parasol = pick(r, VIC_PARASOLS);
       if (kind === "walk" && r() < 0.12) { p.s = 0.62; p.speed = 1.0 + r() * 0.3; }
-    } else if (kind === "walk" && district !== "park" && district !== "residential") { const hr = CLOCK.hourAt(this.time0); if (hr >= 6.5 && hr < 10 && r() < 0.35) p.cup = true; }
+    } else if (sb) { if (kind === "walk" && r() < 0.12) { p.s = 0.62; p.speed = 1.0 + r() * 0.3; } }
+    else if (kind === "walk" && district !== "park" && district !== "residential") { const hr = CLOCK.hourAt(this.time0); if (hr >= 6.5 && hr < 10 && r() < 0.35) p.cup = true; }
     this.place(G, p);
     p.px = p.x; p.pz = p.z; p.ph = p.h; p.pphase = p.phase;
     if (Math.hypot(p.x - focus.x, p.z - focus.z) < PED_SPAWN[0] - 5) return;
@@ -495,16 +497,18 @@ export class Crowd {
     const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), ct = (p.a - p.crossA) * p.dir;
     const inRoad = p.state === "cross" && ct > 1.2 && ct < p.crossLen - 1.2;
     const b: Body = {
-      x: p.x, z: p.z, yaw: h, s, y: (inRoad ? 0.02 : CURB_H) + (moving ? w.bob : 0),
+      x: p.x, z: p.z, yaw: h, s, y: (inRoad ? 0.02 : CURB_H) + (moving ? w.bob * s : 0),
       legs: moving ? w.legs : [0, 0], arms: moving ? w.arms : [0, 0], lean: run ? 0.15 : 0,
       shirt: p.shirt, pants: p.pants, skin: p.skin, hair: p.hair, hat: p.hat, parasol: p.parasol,
       dress: !FIG_STYLE.victorian ? undefined : p.kind === "vendor" ? "cap" : p.kind === "musician" ? "sack" : undefined,
     };
+    if (moving) Object.assign(b, swingBody(w, s));
+    else standIdle(b, this.time, (((p.shirt * 7 + p.pants * 13 + p.hair) >>> 0) % 997) * 0.37);
     if (p.kind === "musician") { const m = 0.9 + 0.25 * Math.sin(p.phase * 7); b.arms = [-m, m]; }
     if (p.kind === "vendor") { const m = 0.3 + 0.2 * Math.sin(p.phase * 1.3); b.arms = [-m, m]; }
     if (p.kind === "chase") b.arms = [0.96, 2.4];   // reaching for the string
-    if (p.cid !== undefined) { const m = 2.6 + 0.25 * Math.sin(this.time * 9); b.arms = [m, m]; b.armOut = [0.3, 0.3]; b.legs = [0, 0]; }   // the clowns coming for them: arms up
-    if (p.umbrella !== undefined) { b.arms = [b.arms![0], 0.55]; b.fore = [b.arms![0], 2.2]; }
+    if (p.cid !== undefined) { const m = 2.6 + 0.25 * Math.sin(this.time * 9); b.arms = [m, m]; b.armOut = [0.3, 0.3]; b.legs = [0, 0]; b.shins = b.fore = null; }   // the clowns coming for them: arms up
+    if (p.umbrella !== undefined) { b.arms = [b.arms![0], 0.55]; b.fore = [b.fore?.[0] ?? b.arms![0], 2.2]; }
     else if (p.cup) { b.arms = [b.arms![0], 0.35]; b.fore = [b.arms![0], 1.55]; }
     F.person(b);
     if (p.umbrella !== undefined) { const hd = F.handR; F.umbrella(hd[0] - fx * 0.05, F.head[1] + 0.42 * s, hd[2] - fz * 0.05, hd, p.umbrella, 0, h + Math.PI / 4); }
@@ -514,8 +518,10 @@ export class Crowd {
       const rx = Math.sin(h), rz = Math.cos(h), hd = F.head, bw = Math.sin(p.phase * 7) * 0.12;
       F.box(hd[0] + fx * 0.18 - rx * 0.12, hd[1] - 0.2, hd[2] + fz * 0.18 - rz * 0.12, 0.34, 0.05, 0.12, h + 0.5, 0.25, 0x7a3a1a);
       F.box(hd[0] + fx * 0.32 + rx * (0.05 + bw), hd[1] - 0.24, hd[2] + fz * 0.32 + rz * (0.05 + bw), 0.02, 0.02, 0.5, h, 0, 0xd8c8a0);
-    } else if (p.kind === "musician") this.box(p.x + fx * 0.25, b.y! + 0.86 + 0.25, p.z + fz * 0.25, 0.12, 0.3, 0.8, h + 0.7, 0, 0x8a5a2a);   // guitar
+    } else if (p.kind === "musician" && FIG_STYLE.storybook) tuba(this.F, p, b);
+    else if (p.kind === "musician") this.box(p.x + fx * 0.25, b.y! + 0.86 + 0.25, p.z + fz * 0.25, 0.12, 0.3, 0.8, h + 0.7, 0, 0x8a5a2a);   // guitar
     if (p.kind === "vendor" && vic) this.barrow(p.x + fx * 1.0, p.z + fz * 1.0, h);
+    else if (p.kind === "vendor" && FIG_STYLE.storybook) flossCart(this.F, p.x + fx * 1.0, p.z + fz * 1.0, h);
     else if (p.kind === "vendor") {   // cart with an umbrella, between the vendor and the kerb
       const cx = p.x + fx * 1.0, cz = p.z + fz * 1.0;
       this.box(cx, 0.6 + CURB_H, cz, 0.9, 0.8, 1.6, h, 0, 0xd8dadc);
@@ -559,6 +565,33 @@ export class Crowd {
       for (const k of [-1, 1]) this.F.box(x + rx * k * 0.2, y + Math.sin(k * flap) * 0.1 * k, z + rz * k * 0.2, 0.16, 0.03, 0.38, yaw, 0, wing, k * flap);
     }
   }
+}
+
+// The storybook busker's tuba: its coils round the chest, its bell up over the shoulder.
+export function tuba(F: Figures, p: { x: number; z: number; h: number; s?: number; phase: number }, b: Body) {
+  const h = p.h, fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h), y = (b.y ?? CURB_H) + 0.86 * (p.s ?? 1), BRASS = 0xd4af37;
+  const puff = 0.03 * Math.sin(p.phase * 3.5);
+  F.box(p.x + fx * 0.22, y + 0.3, p.z + fz * 0.22, 0.14, 0.42 + puff, 0.42 + puff, h, 0, BRASS);
+  F.box(p.x + fx * 0.22, y + 0.3, p.z + fz * 0.22, 0.15, 0.22, 0.22, h, 0, 0x8a6a1a);
+  F.box(p.x + fx * 0.1 + rx * 0.28, y + 0.72, p.z + fz * 0.1 + rz * 0.28, 0.12, 0.4, 0.12, h, 0, BRASS, -0.3);
+  F.box(p.x + fx * 0.02 + rx * 0.36, y + 0.98, p.z + fz * 0.02 + rz * 0.36, 0.5 + puff, 0.16, 0.5 + puff, h, 0, BRASS, -0.3);
+}
+// The storybook seller's candy-floss cart, centred on (x, z) and its length across the heading h:
+// a mint cart on two big wheels, a tub of pink floss on top, under a striped umbrella.
+export function flossCart(F: Figures, x: number, z: number, h: number) {
+  const fx = Math.cos(h), fz = -Math.sin(h), rx = Math.sin(h), rz = Math.cos(h), y = CURB_H;
+  F.box(x, y + 0.62, z, 0.8, 0.6, 1.4, h, 0, 0x5fd3a0);
+  F.box(x, y + 0.94, z, 0.84, 0.06, 1.44, h, 0, 0xfff3dc);
+  for (const k of [-1, 1]) F.box(x + rx * k * 0.74, y + 0.36, z + rz * k * 0.74, 0.62, 0.62, 0.06, h, 0, 0xd83a9a);
+  F.box(x, y + 1.06, z, 0.5, 0.2, 0.5, h, 0, 0xfff3dc);
+  for (const [a, r, d] of [[0.1, 0.06, 0.4], [-0.08, -0.12, 0.34], [0.02, 0.16, 0.3]]) F.box(x + fx * a + rx * r, y + 1.3, z + fz * a + rz * r, d, d * 0.8, d, h + a * 5, 0, 0xff9ec8);
+  F.box(x - rx * 0.5, y + 1.7, z - rz * 0.5, 0.05, 1.6, 0.05, h, 0, 0x2a2440);
+  const ux = x - rx * 0.5, uz = z - rz * 0.5, uy = y + 2.5;
+  for (let i = 0; i < 6; i++) {
+    const ang = h + i * Math.PI / 3, cx = Math.cos(ang), cz = -Math.sin(ang);
+    F.box(ux + cx * 0.4, uy - 0.12, uz + cz * 0.4, 0.8, 0.04, 0.48, ang, -0.3, i % 2 ? 0xfff3dc : 0xe8333a);
+  }
+  F.box(ux, uy + 0.08, uz, 0.1, 0.1, 0.1, h, 0, 0xf2c230);
 }
 
 // Someone on foot as an obstacle: where they are, and how they are moving (this step's: their pose

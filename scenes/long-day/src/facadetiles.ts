@@ -16,6 +16,11 @@ export const FACADE = {
   // (Their variants come in pairs: 0 and 1 for brick, 2 and 3 for stucco or stone. The Victorian
   // buildings pick a wall's variants by what it is: victorian-buildings-town.ts.)
   VICT_SASH: 19, VICT_SHOP: 20, VICT_DOOR: 21, VICT_GOTHIC: 22, VICT_WAREHOUSE: 23, VICT_GRAND: 24, VICT_MILL: 25, VICT_SHOPWIN: 26, VICT_PLAIN: 27,
+  // More of the storybook city's: a works' boarded wall with its own windows (STORY_WORKS), the shop
+  // window with no door, for a shop's other bays (STORY_SHOPWIN), and a second window shape for
+  // the storeys that alternate with STORYBOOK's (STORY_ALT: a building's other storeys), and a picket
+  // fence's run of palings, leaning one way or the other by variant (STORY_PICKET).
+  STORY_WORKS: 28, STORY_SHOPWIN: 29, STORY_ALT: 30, STORY_PICKET: 31,
 } as const;
 // The atlas has room for this many kinds (a tile's kind is its id modulo this; facadeart.ts).
 export const FACADE_KINDS = 32;

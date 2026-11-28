@@ -59,12 +59,28 @@ export function buildCarried(id: string, material: THREE.Material, n = 1, varian
       else m.build(b, 0, 0, 0, 0);
       break;
     default:
-      // One, or a stack (small things in twos).
-      for (let k = 0; k < Math.max(1, n); k++) m.build(b, 0, k * h, 0, variant + k);
+      // One, or a stack (small things in twos), any loose parts on their own (below).
+      for (let k = 0; k < Math.max(1, n); k++) m.build(b, 0, k * h, 0, variant + k, !!m.loose);
       size = [l, Math.max(1, n) * h, w];
   }
   group.add(b.build(material)!);
   const load: CarriedLoad = { group, size, round: !!m.round, bars: m.bars };
+  // The storybook goods come alive in the hands: the lollipops nod on their sticks, the balloons
+  // bob and sway on their ribbons, and the gumdrops and cloud cushions jiggle.
+  if (m.loose) {
+    const parts: THREE.Object3D[] = [];
+    for (let u = 0; u < Math.max(1, n); u++) for (let k = 0; k < m.loose.n; k++) {
+      const pb = new Batch(); m.loose.build(pb, k, variant + u);
+      const g = new THREE.Group(), [ax, ay, az] = m.loose.at(k); g.add(pb.build(material)!); g.position.set(ax, u * h + ay, az);
+      group.add(g); parts.push(g);
+    }
+    const bob = id === "balloons";
+    load.animate = (t) => parts.forEach((g, i) => {
+      g.rotation.set(0.15 * Math.sin(t * (bob ? 1.7 : 6) + i * 2.1), 0, 0.15 * Math.sin(t * (bob ? 1.3 : 5) + i));
+      if (bob) g.scale.y = 1 + 0.08 * Math.sin(t * 2.3 + i);
+    });
+  }
+  if (id === "gumdrops" || id === "cloudCushions") { const body = group.children[0]; load.animate = (t) => { const q = Math.sin(t * 8); body.scale.set(1 - 0.03 * q, 1 + 0.06 * q, 1 - 0.03 * q); }; }
   if (id === "frog") load.animate = (t) => { group.rotation.x = 0.1 * Math.sin(t * 2.7); group.position.y += 0.03 * Math.sin(t * 5.1); };
   if (id === "gorilla") load.animate = (t) => { group.rotation.x = 0.12 * Math.sin(t * 3.1); group.rotation.z = 0.08 * Math.sin(t * 2.3 + 1); };
   if (id === "penguin") {

@@ -87,6 +87,8 @@ src/
     storybook-style.ts                   the storybook style
     storybook-buildings-town.ts          the town's buildings, trees and lamps
     storybook-landmark-knitting-works.ts the knitting works
+    storybook-trades.ts                  the emblems over its trades' doors
+    storybook-street.ts                  its signals, street furniture, scarf, balloon and paving
     wumbleton/
       wumbleton.ts
       wumbleton-contents.ts
@@ -453,7 +455,23 @@ on: no tool rewrites a file that exists. Replacing a city means drafting a new o
    block's recipes is lost. Every lotted block's detail is
    drawn afresh, since a rule's recipe takes its frame from the city file's rounded layout. Then
    redraft the doors and furniture (`make clearstops ... DOORS=1`, then `make clearstops`, in turn
-   until neither changes anything) and run step 4.
+   until neither changes anything) and run step 4. With `SITES=1` it relots instead only the
+   blocks, of any district, whose listed site (a dock, stand, garage or rental lot) the rules no
+   longer place, and leaves every other block's recipes as they are.
+
+## The storybook city's trades
+
+The storybook towns have their own trades and the knitting works, and no facility of any other
+city's. The trades are the facilities in `src/facilities.ts` whose ids start with `sb` (each marked
+`story`). A storybook city draws them by district, and every other city draws only the rest
+(`facilityAt`). Every trade is a kerb stop, so the works' dock is a storybook town's only site.
+
+The four towns were given their trades in one pass when the trades were made. Each block but the
+works took the trade a storybook city with no file would draw for it, by its district and its key.
+The blocks that had held a modern dock, stand, garage or rental lot were relotted
+(`make relot ... SITES=1`), their doors redrafted and their stops cleared as step 5 of "Authoring"
+says. A town's plaza stays on the block its contents put it on (`CityPlan.plaza`), so a change of
+facilities never moves it.
 
 `test/tractorturns.ts` checks that a city of each style lists the moves the sweep bans, that a
 tractor can still get in and out by every gate, and that a tractor driven through two towns keeps

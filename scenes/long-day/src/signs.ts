@@ -84,7 +84,7 @@ class SlotUploads {
   }
 }
 
-export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean; gilt?: boolean }   // (gilt: the Victorian city's, gilt serif capitals inside a gilt line)
+export interface SignStyle { bg: string; fg: string; logo: boolean; baton?: boolean; gilt?: boolean; story?: boolean }   // (gilt: the Victorian city's, gilt serif capitals inside a gilt line; story: the storybook's hand-lettering, storyLetters)
 interface SignJob { slot: number; text: string; style: SignStyle; baked: boolean }
 export interface SignMesh { mesh: THREE.Mesh; slots: number[]; ads: boolean }
 
@@ -193,7 +193,8 @@ export class SignAtlas {
       return;
     }
     g.fillStyle = j.style.fg;
-    fitAtlasText(g, j.text, left + width / 2, y + SIGN_H / 2 + 1, width, 22);
+    if (j.style.story) storyLetters(g, j.text, left + width / 2, y + SIGN_H / 2 + 1, width, 22);
+    else fitAtlasText(g, j.text, left + width / 2, y + SIGN_H / 2 + 1, width, 22);
     g.restore();
   }
 
@@ -215,6 +216,30 @@ function fitAtlasText(g: CanvasRenderingContext2D, text: string, cx: number, cy:
   g.font = font(size);
   while (size > 8 && g.measureText(text).width > width) { size--; g.font = font(size); }
   g.fillText(text, cx, cy);
+}
+
+// The storybook city's hand-lettering: centred, shrunk to fit `width` as fitAtlasText's is, each letter
+// a little bigger or smaller than the next, on its own baseline and at its own tilt, by a hash of the
+// text and its place in it, and a curl of the pen after the last.
+function storyLetters(g: CanvasRenderingContext2D, text: string, cx: number, cy: number, width: number, size: number) {
+  const chars = [...text], seed = chars.reduce((a, c) => a + c.charCodeAt(0), 0);
+  const jit = (i: number, k: number) => hash2(i, k, seed, 0x1e77) - 0.5;
+  g.textAlign = "center"; g.textBaseline = "middle";
+  const font = (sz: number) => `bold ${sz.toFixed(1)}px sans-serif`, curl = 0.7;
+  const measure = (sz: number) => { g.font = font(sz); return chars.reduce((w, c, i) => w + g.measureText(c).width * (1 + jit(i, 0) * 0.2), 0) + sz * curl; };
+  while (size > 8 && measure(size) > width) size--;
+  let x = cx - measure(size) / 2;
+  chars.forEach((c, i) => {
+    const sz = size * (1 + jit(i, 0) * 0.2), w = (g.font = font(sz), g.measureText(c).width);
+    g.save(); g.translate(x + w / 2, cy + jit(i, 1) * size * 0.22); g.rotate(jit(i, 2) * 0.36); g.fillText(c, 0, 0); g.restore();
+    x += w;
+  });
+  // (The curl: a loop of the pen, rising and rolling back on itself.)
+  g.strokeStyle = g.fillStyle; g.lineWidth = Math.max(1.5, size * 0.11); g.lineCap = "round";
+  g.beginPath(); g.moveTo(x + size * 0.05, cy + size * 0.2);
+  g.bezierCurveTo(x + size * 0.6, cy + size * 0.3, x + size * 0.7, cy - size * 0.35, x + size * 0.35, cy - size * 0.3);
+  g.bezierCurveTo(x + size * 0.1, cy - size * 0.25, x + size * 0.25, cy, x + size * 0.45, cy - size * 0.08);
+  g.stroke();
 }
 
 // ---- billboard ads ----------------------------------------------------------------------------
@@ -368,6 +393,11 @@ export const signAtlas = new SignAtlas();
 // (1024x1024: 128 slots of 256x32), so they never crowd out the facilities' name signs.
 const PLATE_W = 256, PLATE_H = 32, PLATE_COLS = 4, PLATE_ROWS = 64;
 export const PLATE_GREEN: SignStyle = { bg: "#1e6b3a", fg: "#ffffff", logo: false };
+// The storybook city's: a street's name in plum on the butter board of its signal (storybook-street.ts
+// storySignal), and the town's own name in butter on the magenta board of its gate (storyGate), both
+// hand-lettered with no border.
+export const PLATE_STORY: SignStyle = { bg: "#fbe58a", fg: "#6a3a9a", logo: false, story: true };
+export const PLATE_STORY_GATE: SignStyle = { bg: "#d83a9a", fg: "#fbe58a", logo: false, story: true };
 interface PlateJob { key: string; text: string; style: SignStyle; refs: number; baked: boolean }
 export class PlateAtlas {
   readonly material = centroidUV(new THREE.MeshBasicMaterial({ color: 0xffffff }));
@@ -382,7 +412,7 @@ export class PlateAtlas {
   // A slot showing `text` (shared with whoever already shows it); -1 when the atlas is full.
   get freeSlots() { return this.free.length; }
   acquire(text: string, style: SignStyle = PLATE_GREEN): number {
-    const key = `${style.bg}|${style.fg}|${text}`, hit = this.byKey.get(key);
+    const key = `${style.bg}|${style.fg}|${style.story ? "story" : ""}|${text}`, hit = this.byKey.get(key);
     if (hit !== undefined) { this.jobs.get(hit)!.refs++; return hit; }
     const slot = this.free.pop();
     if (slot === undefined) return -1;
@@ -417,8 +447,12 @@ export class PlateAtlas {
       const g = this.canvas.g, x = (slot % PLATE_COLS) * PLATE_W, y = Math.floor(slot / PLATE_COLS) * PLATE_H;
       g.save(); g.beginPath(); g.rect(x, y, PLATE_W, PLATE_H); g.clip();
       g.fillStyle = j.style.bg; g.fillRect(x, y, PLATE_W, PLATE_H);
-      g.strokeStyle = j.style.fg; g.lineWidth = 2; g.strokeRect(x + 2, y + 2, PLATE_W - 4, PLATE_H - 4);   // the plate's white border
-      g.fillStyle = j.style.fg; fitAtlasText(g, j.text, x + PLATE_W / 2, y + PLATE_H / 2 + 1, PLATE_W - 16, 21);
+      g.fillStyle = j.style.fg;
+      if (j.style.story) storyLetters(g, j.text, x + PLATE_W / 2, y + PLATE_H / 2 + 1, PLATE_W - 16, 24);
+      else {
+        g.strokeStyle = j.style.fg; g.lineWidth = 2; g.strokeRect(x + 2, y + 2, PLATE_W - 4, PLATE_H - 4);   // the plate's white border
+        fitAtlasText(g, j.text, x + PLATE_W / 2, y + PLATE_H / 2 + 1, PLATE_W - 16, 21);
+      }
       g.restore();
       this.uploads.drew(x, y);
       j.baked = true;

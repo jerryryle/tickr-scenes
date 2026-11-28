@@ -39,19 +39,24 @@ const eye = (b: Batch, x: number, y: number, z: number, r: number) => {
 };
 // glint draws a glint on glass as a little white dash.
 const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x, y, z, 0.04, s, s * 0.35, SHINE, 0.6, 0, 0);
+// lamp draws a round lamp lit after dark as a car's headlamp is (aux -3, cars.ts headLamp), so the light
+// traffic.ts casts on the road ahead comes from something.
+const lamp = (b: Batch, x: number, y: number, z: number, r: number) => { b.aux.set(0, 0, -3); b.ico(x, y, z, r, SB.lamp); b.aux.set(0, 0, -1); };
   const INK = SB.ink, GLASS = 0x9fdcff, SKIN = 0xd8a47f, SHINE = 0xfafafa, CHEEK = 0xff9ab8;
 
   // A blocky little rider has these parts: torso and head are one part, and each leg and arm is its own
   // (each is built hanging from its hip or shoulder at the origin).
   function riderBody(b: Batch, shirt: number, hat: number) {
     b.box(0, 0.32, 0, 0.26, 0.5, 0.36, shirt); b.ico(0, 0.72, 0, 0.15, SKIN); b.cyl(0, 0.84, 0, 0.17, 0.06, hat, 8); b.cyl(0, 0.92, 0, 0.11, 0.16, hat, 8);
+    lamp(b, 0.12, 0.93, 0, 0.06);   // (a miner's lamp on the hat)
   }
   const leg = (col: number) => (b: Batch) => { b.box(0, -0.25, 0, 0.12, 0.5, 0.12, col); b.box(0.05, -0.5, 0, 0.2, 0.08, 0.13, INK); };
   const arm = (col: number) => (b: Batch) => { b.box(0, -0.2, 0, 0.09, 0.4, 0.09, col); b.ico(0, -0.42, 0, 0.06, SKIN); };
-  // Pose a rider whose hips are at (x, y, z), running (`run` 0..1) at phase `ph`, leaning `lean`.
-  function poseRider(out: THREE.Matrix4[], i: number, x: number, y: number, z: number, ph: number, run: number, lean = 0) {
+  // Pose a rider whose hips are at (x, y, z), running (`run` 0..1) at phase `ph` with legs swinging `swing` rad
+  // either way at full run, leaning `lean`.
+  function poseRider(out: THREE.Matrix4[], i: number, x: number, y: number, z: number, ph: number, run: number, lean = 0, swing = 0.75) {
     at(out[i], x, y, z, 0, 0, -lean);
-    const sw = 0.75 * run * Math.sin(ph);
+    const sw = swing * run * Math.sin(ph);
     for (const [k, s] of [[1, 1], [2, -1]] as const) at(out[i + k], x, y + 0.04, z + s * 0.08, 0, 0, sw * s);
     for (const [k, s] of [[3, -1], [4, 1]] as const) { m5.copy(out[i]); at(m4, 0, 0.55, s * 0.22, 0, 0, sw * s * 0.9 - 0.3 * run); out[i + k].multiplyMatrices(m5, m4); }
   }
@@ -73,26 +78,32 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
       (b) => riderBody(b, 0xffffff, SB.teal), leg(SB.navy), leg(SB.navy), arm(0xffffff), arm(0xffffff),
     ],
     pose(s, out) {
-      // The wheel rolls (its centre HW_R up); the runner keeps to the bottom, a little forward,
-      // running as fast as it goes.
+      // The wheel rolls (its centre HW_R up); the runner keeps to the bottom, a little forward, scrambling
+      // with feet on the rungs. A foot sweeps back 2 * 0.5 m * sin(0.9) in half a stride, so a stride of
+      // 0.25 * 2 pi m of road keeps a planted foot going back with the rungs.
       at(out[0], 0, HW_R, 0, 0, 0, -s.odo / HW_R);
-      const run = 0.25 + 0.75 * gait(s.v, 2);
-      poseRider(out, 1, 0.35 * run, 0.72, 0, s.odo / 0.55 + s.t * 2 * (1 - gait(s.v)), run, 0.35 * run);
+      const run = 0.25 + 0.75 * gait(s.v, 2), ph = s.odo / 0.25 + s.t * 2 * (1 - gait(s.v));
+      poseRider(out, 1, 0.35 * run, 0.56 + 0.06 * run * Math.abs(Math.sin(ph)), 0, ph, run, 0.45 * run, 0.9);
     },
   };
 
   // ---- the strider ----------------------------------------------------------------------------------
-  const ST_HIP = 1.45, ST_L1 = 0.78, ST_L2 = 0.82;
+  // The strider trots: each foot is planted for ST_DUTY of a stride of ST_STRIDE m and swings forward the rest,
+  // and each leg reaches it by two-bone IK (thigh ST_L1, shin to the boot's sole ST_L2 + 0.04), knee forward.
+  const ST_HIP = 1.35, ST_L1 = 0.78, ST_L2 = 0.82, ST_STRIDE = 1.6, ST_DUTY = 0.55;
   const ST_LEGS: [number, number, number][] = [[0.8, 0.62, 0], [0.8, -0.62, 0.5], [-0.8, 0.62, 0.5], [-0.8, -0.62, 0]];   // each leg is [x, z, phase], and the phases make a trot
   const strider: StoryRig = {
     id: "strider", len: 3.2, width: 2.2, vmax: 7,
     parts: [
-      (b) => {   // this is a bubble body with its windscreen bulging out ahead and a little hat
+      (b) => {   // this is a bubble body with its windscreen bulging out ahead, a little hat, a bumper, lamps and a curly horn
         b.lathe("bulb", SB_BULB, 0, -0.55, 0, 1.25, 1.5, 0xffffff, 12, 0.2);
         b.lathe("bulb", SB_BULB, 0.55, -0.15, 0, 0.8, 1.05, GLASS, 10, 1.1); glint(b, 1.22, 0.55, -0.3, 0.3);
         b.cyl(0, -0.5, 0, 1.18, 0.16, SB.cream, 12);
+        b.cyl(0, -0.3, 0, 1.24, 0.1, SB.ink, 12);   // (a belt of ink round its middle, to give the bubble a waist)
         b.lathe("lens", SB_LENS, 0, 0.88, 0, 0.5, 0.22, SB.mustard, 8); b.ico(0, 1.15, 0, 0.12, SB.red);
-        for (const z of [-0.5, 0.5]) b.cyl(1.2, -0.25, z, 0.13, 0.08, SB.lamp, 8, 0, Math.PI / 2);
+        for (const z of [-0.5, 0.5]) { b.cyl(1.17, -0.25, z, 0.17, 0.1, SB.ink, 8, 0, Math.PI / 2); lamp(b, 1.22, -0.25, z, 0.13); }
+        sbTube(b, sbCurve(6, (t): SbP3 => [-0.9 - Math.sin(t * Math.PI) * 0.35, 0.3 + t * 0.9, 0.55 + Math.sin(t * 2.5) * 0.15]), (i, t) => 0.05 + t * 0.06, () => SB.mustard, 6);
+        b.cone(-0.9, 1.25, 0.6, 0.22, 0.2, SB.mustard, 8, Math.PI);   // (the horn's bell, open to the sky)
       },
       ...[0, 1, 2, 3].flatMap(() => [
         (b: Batch) => { b.ico(0, 0, 0, 0.2, SB.mustard); sbTube(b, [[0, 0, 0], [0, -ST_L1, 0]], () => 0.14, (i) => (i % 2 ? SB.pink : SB.white), 8); },
@@ -100,14 +111,22 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
       ]),
     ],
     pose(s, out) {
-      const g = gait(s.v), ph0 = s.odo / 1.6 * TAU;
-      const bob = 0.1 * g * Math.abs(Math.sin(ph0)) + 0.04 * Math.sin(s.t * 2.1 + s.seed);
-      at(out[0], 0, ST_HIP + 0.55 + bob, 0, 0.05 * g * Math.sin(ph0), 0, -0.04 * g);
+      // A planted foot goes back under the body as fast as the body goes forward, from +h to -h of the hip
+      // (h = ST_DUTY * ST_STRIDE / 2); a swinging one goes forward and up in an arc. The body bobs twice a
+      // stride. Slowing to a stand, the swing's lift dies away and the feet come down where they are.
+      const g = gait(s.v), f0 = s.odo / ST_STRIDE, h = ST_DUTY * ST_STRIDE / 2, Ls = ST_L2 + 0.04;
+      const bob = 0.06 * g * (0.5 - 0.5 * Math.cos(f0 * 2 * TAU)) + 0.03 * Math.sin(s.t * 2.1 + s.seed);
+      at(out[0], 0, ST_HIP + 0.55 + bob, 0, 0.04 * g * Math.sin(f0 * TAU), 0, -0.04 * g);
       ST_LEGS.forEach(([x, z, p], k) => {
-        // (The knees point forward, like a toddler's: it is a bouncy little trot.)
-        const ph = ph0 + p * TAU, th = 0.45 * g * Math.sin(ph) - 0.25, knee = 0.8 * g * Math.max(0, Math.cos(ph)) + 0.45, splay = Math.sign(z) * 0.12;
-        at(out[1 + 2 * k], x * 0.75, ST_HIP + bob, z * 0.75, splay, 0, th);
-        m5.copy(out[1 + 2 * k]); at(m4, 0, -ST_L1, 0, -splay * 1.5, 0, knee * 0.9 - th * 0.4); out[2 + 2 * k].multiplyMatrices(m5, m4);
+        const u = ((f0 + p) % 1 + 1) % 1, w = (u - ST_DUTY) / (1 - ST_DUTY);
+        const fx = u < ST_DUTY ? h - 2 * h * u / ST_DUTY : -h + 2 * h * (w * w * (3 - 2 * w)), fy = u < ST_DUTY ? 0 : 0.3 * g * Math.sin(Math.PI * w);
+        // (Two-bone IK in the leg's plane: the thigh turns past the hip-to-sole line by the triangle's angle at
+        // the hip, which puts the knee forward, and the shin points from the knee to the sole.)
+        const hy = ST_HIP + bob, dx = fx, dy = fy - hy, d = Math.min(Math.hypot(dx, dy), ST_L1 + Ls - 1e-3);
+        const th = Math.atan2(dx, -dy) + Math.acos(Math.max(-1, Math.min(1, (ST_L1 * ST_L1 + d * d - Ls * Ls) / (2 * ST_L1 * d))));
+        const kx = ST_L1 * Math.sin(th), ky = -ST_L1 * Math.cos(th), sh = Math.atan2(dx - kx, -(dy - ky));
+        at(out[1 + 2 * k], x * 0.75, hy, z * 0.75, 0, 0, th);
+        m5.copy(out[1 + 2 * k]); at(m4, 0, -ST_L1, 0, 0, 0, sh - th); out[2 + 2 * k].multiplyMatrices(m5, m4);
       });
     },
   };
@@ -123,6 +142,7 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
         sbTube(b, sbCurve(6, (t): SbP3 => [0.97 - Math.sin(t * Math.PI) * 0.04, -0.3 - Math.sin(t * Math.PI) * 0.16, (t - 0.5) * 0.6]), () => 0.045, () => SB.red, 4, 0, true);   // this draws a smile
         for (const z of [-1, 1]) { sbTube(b, sbCurve(6, (t): SbP3 => [0.2 + t * 0.35, 0.9 + t * 0.75, z * (0.3 + t * 0.3)]), () => 0.05, () => SB.plum, 4, 0, true); b.ico(0.55, 1.68, z * 0.6, 0.14, SB.pink); }
         for (const z of [-0.6, 0.6]) b.ico(0.1, -1.0, z, 0.22, SB.red, 0.7);
+        lamp(b, 0.9, 0.72, 0, 0.12);   // (a lamp on its forehead, between the feelers)
       },
       ...Array.from({ length: CT_N - 1 }, (_, i) => (b: Batch) => {   // the carriages are striped round bodies with a round window each side and two little feet
         const col = [SB.violet, SB.mustard, SB.teal, SB.pink, SB.orange][i % 5];
@@ -133,18 +153,19 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
       }),
     ],
     pose(s, out) {
-      // Each carriage humps up in turn, the hump running back along it as it goes.
+      // Each carriage humps up in turn, the hump running forward from the tail to the head as a real
+      // caterpillar's does, and surges forward as it lifts.
       const g = gait(s.v, 2);
       for (let i = 0; i < CT_N; i++) {
-        const ph = s.odo / 2.2 * TAU - i * 1.0, hump = 0.45 * g * Math.max(0, Math.sin(ph)) + 0.03 * Math.sin(s.t * 1.7 - i);
-        const x = 8.6 / 2 - 1.0 - i * CT_GAP - (i ? 0.25 : 0);
+        const ph = s.odo / 2.2 * TAU + i * 1.0, hump = 0.45 * g * Math.max(0, Math.sin(ph)) + 0.03 * Math.sin(s.t * 1.7 - i);
+        const x = 8.6 / 2 - 1.0 - i * CT_GAP - (i ? 0.25 : 0) + 0.3 * g * Math.cos(ph);
         at(out[i], x, (i ? CT_R : 1.0) + 0.2 + hump, 0, 0, 0, 0.25 * g * Math.cos(ph) * (i ? 1 : 0.4));
       }
     },
   };
 
   // ---- the pogo hopper ----------------------------------------------------------------------------
-  const PG_SPRING = 1.1;
+  const PG_SPRING = 1.1, PG_STANCE = 0.22;
   const pogo: StoryRig = {
     id: "pogo", len: 2.2, width: 1.7, vmax: 7,
     parts: [
@@ -153,20 +174,27 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
         b.lathe("bulb", SB_BULB, 0.38, 0.35, 0, 0.62, 0.95, GLASS, 10, 1.0); glint(b, 0.95, 0.95, -0.2, 0.22);
         b.cyl(0, 0.05, 0, 0.9, 0.12, SB.cream, 12);
         b.cone(0, 1.62, 0, 0.12, 0.4, SB.red, 6);
+        lamp(b, 0.93, 0.15, 0, 0.1);
       },
       (b) => sbTube(b, sbCurve(40, (t): SbP3 => [Math.cos(t * 7 * TAU) * 0.34, -t * PG_SPRING, Math.sin(t * 7 * TAU) * 0.34]), () => 0.05, () => SB.mustard, 5),   // the spring hangs from the origin
       (b) => { b.lathe("lens", SB_LENS, 0, -0.14, 0, 0.5, 0.18, SB.red, 10); },   // this is its foot
     ],
     pose(s, out) {
-      // It hops 2.6 m at a time, up and down as it goes, and the spring squashes as it lands and pushes off;
-      // standing, it bounces a little on the spot.
-      const g = gait(s.v, 3), p = (s.odo / 2.6) % 1, air = 4 * p * (1 - p);
-      const land = 1 - Math.max(0, 1 - Math.min(p, 1 - p) / 0.14);   // land is 0 at touch-down
-      const squash = 1 - 0.35 * g * (1 - land) - 0.08 * (1 - g) * (0.5 + 0.5 * Math.sin(s.t * 5 + s.seed));
-      const y = 1.3 * g * air, sp = PG_SPRING * squash;
-      at(out[2], 0, y + 0.14, 0);
-      at(out[1], 0, y + 0.14 + sp, 0, 0, 0, 0, 1, squash, 1);
-      at(out[0], 0, y + 0.14 + sp + 0.05, 0, 0, 0, -0.12 * g * (p - 0.5));
+      // It hops 2.6 m at a time. For the first PG_STANCE of a hop the foot is planted: it goes back under
+      // the bubble as the bubble goes on, the spring leans over it from back to front and squashes, and the
+      // bubble dips. Then it flies, the foot swinging forward under it to land ahead. Standing, it bounces a
+      // little on the spot.
+      const g = gait(s.v, 3), p = ((s.odo / 2.6) % 1 + 1) % 1, reach = 0.29 * g;
+      let fx: number, fy: number, squash: number;
+      if (p < PG_STANCE) { const u = p / PG_STANCE; fx = reach * (1 - 2 * u); fy = 0; squash = 1 - 0.35 * g * Math.sin(Math.PI * u); }
+      else { const u = (p - PG_STANCE) / (1 - PG_STANCE); fx = -reach * Math.cos(Math.PI * u); fy = 1.3 * g * 4 * u * (1 - u); squash = 1; }
+      squash -= 0.08 * (1 - g) * (0.5 + 0.5 * Math.sin(s.t * 5 + s.seed));
+      // (The spring runs from the foot to under the bubble's middle, so its lean is set by how far ahead or
+      // behind the foot is, and the bubble's height by its squashed length.)
+      const sp = PG_SPRING * squash, top = fy + 0.14 + Math.sqrt(Math.max(0.01, sp * sp - fx * fx)), lean = Math.atan2(fx, top - fy - 0.14);
+      at(out[2], fx, fy + 0.14, 0);
+      at(out[1], 0, top, 0, 0, 0, lean, 1, squash, 1);
+      at(out[0], 0, top + 0.05, 0, 0, 0, -0.4 * lean);
     },
   };
 
@@ -190,6 +218,7 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
           b.cyl(0, y + 0.08, 0, r * 0.98, 0.1, SB.cream, 12);
         });
         b.box(0.3, 4.75, 0, 0.6, 0.32, 0.03, SB.red);
+        lamp(b, 0.86, 1.25, 0, 0.1);
       },
     ],
     pose(s, out) {
@@ -212,6 +241,8 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
         b.cyl(0, 3.55, 0, 1.6, 0.32, SB.white, 14); b.cyl(0, 4.35, 0, 1.47, 0.3, SB.white, 14);   // (These are bands round it, a little proud.)
         b.ico(0, 5.62, 0, 0.16, SB.mustard);
         b.box(-1.05, 0.45, 0, 0.2, 0.5, 0.2, INK);
+        b.cyl(0, 1.75, 0, 0.22, 0.3, INK, 8); lamp(b, 0, 2.0, 0, 0.18);   // (the burner, aflame)
+        lamp(b, 0.98, 0.7, 0, 0.1);
       },
       (b) => { b.box(0, 0, 0, 0.06, 0.9, 0.16, SB.red); b.box(0.01, 0, 0, 0.06, 0.16, 0.9, SB.red); b.ico(0.04, 0, 0, 0.1, SB.mustard); },   // this is the propeller
     ],
@@ -234,6 +265,7 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
       (b) => {   // the saucer glides on hidden wheels
         b.lathe("lens", SB_LENS, 0, 0.1, 0, 1.4, 0.35, 0xffffff, 16);
         b.cyl(0, 0.36, 0, 1.0, 0.05, SB.pink, 16);
+        sbTube(b, [[1.2, 0.3, 0], [1.38, 0.55, 0]], () => 0.03, () => INK, 4); lamp(b, 1.4, 0.62, 0, 0.09);   // (a lamp on a stalk at the saucer's rim)
       },
       (b) => {   // this draws the cup, its handle, a band of dots and two riders' heads over its rim
         b.lathe("cup", CUP, 0, 0, 0, 1.15, 1.25, SB.cream, 16);
@@ -265,6 +297,7 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
         for (const z of [-0.2, 0.2]) { sbTube(b, [[0.9, 0.85, z * 0.5], [1.0, 1.4, z * 1.4]], () => 0.07, () => SB.mint, 6); eye(b, 1.0, 1.55, z * 1.4, 0.2); }
     sbTube(b, sbCurve(5, (t): SbP3 => [1.18 + Math.sin(t * Math.PI) * 0.02, 0.62 - Math.sin(t * Math.PI) * 0.1, (t - 0.5) * 0.4]), () => 0.035, () => SB.red, 4, 0, true);
     for (const z of [-0.28, 0.28]) b.ico(1.12, 0.72, z, 0.08, CHEEK, 0.6);
+        for (const z of [-0.2, 0.2]) lamp(b, 1.12, 1.78, z * 1.4, 0.07);   // (little lamps atop its eyes)
       },
       ...Array.from({ length: SN_N }, () => (b: Batch) => b.lathe("lens", SB_LENS, 0, 0, 0, 0.62, 0.42, SB.mint, 10, 0, 0, 0)),   // the foot is in pads that ripple
     ],
@@ -273,7 +306,7 @@ const glint = (b: Batch, x: number, y: number, z: number, s: number) => b.boxR(x
       at(out[0], -0.35, 1.55 + 0.05 * g * Math.sin(ph), 0, 0, 0, -0.5 + 0.04 * g * Math.sin(ph + 1));   // (The shell is turned a little, its opening down onto the body.)
       at(out[1], 1.1, 0.05 + 0.04 * g * Math.sin(ph + 2), 0, 0, 0, 0.05 * Math.sin(s.t * 1.2 + s.seed));
       for (let i = 0; i < SN_N; i++) {
-        const w = Math.sin(ph - i * 1.2);
+        const w = Math.sin(ph + i * 1.2);   // (the pads' wave runs from tail to head, as a land snail's does)
         at(out[2 + i], 1.4 - i * 0.75, 0, 0, 0, 0, 0, 1 + 0.18 * g * w, 1 + 0.5 * g * Math.max(0, w), 1.2);
       }
     },

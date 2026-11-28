@@ -4,7 +4,10 @@
 // most journeys of twenty cities, and leaves the real styles' cycle as it was (no two cities in a
 // row of the same style). It also checks that every catalogue storybook town has its knitting
 // works (CityPlan.worksBlock), on a shallow dock its trucks can reach, and that the city after a
-// storybook one arrives with the works' wonders, and no other city with any (journey.ts freightFor).
+// storybook one arrives with the works' wonders, a storybook one with its freight in, and no other
+// city with any storybook goods (journey.ts freightFor). Every storybook facade kind (a FACADE name
+// starting STORY) glows in the storybook's window colours after dark, and every one named SHOP is
+// always lit (facade.ts STORY_WINDOW_KINDS and STORY_SHOP_KINDS).
 // The optional args are journeys (default 400), cities each (default 40) and works checked (default 12).
 import { journeyStyle, isStorybookCity, STORYBOOK_GAP, STYLES } from "../src/styles.ts";
 import { readConfig } from "../src/env.ts";
@@ -12,7 +15,9 @@ import { Journey } from "../src/journey.ts";
 import { CityPlan } from "../src/city.ts";
 import { citiesOfStyle } from "../src/visits.ts";
 import { facilityAt, siteLayout } from "../src/facilities.ts";
-import { STORY_CARGO, STORY_FREIGHT } from "../src/cargo.ts";
+import { STORY_CARGO, STORY_FREIGHT, STORY_FREIGHT_IN } from "../src/cargo.ts";
+import { FACADE } from "../src/facadetiles.ts";
+import { STORY_SHOP_KINDS, STORY_WINDOW_KINDS } from "../src/facade.ts";
 
 const proc = (globalThis as any).process, argv: string[] = proc.argv.slice(2);
 const JOURNEYS = argv[0] ? Number(argv[0]) : 400, CITIES = argv[1] ? Number(argv[1]) : 40;
@@ -52,10 +57,16 @@ for (let seed = 0; seed < WORKS_N; seed++) {
   for (let N = 2; N < 30; N++) {
     const f = j.freightFor(N + 1)?.cargo ?? "";
     if (journeyStyle(seed, N).storybook && !STORY_FREIGHT.includes(f)) fails.push(`seed ${seed}: city ${N + 1} after a storybook city arrives with ${f}, not the works' wonders`);
-    if (!journeyStyle(seed, N).storybook && STORY_CARGO.has(f)) fails.push(`seed ${seed}: city ${N + 1} arrives with ${f} from a city that isn't a storybook city`);
+    if (journeyStyle(seed, N + 1).storybook && !STORY_FREIGHT_IN.includes(f)) fails.push(`seed ${seed}: storybook city ${N + 1} arrives with ${f}, not its freight in`);
+    if (!journeyStyle(seed, N).storybook && !journeyStyle(seed, N + 1).storybook && STORY_CARGO.has(f)) fails.push(`seed ${seed}: city ${N + 1} arrives with ${f}, between cities that aren't storybook cities`);
   }
   works++;
 }
 console.log(`knitting works: ${works} of ${WORKS_N} storybook cities`);
+for (const [name, kind] of Object.entries(FACADE)) {
+  if (!name.startsWith("STORY")) continue;
+  if (!STORY_WINDOW_KINDS.includes(kind)) fails.push(`facade kind ${name} is not in STORY_WINDOW_KINDS: its windows would light in other cities' colours`);
+  if (name.includes("SHOP") && !STORY_SHOP_KINDS.includes(kind)) fails.push(`facade kind ${name} is not in STORY_SHOP_KINDS: its shop window would go dark at night`);
+}
 for (const f of fails.slice(0, 20)) console.log("FAIL " + f);
 if (fails.length) proc.exit(1);

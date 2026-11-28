@@ -18,6 +18,8 @@ import type { FacilityId } from "./facilities.ts";
 import { hash2 } from "./rng.ts";
 import { vicBench, vicCabShelter, vicDustBin, vicHitchPost, vicNewsStand, vicPillarBox, vicPump, vicTrough } from "./city-victorian/victorian-street.ts";
 import type { VicPiece } from "./city-victorian/victorian-street.ts";
+import { storyBarrel, storyBench, storyCandyPost, storyHoops, storyKiosk, storyPostPot, storySquirter, storyToadstool } from "./city-storybook/storybook-street.ts";
+import { SB } from "./city-storybook/storybook-buildings-town.ts";
 import { AD_BATON, AD_BATON_MARK, AD_BILLBOARD, AD_GHOST, AD_H, AD_RYDER, AD_VIC_WALL, AD_W, signAtlas, SignAtlas } from "./signs.ts";
 
 interface RoofSpot { r: Rect; top: number }
@@ -226,9 +228,10 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
   const ac = kerbAcross + inward * 0.7, y0 = CURB_H;   // 0.7 m in from the kerb face
   // Each kind drawn at p along, with what it stands in the walkers' way as (a bus shelter, long and
   // set back, as a row of circles along its roof; a bench, long and shallow, as a row along it).
-  // The Victorian city draws its own piece in each one's place, of about its footprint
-  // (VIC_FURNITURE), and records the same obstacles.
-  const piece: Record<number, (p: number) => void> = CS.victorian ? vicPieces(s, kerbAcross, inward, axis, y0, rec) : {
+  // The Victorian city and the storybook city draw their own piece in each one's place, of about its
+  // footprint (VIC_FURNITURE, STORY_FURNITURE), and record the same obstacles.
+  const period = CS.victorian ? VIC_FURNITURE : CS.storybook ? STORY_FURNITURE : null;
+  const piece: Record<number, (p: number) => void> = period ? vicPieces(s, kerbAcross, inward, axis, y0, rec, period) : {
     [PK.hydrant]: (p) => { cyl(p, y0 + 0.35, ac, 0.13, 0.7, 0xc0392b); cyl(p, y0 + 0.74, ac, 0.16, 0.1, 0xc0392b); box(p, y0 + 0.45, ac, 0.42, 0.1, 0.1, 0xd04a3a); rec(p, ac, 0.45, PK.hydrant); },
     [PK.trash]: (p) => { cyl(p, y0 + 0.45, ac, 0.28, 0.9, 0x2e4a3a); cyl(p, y0 + 0.92, ac, 0.3, 0.06, 0x223a2e); rec(p, ac, 0.45, PK.trash); },
     [PK.bench]: (p) => {
@@ -287,7 +290,9 @@ export function streetFurniture(s: Batch, g: Batch, district: District, kerbAcro
     // A manhole cover in the road (where by its street and side, as the stream's draws differ between
     // a city drawn by its rules and one drawn from its file).
     const mh = a0 + 8 + hash2(FURNITURE.street, inward, Math.round(a0 * 10), DC.plan.seed) * Math.max(0, a1 - a0 - 16);
-    if (axis === 0) g.cyl(mh, 0.014, STREET / 2 + inward * -3, 0.38, 0.01, 0x3a3b3e, 10); else g.cyl(STREET / 2 + inward * -3, 0.014, mh, 0.38, 0.01, 0x3a3b3e, 10);
+    // (The storybook city's is mint.)
+    const [mx, mz] = axis === 0 ? [mh, STREET / 2 + inward * -3] : [STREET / 2 + inward * -3, mh];
+    g.cyl(mx, 0.014, mz, 0.38, 0.01, CS.storybook ? SB.mint : 0x3a3b3e, 10);
   }
   for (const [kind, p] of given ?? []) {
     PAVEMENT.tag = { street: FURNITURE.street, kind, p, inward };
@@ -302,9 +307,14 @@ const VIC_FURNITURE: Record<number, VicPiece> = {
   [PK.hydrant]: vicPump, [PK.trash]: vicDustBin, [PK.bench]: vicBench, [PK.mailbox]: vicPillarBox,
   [PK.news]: vicNewsStand, [PK.meter]: vicHitchPost, [PK.shelter]: vicCabShelter, [PK.rack]: vicTrough,
 };
-function vicPieces(s: Batch, kerbAcross: number, inward: number, axis: 0 | 1, y0: number, rec: (p: number, across: number, r: number, kind?: number) => void): Record<number, (p: number) => void> {
+// The storybook city's pieces, likewise (storybook-street.ts).
+const STORY_FURNITURE: Record<number, VicPiece> = {
+  [PK.hydrant]: storySquirter, [PK.trash]: storyBarrel, [PK.bench]: storyBench, [PK.mailbox]: storyPostPot,
+  [PK.news]: storyKiosk, [PK.meter]: storyCandyPost, [PK.shelter]: storyToadstool, [PK.rack]: storyHoops,
+};
+function vicPieces(s: Batch, kerbAcross: number, inward: number, axis: 0 | 1, y0: number, rec: (p: number, across: number, r: number, kind?: number) => void, table = VIC_FURNITURE): Record<number, (p: number) => void> {
   const ac = kerbAcross + inward * 0.7;
-  const at = (kind: number, p: number) => { if (axis === 0) VIC_FURNITURE[kind](s, p, kerbAcross, 0, inward, y0); else VIC_FURNITURE[kind](s, kerbAcross, p, inward, 0, y0); };
+  const at = (kind: number, p: number) => { if (axis === 0) table[kind](s, p, kerbAcross, 0, inward, y0); else table[kind](s, kerbAcross, p, inward, 0, y0); };
   return {
     [PK.hydrant]: (p) => { at(PK.hydrant, p); rec(p, ac, 0.45, PK.hydrant); },
     [PK.trash]: (p) => { at(PK.trash, p); rec(p, ac, 0.45, PK.trash); },
