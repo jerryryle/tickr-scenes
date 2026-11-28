@@ -12,6 +12,7 @@ import { Batch } from "../geom.ts";
 import { hash2 } from "../rng.ts";
 import { SB, SB_BULB, SB_GLOW, SB_LENS, sbCurve, sbTube } from "./storybook-buildings-town.ts";
 import type { SbP3 } from "./storybook-buildings-town.ts";
+import { STYLE_STORYBOOK } from "./storybook-style.ts";
 
 // sbLocal runs fn, which draws into b about the origin, and then moves what it drew to (x, z) turned
 // by rot (Frame2's sense: local +x goes to (cos rot, -sin rot), local +z to (sin rot, cos rot)).
@@ -238,18 +239,39 @@ export function storyBalloon(b: Batch) {
 // and never shimmers, and a low look along the street keeps the joints it can still draw.
 export const SB_COBBLES = -9, SB_SCALES = -10;
 // In the rain (applySetts' SETT_WET, set each frame from the weather: main.ts) the paving darkens
-// and takes the sky's sheen, strongest at a grazing look, as the setts do. Round puddles stand on
-// it, each ringed in a candy colour, with a faint rainbow in the water and raindrops ringing it
-// (SB_PAVE_TIME: the scene's time, s, also set in main.ts).
+// and takes the sky's sheen, strongest at a grazing look, as the setts do. Round puddles of plain
+// dark water stand on it, and each raindrop that falls in one sends out a ring that glows in the
+// shops' candy colours (STYLE_STORYBOOK walls.commercial, in order of hue), stepping on through them
+// as it spreads (SB_PAVE_TIME: the scene's time, s, also set in main.ts).
 export const SB_PAVE_TIME = { value: 0 };
 // (A cobble's short side and a tile's width, m; the pixel's share of a stone over which the pattern
-// fades, and past which a joint is left out whatever its way; and per kind, the puddles' grid, m,
-// and the share of its cells that hold one.)
-const PAVE = { cobble: 0.38, scale: 1.0, fade: [0.22, 0.5, 0.75], cobbleCell: 5.5, cobblePuddles: 0.4, scaleCell: 4.0, scalePuddles: 0.2 };
+// fades, and past which a joint is left out whatever its way; the puddles' noise, a cycle per so many
+// m, and per kind the level it stands over in full rain; and the raindrops' grid, m.)
+const PAVE = { cobble: 0.38, scale: 1.0, fade: [0.22, 0.5, 0.75], puddleScale: 0.3, cobblePuddle: 0.56, scalePuddle: 0.62, dropCell: 2.0 };
 const f3 = (x: number) => x.toFixed(3);
 // (sRGB hex to the linear vec3 the shader mixes in.)
 const lin = (hex: number) => `vec3(${[16, 8, 0].map((s) => f3(Math.pow(((hex >> s) & 255) / 255, 2.2))).join(", ")})`;
+// (An sRGB colour's hue, 0..1.)
+const hue = (hex: number) => {
+  const [r, g, b] = [16, 8, 0].map((s) => ((hex >> s) & 255) / 255), mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  const h = d === 0 ? 0 : mx === r ? (g - b) / d : mx === g ? 2 + (b - r) / d : 4 + (r - g) / d;
+  return ((h / 6) % 1 + 1) % 1;
+};
+// (The raindrops' rings' colours, round the wheel of hue.)
+const DROP_COLOURS = [...STYLE_STORYBOOK.walls.commercial].sort((a, b) => hue(a) - hue(b));
 const PAVE_GLSL = `
+const vec3 SB_DROP[${DROP_COLOURS.length}] = vec3[](${DROP_COLOURS.map(lin).join(", ")});
+// (The puddles' noise at q, m: Victorian-sized blobs (victorian-street.ts) with a finer ruffle to
+// their shores.)
+float sbPuddle(vec2 q) {
+  q *= ${f3(PAVE.puddleScale)};
+  return 0.72 * stNoise(q + 31.0) + 0.28 * stNoise(q * 3.7 + 7.0);
+}
+// (The rings' colour at u, in colours along the list, blended between neighbours and round again.)
+vec3 sbDrop(float u) {
+  float f = mod(u, ${DROP_COLOURS.length}.0), i = floor(f);
+  return mix(SB_DROP[int(i)], SB_DROP[int(mod(i + 1.0, ${DROP_COLOURS.length}.0))], smoothstep(0.0, 1.0, f - i));
+}
 // (The cobble q falls in, in a herringbone of 2-by-1 bricks on the unit grid, by (c.x - c.y) mod 4
 // of q's cell c: 0 and 1 the two cells of a brick along x, 2 and 3 the two of a brick along y. id,
 // out: the brick's corner. Returned: how far q is inside its rounded edge, and that edge's normal.)
@@ -290,9 +312,10 @@ export function applyCandyPaving(mat: THREE.Material) {
     prev(shader, renderer);
     shader.uniforms.uSbTime = SB_PAVE_TIME;
     shader.fragmentShader = shader.fragmentShader
-      .replace("uniform vec3 uSettSky;", "uniform vec3 uSettSky;\nuniform float uSbTime;" + PAVE_GLSL)
+      .replace("uniform vec3 uSettSky;", "uniform vec3 uSettSky;\nuniform float uSbTime;")
+      .replace("void main() {", PAVE_GLSL + "\nvoid main() {")
       .replace("#include <color_fragment>", `#include <color_fragment>
-  float sbShine = 0.0, sbFloor = 0.0; vec3 sbSheen = vec3(1.0);   // (the wet sheen's strength, its share seen from overhead too, and its tint: emissivemap_fragment below)
+  float sbShine = 0.0, sbFloor = 0.0; vec3 sbGlow = vec3(0.0);   // (the wet sheen's strength, its share seen from overhead too, and the raindrops' rings' own light: emissivemap_fragment below)
   {
     float cob = abs(vSettAux.z - (${f3(SB_COBBLES)})) < 0.5 ? 1.0 : 0.0, til = abs(vSettAux.z - (${f3(SB_SCALES)})) < 0.5 ? 1.0 : 0.0;
     // (x along the street, y across it, m; and a pixel's size on the ground, m, the larger way.
@@ -303,6 +326,9 @@ export function applyCandyPaving(mat: THREE.Material) {
     // Both before the branch, as a derivative is undefined in one.)
     vec2 dpx = dFdx(p), dpy = dFdy(p), dwx = dFdx(vSettXZ), dwy = dFdy(vSettXZ);
     float px = max(abs(dpx.x) + abs(dpy.x), abs(dpx.y) + abs(dpy.y));
+    // (The puddles' noise here, and the level they stand over, which falls as the rain sets in.)
+    float pn = sbPuddle(vSettXZ), pfw = max(fwidth(pn), 0.004);
+    float pth = mix(${f3(PAVE.cobblePuddle)}, ${f3(PAVE.scalePuddle)}, til) + 0.2 * (1.0 - smoothstep(0.15, 0.6, uSettWet));
     if (dot(normalize(vNormal), (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz) < 0.5) cob = til = 0.0;
     if (cob + til > 0.5) {
       // (e: how far inside the stone's edge, m; n: that edge's normal in p; size: the stone's
@@ -339,49 +365,44 @@ export function applyCandyPaving(mat: THREE.Material) {
       float joint = (1.0 - smoothstep(jw * 0.5, jw * 1.2, e)) * edge;
       diffuseColor.rgb *= mix(mix(mean, tone, show), grout, joint);
       if (uSettWet > 0.0) {
-        // (The puddles: one in some cells of a grid in the world, round, its middle jittered. dv:
-        // from its middle, m; pr: a pixel's size on the ground out from its middle, m.)
-        float cell = cob > 0.5 ? ${f3(PAVE.cobbleCell)} : ${f3(PAVE.scaleCell)};
-        vec2 gi = floor(vSettXZ / cell), gf = vSettXZ - (gi + 0.5) * cell;
-        float has = step(stHash2(gi + 41.0 + til * 7.0), cob > 0.5 ? ${f3(PAVE.cobblePuddles)} : ${f3(PAVE.scalePuddles)});
-        vec2 dv = gf - (vec2(stHash2(gi + 5.0), stHash2(gi + 9.0)) - 0.5) * cell * 0.25;
-        float R = cell * (0.13 + 0.1 * stHash2(gi + 13.0)) * smoothstep(0.15, 0.6, uSettWet), dist = length(dv);
-        vec2 rd = dv / max(dist, 1e-4);
-        float pr = max(abs(dot(rd, dwx)) + abs(dot(rd, dwy)), 0.01), rw = max(0.15, 1.2 * pr);
-        float inside = has * (1.0 - smoothstep(R - pr, R, dist));
-        float rim = has * (1.0 - smoothstep(0.5 * (rw - pr), 0.5 * (rw + pr), abs(dist - R - rw * 0.5))) * step(0.05, R);
-        // (The rim: a ring of candy round the water, pink, mint or butter by the puddle.)
-        float hc = stHash2(gi + 23.0);
-        vec3 candy = hc < 0.4 ? ${lin(0xff5fa8)} : hc < 0.7 ? ${lin(0x52e0b0)} : ${lin(0xffd040)};
-        // (The water's faint rainbow, in bands across it.)
-        vec3 bow = 0.5 + 0.5 * cos(6.2832 * (dist / max(R, 0.01) * 1.2 + vec3(0.0, 0.33, 0.67)));
+        // (The puddles: where the noise stands over its level, its shore drawn a pixel wide.)
+        float inside = smoothstep(pth - pfw, pth + pfw, pn);
         diffuseColor.rgb *= mix(1.0, cob > 0.5 ? 0.62 : 0.78, uSettWet);
-        diffuseColor.rgb = mix(diffuseColor.rgb, ${lin(0x2a2660)} * mix(vec3(1.0), bow * 1.6, 0.35), inside * 0.8);
-        diffuseColor.rgb = mix(diffuseColor.rgb, candy, rim * uSettWet);
-        // (The rings: two raindrops in each puddle at a time, each a ring spreading out from where it
-        // fell for 1.5 s and fading as it goes, falling somewhere new each time. A ring too fine for
+        diffuseColor.rgb = mix(diffuseColor.rgb, ${lin(0x2a2660)}, inside * 0.8);
+        // (The rings: two raindrops at a time in each cell of a grid in the world, each a ring
+        // spreading out from where it fell for 1.5 s and fading as it goes, falling somewhere new
+        // each time, near enough the cell's middle that the ring stays in its cell. A drop that falls
+        // on dry ground leaves no ring, and a ring stops at the shore. A ring starts at a colour of its
+        // own and steps through two of the list's colours a second as it spreads. A ring too fine for
         // the pixels is left out.)
+        vec2 gi = floor(vSettXZ / ${f3(PAVE.dropCell)}), gc = (gi + 0.5) * ${f3(PAVE.dropCell)}, dv = vSettXZ - gc;
         float ring = 0.0;
+        vec3 ringCol = vec3(0.0);
         for (float k = 0.0; k < 2.0; k += 1.0) {
           float t = uSbTime / 1.5 + stHash2(gi + 31.0 + k * 3.0), nf = floor(t), age = t - nf;
-          vec2 at = (vec2(stHash2(gi + nf * 1.3 + k), stHash2(gi - nf * 0.7 + k * 5.0)) - 0.5) * R;
+          vec2 at = (vec2(stHash2(gi + nf * 1.3 + k), stHash2(gi - nf * 0.7 + k * 5.0)) - 0.5) * ${f3(PAVE.dropCell * 0.35)};
+          if (sbPuddle(gc + at) < pth + 0.01) continue;
           vec2 dd = dv - at;
-          float l = length(dd), rr = age * R * 0.8;
+          float l = length(dd), rr = age * ${f3(PAVE.dropCell * 0.3)};
           vec2 g = dd / max(l, 1e-4);
-          float w = max(abs(dot(g, dwx)) + abs(dot(g, dwy)), 0.01), ww = max(0.05, w);
-          ring += (1.0 - age) * (1.0 - smoothstep(0.5 * (ww - w), 0.5 * (ww + w), abs(l - rr))) * (1.0 - smoothstep(0.06, 0.14, w));
+          float w = max(abs(dot(g, dwx)) + abs(dot(g, dwy)), 0.01), ww = max(0.07, 1.2 * w);
+          float a = (1.0 - age * age) * (1.0 - smoothstep(0.5 * (ww - w), 0.5 * (ww + w), abs(l - rr))) * (1.0 - smoothstep(0.08, 0.16, w));
+          ring += a;
+          ringCol += a * sbDrop(8.0 * stHash2(gi + nf * 2.1 + k * 11.0) + 3.0 * age);
         }
-        ring *= inside;
-        sbSheen = mix(vec3(1.0), bow * 1.4, 0.35 * inside);
-        sbShine = uSettWet * (mix(0.6, 1.7, inside) * (1.0 - joint * (1.0 - inside)) * (1.0 - rim) + 2.5 * ring);
-        sbFloor = uSettWet * (0.25 * inside + 1.2 * ring);
-        diffuseColor.rgb += ${lin(0xe8f0ff)} * ring * 0.8 * uSettWet;
+        ring = min(ring, 1.0) * inside;
+        ringCol = ringCol / max(ring, 1e-3) * inside;
+        sbShine = uSettWet * mix(0.6, 1.7, inside) * (1.0 - joint * (1.0 - inside)) * (1.0 - ring);
+        sbFloor = uSettWet * 0.25 * inside;
+        sbGlow = ringCol * ring * uSettWet * 0.6;
+        diffuseColor.rgb = mix(diffuseColor.rgb, ringCol, ring * uSettWet);
       }
     }
   }`)
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
-  if (sbShine > 0.0) totalEmissiveRadiance += uSettSky * sbSheen * (sbFloor + sbShine * (0.06 + 0.94 * pow(1.0 - max(dot(normal, normalize(vViewPosition)), 0.0), 4.0)));`);
+  if (sbShine > 0.0) totalEmissiveRadiance += uSettSky * (sbFloor + sbShine * (0.06 + 0.94 * pow(1.0 - max(dot(normal, normalize(vViewPosition)), 0.0), 4.0)));
+  totalEmissiveRadiance += sbGlow;`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|candy-v3";
+  mat.customProgramCacheKey = () => prevKey() + "|candy-v5";
   mat.needsUpdate = true;
 }
