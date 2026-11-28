@@ -65,6 +65,7 @@ import { SteamBreweryFx } from "./city-victorian/victorian-landmark-steam-brewer
 import { carriageAt } from "./carriage.ts";
 import { applySetts, SETT_WET } from "./city-victorian/victorian-street.ts";
 import { applyCandyPaving, SB_PAVE_TIME } from "./city-storybook/storybook-street.ts";
+import { applyModernPaving } from "./paving.ts";
 import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 
@@ -1095,6 +1096,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       for (const m of [facadeMat, engine.mats.ground, engine.mats.solid, seaLife.surface]) applyLampLight(m);   // streetlights and headlights light the world (the sea and the harbour too: their material is the ground's clone, made before this)
       applySetts(engine.mats.ground, engine.sky);   // (the Victorian city's road: victorian-street.ts)
       applyCandyPaving(engine.mats.ground);   // (the storybook city's, after it: storybook-street.ts)
+      applyModernPaving(engine.mats.ground);   // (the modern cities' asphalt and concrete, after them: paving.ts)
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
@@ -1171,7 +1173,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);
       const sky = road ? skyTmp.setHex(journey.plan.style.sky).lerp(skyTmp2.setHex(road.inp.toStyle.sky), road.blendAt(journey.countryS)).getHex() : journey.plan.style.sky;
       atmosphere.update(t, engine, backdrop, sky, weather, truck.toon);
-      SETT_WET.value = weather.rain;   // (the Victorian city's wet stone: victorian-street.ts; the storybook's too)
+      SETT_WET.value = weather.rain;   // (the Victorian city's wet stone: victorian-street.ts; the storybook's and the modern cities' too)
       SB_PAVE_TIME.value = shown % 600;   // (the storybook's puddles' raindrops: storybook-street.ts)
       truck.headlights = atmosphere.night > 0.3 || weather.fog > 0.5 || weather.rain > 0.5 || !!journey.country?.tunnelAt(journey.countryS, 40);
       LAMPS_ON.value = Math.max(THREE.MathUtils.clamp((atmosphere.night - 0.15) * 1.6, 0, 1), weather.fog > 0.5 || weather.rain > 0.5 ? 0.7 : 0);

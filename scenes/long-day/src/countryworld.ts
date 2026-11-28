@@ -36,6 +36,8 @@ import { carriageAt } from "./carriage.ts";
 import { applyPaintTint, CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
+import { PAVE_ASPHALT, PAVE_MACADAM } from "./paving.ts";
+import { SB_COBBLES } from "./city-storybook/storybook-street.ts";
 import { vicRigs } from "./city-victorian/victorian-vehicles.ts";
 import { storyRigs } from "./storyvehicles.ts";
 import type { RigState, StoryRig } from "./storyvehicles.ts";
@@ -658,7 +660,9 @@ export class CountryWorld {
     for (const a of [B - 3.6, B + 3.6]) for (const n of [-6.6, 6.6]) this.rbox(s, a, n, 2.7, 0.3, 5.4, 0.3, 0xdedbd0);
     this.rbox(s, B, 0, 5.6, 8.4, 0.5, 14, 0xf2f2ee); this.rbox(s, B, 0, 5.25, 8.5, 0.25, 14.1, 0x1d3a6b);
     const a0 = B + 6, a1 = Q - 31;
+    this.paveTag(g, (a0 + a1) / 2, PAVE_ASPHALT);
     this.rbox(g, (a0 + a1) / 2, 10, -0.045, a1 - a0, 0.1, 11.8, CW.asphalt);
+    g.aux.set(0, 0, -1);
     for (const n of [7, 10, 13]) this.rbox(g, (a0 + a1) / 2, n, 0.005, a1 - a0 - 1, 0.02, 0.14, CW.white);
     ([[a0 + 4, 8.5], [a0 + 11, 8.5], [a0 + 6, 11.5], [a0 + 20, 14.5]] as const).forEach(([a, n], k) => {
       const kk = k + (this.flip ? 4 : 0), [x, z, h] = this.L(a, n), r = hash2(kk, Math.round(F.s), 0xfe7, 0x31);   // (the far terminal's cars its own)
@@ -771,6 +775,9 @@ export class CountryWorld {
     this.V.point(s, n, this.q);
     return [this.q.x - this.ox, this.q.z - this.oz, this.q.h, this.V.groundAt(s, n)];
   }
+  // (Tags what b draws next as paving of kind `tag`, laid along the road at s: paving.ts
+  // applyModernPaving. Its caller sets the aux back after.)
+  private paveTag(b: Batch, s: number, tag: number) { const h = this.L(s, 0)[2]; b.aux.set(Math.cos(h), -Math.sin(h), tag); }
   // A box aligned with the road at (s, n): `len` along it, `wid` across, tilted to `grade`.
   // (Its height is above the batch's dy.)
   private rbox(b: Batch, s: number, n: number, y: number, len: number, hgt: number, wid: number, color: number, yaw = 0, grade = 0) {
@@ -887,8 +894,14 @@ export class CountryWorld {
         const period = R.periodAt(sm), story = R.storyAt(sm) > STORY_MODERN && period <= 0, modern = !unmodern(R, sm);
         g.dy = R.heightAt(sm);
         const tar = period > 0 ? lerpColor(CW.asphalt, CW.macadam, period) : story ? SB_STREET.asphalt : CW.asphalt;
+        // (Its paving, paving.ts applyModernPaving: asphalt, macadam where the period has crept in, the
+        // storybook's candy cobbles; the shoulders gravel, drawn as macadam.)
+        this.paveTag(g, sm, period > 0 ? PAVE_MACADAM : story ? SB_COBBLES : PAVE_ASPHALT);
         this.rbox(g, sm, 0, story ? -0.066 : -0.064, ln, 0.12, half * 2, tar, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
-        for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, ln, 0.1, 1.8, CW.shoulder, 0, gr); if (modern) this.rbox(g, sm, k * (half - 0.25), 0.005, ln, 0.02, 0.14, CW.white, 0, gr); }
+        this.paveTag(g, sm, PAVE_MACADAM);
+        for (const k of [-1, 1]) this.rbox(g, sm, k * (half + 0.9), -0.075, ln, 0.1, 1.8, CW.shoulder, 0, gr);
+        g.aux.set(0, 0, -1);
+        if (modern) for (const k of [-1, 1]) this.rbox(g, sm, k * (half - 0.25), 0.005, ln, 0.02, 0.14, CW.white, 0, gr);
         if (modern && Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, Math.max(0.05, ln - 0.2), 0.02, 0.24, CW.yellow, 0, gr);
         else if (story && ln > 5) for (const d of [1.5, 4.5]) this.rbox(g, a + d, 0, 0.005 + gr * (a + d - sm), 0.42, 0.02, 0.42, d < 3 ? SB.mustard : SB_STREET.yellow, Math.PI / 4, gr);
       }
@@ -1334,8 +1347,11 @@ export class CountryWorld {
       const edge = st.map((a) => { const [lo, hi] = paveAt(v, a)!; return [this.L(a, sd * lo), this.L(a, sd * hi), lo, hi] as const; });
       for (let i = 0; i + 1 < edge.length; i++) {
         const [l0, h0, lo0, hi0] = edge[i], [l1, h1, lo1, hi1] = edge[i + 1];
-        if (hi0 - lo0 > 1e-3) g.tri(l0[0], y, l0[1], h0[0], y, h0[1], h1[0], y, h1[1], col);
-        if (hi1 - lo1 > 1e-3) g.tri(l0[0], y, l0[1], h1[0], y, h1[1], l1[0], y, l1[1], col);
+        // (Asphalt, or a gravel pull-in drawn as macadam: paving.ts applyModernPaving.)
+        this.paveTag(g, (st[i] + st[i + 1]) / 2, v.kind === "gravel" ? PAVE_MACADAM : PAVE_ASPHALT);
+        if (hi0 - lo0 > 1e-3) g.tri(l0[0], y, l0[1], h0[0], y, h0[1], h1[0], y, h1[1], col, undefined, true);
+        if (hi1 - lo1 > 1e-3) g.tri(l0[0], y, l0[1], h1[0], y, h1[1], l1[0], y, l1[1], col, undefined, true);
+        g.aux.set(0, 0, -1);
         // The skirts: down from both edges, facing out (away from the other edge). (A drive's at its
         // edges, anything else's a cm in under its top: where a drive and a lot run along the same
         // edge, their skirts shared a plane and flickered.)
@@ -1521,8 +1537,9 @@ export class CountryWorld {
         // Its lane beside the road (the scale on it, the scale house beyond), paved over to the
         // road's shoulder where the lane leaves it and comes back.
         const N = WEIGH_N, open = p.way === road.dir && road.weighOpen;
-        for (let a = S; a < S + WEIGH_LEN; a += 10) { this.rbox(g, a + 5, N, -0.045, 10.2, 0.1, 7, CW.asphalt); this.rbox(g, a + 5, N + 3.1, 0.005, 10, 0.02, 0.14, CW.white); }
-        for (const [a0, a1] of [[S + WEIGH_OUT[0], S + WEIGH_OUT[1]], [S + WEIGH_BACK[0], S + WEIGH_BACK[1]]]) for (let a = a0; a < a1; a += 10) this.rbox(g, a + 5, 7.45, -0.05, 10.2, 0.1, 3.1, CW.asphalt);
+        for (let a = S; a < S + WEIGH_LEN; a += 10) { this.paveTag(g, a + 5, PAVE_ASPHALT); this.rbox(g, a + 5, N, -0.045, 10.2, 0.1, 7, CW.asphalt); g.aux.set(0, 0, -1); this.rbox(g, a + 5, N + 3.1, 0.005, 10, 0.02, 0.14, CW.white); }
+        for (const [a0, a1] of [[S + WEIGH_OUT[0], S + WEIGH_OUT[1]], [S + WEIGH_BACK[0], S + WEIGH_BACK[1]]]) for (let a = a0; a < a1; a += 10) { this.paveTag(g, a + 5, PAVE_ASPHALT); this.rbox(g, a + 5, 7.45, -0.05, 10.2, 0.1, 3.1, CW.asphalt); }
+        g.aux.set(0, 0, -1);
         const sc = (WEIGH_SCALE[0] + WEIGH_SCALE[1]) / 2, sl = WEIGH_SCALE[1] - WEIGH_SCALE[0];
         this.rbox(g, S + sc, N, 0.01, sl, 0.04, 3.4, 0x8d9296);
         for (const a of WEIGH_SCALE) this.rbox(g, S + a, N, 0.02, 0.3, 0.04, 3.6, CW.yellow);

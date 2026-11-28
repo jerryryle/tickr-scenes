@@ -120,6 +120,14 @@ from above:
 make citymap SCENE=long-day SEED=11 CITIES=4    # -> build/long-day-citymap/city<N>.png
 ```
 
+Every road is paved by the ground's shader. A modern city's roads, lots and freeway ramps are
+asphalt, and its sidewalks and driveways are concrete laid in slabs (`applyModernPaving` in
+`src/paving.ts`). The asphalt is worn in patches and grained, with now and then a repair patch and
+stretches of sealed cracks. The country road between the cities is asphalt too, with gravel
+shoulders. Near Ravensgate it turns to macadam, and near a storybook town to that town's candy
+cobbles. In the rain the paving darkens, shines with the sky and holds puddles. The Victorian and
+storybook cities pave their own streets in setts and candy cobbles, described with each city below.
+
 `src/main.ts` is the entry; the other modules in `src/` are pulled in through its imports.
 `src/grid.ts` and `src/facadetiles.ts` hold constants that other modules use while loading, so
 they import nothing (most of the city, journey and rendering modules import each other in a
