@@ -8,6 +8,7 @@
 // Laid out in the frontage frame of the freeway's line (a along it from the node the exit is
 // counted from, n in from the back of its sidewalk), in world coordinates; drawn relative to the
 // tile's origin.
+import { PAVE_ASPHALT } from "./paving.ts";
 import { Batch } from "./geom.ts";
 import { hash2 } from "./rng.ts";
 import { OFFRAMP_LEN, OFFRAMP_SHIFT, Path, trackSweep } from "./route.ts";
@@ -161,7 +162,12 @@ export function buildInterchange(ground: Batch, solid: Batch, plan: CityPlan, bl
     const ground0 = Math.max(a.y, b.y) < 0.04;
     if (ground0 && a.r - a.l < 0.05 && b.r - b.l < 0.05) continue;   // out in the street: the street's own
     const rx = (a.rx + b.rx) / 2, rz = (a.rz + b.rz) / 2, my = (a.y + b.y) / 2;
-    quad(at(i, a.l, 0), at(i, a.r, 0), at(i + 1, b.r, 0), at(i + 1, b.l, 0), ground0 ? C.asphalt : IC_TOP, [0, 1, 0]);
+    // (Its road is asphalt, along the ramp: paving.ts applyModernPaving.)
+    const al = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    ground.aux.set((b.x - a.x) / al, (b.z - a.z) / al, PAVE_ASPHALT);
+    const q0 = at(i, a.l, 0), q2 = at(i + 1, b.r, 0), top0 = ground0 ? C.asphalt : IC_TOP;
+    ground.tri(...q0, ...at(i, a.r, 0), ...q2, top0, [0, 1, 0], true); ground.tri(...q0, ...q2, ...at(i + 1, b.l, 0), top0, [0, 1, 0], true);
+    ground.aux.set(0, 0, -1);
     // Edge lines: the right one down to where it reaches the street's kerb line (past it the
     // street's own markings take over); the left one from the gore's nose (the freeway's own line,
     // dashed along the deceleration lane, meets it there) to where the ramp reaches the sidewalk.
@@ -197,7 +203,12 @@ export function buildInterchange(ground: Batch, solid: Batch, plan: CityPlan, bl
   // from the block-side edge to the cut's end. Each with its kerb along the street.
   {
     const ft = interchangeFoot(plan), fp = (a: number, n: number): [number, number] => { const P = G.facePt(f0, a, n); return [P.x - ox, P.z - oz]; };
-    if (ft.apron.length) slab(ground, ft.apron.map(([a, n]) => fp(a, n)), PAVE_Y, PAVE_Y, C.asphalt);
+    if (ft.apron.length) {
+      const [x0, z0] = fp(0, 0), [x1, z1] = fp(1, 0);
+      ground.aux.set(x1 - x0, z1 - z0, PAVE_ASPHALT);
+      slab(ground, ft.apron.map(([a, n]) => fp(a, n)), PAVE_Y, PAVE_Y, C.asphalt, true);
+      ground.aux.set(0, 0, -1);
+    }
     if (ft.l3 - ft.l0 > 0.05 && ft.left.length) {
       slab(ground, ft.left[ft.left.length - 1][0] === ft.l0 && ft.left[ft.left.length - 1][1] === KERB_LINE ? ft.left.map(([a, n]) => fp(a, n)) : [...ft.left.map(([a, n]) => fp(a, n)), fp(ft.l0, KERB_LINE)], 0, CURB_H, C.sidewalk);
       slab(ground, [fp(ft.l0, KERB_LINE + 0.25), fp(ft.l3 - 0.25 * (ft.l3 - ft.l0) / 3, KERB_LINE + 0.25), fp(ft.l3, KERB_LINE), fp(ft.l0, KERB_LINE)], CURB_H, CURB_H + 0.008, C.curb);

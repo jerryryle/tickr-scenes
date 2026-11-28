@@ -26,6 +26,7 @@ import type { CityPlan, Gate } from "./city.ts";
 import type { CityStyle } from "./styles.ts";
 import type { CountryRoad } from "./country.ts";
 import { seaSide } from "./outline.ts";
+import { PAVE_ASPHALT, PAVE_MACADAM } from "./paving.ts";
 import { PlateSet } from "./signs.ts";
 import { CarFleet, carKindAt } from "./cars.ts";
 
@@ -53,6 +54,14 @@ export const FW_OFF_K = 2, FW_OFF_A = -50, FW_OFF_D = (BLOCK - STREET / 2) + FW_
 export const FW_OFF_V = 10;             // the truck's speed as it starts off the freeway (it slows on the ramp)
 const FW_CONCRETE = 0x9a978e, FW_GIRDER = 0x6f7276, FW_ASPHALT = 0x3a3b3f, FW_WHITE = 0xe8e8e0, FW_YELLOW = 0xf2c200;
 
+// (The freeway's asphalt is drawn by the ground's shader, paving.ts applyModernPaving: fwPave tags
+// what b draws next as paving of kind `tag` with the way along the road, (dx, dz) in b's frame,
+// which is turned `rot` from the world's as a city's frames turn it (city.ts frameRot). Its caller
+// sets the aux back after.)
+function fwPave(b: Batch, dx: number, dz: number, rot: number, tag = PAVE_ASPHALT) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  b.aux.set(dx * c + dz * s, -dx * s + dz * c, tag);
+}
 const fwEase = (u: number) => { const t = THREE.MathUtils.clamp(u, 0, 1); return t * t * (3 - 2 * t); };
 const fwSmooth = (u: number) => { const x = THREE.MathUtils.clamp(u, 0, 1); return x * x * x * (10 + x * (6 * x - 15)); };
 const fwM = (d: number) => (d <= 0 ? 0 : FW_SHIFT * fwEase(d / FW_SHIFT_LEN));
@@ -287,7 +296,7 @@ type FwColumnOk = (x: number, z: number) => boolean;
 // the on-ramp (`ramp`) and the highway's surface out to the gate (`surface`, when nothing else
 // draws it). On the entry side the columns keep off the highway and the on-ramp.
 export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: number, az: number,
-  parts: { main?: boolean; ramp?: boolean; surface?: boolean; bents?: boolean }, columnOk: FwColumnOk | null = null, plates: PlateSet | null = null) {
+  parts: { main?: boolean; ramp?: boolean; surface?: boolean; bents?: boolean }, columnOk: FwColumnOk | null = null, plates: PlateSet | null = null, rot = 0) {
   // Its signs: gantries over it on the way in (the route; the exit ahead, where the city has one)
   // and on the far side, and the entrance sign on the highway before the on-ramp.
   if (plates && parts.main) {
@@ -320,7 +329,9 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
     if (parts.main) {
       const ya = F.y(a), yb = F.y(a2), ma = F.m(a), mb = F.m(a2);
       along(a, a2, ma, mb, ya, yb, -0.55, -0.06, 2 * FW_HALF, FW_CONCRETE);
+      fwPave(b, F.px(a2, mb) - F.px(a, ma), F.pz(a2, mb) - F.pz(a, ma), rot);
       along(a, a2, ma, mb, ya, yb, -0.06, 0, 2 * FW_HALF - 0.8, FW_ASPHALT);
+      b.aux.set(0, 0, -1);
       // Edge lines: solid, but dashed along the on-ramp's merge (where the lanes are one roadway).
       for (const k of [-1, 1]) {
         const n = k * (FW_HALF - 0.75);
@@ -339,11 +350,13 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
     if (parts.surface && a >= -1 && a < 1100) {
       // The highway itself, as countryworld.ts draws it: widening to the gate street's width at the gate.
       const w = fwEase((70 - (a + a2) / 2) / 70), half = 4.1 + 1.9 * w;
+      const ddx = F.px(a2, 0) - F.px(a, 0), ddz = F.pz(a2, 0) - F.pz(a, 0);
+      fwPave(b, ddx, ddz, rot);
       along(a, a2, 0, 0, 0, 0, -0.124, -0.004, 2 * half, 0x34353a);
-      for (const k of [-1, 1]) {
-        along(a, a2, k * (half + 0.9), k * (half + 0.9), 0, 0, -0.125, -0.025, 1.8, 0x7a776c);
-        along(a, a2, k * (half - 0.25), k * (half - 0.25), 0, 0, -0.005, 0.015, 0.14, FW_WHITE);
-      }
+      fwPave(b, ddx, ddz, rot, PAVE_MACADAM);   // (its gravel shoulders)
+      for (const k of [-1, 1]) along(a, a2, k * (half + 0.9), k * (half + 0.9), 0, 0, -0.125, -0.025, 1.8, 0x7a776c);
+      b.aux.set(0, 0, -1);
+      for (const k of [-1, 1]) along(a, a2, k * (half - 0.25), k * (half - 0.25), 0, 0, -0.005, 0.015, 0.14, FW_WHITE);
       if (Math.floor(a / 6) % 2 === 0) along(a, Math.min(a2, a + 5), 0, 0, 0, 0, -0.005, 0.015, 0.24, FW_YELLOW);
     }
   }
@@ -359,7 +372,10 @@ export function buildFreeway(b: Batch, F: Frame, d0: number, d1: number, ax: num
       const a2 = Math.min(r1, a + 2), [la, ra] = rampEdges(a), [lb, rb] = rampEdges(a2), ya = onRampY(a), yb = onRampY(a2);
       const out: V = [F.ox, 0, F.oz], right: V = [F.rx, 0, F.rz], left: V = [-F.rx, 0, -F.rz];
       if (rb - lb < 0.05 && ra - la < 0.05) continue;
-      quad(P(a, la, 0), P(a, ra, 0), P(a2, rb, 0), P(a2, lb, 0), 0x34353a, [0, 1, 0]);
+      fwPave(b, F.px(a2, 0) - F.px(a, 0), F.pz(a2, 0) - F.pz(a, 0), rot);
+      const P0 = P(a, la, 0), P1 = P(a, ra, 0), P2 = P(a2, rb, 0), P3 = P(a2, lb, 0);
+      b.tri(...P0, ...P1, ...P2, 0x34353a, [0, 1, 0], true); b.tri(...P0, ...P2, ...P3, 0x34353a, [0, 1, 0], true);
+      b.aux.set(0, 0, -1);
       if (Math.max(ya, yb) < 0.02) {
         // At grade: its edge lines (the left one only once clear of the highway).
         for (const [na, nb, k] of [[ra, rb, 1], [la, lb, -1]] as const) if (k > 0 || la > ROAD_EDGE + 0.3) quad(P(a, na - k * 0.25, 0.012), P(a, na - k * 0.11, 0.012), P(a2, nb - k * 0.11, 0.012), P(a2, nb - k * 0.25, 0.012), FW_WHITE, [0, 1, 0]);
@@ -437,16 +453,16 @@ export function freewayGantry(b: Batch, plates: PlateSet, F: Frame, d: number, a
 // a1 along (an off-ramp leaves there: interchange.ts).
 // (x0..x1: along it, for a street of the curve, city.ts: an organic town's, along x in its frame.)
 export function buildFreewayStreet(b: Batch, axis: number, open: { a0: number; a1: number; k: number } | null = null,
-  gantry: { at: number; face: number; k: number; text: string; other: string; plates: PlateSet } | null = null, x0 = 0, x1 = BLOCK) {
+  gantry: { at: number; face: number; k: number; text: string; other: string; plates: PlateSet } | null = null, x0 = 0, x1 = BLOCK, rot = 0) {
   const F = axis === 0 ? new Frame(0, STREET / 2, Math.PI) : new Frame(STREET / 2, 0, Math.PI / 2);
   // (A frame with the line along +x (or along +z), level all the way: d from 0 to BLOCK.)
   const level = Object.assign(Object.create(Frame.prototype), F, { y: () => FW_TOP, m: () => 0 }) as Frame;
   if (gantry) freewayGantry(b, gantry.plates, level, gantry.at, 0, 0, [{ k: gantry.k, face: gantry.face, text: gantry.text }, { k: -gantry.k, face: -gantry.face, text: gantry.other }]);
-  if (!open) { buildFreeway(b, level, x0, x1, 0, 0, { main: true, bents: false }); return; }
+  if (!open) { buildFreeway(b, level, x0, x1, 0, 0, { main: true, bents: false }, null, null, rot); return; }
   // The deck without that parapet, then the parapet where it stands.
-  buildFreewayDeck(b, level, open);
+  buildFreewayDeck(b, level, open, rot);
 }
-function buildFreewayDeck(b: Batch, F: Frame, open: { a0: number; a1: number; k: number }) {
+function buildFreewayDeck(b: Batch, F: Frame, open: { a0: number; a1: number; k: number }, rot: number) {
   const along = (a: number, a2: number, n: number, lo: number, hi: number, wid: number, color: number) => {
     const xa = F.px(a, n), za = F.pz(a, n), xb = F.px(a2, n), zb = F.pz(a2, n);
     b.box((xa + xb) / 2, FW_TOP + (lo + hi) / 2, (za + zb) / 2, Math.hypot(xb - xa, zb - za) + 0.04, hi - lo, wid, color, Math.atan2(-(zb - za), xb - xa));
@@ -454,7 +470,10 @@ function buildFreewayDeck(b: Batch, F: Frame, open: { a0: number; a1: number; k:
   const keep = b.dy; b.dy = 0;
   for (let a = 0; a < BLOCK - 1e-6; a += 10) {
     const a2 = Math.min(BLOCK, a + 10);
-    along(a, a2, 0, -0.55, -0.06, 2 * FW_HALF, FW_CONCRETE); along(a, a2, 0, -0.06, 0, 2 * FW_HALF - 0.8, FW_ASPHALT);
+    along(a, a2, 0, -0.55, -0.06, 2 * FW_HALF, FW_CONCRETE);
+    fwPave(b, F.px(a2, 0) - F.px(a, 0), F.pz(a2, 0) - F.pz(a, 0), rot);
+    along(a, a2, 0, -0.06, 0, 2 * FW_HALF - 0.8, FW_ASPHALT);
+    b.aux.set(0, 0, -1);
     for (const k of [-1, 1]) {
       along(a, a2, k * 4, -1.45, -0.55, 0.9, FW_GIRDER);
       if (Math.floor(a / 10) % 2 === 0) along(a, a + 4, k * 3.5, 0, 0.025, 0.16, FW_WHITE);

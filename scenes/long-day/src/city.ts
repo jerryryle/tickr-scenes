@@ -26,6 +26,7 @@ import { VIC_FLAGS, VIC_SETT, vicBench, vicLamp } from "./city-victorian/victori
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { registerTradeSpins, storyEmblem } from "./city-storybook/storybook-trades.ts";
 import { SB_STREET, storyGate, storyLamp, bunting, storyTower, storyFountain, storyTree, storyLotBuilding, storyWorks, storyYard, storyPavilion, storyGarden, storyShed, storyKerbDoor, SB } from "./city-storybook/storybook-buildings-town.ts";
+import { PAVE_ASPHALT, PAVE_CONCRETE } from "./paving.ts";
 import { SB_COBBLES, SB_SCALES, storyBench, storyScarf, storyTwinLamp } from "./city-storybook/storybook-street.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
@@ -467,6 +468,9 @@ export let CS: CityStyle = STYLES.coastal;
 // The storybook city lays its own street colours over C while it is built (storybook-buildings-town.ts
 // SB_STREET); every other city has C as above.
 const C_BASE = { ...C };
+// (The ground shader's tags for a street's road and its sidewalks in the city being built.)
+const roadTag = () => (CS.victorian ? VIC_SETT : CS.storybook ? SB_COBBLES : PAVE_ASPHALT);
+const walkTag = () => (CS.victorian ? VIC_FLAGS : CS.storybook ? SB_SCALES : PAVE_CONCRETE);
 function setCityStyle(style: CityStyle) { CS = style; Object.assign(C, C_BASE, style.storybook ? SB_STREET : style.victorian ? VIC_STREET : {}); }
 
 export type Rand = () => number;
@@ -581,7 +585,8 @@ function pullIn(poly: [number, number][], d = 0.02): [number, number][] {
     return k < 0.2 ? [x + b[0] * d, z + b[1] * d] : [x + (a[0] + b[0]) / k * d, z + (a[1] + b[1]) / k * d];
   });
 }
-// (`tagged`: its top carries the batch's aux, a Victorian pavement's flags: victorian-street.ts applySetts.)
+// (`tagged`: its top carries the batch's aux, such as a pavement's paving for the ground's shader:
+// paving.ts applyModernPaving.)
 export function slab(b: Batch, pts: [number, number][], y0: number, y1: number, color: number, tagged = false) {
   // The top: a fan from the first corner where the polygon is convex; otherwise ear-clipped (a
   // fan would cross a notch), each triangle wound as the polygon is.
@@ -627,26 +632,27 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
       // kerb (citygraph.ts sidewalkCorner).
       const sc = sidewalkCorner(G, n, i), local = sc.pts.map(([x, z]): [number, number] => [x - ox, z - oz]);
       // (A Victorian corner's flags run along its first street: victorian-street.ts applySetts; a
-      // storybook corner's scales too: storybook-street.ts applyCandyPaving.)
-      if (CS.victorian || CS.storybook) g.aux.set(Math.cos(A[i].h), -Math.sin(A[i].h), CS.victorian ? VIC_FLAGS : SB_SCALES);
+      // storybook corner's scales too: storybook-street.ts applyCandyPaving; and a modern corner's
+      // concrete slabs: paving.ts applyModernPaving.)
+      g.aux.set(Math.cos(A[i].h), -Math.sin(A[i].h), walkTag());
       if (sc.corner) {
         ring.push(local[5]);
-        slab(g, local, 0, CURB_H, C.sidewalk, !!(CS.victorian || CS.storybook));
+        slab(g, local, 0, CURB_H, C.sidewalk, true);
         g.aux.set(0, 0, -1);
       } else {
         const [a, , , d] = local;
-        slab(g, local, 0, CURB_H, C.sidewalk, !!(CS.victorian || CS.storybook));
+        slab(g, local, 0, CURB_H, C.sidewalk, true);
         g.aux.set(0, 0, -1);
         const e0 = pt(i, A[i].mouth, -ri - 0.25), e1 = pt(j, A[j].mouth, rj + 0.25);
         slab(g, [a, e0, e1, d], CURB_H + 0.004, CURB_H + 0.012, C.curb);
       }
     }
     // (The Victorian city's is laid in setts, in courses across its first arm: victorian-street.ts
-    // applySetts; the storybook's in candy cobbles: storybook-street.ts applyCandyPaving.)
-    const vs = !!(CS.victorian || CS.storybook);
-    if (vs) g.aux.set(Math.cos(A[0].h), -Math.sin(A[0].h), CS.victorian ? VIC_SETT : SB_COBBLES);
-    for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt, undefined, vs);
-    g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt, undefined, vs);
+    // applySetts; the storybook's in candy cobbles: storybook-street.ts applyCandyPaving; a modern
+    // city's is asphalt: paving.ts applyModernPaving.)
+    g.aux.set(Math.cos(A[0].h), -Math.sin(A[0].h), roadTag());
+    for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt, undefined, true);
+    g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt, undefined, true);
     g.aux.set(0, 0, -1);
   }
   buildSignals(solid, lamps, G, n, ox, oz, plan.seed, plates, !!CS.storybook, !!CS.victorian);
@@ -744,11 +750,11 @@ function buildStreetPart(g: Batch, s: Batch, plan: CityPlan, st: CStreet, ox: nu
     // two close up on the outside of the bend; at the line's end, on over the junction as on the grid.)
     if (st.tags.elevated && axis === 0) buildElevated(s, 9 - lineExt(G, st, 0, "elevated", 4.6), 9 + st.len + lineExt(G, st, 1, "elevated", 4.6));
     if (st.tags.cable) { if (axis === 1) buildCableTracks(g); else buildCableTracks(g, 9 - lineExt(G, st, 0, "cable", 3), 9 + st.len + lineExt(G, st, 1, "cable", 3)); }
-    if (fwCurve) buildFreewayStreet(g, 0, null, null, 9 - lineExt(G, st, 0, "freeway", FW_HALF + 0.4), 9 + st.len + lineExt(G, st, 1, "freeway", FW_HALF + 0.4));
+    if (fwCurve) buildFreewayStreet(g, 0, null, null, 9 - lineExt(G, st, 0, "freeway", FW_HALF + 0.4), 9 + st.len + lineExt(G, st, 1, "freeway", FW_HALF + 0.4), frameRot());
     if (fw) {
       const F = plan.freewayFrame!;
       const gantry = ic?.gantry != null && DC.plates ? { at: ic.gantry, face: ic.face, k: ic.k, text: `EXIT ${F.exitNo} · ${F.name} CENTER`, other: `I-${F.route} ${F.wayOut}`, plates: DC.plates } : null;
-      buildFreewayStreet(g, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null, gantry);
+      buildFreewayStreet(g, axis, ic ? { a0: ic.open[0], a1: ic.open[1], k: ic.k } : null, gantry, 0, BLOCK, frameRot());
     }   // (the ground batch: the truck's see-through spotlight leaves it be)
   });
 }
@@ -1099,7 +1105,9 @@ function drawClose(g: Batch, s: Batch, G: CityGraph, c: Close, poly: [number, nu
 DRAW.close = (R, g, s) => {
   const y = CURB_H, x = R.x as number, z = R.z as number;
   slab(g, R.verge as [number, number][], y, y + 0.012, CS.pavers);
-  slab(g, R.lane as [number, number][], y, y + 0.025, C.asphalt);
+  modernPave(g, PAVE_ASPHALT);
+  slab(g, R.lane as [number, number][], y, y + 0.025, C.asphalt, true);
+  g.aux.set(0, 0, -1);
   g.cyl(x, y + 0.012, z, 10.5, 0.024, CS.pavers, 24);
   g.cyl(x, y + 0.025, z, 9, 0.05, C.asphalt, 24);
   s.cyl(x, y + 0.1, z, 2.2, 0.2, C.curb, 16);
@@ -1319,7 +1327,9 @@ DRAW.storyGarden = (R, g, s) => {
 // are mirrored, cabin set back from the aisle); `cars` a colour for each bay with a car in.
 DRAW.carPark = (R, g, s) => {
   const w = R.w as number, d = R.d as number, cars = R.cars as number[], b: Rect = { x0: -w / 2, z0: -d / 2, x1: w / 2, z1: d / 2 };
-  slab(g, [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]], CURB_H, CURB_H + 0.02, C.asphalt);
+  modernPave(g, PAVE_ASPHALT);
+  slab(g, [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]], CURB_H, CURB_H + 0.02, C.asphalt, true);
+  g.aux.set(0, 0, -1);
   let bay = 0;
   for (let zz = b.z0 + 0.3, k = 0; zz + 5 <= b.z1 - 0.3; zz += k % 2 ? 5 : 11, k++) {
     const back = k % 2 ? -1 : 1;
@@ -1686,8 +1696,15 @@ function frameRot() { let r = 0; for (const f of PLACED.frames) r += f.rot; retu
 // (A storybook plaza's or path's ground is fish-scale tiles, in rows along the frame's x:
 // storybook-street.ts applyCandyPaving. Its caller sets the aux back after.)
 function sbPave(g: Batch) { if (CS.storybook) { const r = frameRot(); g.aux.set(Math.cos(r), -Math.sin(r), SB_SCALES); } }
+// (A modern city's lots and lanes off the street are paved as its streets are: paving.ts
+// applyModernPaving, `tag` its asphalt or its concrete. Its caller sets the aux back after.)
+function modernPave(g: Batch, tag: number) { if (!CS.storybook && !CS.victorian) { const r = frameRot(); g.aux.set(Math.cos(r), -Math.sin(r), tag); } }
 // The asphalt under a grid block or a site's square (where its buildings leave it bare).
-DRAW.asphalt = (_R, g) => { g.box((STREET + BLOCK) / 2, -0.05, (STREET + BLOCK) / 2, BLOCK - STREET, 0.1, BLOCK - STREET, C.asphalt); };
+DRAW.asphalt = (_R, g) => {
+  modernPave(g, PAVE_ASPHALT);
+  g.box((STREET + BLOCK) / 2, -0.05, (STREET + BLOCK) / 2, BLOCK - STREET, 0.1, BLOCK - STREET, C.asphalt);
+  g.aux.set(0, 0, -1);
+};
 // A parking garage (garage.ts), its ramp on side `side`; `open`, its top deck open.
 DRAW.garage = (R, g, s, rnd) => { buildGarage(g, s, R.side as number, rnd, DC.plan.seed, !!R.open); };
 // A dock site (facilities.ts DockLayout `L`): its warehouse (or the knitting works) and yard.
@@ -2298,8 +2315,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // along each kerb.
   // (aux.xy: the way along the street in the world, through the frames it is drawn in.)
   const fr = PLACED.frames.reduce((t, f) => t + f.rot, 0), sAlong = [axis ? Math.sin(fr) : Math.cos(fr), axis ? Math.cos(fr) : -Math.sin(fr)];
-  // The storybook city's is candy cobbles (storybook-street.ts applyCandyPaving).
-  if (CS.victorian || CS.storybook) g.aux.set(sAlong[0], sAlong[1], CS.victorian ? VIC_SETT : SB_COBBLES);
+  // The storybook city's is candy cobbles (storybook-street.ts applyCandyPaving), and a modern
+  // city's asphalt has its wear, patches and cracks drawn the same way (paving.ts applyModernPaving).
+  g.aux.set(sAlong[0], sAlong[1], roadTag());
   box(g, mid, -0.05, cl, len, 0.1, STREET, C.asphalt);
   g.aux.set(0, 0, -1);
   if (CS.victorian) for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
@@ -2331,8 +2349,9 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     const parts: [number, number][] = d ? [[a0, d[0]], [d[1], a1]] : [[a0, a1]];
     for (const [p0, p1] of parts) {
       if (p1 - p0 < 0.05) continue;
-      // (York stone flags: victorian-street.ts applySetts; the storybook's fish scales: storybook-street.ts applyCandyPaving.)
-      if (CS.victorian || CS.storybook) g.aux.set(sAlong[0], sAlong[1], CS.victorian ? VIC_FLAGS : SB_SCALES);
+      // (York stone flags: victorian-street.ts applySetts; the storybook's fish scales: storybook-street.ts
+      // applyCandyPaving; a modern city's concrete slabs: paving.ts applyModernPaving.)
+      g.aux.set(sAlong[0], sAlong[1], walkTag());
       box(g, (p0 + p1) / 2, CURB_H / 2, (lo + hi) / 2, p1 - p0, CURB_H, hi - lo, C.sidewalk);
       g.aux.set(0, 0, -1);
       box(g, (p0 + p1) / 2, CURB_H + 0.004, edge + 0.125, p1 - p0, 0.008, 0.25, C.curb);
@@ -2342,7 +2361,10 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
         box(g, (p0 + p1) / 2, CURB_H / 2, lo === 0 ? KERB + 0.003 : STREET - KERB - 0.003, p1 - p0, CURB_H, 0.006, C.curb);
       }
     }
+    // (A modern city's driveway is concrete: paving.ts applyModernPaving.)
+    if (d && !CS.victorian && !CS.storybook) g.aux.set(sAlong[0], sAlong[1], PAVE_CONCRETE);
     if (d) box(g, (d[0] + d[1]) / 2, 0.015, (lo + hi) / 2, d[1] - d[0] - 0.02, 0.03, hi - lo - 0.02, 0x8f8b80);   // (a cm short all round: shared planes flicker)
+    g.aux.set(0, 0, -1);
   }
   // Markings. Forward (+along) traffic keeps right: on an east-west street that is the +z half,
   // on a north-south street (heading +z, right hand is -x) the low-x half.
@@ -3556,7 +3578,9 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // (Both up to the raised base's face, where theirs meet it back to back: a gap there is a slit
   // to the void that glints at a distance.)
   if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, LOT_TOP, 0, L.edge + 0.02, pave);
+  modernPave(g, PAVE_ASPHALT);   // (a modern city's yard is asphalt: paving.ts applyModernPaving)
   fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge + 0.02, 0x66655f);
+  g.aux.set(0, 0, -1);
   if (DC.fac !== "steamBrewery" && DC.fac !== "knittingWorks") for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
 
   // The dock building: a plinth up to platform height, a band of dock doors on the yard side,
