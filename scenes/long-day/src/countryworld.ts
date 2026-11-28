@@ -30,15 +30,15 @@ import { Cow, Horse, Tractor } from "./farm.ts";
 import type { Coat } from "./farm.ts";
 import type { BiomeId, RoadGeo, RoadPiece, RoadSign, RoadView } from "./country.ts";
 import type { RoadItems, RoadMapPiece } from "./roadmap.ts";
-import { storyTree } from "./city-storybook/storybook-buildings-town.ts";
+import { SB, SB_STREET, storyTree } from "./city-storybook/storybook-buildings-town.ts";
 import { vicFingerPost } from "./city-victorian/victorian-street.ts";
 import { carriageAt } from "./carriage.ts";
 import { applyPaintTint, CarFleet, carKindAt, carPaintAt, GLASS, headLamp, parkedCar, tailLamp } from "./cars.ts";
 import type { CarKind } from "./cars.ts";
 import { buildFreeway, FW_TIP } from "./freeway.ts";
 import { vicRigs } from "./city-victorian/victorian-vehicles.ts";
-import type { VicRig } from "./city-victorian/victorian-vehicles.ts";
-import type { RigState } from "./storyvehicles.ts";
+import { storyRigs } from "./storyvehicles.ts";
+import type { RigState, StoryRig } from "./storyvehicles.ts";
 import { boatAt, deckW, hull, wedge } from "./boats.ts";
 import type { Station } from "./boats.ts";
 
@@ -52,6 +52,10 @@ const ONCOMING_PAINTS = [0xc0392b, 0x2e6fb2, 0xe8e8e0, 0x2a2b2e, 0x8a9aa6, 0x2e8
 // on the country roads.
 const ONCOMING_RIGS = ["growler", "dray", "coalcart", "horseback", "coster", "growler", "coalcart", "dray", "horseback", "hansom", "pennyfarthing", "traction"];
 
+// Near a storybook city (where its reach, CountryRoad.storyAt, passes STORY_MODERN) what comes the other
+// way is one of its contraptions (storyvehicles.ts), painted from STORY_PAINTS.
+const STORY_PAINTS = [SB.red, SB.teal, SB.violet, SB.mustard, SB.pink, SB.lime];
+
 // RoadRigs draws the rigs met on the road: a part of every rig of a kind is one instanced mesh,
 // made the first time one is met, its pure white repainted per vehicle (cars.ts applyPaintTint).
 class RoadRigs {
@@ -60,7 +64,7 @@ class RoadRigs {
   private m = new THREE.Matrix4(); private col = new THREE.Color();
   constructor(private parent: THREE.Object3D, private material: THREE.Material, private cap: number) {}
   begin() { for (const ms of this.meshes.values()) for (const m of ms) m.count = 0; }
-  add(rig: VicRig, base: THREE.Matrix4, s: RigState, paint: number) {
+  add(rig: StoryRig, base: THREE.Matrix4, s: RigState, paint: number) {
     let ms = this.meshes.get(rig.id);
     if (!ms) {
       ms = rig.parts.map((build) => {
@@ -116,6 +120,13 @@ const CW = { asphalt: 0x34353a, shoulder: 0x7a776c, white: 0xe8e8e0, yellow: 0xf
 // billboards, and its signs are finger posts (vicFingerPost). The truck turns into a carriage at the
 // same point: its cab, back doors and exhaust change at half (truck.ts), as the oncoming traffic does.
 const PERIOD_MODERN = 0.5;
+// Where the storybook city has crept in further than this (CountryRoad.storyAt), the road keeps
+// nothing modern by it either: it turns the town's plum with its polka-dot centre line, has no
+// utility poles, pylons, wind turbines, steel silos or billboards, its distance boards are the
+// town's magenta, and the traffic met on it is the town's contraptions.
+const STORY_MODERN = 0.5;
+// Whether the road at s is past either city's point of no modern dress.
+const unmodern = (R: { periodAt(s: number): number; storyAt(s: number): number }, s: number) => R.periodAt(s) > PERIOD_MODERN || R.storyAt(s) > STORY_MODERN;
 // This mixes colour a k of the way (0..1) to colour b, channel by channel.
 function lerpColor(a: number, b: number, k: number) {
   const ch = (sh: number) => Math.round(((a >> sh) & 255) * (1 - k) + ((b >> sh) & 255) * k) << sh;
@@ -560,14 +571,16 @@ export class CountryWorld {
       const tm = road.meetings[i];
       // (Horse-drawn where the meeting is in the Victorian city's reach, and slow: it still meets
       // the truck at tm.)
-      const rig = road.periodAt(road.sAt(tm)) > 0 ? vicRigs().find((r) => r.id === ONCOMING_RIGS[Math.floor(hash2(i, 0x0d, 0xa7, 0x52) * ONCOMING_RIGS.length)])! : null;
+      // (And a storybook contraption where the meeting is past STORY_MODERN.)
+      const sm = road.sAt(tm), vic = road.periodAt(sm) > 0 ? vicRigs().find((r) => r.id === ONCOMING_RIGS[Math.floor(hash2(i, 0x0d, 0xa7, 0x52) * ONCOMING_RIGS.length)])! : null;
+      const rig: StoryRig | null = vic ?? (road.storyAt(sm) > STORY_MODERN ? storyRigs()[Math.floor(hash2(i, 0x0d, 0xa7, 0x53) * storyRigs().length)] : null);
       const sp = rig ? rig.vmax * 0.9 : ONCOMING_SPEED;
       const s = road.sAt(tm) - sp * (u - tm);
       if (Math.abs(s - sTruck) > 330 || s < road.landFrom || s > road.landTo) continue;
       road.point(s, -LANE, this.p);
       this.quat.setFromEuler(this.eul.set(0, this.p.h + Math.PI, -Math.atan(road.gradeAt(s))));   // (it drives down the road: its nose dips where the road climbs)
       this.m4.compose(this.v.set(this.p.x, road.heightAt(s), this.p.z), this.quat, this.one);
-      if (rig) { this.rigs.add(rig, this.m4, { odo: 1000 + sp * (u - tm), v: sp, t: u, seed: i }, rig.colors[i % rig.colors.length]); n++; continue; }
+      if (rig) { this.rigs.add(rig, this.m4, { odo: 1000 + sp * (u - tm), v: sp, t: u, seed: i }, vic ? vic.colors[i % vic.colors.length] : STORY_PAINTS[i % STORY_PAINTS.length]); n++; continue; }
       this.cars.add(carKindAt(hash2(i, 0x0c, 0xa7, 0x51)), this.m4, ONCOMING_PAINTS[i % ONCOMING_PAINTS.length]);
       this.carPoses.push(this.p.x, this.p.z, this.p.h + Math.PI, road.heightAt(s));
       n++;
@@ -867,12 +880,17 @@ export class CountryWorld {
         : [[a - 0.1, Math.min(a + 6.1, Fy.q0)], [Math.max(a - 0.1, Fy.q1), a + 6.1]].filter(([b0, b1]) => b1 - b0 > 0.05) as [number, number][];
       for (const [b0, b1] of spans) {
         const sm = (b0 + b1) / 2, ln = b1 - b0, w = R.widthAt(sm), half = 4.1 + 1.9 * w, gr = R.gradeAt(sm);
-        // (Near a Victorian city the road turns to macadam, unpainted, as the period creeps in.)
-        const period = R.periodAt(sm), modern = period <= PERIOD_MODERN;
+        // (Near a Victorian city the road turns to macadam, unpainted, as the period creeps in. Past
+        // STORY_MODERN near the storybook city it is the town's plum, its centre line the town's
+        // polka dots, gold and pink by turns, and it lies 2 mm lower, so that where it meets the
+        // road's own colour the two pieces' overlap is not flush.)
+        const period = R.periodAt(sm), story = R.storyAt(sm) > STORY_MODERN && period <= 0, modern = !unmodern(R, sm);
         g.dy = R.heightAt(sm);
-        this.rbox(g, sm, 0, -0.064, ln, 0.12, half * 2, period > 0 ? lerpColor(CW.asphalt, CW.macadam, period) : CW.asphalt, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
+        const tar = period > 0 ? lerpColor(CW.asphalt, CW.macadam, period) : story ? SB_STREET.asphalt : CW.asphalt;
+        this.rbox(g, sm, 0, story ? -0.066 : -0.064, ln, 0.12, half * 2, tar, 0, gr);   // 4 mm under a city street's asphalt, which it meets at the gate
         for (const k of [-1, 1]) { this.rbox(g, sm, k * (half + 0.9), -0.075, ln, 0.1, 1.8, CW.shoulder, 0, gr); if (modern) this.rbox(g, sm, k * (half - 0.25), 0.005, ln, 0.02, 0.14, CW.white, 0, gr); }
         if (modern && Math.floor(a / 6) % 2 === 0) this.rbox(g, sm, 0, 0.005, Math.max(0.05, ln - 0.2), 0.02, 0.24, CW.yellow, 0, gr);
+        else if (story && ln > 5) for (const d of [1.5, 4.5]) this.rbox(g, a + d, 0, 0.005 + gr * (a + d - sm), 0.42, 0.02, 0.42, d < 3 ? SB.mustard : SB_STREET.yellow, Math.PI / 4, gr);
       }
     }
     g.dy = 0;
@@ -892,9 +910,9 @@ export class CountryWorld {
     // Utility poles on the right, every 50 m where the land is clear, with wires only between two
     // poles. Where the line stops, the wires either end at the last pole or, now and then, have
     // snapped and hang from its crossarm to the ground, the slack lying in the grass. (None where a
-    // Victorian city has crept in.)
+    // Victorian city or the storybook has crept in: unmodern.)
     const poleSet = items ? this.itemSet(R, "poles", 1, (v) => `${v[0]}`) : null;
-    const hasPole = (a: number) => R.periodAt(a) <= PERIOD_MODERN && (poleSet ? poleSet.has(`${Math.round(a * 10)}`)
+    const hasPole = (a: number) => !unmodern(R, a) && (poleSet ? poleSet.has(`${Math.round(a * 10)}`)
       : land(a) && (R.clearAt(a, 12) || R.pieces.some((q) => { const p = R.inMap(q); return p.kind === "billboards" && a > p.s - 40 && a < p.s + p.len + 40; })));
     const WIRE = 0x2a2a2a;
     const arm = (a: number, k: number): [number, number] => { const [x, z, h] = this.L(a, 12.5); return [x + Math.sin(h) * k, z + Math.cos(h) * k]; };
@@ -1112,9 +1130,9 @@ export class CountryWorld {
   // A wind turbine, facing the wind, the same way all along the drive (windYaw). In a breeze it
   // turns, 9 to 17 rpm with the wind (each a little different); in a calm, or one in a dozen
   // stopped for service, it stands still. (Its speed is the drive's.)
-  // (None, nor a pylon, where a Victorian city has crept in.)
+  // (None, nor a pylon, where a Victorian city or the storybook has crept in: unmodern.)
   private drawTurbine(R: RoadGeo, s: Batch, sa: number, n: number, spins: TurbineSpin[], road: CountryRoad) {
-    if (R.periodAt(sa) > PERIOD_MODERN) return;
+    if (unmodern(R, sa)) return;
     const r = this.itemRnd(Math.round(sa * 10), Math.round(n * 10), 4, R.key), ph = r() * 6.3;
     const [x, z, h] = this.L(sa, n), c = R.climateAt(sa, n), wind = this.windIn(road, c), yaw = this.windYaw(road);
     const tk = Math.floor(sa / 6), stopped = hash3(tk, road.inp.city, 7, road.inp.driveSeed, 0x3ab3) < 0.08;
@@ -1124,8 +1142,8 @@ export class CountryWorld {
     const bs = sa + dx * Math.cos(h) - dz * Math.sin(h), bn = n + dx * Math.sin(h) + dz * Math.cos(h);
     s.dy = this.foot(sa, n, 3.5); this.turbine(s, x, z, yaw, rpm * Math.PI / 30, ph, spins, this.foot(bs, bn, 1) - s.dy);
   }
-  private drawPylon(R: RoadGeo, s: Batch, a: number) { if (R.periodAt(a) > PERIOD_MODERN) return; const [x, z, h] = this.L(a, -60); s.dy = this.foot(a, -60, 2); this.pylon(s, x, z, h); }
-  private drawFarm(R: RoadGeo, s: Batch, a: number, n: number) { const [x, z, h] = this.L(a, n); s.dy = this.foot(a, n, 9); this.farm(s, x, z, h, this.itemRnd(Math.round(a * 10), Math.round(n * 10), 5, R.key), R.periodAt(a) > PERIOD_MODERN); }
+  private drawPylon(R: RoadGeo, s: Batch, a: number) { if (unmodern(R, a)) return; const [x, z, h] = this.L(a, -60); s.dy = this.foot(a, -60, 2); this.pylon(s, x, z, h); }
+  private drawFarm(R: RoadGeo, s: Batch, a: number, n: number) { const [x, z, h] = this.L(a, n); s.dy = this.foot(a, n, 9); this.farm(s, x, z, h, this.itemRnd(Math.round(a * 10), Math.round(n * 10), 5, R.key), unmodern(R, a)); }
   private drawCows(R: RoadGeo, s: Batch, a: number, n: number) {
     const r = this.itemRnd(Math.round(a * 10), Math.round(n * 10), 6, R.key), [x, z, , gy] = this.L(a, n);
     s.dy = gy - 0.1; for (let c = 0; c < 3; c++) this.cow(s, x + (r() - 0.5) * 12, z + (r() - 0.5) * 12, r() * 6.3);
@@ -1354,9 +1372,10 @@ export class CountryWorld {
       if (uv) { this.signAt(g, uv); this.sign(g.s - 0.06, g.n, g.y, g.w, g.h, uv, 1); }
       return;
     }
-    // (The storybook city's own signs, welcoming and leaving, are magenta, edged in butter, on striped posts.)
-    if ((p.kind === "welcome" || p.kind === "leave") && p.variant === 1) {
-      const n = p.n ?? 11, uv = this.slot(text, { bg: "#d83a9a", fg: "#fff3dc", logo: false });
+    // (The storybook city's own signs, welcoming and leaving, are magenta, edged in butter, on striped
+    // posts, hand-lettered; and so are the distance boards in its reach.)
+    if (((p.kind === "welcome" || p.kind === "leave") && p.variant === 1) || (p.kind === "distance" && this.V.storyAt(p.s) > STORY_MODERN)) {
+      const n = p.n ?? 11, uv = this.slot(text, { bg: "#d83a9a", fg: "#fff3dc", logo: false, story: true });
       for (const k of [-5.4, 5.4]) for (let i = 0; i < 10; i++) this.rbox(s, p.s + 0.27, n + k, 0.64 * (i + 0.5), 0.26 - (i % 2) * 0.02, 0.64, 0.26 - (i % 2) * 0.02, i % 2 ? 0xffffff : 0xe8333a);
       this.rbox(s, p.s + 0.08, n, 5.2, 0.1, 2.6, 13.4, 0xd83a9a);
       this.rbox(s, p.s + 0.08, n, 5.2, 0.08, 2.75, 13.6, 0xfbe58a);
@@ -1377,7 +1396,7 @@ export class CountryWorld {
     switch (p.kind) {
       case "leave": case "distance": case "welcome": this.greenSign(s, p, p.text ?? ""); break;
       case "billboards": {
-        if (this.V.periodAt(S) > PERIOD_MODERN) break;   // (the road's maps have none there: roadgen.ts)
+        if (unmodern(this.V, S)) break;   // (the road's maps have none near a Victorian city: roadgen.ts)
         both(() => {
           for (let k = 0; k < 3; k++) {
             const a = S + 30 + k * 110, n = (k % 2 ? -1 : 1) * 22, sd = Math.sign(n);

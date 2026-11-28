@@ -407,10 +407,11 @@ export class Director {
         const at = (a: number, n: number, y: number, v: THREE.Vector3) => { const q = P.graph.facePt(an.face, a + an.delta, n); return v.set(q.x, y, q.z); };
         // (The brewery is taller, with its yard further along: the shot looks higher and a little along.)
         if (P.style.victorian) at(35, 17, 13, this.worksLook); else at(31, 16, 7.5, this.worksLook);
+        // (Where none is clear, it stands over the middle of the street, which nothing tall ever fills.)
         const spots = P.style.victorian ? BREWERY_SPOTS : WORKS_SPOTS;
-        for (let i = 0; i < spots.length; i++) {
-          const [a, n, y] = spots[i], c = at(a, n, y, this.v4);
-          if (i === 0) this.worksPos.copy(c);
+        at(31, -P.graph.streets[an.face >> 1].half, 8, this.worksPos);
+        for (const [a, n, y] of spots) {
+          const c = at(a, n, y, this.v4);
           if (OCCLUSION.clearance(c, 1.5) >= 1.5 && OCCLUSION.blocked(c, this.worksLook, [], 0.5) <= 0.2) { this.worksPos.copy(c); break; }
         }
         this.variant = "works";

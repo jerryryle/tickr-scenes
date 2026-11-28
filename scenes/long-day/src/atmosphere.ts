@@ -2,7 +2,9 @@
 // The time of day is the real local time on the board's clock (timeOfDay "cycle"; "day", "dusk"
 // and "night" pin it): scene time t maps to the wall clock at setup plus t, so scrubbing the
 // preview moves the sun too. The sun's height through the day sets the sky, the light and the
-// haze; after dark the windows and streetlights come on and the truck runs its headlights.
+// haze, and the sky dome in the backdrop pass shades the horizon (a warm glow at dawn and golden
+// hour, a cool one at night); after dark the windows and streetlights come on and the truck runs its
+// headlights.
 // The weather (climate.ts) comes from the city, blended across the country drive: cloud greys
 // the sky and flattens the light, fog pulls the haze in, rain and snow fall around the camera
 // (stateless: every drop's position is a function of t), and storms flash.
@@ -194,6 +196,11 @@ export class PoolBuilder {
 const SKY_KEYS: [number, number][] = [   // sun elevation (sin) -> clear sky colour
   [-0.35, 0x050b1e], [-0.12, 0x1a1f52], [-0.02, 0x5a3a78], [0.04, 0xd8683e], [0.12, 0xe89a5a], [0.22, 0x3f7ad0],
 ];
+// The storybook city's own light, blended in by the story weight (update's `story`): an indigo
+// night, a salmon dawn and an apricot golden hour, with no royal-blue dip before its day sky.
+const STORY_SKY_KEYS: [number, number][] = [
+  [-0.35, 0x1c1452], [-0.12, 0x2e2470], [-0.02, 0x7a3c8e], [0.04, 0xff7a7a], [0.12, 0xffa066], [0.22, 0x58a6ea],
+];
 const HAZE_DAY = new THREE.Color(0xa8c2ec);
 
 export class Atmosphere {
@@ -205,6 +212,7 @@ export class Atmosphere {
   private tmp = new THREE.Color(); private tmp2 = new THREE.Color();
   private rain: THREE.InstancedMesh; private snow: THREE.InstancedMesh;
   private stars: THREE.InstancedMesh; private moon: THREE.Mesh;
+  private dome: THREE.Mesh; private zenith = { value: new THREE.Color() }; private horizon = { value: new THREE.Color() };
   private m4 = new THREE.Matrix4(); private q = new THREE.Quaternion(); private v = new THREE.Vector3(); private sc = new THREE.Vector3(1, 1, 1);
   private fwd = new THREE.Vector3();
   flash = 0;
@@ -224,7 +232,18 @@ export class Atmosphere {
     }
     this.moon = new THREE.Mesh(new THREE.IcosahedronGeometry(60, 1), new THREE.MeshBasicMaterial({ color: 0xf2eedc, fog: false }));
     this.stars.frustumCulled = false;
-    backdropScene.add(this.stars, this.moon);
+    // The sky is a dome behind them, shaded from the horizon's colour up to the sky's over the lowest
+    // 19 degrees, about as much sky as a street shot shows. Update sets both colours.
+    this.dome = new THREE.Mesh(new THREE.SphereGeometry(3600, 24, 12), new THREE.ShaderMaterial({
+      uniforms: { uZenith: this.zenith, uHorizon: this.horizon }, side: THREE.BackSide, depthWrite: false,
+      vertexShader: "varying float vUp;\nvoid main() { vUp = normalize(position).y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader: `uniform vec3 uZenith; uniform vec3 uHorizon; varying float vUp;
+void main() { gl_FragColor = vec4(mix(uHorizon, uZenith, smoothstep(0.0, 0.32, max(vUp, 0.0))), 1.0);
+#include <colorspace_fragment>
+}`,
+    }));
+    this.dome.renderOrder = -1; this.dome.frustumCulled = false;
+    backdropScene.add(this.dome, this.stars, this.moon);
   }
 
   // Make everything drawable for a precompile (or put it back).
@@ -268,23 +287,25 @@ export class Atmosphere {
     const e = this.elevationAt(h), dayK = THREE.MathUtils.smoothstep(e, -0.06, 0.2), night = 1 - THREE.MathUtils.smoothstep(e, -0.08, 0.06);
     return Math.max(night, 0.5 * weather.cloud * (1 - dayK * 0.6) * (weather.rain + weather.fog > 0.5 ? 1 : 0));
   }
-  // Work out the sky, light and haze for scene time t and the weather, and apply them.
-  update(t: number, engine: Engine, backdrop: Backdrop, daySky: number, weather: WeatherMix) {
+  // The sky colour at elevation e from keys, ending in the day sky.
+  private keyed(out: THREE.Color, keys: [number, number][], e: number, daySky: number) {
+    let i = 0;
+    while (i < keys.length - 1 && e > keys[i + 1][0]) i++;
+    if (e < keys[0][0]) return out.setHex(keys[0][1]);
+    const [e0, c0] = keys[i], [e1, c1] = i < keys.length - 1 ? keys[i + 1] : [0.35, daySky];
+    return out.setHex(c0).lerp(this.tmp.setHex(c1), THREE.MathUtils.clamp((e - e0) / (e1 - e0), 0, 1));
+  }
+  // Work out the sky, light and haze for scene time t and the weather, and apply them. `story` is
+  // how far the storybook city's own light is blended in (main.ts: the trucks' toon weight).
+  update(t: number, engine: Engine, backdrop: Backdrop, daySky: number, weather: WeatherMix, story = 0) {
     this.weather = weather;
     const h = this.hourAt(t), { rise, set } = this.sunTimes(), e = this.elevationAt(h);
     this.elevation = e;
     const dayK = THREE.MathUtils.smoothstep(e, -0.06, 0.2);
     this.night = 1 - THREE.MathUtils.smoothstep(e, -0.08, 0.06);
-    // Clear sky by elevation, the city's day sky at the top.
-    const keys: [number, number][] = [...SKY_KEYS, [0.35, daySky]];
-    let i = 0;
-    while (i < keys.length - 1 && e > keys[i + 1][0]) i++;
-    if (i >= keys.length - 1) this.sky.setHex(daySky);
-    else {
-      const [e0, c0] = keys[i], [e1, c1] = keys[i + 1];
-      this.sky.setHex(c0).lerp(this.tmp.setHex(c1), THREE.MathUtils.clamp((e - e0) / (e1 - e0), 0, 1));
-    }
-    if (e < keys[0][0]) this.sky.setHex(keys[0][1]);
+    // Clear sky by elevation, the city's day sky at the top; the storybook's keys by its weight.
+    this.keyed(this.sky, SKY_KEYS, e, daySky);
+    if (story > 0) this.sky.lerp(this.keyed(this.tmp2, STORY_SKY_KEYS, e, daySky), story);
     // Cloud greys it towards a sky-bright grey; fog whitens it.
     const lum = 0.15 + 0.75 * dayK;
     // (A slate blue rather than a pale grey: grey fills light every emitter and read as a glow.)
@@ -294,10 +315,18 @@ export class Atmosphere {
     const slot = Math.floor(t / 5.3), ph = t - slot * 5.3;
     this.flash = weather.storm > 0.5 && hash2(slot, 1, 0x11, 0xf1a5) < 0.35 && (ph < 0.12 || (ph > 0.22 && ph < 0.3)) ? 1 : 0;
     if (this.flash) this.sky.lerp(this.tmp.setHex(0xdfe6ff), 0.7);
-    // Haze: the sky towards a pale blue by day, the sky darkened by night, whiter in fog.
-    this.haze.copy(this.sky).lerp(this.tmp.copy(HAZE_DAY).multiplyScalar(0.12 + 0.88 * dayK), 0.3);
+    // Haze: the sky towards a pale blue by day, the sky darkened by night, whiter in fog. (The
+    // storybook's night haze stays in the sky's own violet, so far towers don't go grey.)
+    const hazeNight = 0.12 - 0.09 * story;
+    this.haze.copy(this.sky).lerp(this.tmp.copy(HAZE_DAY).multiplyScalar(hazeNight + (1 - hazeNight) * dayK), 0.3);
     this.haze.lerp(this.tmp.setRGB(0.5 * lum + 0.06, 0.56 * lum + 0.06, 0.66 * lum + 0.06, THREE.SRGBColorSpace), weather.fog * 0.5);
     engine.sky.copy(this.sky); engine.fog.color.copy(this.haze);
+    // The horizon is paler by day, towards the haze. It glows warm at dawn and golden hour, and at
+    // night it glows slate blue, or violet and brighter in the storybook. Cloud covers the glows.
+    const glowK = THREE.MathUtils.smoothstep(e, -0.08, -0.02) * (1 - THREE.MathUtils.smoothstep(e, 0.12, 0.24)), clear = 1 - weather.cloud;
+    this.zenith.value.copy(this.sky);
+    this.horizon.value.copy(this.sky).lerp(this.haze, 0.5 * dayK)
+      .lerp(this.tmp.setHex(0x34407a).lerp(this.tmp2.setHex(0x4a3a90), story), (0.3 + 0.1 * story) * this.night * clear).lerp(this.tmp.setHex(0xffd0a0), 0.4 * glowK * clear);
     // The backdrop's colours were baked against its day haze: scale them to tonight's.
     const base = hazeColor(daySky);
     const tint = backdrop.mat;
@@ -313,20 +342,28 @@ export class Atmosphere {
       engine.sun.color.setHex(0xffb070).lerp(this.tmp.setHex(0xffffff), warm);
       engine.sun.intensity = Engine.DAY.sun * THREE.MathUtils.smoothstep(e, -0.02, 0.18) * (1 - 0.75 * weather.cloud);
     } else {
-      engine.sun.color.setHex(0x9ab0ff);
-      engine.sun.intensity = 0.6 * (1 - weather.cloud);
+      engine.sun.color.setHex(0x9ab0ff).lerp(this.tmp.setHex(0xb4aaff), story);
+      engine.sun.intensity = (0.6 + 0.15 * story) * (1 - weather.cloud);
     }
-    engine.hemi.intensity = (0.8 + 1.2 * dayK) * (1 - 0.15 * weather.cloud) + this.flash * 2;
-    engine.hemi.color.setHex(0x5a6ab0).lerp(this.tmp.setHex(0xcfe6ff), dayK);
-    engine.hemi.groundColor.setHex(0x1a1a28).lerp(this.tmp.setHex(0x4a4030), dayK);
+    // (The storybook's night is lit brighter, from a lilac sky over a plum ground.)
+    const hemiNight = 0.8 + 0.2 * story;
+    engine.hemi.intensity = (hemiNight + (2 - hemiNight) * dayK) * (1 - 0.15 * weather.cloud) + this.flash * 2;
+    // (By day the storybook's light bounces a bright, warm cream off its pale pavements, where other
+    // cities' bounce is an olive brown, so its walls in shade stay candy rather than going muddy.)
+    engine.hemi.color.setHex(0x5a6ab0).lerp(this.tmp.setHex(0x7a6ac8), story).lerp(this.tmp.setHex(0xcfe6ff).lerp(this.tmp2.setHex(0xffffff), story), dayK);
+    engine.hemi.groundColor.setHex(0x1a1a28).lerp(this.tmp.setHex(0x3a2448), story).lerp(this.tmp.setHex(0x4a4030).lerp(this.tmp2.setHex(0xf0e4cc), story), dayK);
     poolMat.opacity = this.night; poolMat.visible = this.night > 0.03;
     NIGHT_GLOW.value = this.glowAt(h, weather);
     // Stars and the moon: clear nights only.
     const starK = this.night * (1 - weather.cloud);
     this.stars.visible = this.moon.visible = starK > 0.05;
     (this.stars.material as THREE.MeshBasicMaterial).color.setScalar(starK);
-    (this.moon.material as THREE.MeshBasicMaterial).color.setHex(0xf2eedc).multiplyScalar(starK);
-    this.moon.position.set(-Math.cos(daz) * 1700, 900, -Math.sin(daz) * 1700);
+    // (The storybook's moon is a big butter one, low enough to show over its streets.)
+    (this.moon.material as THREE.MeshBasicMaterial).color.setHex(0xf2eedc).lerp(this.tmp.setHex(0xfff0b8), story).multiplyScalar(starK);
+    this.moon.position.set(-Math.cos(daz) * 1700, 900 - 450 * story, -Math.sin(daz) * 1700);
+    this.moon.scale.setScalar(1 + 1.2 * story);
+    // Snow dims with the light, so it doesn't sparkle white in the dark.
+    (this.snow.material as THREE.MeshBasicMaterial).color.setHex(0xf4f7fa).multiplyScalar(0.35 + 0.65 * dayK);
   }
 
   // After the view distance is set for the frame: fog weather pulls the haze in.

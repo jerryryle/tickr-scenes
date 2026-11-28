@@ -20,11 +20,13 @@ import { truckExtents } from "./truck.ts";
 import type { TruckModel } from "./truck.ts";
 import { BAY, facadeBox, setFacadeChunk } from "./facade.ts";
 import { FACADE, FACADE_KINDS, PAINTED_DOORS } from "./facadetiles.ts";
-import { buildWorksStatic, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
+import { buildWorksStatic, storyDock, worksFrameOf, WORKS } from "./city-storybook/storybook-landmark-knitting-works.ts";
 import { VIC_GASLIGHT, VIC_STREET, vicBackYard, vicCorner, vicGate, vicLot, vicMonument, vicPark, vicPlanter, vicShed, vicSquare, vicTower, vicWorks, vicYard } from "./city-victorian/victorian-buildings-town.ts";
 import { VIC_FLAGS, VIC_SETT, vicBench, vicLamp } from "./city-victorian/victorian-street.ts";
 import { buildBreweryStatic, breweryNameY, BREWERY_DOCK } from "./city-victorian/victorian-landmark-steam-brewery.ts";
-import { SB, SB_STREET, storyGate, storyLamp, bunting, storyTower, storyShopRow, storyHouse, storyFountain, sbFootSides, storyTree, storyWorkshop } from "./city-storybook/storybook-buildings-town.ts";
+import { registerTradeSpins, storyEmblem } from "./city-storybook/storybook-trades.ts";
+import { SB_STREET, storyGate, storyLamp, bunting, storyTower, storyFountain, storyTree, storyLotBuilding, storyWorks, storyYard, storyPavilion, storyGarden, storyShed, storyKerbDoor, SB } from "./city-storybook/storybook-buildings-town.ts";
+import { SB_COBBLES, SB_SCALES, storyBench, storyScarf, storyTwinLamp } from "./city-storybook/storybook-street.ts";
 import { FACADE_TILE } from "./facadeart.ts";
 import type { FacadeBand } from "./facade.ts";
 import { buildSignals, buildStopSigns, linkSignals, signalPoles, stopSignPosts, STOP_PLATE } from "./signals.ts";
@@ -51,7 +53,7 @@ import type { DockLayout, FacilityId, LotLayout, SiteLayout, StandLayout } from 
 import { graphOfFile } from "./cityfile.ts";
 import type { CityFile, CityFileContents, CityFileDoor, CityFileLot, CityHead, CityLayout } from "./cityfile.ts";
 import { cityByKey } from "./visits.ts";
-import { facilitySign, marquee, signAtlas, SignAtlas } from "./signs.ts";
+import { facilitySign, marquee, PLATE_STORY_GATE, signAtlas, SignAtlas } from "./signs.ts";
 import type { SignMesh, SignStyle } from "./signs.ts";
 import { BIOME_OF } from "./country.ts";
 import { BIOMES, landTree } from "./countryworld.ts";
@@ -221,13 +223,18 @@ export class CityPlan {
   }
   // The town's plaza, a whole block of paving with a fountain and trees in place of buildings: the
   // most central block downtown or in the shops whose facility is at the kerb (no site laid out on
-  // it), in a city without a Main Street town square. Its block id, or -1.
+  // it), in a city without a Main Street town square. Its block id, or -1. A city that lists its
+  // contents has its plaza where they put one, and `listedPlaza` gives it for a city drawn by the
+  // rules in its place (tools/relot.ts), so a change of facilities never moves it.
   private plazaId: number | undefined;
+  listedPlaza: number | undefined;
   get plaza(): number {
     if (this.plazaId !== undefined) return this.plazaId;
     this.plazaId = -1;
     if (this.style.townSquare) return this.plazaId;
     const G = this.graph;
+    if (this.listedPlaza !== undefined) return this.plazaId = this.listedPlaza;
+    if (this.contents) { for (const [id, rs] of this.contents.blocks) if (rs.some((r) => r.k === "plaza")) return this.plazaId = id; return this.plazaId; }
     let best = Infinity;
     for (const B of G.blocks) {
       if (!B.inCity || B.water || B.park || B.area < 1200 || B.area > 4000) continue;
@@ -619,23 +626,25 @@ function buildNode(g: Batch, solid: Batch, lamps: Batch, plan: CityPlan, n: CNod
       // asphalt's corner) and the sidewalks' backs (the block's); or straight on across, with its
       // kerb (citygraph.ts sidewalkCorner).
       const sc = sidewalkCorner(G, n, i), local = sc.pts.map(([x, z]): [number, number] => [x - ox, z - oz]);
-      // (A Victorian corner's flags run along its first street: victorian-street.ts applySetts.)
-      if (CS.victorian) g.aux.set(Math.cos(A[i].h), -Math.sin(A[i].h), VIC_FLAGS);
+      // (A Victorian corner's flags run along its first street: victorian-street.ts applySetts; a
+      // storybook corner's scales too: storybook-street.ts applyCandyPaving.)
+      if (CS.victorian || CS.storybook) g.aux.set(Math.cos(A[i].h), -Math.sin(A[i].h), CS.victorian ? VIC_FLAGS : SB_SCALES);
       if (sc.corner) {
         ring.push(local[5]);
-        slab(g, local, 0, CURB_H, C.sidewalk, !!CS.victorian);
+        slab(g, local, 0, CURB_H, C.sidewalk, !!(CS.victorian || CS.storybook));
         g.aux.set(0, 0, -1);
       } else {
         const [a, , , d] = local;
-        slab(g, local, 0, CURB_H, C.sidewalk, !!CS.victorian);
+        slab(g, local, 0, CURB_H, C.sidewalk, !!(CS.victorian || CS.storybook));
         g.aux.set(0, 0, -1);
         const e0 = pt(i, A[i].mouth, -ri - 0.25), e1 = pt(j, A[j].mouth, rj + 0.25);
         slab(g, [a, e0, e1, d], CURB_H + 0.004, CURB_H + 0.012, C.curb);
       }
     }
-    // (The Victorian city's is laid in setts, in courses across its first arm: victorian-street.ts applySetts.)
-    const vs = !!CS.victorian;
-    if (vs) g.aux.set(Math.cos(A[0].h), -Math.sin(A[0].h), VIC_SETT);
+    // (The Victorian city's is laid in setts, in courses across its first arm: victorian-street.ts
+    // applySetts; the storybook's in candy cobbles: storybook-street.ts applyCandyPaving.)
+    const vs = !!(CS.victorian || CS.storybook);
+    if (vs) g.aux.set(Math.cos(A[0].h), -Math.sin(A[0].h), CS.victorian ? VIC_SETT : SB_COBBLES);
     for (let i = 1; i < ring.length; i++) g.tri(cx, 0, cz, ring[i - 1][0], 0, ring[i - 1][1], ring[i][0], 0, ring[i][1], C.asphalt, undefined, vs);
     g.tri(cx, 0, cz, ring[ring.length - 1][0], 0, ring[ring.length - 1][1], ring[0][0], 0, ring[0][1], C.asphalt, undefined, vs);
     g.aux.set(0, 0, -1);
@@ -791,9 +800,9 @@ function buildLots(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, ox: number, 
   const faces = blk.faces.slice().sort((p, q) => (G.faceA1(q) - G.faceA0(q)) - (G.faceA1(p) - G.faceA0(p)) || p - q);
   // A cul-de-sac (a close) into a big block where people live, in about half of those with room:
   // off the middle of its longest side, a lane in to a turning circle, and houses round it facing
-  // in. Its lane's span of that side has no lot. (The Victorian city has none: a turning circle
-  // is a suburb's.)
-  const close = district === "residential" && !keep && !CS.victorian ? closeOf(G, blk, poly, ox, oz, faces[0], plan.seed) : null;
+  // in. Its lane's span of that side has no lot. (The Victorian and storybook cities have none: a
+  // turning circle is a suburb's.)
+  const close = district === "residential" && !keep && !CS.victorian && !CS.storybook ? closeOf(G, blk, poly, ox, oz, faces[0], plan.seed) : null;
   // (A lot that won't fit is tried shallower, then narrower; a park's pavilion goes mid-side.)
   const tryLot = (f: number, a0: number, a1: number, d: number) => {
     for (const k of [1, 0.65, 0.4]) {
@@ -968,6 +977,7 @@ DRAW.lotBuilding = (R, _g, s, rnd) => {
     }
     case "pavilion": {
       door(b.x0, b.x1, b.z0);
+      if (CS.storybook) { const bays = Math.max(1, Math.round((b.x1 - b.x0) / BAY)); storyPavilion(s, b, CURB_H, bays > 1 ? b.x0 + (b.x1 - b.x0) * Math.round(bays / 2) / bays : (b.x0 + b.x1) / 2, wall, rnd); break; }   // (centred on its door: storybook-buildings-town.ts)
       const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.STOREFRONT, floors: 1, floorH: 4 }], wall);
       flatRoof(s, b, top, wall, rnd, 0);
       break;
@@ -990,19 +1000,22 @@ DRAW.lotBuilding = (R, _g, s, rnd) => {
     }
     default: {
       door(b.x0, b.x1, b.z0);
+      if (CS.storybook) { storyWorks(s, b, CURB_H, R.floorH as number, CS.walls.industrial, rnd); break; }   // (a storybook works, its wall from its own draws: storybook-buildings-town.ts)
       const top = facadeBox(s, b.x0, b.z0, b.x1, b.z1, CURB_H, [{ tile: FACADE.INDUSTRIAL, floors: 1, floorH: R.floorH as number }], wall);
       flatRoof(s, b, top, wall, rnd, 1);
-      if (CS.storybook) storyWorkshop(s, b, top, rnd);
     }
   }
 };
-// A storybook lot's buildings (storyLot), on `rect` in its face's frame, by its district.
+// A storybook lot's buildings, on `rect` in its face's frame, by its district (storybook-buildings-town.ts
+// storyLotBuilding): the town clock where the recipe says `clock`, the Tippy Tower along the first
+// side of that trade's blocks downtown, a house's tree behind it.
 DRAW.storyLot = (R, _g, s, rnd) => {
-  const [x0, z0, x1, z1] = R.rect as number[], side = R.side as number;
-  storyLot(s, { x0, z0, x1, z1 }, side, R.district as District, R.hs as number, rnd, (_f, dx0, dx1, n, painted = false) => {
+  const [x0, z0, x1, z1] = R.rect as number[], side = R.side as number, district = R.district as District;
+  const tree = storyLotBuilding(s, { x0, z0, x1, z1 }, CURB_H, district, R.hs as number, { walls: CS.walls, roofs: CS.roofs, gables: CS.gables, maxShopFloors: CS.maxShopFloors }, rnd, (dx0, dx1, n, painted = false) => {
     const bays = Math.max(1, Math.round((dx1 - dx0) / BAY));
     doorSpot(side, painted ? dx1 - (dx1 - dx0) * (Math.floor(bays / 2) + 0.5) / bays : bays > 1 ? dx0 + (dx1 - dx0) * Math.round(bays / 2) / bays : (dx0 + dx1) / 2, n);
-  });
+  }, { clock: !!R.clock, tippy: district === "downtown" && side === 0 && DC.fac === "sbTippyTower" });
+  if (tree && rnd() < 0.5) cityTree(s, tree[0] + range(rnd, -2, 2), CURB_H, tree[1], range(rnd, 5, 7), 1.6, pick(rnd, CS.trees.greens), rnd);
 };
 // A Victorian lot's building (vicLot), on `rect` in its face's frame, by its district (a park's
 // pavilion where the district is "park"): victorian-buildings-town.ts.
@@ -1037,35 +1050,6 @@ DRAW.ground = (R, g) => { slab(g, R.pts as [number, number][], 0, R.top as numbe
 DRAW.plaza = (R, g, s, rnd) => { buildPlaza(g, s, R.pts as [number, number][], rnd); };
 // (A polygon's corners to the centimetre.)
 const cmPts = (pts: [number, number][]) => pts.map(([x, z]) => [cm2(x), cm2(z)] as [number, number]);
-// This builds the storybook city's buildings on a lot b (in its face's frame, with the street at -z): downtown gets a
-// bent tower or two of round pods in hats, shops stand in crooked rows (now and then with a short tower), and
-// houses are squat pods or crooked gables. `door` records the front door for kerbDoors, as for any
-// city's lot (x0..x1 is the wall it is in, n its depth).
-function storyLot(s: Batch, b: Rect, f: number, district: District, hs: number, rnd: Rand, door: (f: number, x0: number, x1: number, n: number, painted?: boolean) => void) {
-  const w = b.x1 - b.x0, d = b.z1 - b.z0, roofs = CS.roofs;
-  if (district === "downtown" || (district === "commercial" && rnd() < 0.3)) {
-    const two = w > 1.7 * d, cw = two ? w / 2 : w, R = Math.max(2.4, Math.min(cw / 2, d / 2) - 0.4), n = sbFootSides(R);
-    const look = { walls: district === "downtown" ? CS.walls.downtown : CS.walls.commercial, roofs, ground: FACADE.STORY_SHOP, upper: FACADE.STORYBOOK, storeys: 0 };
-    for (let k = 0; k < (two ? 2 : 1); k++) {
-      const cx = two ? b.x0 + cw * (k + 0.5) : (b.x0 + b.x1) / 2, cz = b.z0 + R * Math.cos(Math.PI / n);
-      const storeys = district === "downtown" ? Math.max(3, Math.min(9, Math.round(3 + hs * range(rnd, 2, 9)))) : irange(rnd, 2, 3);
-      storyTower(s, cx, cz, R, { x: cw / 2 - 0.55, zf: R + 1.2, zb: d - R + 0.4 }, CURB_H, { ...look, storeys }, rnd);   // (its trims stay clear of the next lot's, or the other tower's)
-      if (k === 0) door(f, cx - 0.5, cx + 0.5, b.z0);
-    }
-    return;
-  }
-  if (district === "commercial") {
-    door(f, b.x0, b.x1, b.z0);
-    storyShopRow(s, b, CURB_H, Math.min(CS.maxShopFloors, irange(rnd, 1, 3)), { walls: CS.walls.commercial, roofs, ground: FACADE.STORY_SHOP, upper: FACADE.STORYBOOK, storeys: 0 }, rnd);
-    return;
-  }
-  // a house is set back behind its front garden, with its tree behind it
-  const h: Rect = { x0: b.x0 + 0.8, z0: b.z0 + range(rnd, 2.2, 3.2), x1: b.x1 - 0.8, z1: Math.min(b.z1, b.z0 + 10) };
-  const R = Math.max(2.6, Math.min((h.x1 - h.x0) / 2, (h.z1 - h.z0) / 2) - 0.2), cx = (h.x0 + h.x1) / 2, cz = h.z0 + R;
-  const r = storyHouse(s, cx, cz, R, CURB_H, { walls: CS.walls.residential, roofs: CS.gables, ground: FACADE.STORYBOOK, upper: FACADE.STORYBOOK, door: FACADE.STORY_DOOR, storeys: 0 }, rnd);
-  door(f, r.door[0], r.door[1], r.front, true);
-  if (rnd() < 0.5) cityTree(s, cx + range(rnd, -2, 2), CURB_H, cz + R + 2.8, range(rnd, 5, 7), 1.6, pick(rnd, CS.trees.greens), rnd);
-}
 // A close into block blk off face f (its longest side), or null: where a turning circle (9 m, and
 // a pavement round it) fits 20 to 40 m in from the middle of the side, 12 m clear of the block's
 // edge, the side being 50 m long at least. m: the lane's place along the side; D: how far in its
@@ -1291,7 +1275,7 @@ function buildInfill(g: Batch, s: Batch, plan: CityPlan, blk: CBlock, poly: [num
         const stacks: number[][] = [];
         for (let i = 0; i < n; i++) for (let j = 0; j < rows; j++) { const hgt = 1 + Math.floor(rnd() * 2), st: number[] = []; for (let lv = 0; lv < hgt; lv++) st.push(pick(rnd, CONTAINER_COLORS)); stacks.push(st); }
         if (CS.victorian) place("vicYard", { w: cm2(W), d: cm2(D) }, g, s, rnd);
-        else place("containers", { n, rows, stacks }, g, s, rnd);
+        else place("containers", { n, rows, stacks }, g, s, rnd);   // (the storybook city's yard draws in their place: DRAW.containers)
       });
     }
   }
@@ -1302,6 +1286,11 @@ const CONTAINER_COLORS = [0x9b2f24, 0x2f5d8a, 0x3f7a4a, 0xc78a2c, 0x6d6f73, 0x8a
 DRAW.garden = (R, g, s, rnd) => {
   const [A0, n0, A1, n1] = R.rect as number[], fence = R.fence as number, gd = n1 - n0;
   if (CS.victorian) { vicBackYard(s, g, A0, n0, A1, n1, CURB_H, CS.grass, rnd); return; }   // (a back yard walled in brick: victorian-buildings-town.ts)
+  if (CS.storybook) {   // (a picket fence and a pod shed: storybook-buildings-town.ts)
+    if (R.patio) slab(g, [[A0 + 0.5, n0], [A1 - 0.5, n0], [A1 - 0.5, n0 + 3], [A0 + 0.5, n0 + 3]], CURB_H, CURB_H + 0.03, CS.pavers);
+    storyGarden(s, A0, n0, A1, n1, CURB_H, R.shed as number | undefined, rnd);
+    return;
+  }
   for (const a of [A0, A1]) s.box(a, CURB_H + 0.6, (n0 + n1) / 2, 0.08, 1.2, gd, fence);
   s.box((A0 + A1) / 2, CURB_H + 0.6, n1, A1 - A0, 1.2, 0.08, fence);
   if (R.patio) slab(g, [[A0 + 0.5, n0], [A1 - 0.5, n0], [A1 - 0.5, n0 + 3], [A0 + 0.5, n0 + 3]], CURB_H, CURB_H + 0.03, CS.pavers);
@@ -1311,6 +1300,7 @@ DRAW.garden = (R, g, s, rnd) => {
 DRAW.shed = (R, _g, s, rnd) => {
   const x = (R.x as number | undefined) ?? 0, z = (R.z as number | undefined) ?? 0;
   if (CS.victorian && R.x === undefined) { vicShed(s, CURB_H, R.wall as number, rnd); return; }
+  if (CS.storybook) { storyShed(s, x, CURB_H, z, R.wall as number, rnd); return; }
   s.box(x, CURB_H + 1.1, z, 2.4, 2.2, 2.0, R.wall as number);
   if (R.x === undefined) s.box(x, CURB_H + 2.3, z, 2.7, 0.2, 2.3, 0x5a4a3a);   // (a back garden's has a roof; a grid block's middle's, as it always was, none)
 };
@@ -1318,7 +1308,9 @@ DRAW.shed = (R, _g, s, rnd) => {
 // fountain in the middle of a big one (its trees are trees of their own).
 DRAW.storyGarden = (R, g, s) => {
   const w = R.w as number, d = R.d as number, b: Rect = { x0: -w / 2, z0: -d / 2, x1: w / 2, z1: d / 2 };
-  slab(g, [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]], CURB_H, CURB_H + 0.02, C.path);
+  sbPave(g);
+  slab(g, [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]], CURB_H, CURB_H + 0.02, C.path, !!CS.storybook);
+  g.aux.set(0, 0, -1);
   slab(g, [[b.x0 + 1.4, b.z0 + 1.4], [b.x1 - 1.4, b.z0 + 1.4], [b.x1 - 1.4, b.z1 - 1.4], [b.x0 + 1.4, b.z1 - 1.4]], CURB_H + 0.02, CURB_H + 0.04, CS.grass);
   if (R.fountain) storyFountain(s, 0, CURB_H + 0.04, 0, Math.min(w, d) / 2 - 3);
 };
@@ -1347,14 +1339,16 @@ DRAW.planter = (_R, g, s) => {
   slab(g, [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]], CURB_H + 0.36, CURB_H + 0.36, 0x4a3a2a);
 };
 // Shipping containers in an industrial yard: n along, `rows` deep, each stack's colours bottom up.
-DRAW.containers = (R, _g, s) => {
+DRAW.containers = (R, _g, s, rnd) => {
+  if (CS.storybook) { storyYard(s, (R.n as number) * 2.6, (R.rows as number) * 6.3, CURB_H, rnd); return; }   // (barrels, spools, crates and yarn bales: storybook-buildings-town.ts)
   const n = R.n as number, rows = R.rows as number, stacks = R.stacks as number[][], W = n * 2.6, D = rows * 6.3;
   for (let i = 0; i < n; i++) for (let j = 0; j < rows; j++) (stacks[i * rows + j] ?? []).forEach((c, lv) => s.box(-W / 2 + 1.3 + i * 2.6, CURB_H + 1.3 + lv * 2.6, -D / 2 + 3.15 + j * 6.3, 2.44, 2.59, 6.06, c));
 };
-// A storybook tower standing on its own (an infill's), its radius and storeys.
+// A storybook tower standing on its own (an infill's), its radius and storeys. (Its pods keep
+// within its foot's corners, clear of the lots' towers round it.)
 DRAW.storyTower = (R, _g, s, rnd) => {
   const r = R.r as number;
-  storyTower(s, 0, 0, r, { x: r + 0.4, zf: r + 0.4, zb: r + 0.4 }, CURB_H, { walls: CS.walls.downtown, roofs: CS.roofs, ground: FACADE.STORYBOOK, upper: FACADE.STORYBOOK, storeys: R.storeys as number }, rnd);
+  storyTower(s, 0, 0, r, { x: r - 0.3, zf: r - 0.3, zb: r - 0.3 }, CURB_H, { walls: CS.walls.downtown, roofs: CS.roofs, ground: FACADE.STORYBOOK, upper: FACADE.STORYBOOK, storeys: R.storeys as number }, rnd);
 };
 const PARKED_COLORS = [0xb8bcc2, 0x2a2c30, 0xe8e6e0, 0x8a1e22, 0x24426e, 0x5a6066, 0x6e5a3a];
 
@@ -1689,6 +1683,9 @@ function facilityUV() {
 }
 // The rotation of the frame being drawn in, from the tile's.
 function frameRot() { let r = 0; for (const f of PLACED.frames) r += f.rot; return r; }
+// (A storybook plaza's or path's ground is fish-scale tiles, in rows along the frame's x:
+// storybook-street.ts applyCandyPaving. Its caller sets the aux back after.)
+function sbPave(g: Batch) { if (CS.storybook) { const r = frameRot(); g.aux.set(Math.cos(r), -Math.sin(r), SB_SCALES); } }
 // The asphalt under a grid block or a site's square (where its buildings leave it bare).
 DRAW.asphalt = (_R, g) => { g.box((STREET + BLOCK) / 2, -0.05, (STREET + BLOCK) / 2, BLOCK - STREET, 0.1, BLOCK - STREET, C.asphalt); };
 // A parking garage (garage.ts), its ramp on side `side`; `open`, its top deck open.
@@ -1730,6 +1727,8 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
       const P = G.facePt(e.f, 0, 0), [rx, rz] = frameApply({ ox: 0, oz: 0, rot: P.h }, 9, 18);
       inFrame({ ox: P.x - cx * BLOCK - rx, oz: P.z - cz * BLOCK - rz, rot: P.h }, [solid, ground, lamps], () => {
         entranceDoor(solid, { ...e.d, side: 0 });
+        // (The storybook city's trades have their emblem over the door: storybook-trades.ts.)
+        if (plan.style.storybook) { const y0 = e.d.y ?? CURB_H, [x, z] = frontPt(0, e.d.a, e.d.n), l = storyEmblem(solid, facilityAt(plan, e.b.kx, e.b.kz), x, z, y0, y0 + e.d.h, true); if (l) DC.lampSites.push(...l); }
         // (The Victorian city's facilities have their name over the door, on a signwriter's board
         // in gilt edged in gilt: signs.ts facilitySign.)
         const sign = plan.style.victorian && !e.d.plain ? facilitySign(plan, e.b.kx, e.b.kz) : null, uv = sign ? takeSlot(sign.text, sign.style) : null;
@@ -1764,6 +1763,7 @@ export function makeCityChunkBuilder(mats: CityMaterials, plan: CityPlan, fleet:
     group.userData.onRestore = () => { if (lampSites.length) LAMP_SITES.set(group, lampSites); };
     if (stalls.length && fleet) { const f = fleet(stalls); if (f) group.add(f); }
     group.userData.district = district;
+    registerTradeSpins(group);   // (the emblems' moving parts: storybook-trades.ts TradeSpinners)
     return group;
   };
 }
@@ -2078,6 +2078,8 @@ const doorSpot = (side: number, a: number, n: number, o: SpotLook = {}) => {
 function entranceDoor(s: Batch, d: KerbDoor) {
   const side = d.side, a = d.a, n = d.n, frame = d.frame, panel = d.panel, H = d.half, DH = d.h, wide = d.wide;
   const y0 = CURB_H;
+  // (The storybook city's: round-topped, storybook-buildings-town.ts. Drawn on side 0, as the chunk draws every door: frontPt.)
+  if (CS.storybook && !d.plain && side === 0) { const [x, z] = frontPt(0, a, n); storyKerbDoor(s, x, z, d.y ?? y0, H, DH, panel, frame, wide); return; }
   fspan(s, side, a - H - 0.09, a + H + 0.09, y0, y0 + DH + 0.12, n - 0.06, n + 0.01, frame);   // (a cm short of a wall's end it may be set against: shared planes flicker)
   fspan(s, side, a - H, a + H, y0, y0 + DH, n - 0.09, n - 0.05, panel);
   if (d.plain) {
@@ -2200,6 +2202,7 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
   // Victorian city's square has a statue or a drinking fountain in iron railings instead.)
   g.cyl(cx, y + 0.01, cz, R + 2.2, 0.02, shade(CS.pavers, 0.85), 24);
   if (CS.victorian) vicMonument(s, cx, y, cz, R, rnd);
+  else if (CS.storybook) storyFountain(s, cx, y, cz, R);
   else {
     s.cyl(cx, y + 0.3, cz, R, 0.6, 0xbab2a2, 24);
     s.cyl(cx, y + 0.55, cz, R - 0.35, 0.06, 0x4a7fa8, 24);
@@ -2216,6 +2219,8 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
     const b = a + Math.PI / n, bx = cx + Math.cos(b) * (rr - 1.5), bz = cz + Math.sin(b) * (rr - 1.5);
     if (!inPoly(poly, bx, bz) || polyDist(poly, bx, bz) < 2) continue;
     const ux = Math.cos(b), uz = Math.sin(b), tx = -uz, tz = ux;   // (out from the fountain, and along the bench)
+    // (The storybook city's is its curl-backed bench: storybook-street.ts.)
+    if (CS.storybook) { storyBench(s, bx - ux * 0.82, bz - uz * 0.82, ux, uz, y); pavementObstacle(bx, bz, 1.0, PK.bench); continue; }
     for (const [w, h, d, up] of [[1.8, 0.08, 0.45, 0.45], [1.8, 0.4, 0.08, 0.7]] as const) {
       const ox = up > 0.6 ? ux * 0.22 : 0, oz = up > 0.6 ? uz * 0.22 : 0;
       s.box(bx + ox, y + up, bz + oz, w, h, d, 0x7a5a3a, Math.atan2(-tz, tx));
@@ -2228,6 +2233,7 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
     pavementObstacle(x, z, 0.15, PK.lamp);
     // (The Victorian city's is a gas lamp: victorian-street.ts.)
     if (CS.victorian) { const l = vicLamp(s, x, z, cx, cz, y); DC.lampSites.push(l[0], l[1], l[2]); continue; }
+    if (CS.storybook) { const l = storyLamp(s, x, z, x + (cx - x) / (rr + 3) * 1.5, z + (cz - z) / (rr + 3) * 1.5, y); DC.lampSites.push(l[0], l[1], l[2]); continue; }
     s.cyl(x, y + 2.2, z, 0.08, 4.4, C.pole, 6); s.aux.set(0, 0, -2); s.cyl(x, y + 4.5, z, 0.28, 0.4, C.lampHead, 8); s.aux.set(0, 0, -1);
     DC.lampSites.push(x, y + 4.4, z);
   }
@@ -2237,8 +2243,10 @@ function buildPlaza(g: Batch, s: Batch, poly: [number, number][], rnd: Rand) {
 // green bike lane beside the traffic, and by the kerb a loading lane of 6.5 m bays, some with a
 // van or car parked in them, every third a loading zone (yellow kerb), all clear of the corners.
 type BoxFn = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) => void;
+// The storybook city's has only a row of polka dots in the edge line's place (polkaDots).
 function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number, a1: number, salt: number) {
   const cl = STREET / 2, sg = axis === 0 ? 1 : -1, M = 0.012, MH = 0.02, len = a1 - a0, mid = (a0 + a1) / 2;
+  if (CS.storybook) { polkaDots(g, axis, a0, a1, cl + sg * 0.1, M); return; }
   box(g, mid, M, cl + sg * 0.1, len - 8, MH, 0.12, C.white);
   for (let p = a0 + 6; p + 3 <= a1 - 6; p += 9) box(g, p + 1.5, M, cl + sg * 3, 3, MH, 0.12, C.white);
   // (The bike lane: green, edged white on its kerb side.)
@@ -2260,6 +2268,19 @@ function oneWayMarkings(g: Batch, s: Batch, box: BoxFn, axis: 0 | 1, a0: number,
     }
   }
 }
+// A flat dot on the ground at (x, y, z), r across: a hexagon of six triangles, which is all a dot
+// needs from above, turned by `spin`.
+function dot(g: Batch, x: number, y: number, z: number, r: number, spin: number, c: number) {
+  for (let i = 0; i < 6; i++) {
+    const b0 = spin * 0.37 + i * Math.PI / 3, b1 = b0 + Math.PI / 3;
+    g.tri(x, y, z, x + Math.cos(b1) * r, y, z + Math.sin(b1) * r, x + Math.cos(b0) * r, y, z + Math.sin(b0) * r, c);
+  }
+}
+// The storybook city's centre line, a row of polka dots, pink and gold by turns, along the street's
+// frame from a0 to a1 at `ac` across.
+function polkaDots(g: Batch, axis: 0 | 1, a0: number, a1: number, ac: number, M: number) {
+  for (let p = a0 + 4.5, k = 0; p < a1 - 4; p += 2.2, k++) dot(g, axis === 0 ? p : ac, M + 0.004, axis === 0 ? ac : p, 0.3, p, k % 2 ? SB.mustard : C.yellow);
+}
 function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: Rand, loF: Frontage, hiF: Frontage,
   loAl: (a: number) => number, hiAl: (a: number) => number, a0: number, a1: number, feat: { el: boolean; fw: boolean; icClear: [number, number] | null; oneway?: boolean; ring?: boolean; loading?: (number | null)[]; median?: boolean; wet?: boolean[]; salt?: number; posts?: { right: boolean; s: number; r: number }[]; furniture?: [FurnitureItem[], FurnitureItem[]] | null }) {
   const box = (b: Batch, al: number, y: number, ac: number, lal: number, h: number, lac: number, color: number) =>
@@ -2277,7 +2298,8 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   // along each kerb.
   // (aux.xy: the way along the street in the world, through the frames it is drawn in.)
   const fr = PLACED.frames.reduce((t, f) => t + f.rot, 0), sAlong = [axis ? Math.sin(fr) : Math.cos(fr), axis ? Math.cos(fr) : -Math.sin(fr)];
-  if (CS.victorian) g.aux.set(sAlong[0], sAlong[1], VIC_SETT);
+  // The storybook city's is candy cobbles (storybook-street.ts applyCandyPaving).
+  if (CS.victorian || CS.storybook) g.aux.set(sAlong[0], sAlong[1], CS.victorian ? VIC_SETT : SB_COBBLES);
   box(g, mid, -0.05, cl, len, 0.1, STREET, C.asphalt);
   g.aux.set(0, 0, -1);
   if (CS.victorian) for (const v of [KERB, STREET - KERB - 0.4]) flat(a0, a1, v, v + 0.4, 0.004, shade(C.curb, 0.82));
@@ -2309,19 +2331,12 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     const parts: [number, number][] = d ? [[a0, d[0]], [d[1], a1]] : [[a0, a1]];
     for (const [p0, p1] of parts) {
       if (p1 - p0 < 0.05) continue;
-      if (CS.victorian) g.aux.set(sAlong[0], sAlong[1], VIC_FLAGS);   // (York stone flags: victorian-street.ts applySetts)
+      // (York stone flags: victorian-street.ts applySetts; the storybook's fish scales: storybook-street.ts applyCandyPaving.)
+      if (CS.victorian || CS.storybook) g.aux.set(sAlong[0], sAlong[1], CS.victorian ? VIC_FLAGS : SB_SCALES);
       box(g, (p0 + p1) / 2, CURB_H / 2, (lo + hi) / 2, p1 - p0, CURB_H, hi - lo, C.sidewalk);
       g.aux.set(0, 0, -1);
       box(g, (p0 + p1) / 2, CURB_H + 0.004, edge + 0.125, p1 - p0, 0.008, 0.25, C.curb);
-      if (CS.storybook) {
-        // The sidewalk is checkered with cream squares laid on the pink, two across, clear of the kerb's edge strip.
-        const c0 = lo === 0 ? 0 : edge + 0.25, c1 = lo === 0 ? edge : STREET, cw = (c1 - c0) / 2, y = CURB_H + 0.002;
-        for (let k = Math.floor(p0 / 1.5); k * 1.5 < p1; k++) for (let j = 0; j < 2; j++) {
-          if ((k + j) % 2) continue;
-          const u0 = Math.max(p0, k * 1.5) + 0.01, u1 = Math.min(p1, (k + 1) * 1.5) - 0.01;
-          if (u1 - u0 > 0.05) flat(u0, u1, c0 + j * cw + 0.01, c0 + (j + 1) * cw - 0.01, y, SB.cream);
-        }
-      } else if (CS.victorian) {
+      if (CS.victorian) {
         // (The pavement's York stone flags are drawn by the ground's shader: victorian-street.ts applySetts.)
         // (The granite kerb's face, under its edge strip.)
         box(g, (p0 + p1) / 2, CURB_H / 2, lo === 0 ? KERB + 0.003 : STREET - KERB - 0.003, p1 - p0, CURB_H, 0.006, C.curb);
@@ -2346,11 +2361,19 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
     box(g, mm, CURB_H + 0.01, cl, m1 - m0 - 0.4, 0.02, 0.44, CS.grass);
     const nL = Math.max(1, Math.round((m1 - m0) / 30)), poles = Array.from({ length: nL }, (_, k) => m0 + (m1 - m0) * (k + 0.5) / nL);
     // (No shrub round a streetlight's pole: the pole stood in it.)
-    for (let p = m0 + 1.5; p < m1 - 1; p += 2.2) { const c = hash2(Math.round(p * 10), Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5b1) < 0.5 ? 0x3e6b34 : 0x4b7a3a; if (poles.every((q) => Math.abs(q - p) > 0.8)) box(s, p, CURB_H + 0.22, cl, 1.3, 0.44, 0.4, c); }
+    // (The storybook city's are clipped balls, lime and mint by turns.)
+    for (let p = m0 + 1.5, k = 0; p < m1 - 1; p += 2.2, k++) {
+      const c = hash2(Math.round(p * 10), Math.round(cl * 10), (DC.plan as CityPlan).seed, 0x5b1) < 0.5 ? 0x3e6b34 : 0x4b7a3a;
+      if (!poles.every((q) => Math.abs(q - p) > 0.8)) continue;
+      if (CS.storybook) { const [x, z] = axis === 0 ? [p, cl] : [cl, p]; s.ico(x, CURB_H + 0.3, z, 0.3, k % 2 ? SB.mint : SB.lime, 0.9, p); }
+      else box(s, p, CURB_H + 0.22, cl, 1.3, 0.44, 0.4, c);
+    }
     for (let k = 0; k < nL; k++) {
       const p = m0 + (m1 - m0) * (k + 0.5) / nL, [px, pz] = axis === 0 ? [p, cl] : [cl, p];
       // (The Victorian city's is a gas lamp: victorian-street.ts.)
       if (CS.victorian) { const l = vicLamp(s, px, pz, axis === 0 ? px : px + 1, axis === 0 ? pz + 1 : pz, CURB_H); DC.lampSites.push(l[0], l[1], l[2]); continue; }
+      // (The storybook city's is two crooks back to back on one pole: storybook-street.ts.)
+      if (CS.storybook) { for (const l of storyTwinLamp(s, px, pz, axis === 0 ? 0 : 1.6, axis === 0 ? 1.6 : 0, CURB_H)) DC.lampSites.push(l[0], l[1], l[2]); continue; }
       s.cyl(px, CURB_H + 3.75, pz, 0.1, 7.5, C.pole, 6);
       for (const d of [-1, 1]) {
         const [hx, hz] = axis === 0 ? [px, cl + d * 1.6] : [cl + d * 1.6, pz];
@@ -2362,14 +2385,7 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   } else if (CS.victorian) {
     // (The Victorian city's setts carry no painted lines.)
   } else if (!feat.oneway && CS.storybook) {
-    // The storybook city's centre line is a row of polka dots, pink and gold by turns.
-    for (let p = a0 + 4.5, k = 0; p < a1 - 4; p += 2.2, k++) {
-      const [x, z] = axis === 0 ? [p, cl] : [cl, p], y = M + 0.004, c = k % 2 ? SB.mustard : C.yellow;
-      for (let i = 0; i < 6; i++) {   // (each dot is flat, a hexagon of six triangles, which is all a dot needs from above)
-        const a0 = p * 0.37 + i * Math.PI / 3, a1 = a0 + Math.PI / 3;
-        g.tri(x, y, z, x + Math.cos(a1) * 0.3, y, z + Math.sin(a1) * 0.3, x + Math.cos(a0) * 0.3, y, z + Math.sin(a0) * 0.3, c);
-      }
-    }
+    polkaDots(g, axis, a0, a1, cl, M);
   } else if (!feat.oneway) {
     // (Yellow 4 mm under the white, which can cross it where streets meet: shared planes flicker.)
     box(g, mid, M - 0.002, cl - 0.15, len - 8, MH - 0.004, 0.12, C.yellow);
@@ -2377,21 +2393,25 @@ function buildStreet(g: Batch, s: Batch, axis: 0 | 1, district: District, rnd: R
   }
   // Loading zones (lo side, hi side): 16 m of yellow kerb, inside the street's ends, and no
   // markings on the road.
-  // (The Victorian city paints no kerbs.)
-  if (!CS.victorian) feat.loading?.forEach((at, i) => {
+  // (The Victorian city and the storybook city paint no kerbs.)
+  if (!CS.victorian && !CS.storybook) feat.loading?.forEach((at, i) => {
     if (at === null || at === undefined) return;
     const c = Math.max(a0 + 14, Math.min(a1 - 14, at)), kerbE = i ? STREET - KERB : KERB;
     if (a1 - a0 < 30) return;
     box(g, c, CURB_H + 0.012, kerbE + (i ? 0.055 : -0.055), 16, 0.02, 0.13, C.yellow);   // (a cm proud of the kerb's face, which the kerb's edge strip shares)
   });
-  if (!CS.victorian && (!feat.oneway || feat.ring)) for (const lane of feat.oneway ? [cl, cl + 3] : [cl - 3, cl + 3])
+  // (The storybook city paints no lane lines.)
+  if (!CS.victorian && !CS.storybook && (!feat.oneway || feat.ring)) for (const lane of feat.oneway ? [cl, cl + 3] : [cl - 3, cl + 3])
     for (let p = a0 + 6; p + 3 <= a1 - 6; p += 9) box(g, p + 1.5, M, lane, 3, MH, 0.12, C.white);
   // Stop lines (forward traffic stops before the next intersection at a1, backward before a0),
   // then continental crosswalks at both ends.
   // (Short of the yellow centre lines: overlapping markings flicker.)
   if (!feat.ring && !CS.victorian) {
-    box(g, a1 - (STOP_BACK - 0.2), M, (fwdLo + fwdHi) / 2, 0.4, MH, fwdHi - fwdLo - 0.5, C.white);
-    if (!feat.oneway) box(g, a0 + (STOP_BACK - 0.2), M, (backLo + backHi) / 2, 0.4, MH, backHi - backLo - 0.5, C.white);
+    // (The storybook city has no stop lines, only its zebras: seen down the street, a row across the
+    // lanes reads as a line along the kerb.)
+    const stop = (at: number, lo: number, hi: number) => { if (!CS.storybook) box(g, at, M, (lo + hi) / 2, 0.4, MH, hi - lo - 0.5, C.white); };
+    stop(a1 - (STOP_BACK - 0.2), fwdLo, fwdHi);
+    if (!feat.oneway) stop(a0 + (STOP_BACK - 0.2), backLo, backHi);
     for (const c0 of [a0 + 0.3, a1 - 3.3])
       for (let ac = KERB + 0.6, k = 0; ac < STREET - KERB - 0.4; ac += 1.0, k++) box(g, c0 + 1.4, M, ac, 2.8, MH, 0.5, CS.storybook && k % 2 ? SB.pink : C.white);
   } else if (!feat.ring) {
@@ -2567,7 +2587,10 @@ function buildOutskirts(ground: Batch, solid: Batch, plan: CityPlan, cx: number,
   for (const eg of plan.style.victorian ? G.gates : plan.style.storybook ? [G.gates[0]] : []) {
     if (!eg) continue;
     const e = gateEnd(eg), fx = Math.cos(e.h), fz = -Math.sin(e.h), x = e.x - fx * 6, z = e.z - fz * 6;
-    if (Math.floor(x / BLOCK) === cx && Math.floor(z / BLOCK) === cz) (plan.style.victorian ? vicGate : storyGate)(solid, x - ox, z - oz, fx, fz, STREET / 2 + 1.6, 0);
+    if (Math.floor(x / BLOCK) !== cx || Math.floor(z / BLOCK) !== cz) continue;
+    if (plan.style.victorian) { vicGate(solid, x - ox, z - oz, fx, fz, STREET / 2 + 1.6, 0); continue; }
+    // (The storybook's board carries the town's name, hand-lettered: signs.ts PLATE_STORY_GATE.)
+    storyGate(solid, x - ox, z - oz, fx, fz, STREET / 2 + 1.6, 0, DC.plates ? (px, py, pz, w, h, r) => DC.plates!.put(plan.name, px, py, pz, w, h, r, PLATE_STORY_GATE) : null);
   }
   // (Covered: a city block's, or a river's, over it. Streets lie over the land, which runs under them.)
   const covered = (wx: number, wz: number) => { const B = G.blockAt(wx, wz); return !!B && (B.inCity || B.water); };
@@ -2696,7 +2719,9 @@ DRAW.pit = (R, g) => { g.box(R.x as number, CURB_H + 0.0125, R.z as number, 1.4,
 // The storybook city's bunting across a street, between striped poles at (x, z) and (bx, bz).
 DRAW.bunting = (R, _g, s) => {
   const ax = R.x as number, az = R.z as number, bx = R.bx as number, bz = R.bz as number;
-  bunting(s, ax, az, bx, bz, 0, R.salt as number);
+  // (One in five is the Very Long Scarf instead: storybook-street.ts.)
+  if (hash2(Math.round(ax * 10), Math.round(az * 10), R.salt as number, 0x5ca4) < 0.2) storyScarf(s, ax, az, bx, bz, 0, R.salt as number);
+  else bunting(s, ax, az, bx, bz, 0, R.salt as number);
   pavementObstacle(ax, az, 0.15, PK.lamp); pavementObstacle(bx, bz, 0.15, PK.lamp);
 };
 // Palm: a gently leaning ringed trunk and a crown of drooping fronds.
@@ -2876,7 +2901,9 @@ function wantsMarquee() {
 }
 
 function plaza(g: Batch, s: Batch, r: Rect, rnd: Rand) {
+  sbPave(g);
   g.span(r.x0 + 0.5, CURB_H, r.z0 + 0.5, r.x1 - 0.5, CURB_H + 0.02, r.z1 - 0.5, C.plaza);
+  g.aux.set(0, 0, -1);
   const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2;
   if (rnd() < 0.5) chessStatues(s, cx, cz, rnd() * Math.PI * 2);   // the giant red panda and capybara, mid-game
   else {
@@ -3046,10 +3073,12 @@ DRAW.house = (R, g, s, rnd) => {
     }
   }
   const fx = (h.x0 + h.x1) / 2, fz = (h.z0 + h.z1) / 2;
+  sbPave(g);
   if (front === 0) g.span(fx - 0.6, CURB_H, h.z1, fx + 0.6, CURB_H + 0.02, r.z1, C.path);
   else if (front === 2) g.span(fx - 0.6, CURB_H, r.z0, fx + 0.6, CURB_H + 0.02, h.z0, C.path);
   else if (front === 1) g.span(h.x1, CURB_H, fz - 0.6, r.x1, CURB_H + 0.02, fz + 0.6, C.path);
   else g.span(r.x0, CURB_H, fz - 0.6, h.x0, CURB_H + 0.02, fz + 0.6, C.path);
+  g.aux.set(0, 0, -1);
 };
 // A back garden's pool on `rect`.
 DRAW.pool = (R, g) => { const r = rectFrom(R.rect); g.span(r.x0, CURB_H, r.z0, r.x1, CURB_H + 0.03, r.z1, 0x3aa0d0); };
@@ -3233,8 +3262,10 @@ function buildPark(g: Batch, s: Batch, B: Rect, rnd: Rand, keep: Rect | null = n
 DRAW.park = (R, g, s) => {
   const B = rectFrom(R.rect), cx = (B.x0 + B.x1) / 2, cz = (B.z0 + B.z1) / 2, w = B.x1 - B.x0;
   g.span(B.x0, 0, B.z0, B.x1, LOT_TOP, B.z1, CS.grass);
+  sbPave(g);
   g.span(B.x0, CURB_H, cz - 1.2, B.x1, CURB_H + 0.02, cz + 1.2, C.path);
   g.span(cx - 1.2, CURB_H, B.z0, cx + 1.2, CURB_H + 0.02, B.z1, C.path);
+  g.aux.set(0, 0, -1);
   if (R.pond) {
     const px = cx + w * 0.22, pz = cz + w * 0.22;
     s.cyl(px, CURB_H + 0.02, pz, 6.2, 0.06, 0xcabf9e, 14);
@@ -3526,7 +3557,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // to the void that glints at a distance.)
   if (yardA1 < 51) fspan(g, side, yardA1, 51, 0, LOT_TOP, 0, L.edge + 0.02, pave);
   fspan(g, side, 9, yardA1, 0, 0.02, 0, L.edge + 0.02, 0x66655f);
-  if (DC.fac !== "steamBrewery") for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
+  if (DC.fac !== "steamBrewery" && DC.fac !== "knittingWorks") for (const b of L.bays) for (const k of [-1.7, 1.7]) fspan(g, side, b + k - 0.06, b + k + 0.06, 0.02, 0.03, 1.5, L.edge, C.yellow);
 
   // The dock building: a plinth up to platform height, a band of dock doors on the yard side,
   // then a building of its own (warehouseLook): wall colour and cladding, height, roof, an accent
@@ -3538,6 +3569,15 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
     : DC.fac === "steamBrewery" ? buildBreweryStatic(s, worksFrameOf((a, n) => frontPt(side, a, n)), L) : buildWarehouse(s, side, face, L, r, district, rnd);
   if (DC.fac === "ryderWarehouse" && uv) ryderRoofSign(s, r, top, face, uv);
   if (DC.fac === "steamBrewery") { breweryDock(s, L, quads, uv); return; }
+  if (DC.fac === "knittingWorks") {   // (its dock is a storybook one, and its name goes up on the hall's gable, under the barrel roof's front)
+    for (const p of storyDock(s, worksFrameOf((a, n) => frontPt(side, a, n)), L)) DC.lampSites.push(...p);
+    if (uv) {
+      const d = FRONT_NODE[side][2], y = WORKS.hallTop + 3.4, n = L.wall + 0.28;
+      fspan(s, side, 15.7, 25.3, y - 0.72, y + 0.72, n - 0.1, n, SB.ink);
+      signQuad(quads, uv, side, 20.5, n - 0.11, y, 9.2, 1.15, -RIGHT[d][0], -RIGHT[d][1]);
+    }
+    return;
+  }
 
   // Platform and its edge, bumpers, a door at every bay (the site's own style), the leveller,
   // seal and dock light at the bays trucks use, wall packs, the steps, and some dressing.
@@ -3674,9 +3714,8 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   if (pLo - 4.5 > 9.5) posts(9.2, pLo - 4.5);
   if (L.deep && pHi + 18 < 50.5) posts(pHi + 18, 50.8);
 
-  // A shallow dock sits beside the store or tower that fronts the rest of the street (the knitting
-  // works' yard is its process instead: storybook-landmark-knitting-works.ts).
-  if (!L.deep && DC.fac !== "knittingWorks") {
+  // A shallow dock sits beside the store or tower that fronts the rest of the street.
+  if (!L.deep) {
     const sr = frontRect(side, L.a1, 48.5, 2, 39.5);
     if (district === "downtown") {
       const wall = pick(rnd, CS.walls.downtown);
@@ -3698,11 +3737,7 @@ function buildDockSite(g: Batch, s: Batch, L: DockLayout, district: District, hs
   // The name sign: across the dock wall above the doors, or on the store front.
   if (uv) {
     const d = FRONT_NODE[side][2], ox = -RIGHT[d][0], oz = -RIGHT[d][1];   // out towards the street
-    if (DC.fac === "knittingWorks") {   // the sign goes up on the hall's gable, under the barrel roof's front
-      const y = WORKS.hallTop + 3.4, n = L.wall + 0.28;
-      fspan(s, side, 15.7, 25.3, y - 0.72, y + 0.72, n - 0.1, n, SB.ink);
-      signQuad(quads, uv, side, 20.5, n - 0.11, y, 9.2, 1.15, ox, oz);
-    } else if (L.deep) {
+    if (L.deep) {
       const y = P + 4.6 + 1.1;
       fspan(s, side, 25, 35, y - 0.72, y + 0.72, L.wall - 0.12, L.wall - 0.012, C.dark);   // (off the wall's plane, and the ribs')
       signQuad(quads, uv, side, 30, L.wall - 0.13, y, 9.6, 1.2, ox, oz);

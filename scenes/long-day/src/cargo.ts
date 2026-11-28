@@ -79,16 +79,39 @@ export const CARGO: CargoType[] = [
   cargoType("envelope", "One tiny envelope", "humorous", "carry", ["lawOffice"], ["courthouse"], "box26", [1, 1], 12),
   cargoType("sailboat", "Sailboat", "humorous", "tow", ["boatyard"], ["marina"], "flatbed", [1, 1], 4),
   cargoType("toilet", "Portable toilet", "humorous", "teamLift", ["sanitationDepot"], ["construction"], "flatbed", [1, 2], 2),
-  // The storybook city's cargo includes the knitting works' striped bolts of knitting, rolled out (journey.ts makeJob).
-  cargoType("knitwear", "Bolts of knitting", "uncommon", "roll", ["knittingWorks"], ["retail", "outfitter", "toyStore", "cornerStore", "bigBox", "laundromat", "partySupply"], "box26", [4, 10], 0.5),
-  // And its other wonders are made only there (STORY_CARGO is never drawn outside a storybook city), and are
-  // carried about it, or out to the next city as freight (journey.ts freightFor).
-  cargoType("rainbowJars", "Bottled rainbows", "uncommon", "handTruck", ["pharmacy", "florist"], ["cafe", "restaurant", "retail", "bakery", "hotel"], "box26", [4, 10], 0.5),
-  cargoType("lollipops", "Giant lollipops", "uncommon", "carry", ["bakery", "iceCream"], ["iceCream", "toyStore", "cornerStore", "partySupply", "school"], "box16", [2, 6], 0.25),
-  cargoType("cloudCushions", "Cloud cushions", "uncommon", "carry", ["knittingWorks"], ["hotel", "residence", "retail", "apartment", "outfitter"], "box26", [3, 8], 0.5),
-  cargoType("windupToys", "Wind-up toys", "uncommon", "handTruck", ["hardware", "toyStore"], ["toyStore", "retail", "school", "partySupply"], "box26", [4, 10], 0.5),
-  cargoType("balloons", "Balloon bunches", "uncommon", "carry", ["partySupply", "toyStore"], ["school", "theater", "cafe", "residence", "hotel"], "box16", [2, 6], 0.5),
-  cargoType("musicBoxes", "Music boxes", "uncommon", "carry", ["musicStore", "toyStore"], ["theater", "hotel", "residence", "museum", "retail"], "box16", [2, 6], 0.25),
+  // The storybook city's goods (STORY_CARGO) are drawn only there, and carried by hand, on the
+  // hand truck, rolled or lifted between two. Each goes between its trades (facilities.ts, the sb
+  // ids) and its knitting works. The works' bolts of knitting and cloud cushions go on as freight to
+  // the next city, so they also go to that city's facilities.
+  cargoType("knitwear", "Bolts of knitting", "uncommon", "roll", ["knittingWorks"], ["sbScarfShop", "sbEmporium", "sbMuseum", "sbHatStacker",
+    "retail", "outfitter", "toyStore", "cornerStore", "bigBox", "laundromat", "partySupply"], "box26", [4, 10], 0.5),
+  cargoType("cloudCushions", "Cloud cushions", "uncommon", "carry", ["knittingWorks", "sbCloudLaundry"], ["sbSnoozery", "sbUpsideInn", "sbPodHouse", "sbTeeterFlats", "sbTippyTower",
+    "hotel", "residence", "retail", "apartment", "outfitter"], "box26", [3, 8], 0.5),
+  cargoType("gumdrops", "Sacks of gumdrops", "common", "handTruck", ["sbGumdropMill"], ["sbSweetShop", "sbBakery", "sbScoopery", "sbCornerNook", "sbFizzParlour"], "box26", [6, 14], 0.5),
+  cargoType("fizzPop", "Crates of fizzy pop", "common", "handTruck", ["sbFizzWorks"], ["sbCornerNook", "sbFizzParlour", "sbNoodlery", "sbPlayhouse", "sbGazebo"], "box26", [6, 16], 0.5),
+  cargoType("yarnBalls", "Baskets of yarn", "common", "carry", ["sbSpinnery"], ["knittingWorks", "sbScarfShop", "sbHatStacker", "sbPodHouse", "sbTeeterFlats"], "box16", [3, 8], 0.25),
+  cargoType("springs", "Crates of springs", "common", "handTruck", ["sbSpringWorks"], ["sbGadgetry", "sbClockery", "sbTinklery", "sbToyShop"], "box26", [6, 14], 0.5),
+  cargoType("jamJars", "Snorkberry jam", "common", "handTruck", ["sbJammery"], ["sbBakery", "sbTeaHouse", "sbCornerNook", "sbSweetShop", "sbPodHouse", "sbTeeterFlats"], "box26", [6, 14], 0.5),
+  cargoType("buns", "Trays of buns", "common", "carry", ["sbBakery"], ["sbTeaHouse", "sbNoodlery", "sbSchool", "sbUpsideInn", "sbGazebo", "sbDoodads"], "box16", [3, 8], 0.25),
+  cargoType("snorkberries", "Baskets of snorkberries", "common", "carry", ["sbSnorkberryPatch"], ["sbJammery", "sbBakery", "sbScoopery", "sbCornerNook"], "box16", [3, 8], 0.25),
+  cargoType("trufflunkTufts", "Trufflunk tufts", "common", "carry", ["sbTrufflunkGrove"], ["sbSpinnery", "knittingWorks", "sbSnoozery"], "box26", [3, 8], 0.5),
+  cargoType("rainbowJars", "Bottled rainbows", "uncommon", "handTruck", ["sbRainbowRefinery"], ["sbTeaHouse", "sbNoodlery", "sbEmporium", "sbBakery", "sbUpsideInn", "sbFizzParlour"], "box26", [4, 10], 0.5),
+  cargoType("lollipops", "Giant lollipops", "uncommon", "carry", ["sbGumdropMill"], ["sbSweetShop", "sbScoopery", "sbCornerNook", "sbPartyShop", "sbSchool", "sbToyShop"], "box16", [2, 6], 0.25),
+  cargoType("windupToys", "Wind-up toys", "uncommon", "handTruck", ["sbGadgetry"], ["sbToyShop", "sbEmporium", "sbSchool", "sbPartyShop"], "box26", [4, 10], 0.5),
+  cargoType("balloons", "Balloon bunches", "uncommon", "carry", ["sbPartyShop"], ["sbSchool", "sbPlayhouse", "sbKiteMeadow", "sbGazebo", "sbTeaHouse", "sbToyShop"], "box16", [2, 6], 0.5),
+  cargoType("musicBoxes", "Music boxes", "uncommon", "carry", ["sbTinklery"], ["sbPlayhouse", "sbUpsideInn", "sbPodHouse", "sbMuseum", "sbEmporium"], "box16", [2, 6], 0.25),
+  cargoType("bubbleBarrels", "Barrels of bubbles", "uncommon", "roll", ["sbBubbleWorks"], ["sbCloudLaundry", "sbPartyShop", "sbPlayhouse", "sbFizzParlour"], "box26", [3, 8], 0.5),
+  cargoType("hatStacks", "Hat stacks", "uncommon", "carry", ["sbHatStacker"], ["sbPodHouse", "sbTeeterFlats", "sbPlayhouse", "sbUpsideInn", "sbEmporium", "sbMuseum"], "box16", [2, 6], 0.25),
+  cargoType("cuckooClocks", "Cuckoo clocks", "uncommon", "carry", ["sbClockery"], ["sbPodHouse", "sbUpsideInn", "sbTippyTower", "sbDoodads", "sbEmporium", "sbSchool"], "box16", [2, 6], 0.25),
+  cargoType("doodads", "Crates of doodads", "uncommon", "handTruck", ["sbGadgetry"], ["sbDoodads", "sbTippyTower", "sbMuseum", "sbSchool", "sbEmporium"], "box26", [4, 10], 0.5),
+  cargoType("kites", "Kites", "uncommon", "carry", ["sbToyShop"], ["sbKiteMeadow", "sbSchool", "sbPartyShop", "sbPodHouse"], "box16", [2, 6], 0.25),
+  cargoType("upsideCake", "Upside-down cake", "rare", "carry", ["sbBakery"], ["sbGazebo", "sbUpsideInn", "sbTeaHouse"], "box16", [1, 1], 0.5),
+  cargoType("longScarf", "A very long scarf", "rare", "teamLift", ["knittingWorks", "sbScarfShop"], ["sbMuseum", "sbTippyTower"], "box26", [1, 1], 2),
+  cargoType("snuffleump", "A snoozing snuffleump", "humorous", "teamLift", ["sbTrufflunkGrove"], ["sbSnoozery", "sbMuseum"], "box26", [1, 1], 2),
+  // (The storybook city's freight in, STORY_FREIGHT_IN: picked up in the city before, from what every city has.)
+  cargoType("sugarSacks", "Sacks of sugar", "common", "handTruck", ["dc", "foodServiceWh", "mill"], ["sbGumdropMill", "sbBakery", "sbJammery", "sbSweetShop"], "box26", [6, 14], 0.5),
+  cargoType("woolBales", "Bales of wool", "common", "handTruck", ["dc", "ryderWarehouse", "farmCoop"], ["sbSpinnery", "knittingWorks"], "box26", [4, 10], 0.5),
+  cargoType("glassJars", "Crates of empty jars", "common", "handTruck", ["dc", "bottling", "ryderWarehouse"], ["sbJammery", "sbRainbowRefinery", "sbFizzWorks"], "box26", [6, 14], 0.5),
   // The Victorian city's goods (VIC_CARGO) are drawn only there, and carried by hand, on the sack
   // truck, rolled or lifted between two: its brewery's ale and stout, the grocer's and baker's
   // staples, and a household's treasures. Each comes from and goes to facilities Ravensgate has.
@@ -169,11 +192,15 @@ const TIER_WEIGHT: Record<Tier, number> = { common: 0.70, uncommon: 0.20, rare: 
 // nothing is left.
 // The waterfront's cargo (facilities.ts waterfrontAt), which a town on the sea favours (journey.ts makeJob).
 export const SEA_CARGO = new Set(["seafood", "shipStores", "surfboards", "nets"]);
-// The storybook city's cargo is made only there. It is never drawn but where allowed for it (pickCargo),
-// which is only ever in a storybook city or as its freight out (journey.ts makeJob, freightFor).
-export const STORY_CARGO = new Set(["knitwear", "rainbowJars", "lollipops", "cloudCushions", "windupToys", "balloons", "musicBoxes"]);
-// Those the knitting works makes (which every storybook city has) are what one sends on as freight.
+// The storybook city's goods are likewise drawn only there, and in a storybook city every job draws
+// from STORY_TOWN alone (journey.ts makeJob). The knitting works' (every storybook city has it) are
+// what it sends on as freight, and the city before it brings in one of STORY_FREIGHT_IN, which come
+// from facilities every other city has (journey.ts freightFor).
 export const STORY_FREIGHT = ["knitwear", "cloudCushions"];
+export const STORY_FREIGHT_IN = ["sugarSacks", "woolBales", "glassJars"];
+export const STORY_TOWN = new Set(["knitwear", "cloudCushions", "gumdrops", "fizzPop", "yarnBalls", "springs", "jamJars", "buns", "snorkberries", "trufflunkTufts",
+  "rainbowJars", "lollipops", "windupToys", "balloons", "musicBoxes", "bubbleBarrels", "hatStacks", "cuckooClocks", "doodads", "kites", "upsideCake", "longScarf", "snuffleump"]);
+export const STORY_CARGO = new Set([...STORY_TOWN, ...STORY_FREIGHT_IN]);
 // The Victorian city's goods are likewise made only there, and in a Victorian city every job draws
 // from them alone (journey.ts makeJob). Its steam brewery's are what it sends on as freight, and the
 // city before it brings in one of VIC_FREIGHT_IN, which come from facilities every city has

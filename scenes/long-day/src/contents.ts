@@ -77,7 +77,7 @@ export const FIELDS: Record<string, string[]> = {
   rock: ["x", "z", "r"],
   ground: ["pts", "top", "c"],
   plaza: ["pts"],
-  storyLot: ["side", "rect", "district", "hs"],
+  storyLot: ["side", "rect", "district", "hs", "clock"],
   vicLot: ["side", "rect", "district", "hs"],
   vicCorner: ["side", "pts", "district", "hs"],
   vicTower: ["rect", "hs"],

@@ -13,7 +13,16 @@ import { Batch, PLACED, toTile } from "./geom.ts";
 import { NIGHT_GLOW } from "./atmosphere.ts";
 import { hash2 } from "./rng.ts";
 import { FACADE_GRID, FACADE_ROWS, FACADE_TILE, FACADE_VARIANTS } from "./facadeart.ts";
-import { FACADE_KINDS } from "./facadetiles.ts";
+import { FACADE, FACADE_KINDS } from "./facadetiles.ts";
+
+// The storybook city's facade kinds, whose windows glow after dark in candle, rose and butter, a
+// little dimmer than other cities' so the hue survives the board; more of them lit, and the shops'
+// always (STORY_SHOP_KINDS). A new storybook kind belongs in the first list, and a shop's in both
+// (test/storybook.ts checks every FACADE kind named STORY*).
+export const STORY_WINDOW_KINDS: readonly number[] = [FACADE.STORYBOOK, FACADE.STORY_SHOP, FACADE.STORY_DOOR, FACADE.STORY_WORKS, FACADE.STORY_SHOPWIN, FACADE.STORY_ALT, FACADE.STORY_PICKET];
+export const STORY_SHOP_KINDS: readonly number[] = [FACADE.STORY_SHOP, FACADE.STORY_SHOPWIN];
+// GLSL: 1.0 when the float `kind` is one of ks, else 0.0.
+const kindIn = (ks: readonly number[]) => ks.length ? "(" + ks.map((k) => `step(abs(kind - ${glslFloat(k)}), 0.5)`).join(" + ") + ")" : "0.0";
 
 function atlasTexture(image: CanvasImageSource): THREE.Texture {
   const tex = new THREE.Texture(image as any);
@@ -65,8 +74,8 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
 #endif`)
       // After dark (atmosphere.ts): about half the windows lit, one room per bay and floor (offices
       // and lobbies: two per bay, and more of them lit), in warm lamplight, cool office light or
-      // a television's blue (the Victorian city's tiles: only gaslight), each a little brighter or dimmer; and the streetlight heads
-      // (aux.z = -2) glowing, gas lanterns (aux.z = -5) a dimmer orange. The mask says which pixels are glass and how brightly they glow
+      // a television's blue (the Victorian city's tiles: only gaslight; the storybook's: STORY_WINDOW_KINDS), each a little brighter or dimmer; and the streetlight heads
+      // (aux.z = -2) glowing, gas lanterns (aux.z = -5) a dimmer orange, and the storybook's lanterns (aux.z = -6, SB_GLOW) in their own colour. The mask says which pixels are glass and how brightly they glow
       // (blinds, curtains).
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
   {
@@ -75,17 +84,22 @@ export function makeFacadeMaterial(): THREE.MeshLambertMaterial {
     vec2 cid = floor(vAux.xy * vec2(1.0 + work, 1.0)) + vec2(tileId * 7.13, tileId * 3.7);
     float r1 = fract(sin(dot(cid, vec2(12.9898, 78.233))) * 43758.5453);
     float r2 = fract(sin(dot(cid, vec2(39.3468, 11.1351))) * 24634.6345);
-    float lit = step(0.5 - 0.15 * work, r1);
+    float story = ${kindIn(STORY_WINDOW_KINDS)};
+    float lit = max(step(0.5 - 0.15 * work - 0.12 * story, r1), ${kindIn(STORY_SHOP_KINDS)});
     vec3 warm = vec3(1.0, 0.75, 0.4), cool = vec3(0.7, 0.78, 0.9), tv = vec3(0.45, 0.55, 1.0) * 0.6;
     vec3 lc = work > 0.5 ? mix(cool, warm, step(0.8, r2)) : r2 < 0.1 ? tv : r2 < 0.28 ? mix(warm, cool, 0.5) : warm;
     lc = mix(lc, warm * vec3(1.0, 0.92, 0.8), step(18.5, kind) * step(kind, 26.5));   // (the Victorian city's kinds: warm gaslight only)
+    // (The storybook's: candle, rose and butter, saturated in linear light so the hue survives sRGB.)
+    vec3 sc = r2 < 0.34 ? vec3(1.0, 0.4, 0.08) : r2 < 0.67 ? vec3(1.0, 0.3, 0.26) : vec3(1.0, 0.68, 0.19);
+    lc = mix(lc, sc * 0.9, story);
     float bright = 0.7 + 0.45 * fract(r2 * 7.0);
     totalEmissiveRadiance += uNight * glass * lit * lc * 0.85 * bright;
-    if (vAux.z < -4.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.66, 0.2) * 1.05;
+    if (vAux.z < -5.5) totalEmissiveRadiance += uNight * diffuseColor.rgb;
+    else if (vAux.z < -4.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.66, 0.2) * 1.05;
     else if (vAux.z < -1.5) totalEmissiveRadiance += uNight * vec3(1.0, 0.86, 0.55) * 1.3;
   }`);
   };
-  mat.customProgramCacheKey = () => "facade-v10";
+  mat.customProgramCacheKey = () => "facade-v12";
   return mat;
 }
 
@@ -113,9 +127,10 @@ export const BAY = 3.4; // target bay width in metres; walls round to whole bays
 
 // Wall a box footprint with facade bands stacked from y0: e.g. a storefront band then office
 // floors. `doorSide` (0..3 in the order +z, +x, -z, -x) gets `doorTile` in the middle bay of the
-// first band, for houses and lobbies. Returns the top height.
+// first band, for houses and lobbies, or in bay `doorBay` of that side when it is given (counted
+// from the side's first corner). Returns the top height.
 export function facadeBox(b: Batch, x0: number, z0: number, x1: number, z1: number, y0: number,
-                          bands: FacadeBand[], color: number, doorSide = -1, doorTile = -1): number {
+                          bands: FacadeBand[], color: number, doorSide = -1, doorTile = -1, doorBay = -1): number {
   const corners = [[x0, z1], [x1, z1], [x1, z0], [x0, z0]];
   for (const [x, z] of corners) PLACED.foot.push(...toTile(x, z));   // (for the trees that come after: city.ts treeRoom)
   const variant = buildingVariant(x0 + x1, z0 + z1);
@@ -130,7 +145,7 @@ export function facadeBox(b: Batch, x0: number, z0: number, x1: number, z1: numb
       const bays = Math.max(1, Math.round(len / BAY));
       if (bi === 0 && s === doorSide && doorTile >= 0 && bays >= 1) {
         // Split the first band's wall into [0,k) door [k+1,n) so the door is a whole bay.
-        const k = Math.floor(bays / 2), f0 = k / bays, f1 = (k + 1) / bays;
+        const k = doorBay >= 0 ? Math.min(doorBay, bays - 1) : Math.floor(bays / 2), f0 = k / bays, f1 = (k + 1) / bays;
         const lerp = (f: number) => [ax + (bx - ax) * f, az + (bz - az) * f];
         const [px, pz] = lerp(f0), [qx, qz] = lerp(f1);
         if (k > 0) b.wall(ax, az, px, pz, y, y + h, color, tile, 0, k, 0, band.floors);

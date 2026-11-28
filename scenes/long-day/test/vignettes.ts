@@ -22,6 +22,7 @@ const runs: [StyleId, number, string, string, boolean][] = [
   ["metro", 8.5, "spring", "clear", false], ["coastal", 9, "autumn", "cloudy", false], ["port", 7.6, "summer", "clear", false],
   ["mainstreet", 10.5, "summer", "clear", false], ["desert", 16, "spring", "clear", false],
   ["victorian", 12, "summer", "clear", false], ["victorian", 18.5, "autumn", "cloudy", false], ["victorian", 9, "winter", "rain", false], ["victorian", 16, "winter", "cloudy", false],
+  ["storybook", 12, "summer", "clear", false], ["storybook", 9.5, "spring", "cloudy", false], ["storybook", 16, "autumn", "clear", false],
 ];
 const seen = new Map<string, number>();
 let failed = false;
@@ -32,7 +33,7 @@ for (const [i, [style, hour, season, weather, snow]] of runs.entries()) {
   plan.climate = { season: season as any, weather: weather as any, snowCover: snow };
   CLOCK.hourAt = () => hour;
   CLOCK.glowAt = (h) => (h >= 17.5 && h < 19.5 ? 0.4 : h >= 19.5 || h < 6 ? 1 : 0);   // (the street lamps coming on at dusk, as the atmosphere has them in autumn)
-  FIG_STYLE.victorian = style === "victorian";   // (dressed as main.ts dresses them)
+  FIG_STYLE.victorian = style === "victorian"; FIG_STYLE.storybook = style === "storybook";   // (dressed as main.ts dresses them)
   const crowd = new Crowd(new THREE.Scene(), new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshLambertMaterial({ vertexColors: true }));   // (with the props material, as in the scene)
   crowd.reset(77 + i);
   // The focus: along a street's kerb lane, east, a row of blocks at a time; parked for 40 s of

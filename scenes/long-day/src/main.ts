@@ -60,9 +60,11 @@ import { SNAP_SKIPPED } from "./snap.ts";
 import { Ambient } from "./ambient.ts";
 import { SEA_ALONG, SeaLife } from "./sealife.ts";
 import { KnittingWorksFx } from "./city-storybook/storybook-landmark-knitting-works.ts";
+import { TradeSpinners } from "./city-storybook/storybook-trades.ts";
 import { SteamBreweryFx } from "./city-victorian/victorian-landmark-steam-brewery.ts";
 import { carriageAt } from "./carriage.ts";
 import { applySetts, SETT_WET } from "./city-victorian/victorian-street.ts";
+import { applyCandyPaving, SB_PAVE_TIME } from "./city-storybook/storybook-street.ts";
 import { FIG_STYLE } from "./figure.ts";
 import { StreetLife } from "./life.ts";
 
@@ -88,7 +90,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
   const backdrop = new Backdrop();
   let seekMs = 0;   // the last seek's cost (debug HUD)
   let worldOff: [number, number] | null = null;   // (worldOffset's, taken afresh after each move of the world and each city built)
-  let traffic: Traffic, crowd: Crowd, ambient: Ambient, seaLife: SeaLife, worksFx: KnittingWorksFx, breweryFx: SteamBreweryFx, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
+  let traffic: Traffic, crowd: Crowd, ambient: Ambient, seaLife: SeaLife, worksFx: KnittingWorksFx, tradeSpinners: TradeSpinners, breweryFx: SteamBreweryFx, countryWorld: CountryWorld, elevatedReach: ElevatedReach;
   let freewayReach: FreewayReach, cityCars: FreewayTraffic, roadCars: FreewayTraffic;
   let roadFrame: { road: CountryRoad; F: Frame } | null = null;
   let atmosphere: Atmosphere;
@@ -495,13 +497,18 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     } else if (DEBUG_VIEW.startsWith("works") && plan.worksBlock >= 0) {
       // These show the storybook city's knitting works or the Victorian city's steam brewery from across its
       // street, drifting along it ("works"), or circling high ("worksHigh"); close on the knitting works' vats
-      // ("worksVats") or spools ("worksSpools"); close on the brewery's engine ("worksEngine"), its cooperage
-      // yard ("worksYard"), its dock ("worksDock") or the top of its brewhouse ("worksTop").
+      // ("worksVats"), spools ("worksSpools"), kettle engine ("worksKettle") or claw and chute ("worksClaw");
+      // close on the brewery's engine ("worksEngine"), its cooperage yard ("worksYard"), its dock ("worksDock")
+      // or the top of its brewhouse ("worksTop").
       const B = plan.graph.blocks[plan.worksBlock], an = B.anchor!, G = plan.graph;
       const P = (a: number, n: number) => G.facePt(an.face, a + an.delta, n);
       const [ca, cn, cy, la, ln, ly] = DEBUG_VIEW === "worksVats" ? [44, -15, 6, 41, 9, 5] : DEBUG_VIEW === "worksSpools" ? [24, -10, 5, 20.5, 13, 9] : DEBUG_VIEW === "worksEngine" ? [43, -11, 11, 44, 16, 7.5] : DEBUG_VIEW === "worksYard" ? [40, -5, 8, 40, 7, 1] : DEBUG_VIEW === "worksDock" ? [24, -12, 3.5, 20.5, 13, 3.5]
-        : DEBUG_VIEW === "worksTop" ? [26, -22, 14, 22, 20, 21] : DEBUG_VIEW === "worksHigh" ? [30 + Math.cos(tourT * 0.15) * 60, 25 + Math.sin(tourT * 0.15) * 60, 38, 30, 22, 4] : [18 + tourT * 1.5, -48, 12, 30 + tourT * 0.4, 20, 8];
+        : DEBUG_VIEW === "worksTop" ? [26, -22, 14, 22, 20, 21] : DEBUG_VIEW === "worksKettle" ? [27, 3, 4, 31.5, 13, 2] : DEBUG_VIEW === "worksClaw" ? [35, 25, 13, 42, 36, 7] : DEBUG_VIEW === "worksHigh" ? [30, 22, 50, 30, 22, 4]
+        : [Math.min(46, 14 + tourT), -G.streets[an.face >> 1].half, 9, 30 + tourT * 0.3, 20, 7];
+      // (The drift keeps to the street's middle, and the high circle is laid out in the world: a face's frame
+      // runs round the block's corners past its ends, so a circle in it would cut through the buildings.)
       const C0 = P(ca, cn), C1 = P(la, ln);
+      if (DEBUG_VIEW === "worksHigh") { C0.x += Math.cos(tourT * 0.15) * 60; C0.z += Math.sin(tourT * 0.15) * 60; }
       cx = C1.x; cz = C1.z;
       cam.position.set(C0.x, cy, C0.z); cam.lookAt(C1.x, ly, C1.z);
     } else if (DEBUG_VIEW === "gate" && plan.graph.gates[0]) {
@@ -1056,6 +1063,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       ambient = new Ambient(engine.scene, engine.mats.ground);
       seaLife = new SeaLife(engine.world, engine.mats.ground);
       worksFx = new KnittingWorksFx(engine.world, engine.mats.solid);
+      tradeSpinners = new TradeSpinners(engine.scene, engine.mats.solid);
       breweryFx = new SteamBreweryFx(engine.world, engine.mats.solid);
       // The clock first: attaching street life replays the city so far, and its vignettes and
       // pedestrians keep the hours.
@@ -1076,6 +1084,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       applyCutaway(facadeMat); applyDriverSpot(facadeMat);
       for (const m of [facadeMat, engine.mats.ground, engine.mats.solid, seaLife.surface]) applyLampLight(m);   // streetlights and headlights light the world (the sea and the harbour too: their material is the ground's clone, made before this)
       applySetts(engine.mats.ground, engine.sky);   // (the Victorian city's road: victorian-street.ts)
+      applyCandyPaving(engine.mats.ground);   // (the storybook city's, after it: storybook-street.ts)
       mats = { ground: engine.mats.ground, solid: facadeMat, lamp: makeLampMaterial() };
       buildCity();
       countryWorld = new CountryWorld(engine.scene, mats, (st) => fleet.build(st));
@@ -1083,7 +1092,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       elevatedReach = new ElevatedReach(engine.world, mats.solid);
       freewayReach = new FreewayReach(engine.world, mats.ground);   // (not the solid material: the truck's see-through spotlight leaves the freeway be)
       VIG_LOG.out = (line) => sys.log(line);
-      atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather));
+      atmosphere.update(0, engine, backdrop, journey.plan.style.sky, weatherMix(journey.climate.weather), journey.plan.style.storybook ? 1 : 0);
       setSignalTime(journey.clockTime + journey.frac);
       streamer.fill(truck.root.position);
       if (TOUR_VIEW) { tourCamera(0); streamer.fill(focus); }
@@ -1136,7 +1145,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       crowd.draw(alpha, shown);
       ambient.update(shown, alpha, journey.plan, TOUR_VIEW ? focus : truck.root.position, inCity);
       seaLife.update(shown);
-      worksFx.update(shown); breweryFx.update(shown);
+      worksFx.update(shown); breweryFx.update(shown); tradeSpinners.update(shown);
       if (!TOUR_VIEW) streamRound(true);
       prepareNextCity();
       {
@@ -1151,8 +1160,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       // Time of day from the clock, weather from the city (blended along the country road).
       const weather = road ? road.weatherAt(journey.countryU) : weatherMix(journey.climate.weather);
       const sky = road ? skyTmp.setHex(journey.plan.style.sky).lerp(skyTmp2.setHex(road.inp.toStyle.sky), road.blendAt(journey.countryS)).getHex() : journey.plan.style.sky;
-      atmosphere.update(t, engine, backdrop, sky, weather);
-      SETT_WET.value = weather.rain;   // (the Victorian city's wet stone: victorian-street.ts)
+      atmosphere.update(t, engine, backdrop, sky, weather, truck.toon);
+      SETT_WET.value = weather.rain;   // (the Victorian city's wet stone: victorian-street.ts; the storybook's too)
+      SB_PAVE_TIME.value = shown % 600;   // (the storybook's puddles' raindrops: storybook-street.ts)
       truck.headlights = atmosphere.night > 0.3 || weather.fog > 0.5 || weather.rain > 0.5 || !!journey.country?.tunnelAt(journey.countryS, 40);
       LAMPS_ON.value = Math.max(THREE.MathUtils.clamp((atmosphere.night - 0.15) * 1.6, 0, 1), weather.fog > 0.5 || weather.rain > 0.5 ? 0.7 : 0);
       updateLampLights(truck.root.position);

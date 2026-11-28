@@ -79,6 +79,29 @@ interface PeriodLook { shirt: number; waistcoat: number; neck: number; trousers:
 export const CARTER_DRIVER: PeriodLook = { shirt: 0xe6e0d0, waistcoat: 0x3a3026, neck: 0xa82a2a, trousers: 0x3a3630, boots: 0x2a201a, hat: 0x1e1c1a, bowler: true, jacket: 0x8c7a56 };
 export const CARTER_MATE: PeriodLook = { shirt: 0xd4cebe, waistcoat: 0x4a4a42, neck: 0x2a4a7a, trousers: 0x3a3a36, boots: 0x2a201a, hat: 0x4a4238, bowler: false, apron: 0x7a5434 };
 
+// The crew's storybook dress (Character.story), worn in the storybook city and on the road while
+// its land has crept more than half in: the Ryder colours in the town's idiom. The driver wears a
+// long-tailed navy coat with gold buttons over a cream front, a tall bending stovepipe striped red
+// and cream with a gold band, a striped scarf, white cartoon gloves and long upturned shoes. The
+// mate wears a striped jumper, knee breeches, long stockings and a knitted cap with a tassel and a
+// pompom, its brim in Ryder red.
+interface StoryLook {
+  coat: number; front: number; trousers: number; shoes: number; hands: number; hat: number; hat2: number; band: number;
+  scarf?: [number, number];   // a scarf's two stripes (the driver)
+  stockings?: number;         // the mate's breeches stop at the knee over these
+  stovepipe: boolean;         // a stovepipe, or a knitted cap with a tassel
+}
+export const STORY_DRIVER: StoryLook = { coat: 0x2b3f8a, front: 0xfff3dc, trousers: 0x4a3a6a, shoes: 0xce1126, hands: 0xfffdf4, hat: 0xce1126, hat2: 0xfff3dc, band: 0xf2c200, scarf: [0xf2c200, 0x2b3f8a], stovepipe: true };
+export const STORY_MATE: StoryLook = { coat: 0xe8333a, front: 0xfff3dc, trousers: 0xf2c230, shoes: 0x6a3a9a, hands: 0x8a5a3c, hat: 0x1fb5b0, hat2: 0xff7fb5, band: 0xce1126, stockings: 0x5fd3a0, stovepipe: false };
+// The storybook crew's walk is bouncier (walkPose): crew.ts sets this with the dress.
+export const CREW_GAIT = { story: false };
+// A long shoe whose toe curls up, under a shin (the knee's frame: the sole at -LEG_L).
+function storyShoe(b: Batch, c: number) {
+  b.box(0.06, -0.455, 0, 0.3, 0.08, 0.14, c);
+  b.boxR(0.24, -0.43, 0, 0.12, 0.06, 0.12, c, 0, 0, 0.5);
+  b.ico(0.28, -0.39, 0, 0.035, c);
+}
+
 export class Character {
   readonly root = new THREE.Group();
   private hips = new THREE.Group(); private torso = new THREE.Group(); private head = new THREE.Group();
@@ -87,18 +110,21 @@ export class Character {
   readonly handL = new THREE.Object3D(); readonly handR = new THREE.Object3D();
   private vest: THREE.Mesh;
   readonly headMeshes: THREE.Object3D[] = [];
-  // Each part is built in both dresses when there is a period one, and `period` shows one set.
-  private dressed: [THREE.Mesh[], THREE.Mesh[]] = [[], []];
+  // Each part is built in every dress the character has (modern, period, storybook), and `dress`
+  // shows one set.
+  private dressed: [THREE.Mesh[], THREE.Mesh[], THREE.Mesh[]] = [[], [], []];
   private headOf = new Set<THREE.Object3D>();
-  private shown = { period: false, head: true, vest: false };
+  private shown = { dress: 0, head: true, vest: false };
 
-  constructor(material: THREE.Material, look: Look, vest = false, pl: PeriodLook | null = null) {
-    // A part in the modern dress, and in the period dress when there is one (its own builder, or
-    // the same one).
-    const part = (parent: THREE.Object3D, build: (b: Batch) => void, period: ((b: Batch, p: PeriodLook) => void) | null = null) => {
+  constructor(material: THREE.Material, look: Look, vest = false, pl: PeriodLook | null = null, sl: StoryLook | null = null) {
+    // A part in the modern dress, and in the period and storybook dresses when there are those
+    // (each its own builder, or the modern one).
+    const part = (parent: THREE.Object3D, build: (b: Batch) => void, period: ((b: Batch, p: PeriodLook) => void) | null = null, story: ((b: Batch, s: StoryLook) => void) | null = null) => {
       const b = new Batch(); build(b);
       const m = b.build(material)!; parent.add(m); this.dressed[0].push(m);
-      if (pl) { const c = new Batch(); (period ?? build)(c, pl); const n = c.build(material)!; n.visible = false; parent.add(n); this.dressed[1].push(n); if (parent === this.head) this.headOf.add(n); }
+      const extra = (i: 1 | 2, f: (c: Batch) => void) => { const c = new Batch(); f(c); const n = c.build(material)!; n.visible = false; parent.add(n); this.dressed[i].push(n); if (parent === this.head) this.headOf.add(n); };
+      if (pl) extra(1, (c) => (period ?? build)(c, pl));
+      if (sl) extra(2, (c) => (story ?? build)(c, sl));
       return m;
     };
     this.root.add(this.hips);
@@ -107,6 +133,10 @@ export class Character {
     part(this.hips, (b) => b.box(0, 0.02, 0, 0.22, 0.18, 0.34, look.trousers), (b, p) => {
       b.box(0, 0.02, 0, 0.22, 0.18, 0.34, p.trousers);
       if (p.jacket !== undefined) b.box(0, -0.02, 0, 0.27, 0.2, 0.43, p.jacket);   // the jacket's skirt, over the seat
+    }, (b, s) => {
+      b.box(0, 0.02, 0, 0.22, 0.18, 0.34, s.trousers);
+      if (s.stovepipe) { b.box(0, 0.0, 0, 0.27, 0.16, 0.43, s.coat); b.boxR(-0.15, -0.26, 0, 0.04, 0.46, 0.3, s.coat, 0, 0, -0.12); }   // the coat's skirt, and its tails behind
+      else b.box(0, 0.06, 0, 0.27, 0.1, 0.42, s.coat);                  // the jumper's hem
     });
     this.hips.add(this.torso);
     part(this.torso, (b) => {
@@ -129,6 +159,21 @@ export class Character {
       b.box(0.01, 0.565, 0, 0.17, 0.07, 0.19, p.neck);                 // the neckerchief, knotted at the front
       b.box(0.1, 0.52, 0, 0.05, 0.07, 0.06, p.neck);
       if (p.apron !== undefined) b.box(0.14, 0.12, 0, 0.02, 0.66, 0.34, p.apron);   // a leather apron
+    }, (b, s) => {
+      if (s.scarf) {
+        // The coat, open on a cream front with two rows of gold buttons, and the striped scarf
+        // round the neck, one end down the front and one flying out behind.
+        b.box(0, 0.3, 0, 0.26, 0.53, 0.42, s.coat);
+        b.box(0.131, 0.3, 0, 0.01, 0.44, 0.14, s.front);
+        for (const y of [0.16, 0.27, 0.38]) for (const z of [-0.1, 0.1]) b.box(0.136, y, z, 0.012, 0.035, 0.035, 0xf2c200);
+        b.box(0.01, 0.56, 0, 0.2, 0.08, 0.3, s.scarf[0]);
+        for (let i = 0; i < 4; i++) b.box(0.14, 0.47 - i * 0.08, -0.12, 0.02, 0.08, 0.09, s.scarf[i % 2]);
+        for (let i = 0; i < 4; i++) b.boxR(-0.15 - i * 0.07, 0.53 - i * 0.04, 0.1, 0.08, 0.035, 0.09, s.scarf[(i + 1) % 2], 0, 0, 0.5);
+      } else {
+        // A jumper in broad stripes, a roll collar.
+        for (let i = 0; i < 5; i++) b.box(0, 0.1 + i * 0.105, 0, 0.25, 0.105, 0.41, i % 2 ? s.front : s.coat);
+        b.box(0, 0.565, 0, 0.18, 0.06, 0.22, s.coat);
+      }
     });
     {
       const b = new Batch();
@@ -138,7 +183,8 @@ export class Character {
       this.vest = b.build(material)!; this.torso.add(this.vest);
     }
     this.vestOn = vest;
-    // Head: a plain face (two eyes) under a cap or hard hat, or in period dress a bowler or flat cap.
+    // Head: a plain face (two eyes) under a cap or hard hat, or in period dress a bowler or flat
+    // cap, or in storybook dress a stovepipe or a tasselled cap.
     this.torso.add(this.head);
     this.head.position.y = 0.56;
     const face = (b: Batch) => {
@@ -160,42 +206,66 @@ export class Character {
       face(b);
       if (p.bowler) { b.box(0, 0.286, 0, 0.3, 0.02, 0.29, p.hat); b.box(-0.005, 0.347, 0, 0.23, 0.11, 0.22, p.hat); b.box(-0.005, 0.412, 0, 0.17, 0.04, 0.16, p.hat); }
       else { b.box(0.005, 0.316, 0, 0.25, 0.062, 0.24, p.hat); b.box(0.15, 0.289, 0, 0.11, 0.02, 0.21, p.hat); }
+    }, (b, s) => {
+      face(b);
+      if (s.stovepipe) {
+        // The brim, the band, then six striped tiers bending further back the higher they go.
+        b.box(0, 0.29, 0, 0.36, 0.025, 0.34, s.hat);
+        b.box(0, 0.33, 0, 0.215, 0.06, 0.205, s.band);
+        for (let i = 0; i < 6; i++) b.boxR(-i * i * 0.011, 0.4 + i * 0.1, 0, 0.2, 0.105, 0.19, i % 2 ? s.hat2 : s.hat, 0, 0, 0.06 + i * 0.05);
+      } else {
+        // The cap, its brim, and a long tassel drooping back to a pompom.
+        b.box(-0.005, 0.32, 0, 0.235, 0.1, 0.225, s.hat);
+        b.box(-0.005, 0.28, 0, 0.245, 0.04, 0.235, s.band);
+        b.boxR(-0.09, 0.47, 0, 0.05, 0.26, 0.05, s.hat, 0, 0, 0.55);
+        b.ico(-0.18, 0.59, 0, 0.075, s.hat2);
+      }
     }));
     // Arms: in period dress the hands are bare, and the jacket's sleeves reach the wrist or the
-    // shirtsleeves are rolled to the elbow.
+    // shirtsleeves are rolled to the elbow; in storybook dress the sleeves reach the wrist.
     for (const [sh, el, hand, z] of [[this.shL, this.elL, this.handL, -0.25], [this.shR, this.elR, this.handR, 0.25]] as const) {
       this.torso.add(sh); sh.position.set(0, 0.5, z);
-      part(sh, (b) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, look.jacket), (b, p) => b.box(0, -0.14, 0, 0.115, 0.3, 0.115, p.jacket ?? p.shirt));
+      part(sh, (b) => b.box(0, -0.14, 0, 0.11, 0.3, 0.11, look.jacket), (b, p) => b.box(0, -0.14, 0, 0.115, 0.3, 0.115, p.jacket ?? p.shirt), (b, s) => b.box(0, -0.14, 0, 0.115, 0.3, 0.115, s.coat));
       sh.add(el); el.position.y = -0.29;
       part(el, (b) => { b.box(0, -0.13, 0, 0.1, 0.27, 0.1, look.jacket); b.box(0, -0.31, 0, 0.11, 0.1, 0.12, look.gloves); },
         (b, p) => {
           if (p.jacket !== undefined) b.box(0, -0.125, 0, 0.105, 0.27, 0.105, p.jacket);
           else { b.box(0, -0.04, 0, 0.115, 0.08, 0.115, p.shirt); b.box(0, -0.155, 0, 0.09, 0.2, 0.09, look.skin); }
           b.box(0, -0.31, 0, 0.1, 0.1, 0.11, look.skin);
-        });
+        },
+        (b, s) => { b.box(0, -0.125, 0, 0.105, 0.27, 0.105, s.coat); b.box(0, -0.245, 0, 0.12, 0.04, 0.12, s.front); b.box(0, -0.31, 0, 0.115, 0.11, 0.125, s.hands); });
       el.add(hand); hand.position.y = -0.32;
     }
-    // Legs: in period dress, ankle boots.
+    // Legs: in period dress, ankle boots; in storybook dress long shoes curling up at the toe (and
+    // the mate's stockings below the knee).
     for (const [hp, kn, z] of [[this.hipL, this.knL, -0.1], [this.hipR, this.knR, 0.1]] as const) {
       this.hips.add(hp); hp.position.set(0, 0, z);
-      part(hp, (b) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, look.trousers), (b, p) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, p.trousers));
+      part(hp, (b) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, look.trousers), (b, p) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, p.trousers), (b, s) => b.box(0, -0.21, 0, 0.15, 0.43, 0.15, s.trousers));
       hp.add(kn); kn.position.y = -0.43;
       part(kn, (b) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, look.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, look.boots); },
-        (b, p) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, p.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, p.boots); b.box(0, -0.36, 0, 0.145, 0.12, 0.145, p.boots); });
+        (b, p) => { b.box(0, -0.2, 0, 0.13, 0.4, 0.13, p.trousers); b.box(0.045, -0.455, 0, 0.25, 0.08, 0.14, p.boots); b.box(0, -0.36, 0, 0.145, 0.12, 0.145, p.boots); },
+        (b, s) => {
+          if (s.stockings !== undefined) { b.box(0, -0.05, 0, 0.145, 0.1, 0.145, s.trousers); b.box(0, -0.25, 0, 0.12, 0.38, 0.12, s.stockings); }
+          else b.box(0, -0.2, 0, 0.13, 0.4, 0.13, s.trousers);
+          storyShoe(b, s.shoes);
+        });
     }
   }
 
-  // The dress: the period one (when the character has it) or the modern one. Only what is drawn
-  // changes; the rig and its motion are the same in both.
-  set period(v: boolean) {
-    if (!this.dressed[1].length || v === this.shown.period) return;
-    this.shown.period = v; this.show();
+  // The dress: the period one or the storybook one (when the character has it), or the modern
+  // one. Only what is drawn changes; the rig and its motion are the same in all.
+  set period(v: boolean) { this.setDress(v ? 1 : this.shown.dress === 1 ? 0 : this.shown.dress); }
+  get period() { return this.shown.dress === 1; }
+  set story(v: boolean) { this.setDress(v ? 2 : this.shown.dress === 2 ? 0 : this.shown.dress); }
+  get story() { return this.shown.dress === 2; }
+  private setDress(i: number) {
+    if (i === this.shown.dress || (i > 0 && !this.dressed[i].length)) return;
+    this.shown.dress = i; this.show();
   }
-  get period() { return this.shown.period; }
   private show() {
-    const { period, head, vest } = this.shown;
-    for (const [i, set] of this.dressed.entries()) for (const m of set) m.visible = (i === 1) === period && (head || !(this.headOf.has(m) || this.headMeshes.includes(m)));
-    this.vest.visible = vest && !period;   // (no hi-vis on a carter)
+    const { dress, head, vest } = this.shown;
+    for (const [i, set] of this.dressed.entries()) for (const m of set) m.visible = i === dress && (head || !(this.headOf.has(m) || this.headMeshes.includes(m)));
+    this.vest.visible = vest && dress === 0;   // (no hi-vis on a carter, nor in the storybook)
   }
 
   // ---- reaching (two-bone IK) -----------------------------------------------------------------
@@ -240,14 +310,14 @@ export class Character {
   }
 
   get headNode(): THREE.Object3D { return this.head; }
-  set vestOn(v: boolean) { this.shown.vest = v; this.vest.visible = v && !this.shown.period; }
+  set vestOn(v: boolean) { this.shown.vest = v; this.vest.visible = v && this.shown.dress === 0; }
   // The legs spread apart (radians, each thigh out to its own side) and the shins turned back
   // under (knee): astride a horse. apply() leaves both.
   setLegSpread(r: number, knee = 0) { this.hipL.rotation.x = r; this.hipR.rotation.x = -r; this.knL.rotation.x = -knee; this.knR.rotation.x = knee; }
   set headVisible(v: boolean) {
     if (v === this.shown.head) return;
     this.shown.head = v;
-    if (this.dressed[1].length) this.show(); else for (const m of this.headMeshes) m.visible = v;
+    if (this.dressed[1].length || this.dressed[2].length) this.show(); else for (const m of this.headMeshes) m.visible = v;
   }
 
   apply(p: BodyPose) {
@@ -267,14 +337,24 @@ export class Character {
 // bends while its leg swings forward (the foot lifted to come through) and is straight while the
 // leg swings back, the foot planted under the body as it passes over; run backwards, the foot is
 // lifted as the leg reaches back, and planted as the body backs over it.
+// The hips are lowest at contact, the legs spread widest (walkDrop). In the storybook city
+// (CREW_GAIT) the walk is a springy one: a deep bob, the knees lifted high, the arms pumping with
+// the elbows bent, the body dipping forward onto each step and the head nodding back after it.
 export function walkPose(phase: number, out: BodyPose, arms = true, stride = 1): BodyPose {
-  const s = Math.sin(phase * Math.PI * 2), c = Math.cos(phase * Math.PI * 2);
+  const s = Math.sin(phase * Math.PI * 2), c = Math.cos(phase * Math.PI * 2), sb = CREW_GAIT.story, s2 = s * s * stride;
+  const knee = sb ? 1.1 : 0.7, swing = sb ? 0.65 : 0.4, elbow = sb ? 0.5 : 0.3;
   out.hipL = 0.45 * s * stride; out.hipR = -0.45 * s * stride;
-  out.knL = -Math.max(0, c) * 0.7 * stride - 0.05; out.knR = -Math.max(0, -c) * 0.7 * stride - 0.05;
-  out.drop = 0.02 + 0.015 * Math.abs(Math.sin(phase * Math.PI * 4));
-  out.bend = -0.04;
-  if (arms) { out.shLP = -0.4 * s * stride; out.shRP = 0.4 * s * stride; out.elL = 0.3 + 0.15 * Math.max(0, -s); out.elR = 0.3 + 0.15 * Math.max(0, s); }
+  out.knL = -Math.max(0, c) * knee * stride - 0.05; out.knR = -Math.max(0, -c) * knee * stride - 0.05;
+  out.drop = walkDrop(phase, stride);
+  out.bend = sb ? -0.04 - 0.06 * s2 : -0.04;
+  if (sb) out.headP = 0.08 * s2;
+  if (arms) { out.shLP = -swing * s * stride; out.shRP = swing * s * stride; out.elL = elbow + 0.15 * Math.max(0, -s); out.elR = elbow + 0.15 * Math.max(0, s); }
   return out;
+}
+// How far walkPose lowers the hips at `phase`.
+export function walkDrop(phase: number, stride = 1) {
+  const s = Math.sin(phase * Math.PI * 2);
+  return 0.02 + (CREW_GAIT.story ? 0.08 : 0.025) * s * s * stride;
 }
 // Stepping sideways, on top of walkPose run at the same phase: each foot swung out to the side
 // and back by `e` (rad) as it swings fore and aft, so it is planted, moving neither way, through

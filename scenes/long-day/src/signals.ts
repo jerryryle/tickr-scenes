@@ -16,6 +16,8 @@ import { STOP_BACK, Path, LANE_KERB, LANE_INNER } from "./route.ts";
 import { SPECS } from "./truck.ts";
 import { SB } from "./city-storybook/storybook-buildings-town.ts";
 import { vicConstable, vicSignal } from "./city-victorian/victorian-street.ts";
+import { storySignal } from "./city-storybook/storybook-street.ts";
+import { PLATE_STORY } from "./signs.ts";
 import { NIGHT_GLOW } from "./atmosphere.ts";
 
 const SIG_GREEN = 10, SIG_YELLOW = 2.5, SIG_SLOT = 13;
@@ -217,8 +219,8 @@ float lampHash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }`)
 
 const LAMP_COLORS = [0xff2a1a, 0xffb000, 0x22ff66];
 const POLE = 0x2b2f33, HOUSING = 0x15181a;
-// The storybook city's (`story`) are sweets: candy-striped poles with gumball tops, round housings
-// with round lamps, and stop signs like iced biscuits on peppermint posts.
+// The storybook city's (`story`) stop signs are iced biscuits on peppermint posts (its signals are
+// lollipops: buildSignals).
 // (A candy pole's stripes are open tubes, `band` long: its top is capped by what stands on it.)
 const candyPole = (b: Batch, x: number, z: number, y0: number, y1: number, r: number, band: number, a: number, c: number) => {
   for (let y = y0, k = 0; y < y1 - 1e-6; y += band, k++) { const h = Math.min(band, y1 - y); b.tubeSeg(x, y + h / 2, z, r, h, k % 2 ? a : c, 6); }
@@ -498,8 +500,8 @@ export function signalPoleOk(G: CityGraph, near: Iterable<number>, x: number, z:
 // Mast-arm signals for node n, drawn relative to (ox, oz) (its tile's origin). Each approach gets
 // a pole on the far right corner of the intersection and an arm reaching over its two lanes, with
 // a head per lane. Poles and heads go in `solid`, and lamps go in `lamps`. Each lamp stands out of
-// its head's face, a box or in the storybook (`story`) a ball, so its top reads from the overhead
-// camera. `plates`: for the name plates on the mast arms, each
+// its head's face, so its top reads from the overhead camera. `plates`: for the name plates on the
+// mast arms, each
 // naming the cross street to the traffic coming up to it.
 // The Victorian city's (`vic`) are of the Westminster kind of 1868, each standing where a pole
 // would, with no mast arm and no name plate: a tall iron column with red and green gas lamps and a
@@ -507,6 +509,9 @@ export function signalPoleOk(G: CityGraph, near: Iterable<number>, x: number, z:
 // A Victorian junction whose city file gives it no poles has a constable on point duty in its
 // middle instead (vicConstable), in a pose for each phase: facing out along the first arm not in
 // that phase, whose traffic he holds while that phase goes.
+// The storybook city's (`story`) stand where a pole would too, with no mast arm: a candy pole
+// leaning out over the kerb with a lollipop of three gumball lamps, the cross street's name
+// hand-lettered on a butter board under it (storybook-street.ts storySignal).
 export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode, ox: number, oz: number, seed: number, plates: PlateSet | null = null, story = false, vic = false) {
   if (n.control !== "signal") return;
   const offset = signalOffset(n, seed), armY = 6.2, poles = signalPoles(G, n), phases = Math.max(2, n.phases);
@@ -529,40 +534,32 @@ export function buildSignals(solid: Batch, lamps: Batch, G: CityGraph, n: CNode,
       vicSignal(solid, lamps, px, pz, fx, fz, ax, az, (k, hide) => lamps.aux.set(lampTag(k, offset, hide), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2)));
       continue;
     }
+    // The cross street's name, on a plate facing the traffic: the street of the arm nearest square
+    // to this one in another phase.
+    let cross = "", best = Infinity;
+    if (plates) n.arms.forEach((b, j) => { if (n.phaseOf[j] === n.phaseOf[i]) return; const d = Math.abs(Math.abs(Math.atan2(Math.sin(b.h - arm.h), Math.cos(b.h - arm.h))) - Math.PI / 2); if (d < best) { best = d; cross = G.streets[b.street].name; } });
     if (story) {
-      candyPole(solid, px, pz, 0, armY + 0.1, 0.16, 1.0, SB.pink, SB.cream);
-      solid.ico(px, armY + 0.3, pz, 0.26, SB.mustard);
-      solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, SB.plum, armH);
-      solid.ico(px + ax * (reach + 0.12), armY - 0.01, pz + az * (reach + 0.12), 0.16, SB.mustard);
-    } else {
-      solid.cyl(px, armY / 2, pz, 0.16, armY, POLE, 6);
-      solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, POLE, armH);
+      const st = G.streets[arm.street];
+      storySignal(solid, lamps, px, pz, fx, fz, ax, az, toCentre - (st.half - st.kerb), (k) => lamps.aux.set(lampTag(k, offset), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2)),
+        plates && cross ? (x, y, z, w, h, r) => plates.put(cross, x, y, z, w, h, r, PLATE_STORY) : null);
+      continue;
     }
-    if (plates) {
-      // The cross street's name on a plate over the arm, near the pole, facing the traffic: the
-      // street of the arm nearest square to this one in another phase.
-      let cross = "", best = Infinity;
-      n.arms.forEach((b, j) => { if (n.phaseOf[j] === n.phaseOf[i]) return; const d = Math.abs(Math.abs(Math.atan2(Math.sin(b.h - arm.h), Math.cos(b.h - arm.h))) - Math.PI / 2); if (d < best) { best = d; cross = G.streets[b.street].name; } });
-      if (cross) {
-        const sx = px + ax * 2.3, sz = pz + az * 2.3, y = armY + 0.42;
-        solid.box(sx, y, sz, 2.5, 0.42, 0.05, 0x1e6b3a, armH);
-        solid.box(sx, armY + 0.12, sz, 0.06, 0.12, 0.06, POLE);
-        plates.put(cross.toUpperCase(), sx - fx * 0.035, y, sz - fz * 0.035, 2.4, 0.3, Math.atan2(-fx, -fz));
-      }
+    solid.cyl(px, armY / 2, pz, 0.16, armY, POLE, 6);
+    solid.box(px + ax * reach / 2, armY - 0.01, pz + az * reach / 2, reach + 0.16, 0.18, 0.16, POLE, armH);
+    if (cross && plates) {   // (over the arm, near the pole)
+      const sx = px + ax * 2.3, sz = pz + az * 2.3, y = armY + 0.42;
+      solid.box(sx, y, sz, 2.5, 0.42, 0.05, 0x1e6b3a, armH);
+      solid.box(sx, armY + 0.12, sz, 0.06, 0.12, 0.06, POLE);
+      plates.put(cross.toUpperCase(), sx - fx * 0.035, y, sz - fz * 0.035, 2.4, 0.3, Math.atan2(-fx, -fz));
     }
     // One head over each lane centre (1.5 m and 4.5 m from the centre line), lamps facing the
     // approaching traffic: red on top, then yellow, then green.
     for (const lane of [1.5, 4.5]) {
       const hx = px + ax * (toCentre - lane), hz = pz + az * (toCentre - lane);
-      if (story) {
-        // (A round teal body with a cream face its round lamps stand out of.)
-        solid.cyl(hx, armY - 0.75, hz, 0.25, 1.2, SB.teal, 8);
-        solid.box(hx - fx * 0.27, armY - 0.74, hz - fz * 0.27, 0.04, 1.14, 0.38, SB.cream, h);
-      } else solid.box(hx, armY - 0.75, hz, 0.36, 1.25, 0.44, HOUSING, h);
+      solid.box(hx, armY - 0.75, hz, 0.36, 1.25, 0.44, HOUSING, h);
       for (const k of [0, 1, 2] as const) {
         lamps.aux.set(lampTag(k, offset), -(n.id + 1), n.phaseOf[i] + 4 * (Math.max(2, n.phases) - 2));
-        if (story) lamps.ico(hx - fx * 0.3, armY - 0.36 - k * 0.38, hz - fz * 0.3, 0.15, LAMP_COLORS[k]);
-        else lamps.box(hx - fx * 0.22, armY - 0.36 - k * 0.38, hz - fz * 0.22, 0.16, 0.3, 0.3, LAMP_COLORS[k], h);
+        lamps.box(hx - fx * 0.22, armY - 0.36 - k * 0.38, hz - fz * 0.22, 0.16, 0.3, 0.3, LAMP_COLORS[k], h);
       }
     }
   }

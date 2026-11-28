@@ -9,7 +9,11 @@ import { boatAt, boatExtent } from "./boats.ts";
 
 interface CargoModel {
   size: [number, number, number];     // length (x), height (y), width (z)
+  // noLegs: without the parts built on their own (an animal's legs, the loose parts).
   build(b: Batch, x: number, y: number, z: number, variant: number, noLegs?: boolean): void;
+  // Parts a carried load moves on their own (loads.ts): n of them, each built about its pivot,
+  // which sits `at(k)` from the model's bottom centre.
+  loose?: { n: number; at(k: number): [number, number, number]; build(b: Batch, k: number, variant: number): void };
   // Animals: leg layout, so the herd can animate legs built separately (build with noLegs).
   legs?: { lx: number; lz: number; h: number; t: number; color: (variant: number) => number };
   round?: boolean;                     // rolls (radius = height / 2)
@@ -29,9 +33,28 @@ const CHURN = [[0.92, 0], [1, 0.03], [1, 0.6], [0.96, 0.68], [0.7, 0.82], [0.56,
 // (A sack: slumped wide at the foot and drawn in under its rolled-down mouth, which SACK_LIP draws.)
 const SACK = [[0.86, 0], [1, 0.12], [0.98, 0.4], [0.86, 0.75], [0.8, 1]] as const;
 const SACK_LIP = [[0.86, 0], [1, 0.5], [0.94, 1]] as const;
+// (A bun's dome, and a pom-pom, for the storybook city's goods.)
+const SB_BUN = [[0, 0], [1, 0.1], [0.9, 0.6], [0.4, 0.95], [0, 1]] as const;
+const SB_PUFF_P = [[0, 0], [0.8, 0.12], [1, 0.42], [0.9, 0.66], [0.62, 0.9], [0, 1]] as const;
 const HORN =[[0.08, 0], [0.1, 0.3], [0.18, 0.6], [0.4, 0.82], [1, 1]] as const;
 const TRAILER_SAILER = { scale: 0.5, mastDown: true }, JETSKI = { scale: 0.8 };
 const vpick = <T,>(a: T[], i: number) => a[((i % a.length) + a.length) % a.length];
+
+// A giant lollipop k of a tub (the storybook's) whose bottom centre is (x, y, z): its stick from
+// the tub's top, the three fanning out, the middle one tallest and the others leaning away from it.
+function lollipop(b: Batch, x: number, y: number, z: number, i: number, k: number) {
+  const cols = [[0xff5a4e, CK.white], [0x9a6cf0, 0xfbe58a], [0x5fd3a0, 0xff7fb5]], s = k - 1;
+  const [a, c] = vpick(cols, i + k), hy = y + (k === 1 ? 0.76 : 0.62), dx = s * 0.06, dz = s * 0.17;
+  b.cyl(x + dx * 0.5, (y + 0.2 + hy) / 2, z + dz * 0.5, 0.015, hy - y - 0.2, CK.white, 5, s * 0.25);
+  for (let r = 0; r < 4; r++) b.cyl(x + dx + 0.003 * r, hy, z + dz, 0.17 - r * 0.038, 0.05 + r * 0.004, r % 2 ? c : a, 12, 0, Math.PI / 2);
+}
+// A balloon k of a bunch whose bottom centre is (x, y, z), on its ribbon from the weight's top.
+function balloon(b: Batch, x: number, y: number, z: number, i: number, k: number) {
+  const cols = [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0x5fd3a0, 0xff5a4e];
+  const [dx, dy, dz] = [[-0.12, 0.84, -0.06], [0.1, 0.9, 0.08], [0.0, 0.94, -0.1]][k], tx = x + dx, tz = z + dz, ty = y + dy;
+  b.cyl((x + tx) / 2, (y + 0.12 + ty - 0.17) / 2, (z + tz) / 2, 0.006, Math.hypot(dx, ty - 0.17 - y - 0.12, dz), 0xfffdf8, 3, Math.atan2(dz, ty - 0.17 - y - 0.12), -Math.atan2(dx, ty - 0.17 - y - 0.12));
+  b.ico(tx, ty, tz, 0.15, cols[(k * 2 + i) % cols.length], 1.2);
+}
 
 function carton(b: Batch, x: number, y: number, z: number, l: number, h: number, w: number, tape = CK.tape, color = CK.card) {
   b.box(x, y + h / 2, z, l, h, w, color);
@@ -84,17 +107,11 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     }
   } },
   // Giant lollipops are three swirled discs on sticks standing in a striped tub.
-  lollipops: { size: [0.5, 0.95, 0.7], build: (b, x, y, z, i) => {
+  lollipops: { size: [0.5, 0.95, 0.7], build: (b, x, y, z, i, loose) => {
     b.cyl(x, y + 0.13, z, 0.2, 0.26, vpick([0xff7fb5, 0x6fe0e8, 0xf2c230], i), 10);
     b.cyl(x, y + 0.24, z, 0.21, 0.05, CK.white, 10);
-    const cols = [[0xff5a4e, CK.white], [0x9a6cf0, 0xfbe58a], [0x5fd3a0, 0xff7fb5]];
-    // (They fan out: the middle one is tallest, and the others lean away from it.)
-    [-1, 0, 1].forEach((s, k) => {
-      const [a, c] = vpick(cols, i + k), hy = y + (k === 1 ? 0.76 : 0.62), dx = s * 0.06, dz = s * 0.17;
-      b.cyl(x + dx * 0.5, (y + 0.2 + hy) / 2, z + dz * 0.5, 0.015, hy - y - 0.2, CK.white, 5, s * 0.25);
-      for (let r = 0; r < 4; r++) b.cyl(x + dx + 0.003 * r, hy, z + dz, 0.17 - r * 0.038, 0.05 + r * 0.004, r % 2 ? c : a, 12, 0, Math.PI / 2);
-    });
-  } },
+    if (!loose) for (let k = 0; k < 3; k++) lollipop(b, x, y, z, i, k);
+  }, loose: { n: 3, at: () => [0, 0.2, 0], build: (b, k, i) => lollipop(b, 0, -0.2, 0, i, k) } },
   // Cloud cushions are a puffy cloud, white with a blush of colour underneath.
   cloudCushions: { size: [0.7, 0.42, 0.5], build: (b, x, y, z, i) => {
     const under = vpick([0xffd9e0, 0xd8f4ff, 0xfff3c8], i);
@@ -112,15 +129,10 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     for (const dz of [-0.1, 0.1]) b.cyl(x, y + 0.38, z + dz, 0.06, 0.04, 0xd4af37, 8, Math.PI / 2);
   } },
   // Balloon bunches are three balloons on ribbons over a little weight.
-  balloons: { size: [0.5, 1.1, 0.5], build: (b, x, y, z, i) => {
+  balloons: { size: [0.5, 1.1, 0.5], build: (b, x, y, z, i, loose) => {
     b.box(x, y + 0.06, z, 0.16, 0.12, 0.16, 0xd4af37);
-    const cols = [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0x5fd3a0, 0xff5a4e];
-    [[-0.12, 0.84, -0.06], [0.1, 0.9, 0.08], [0.0, 0.94, -0.1]].forEach(([dx, dy, dz], k) => {
-      const tx = x + dx, tz = z + dz, ty = y + dy;
-      b.cyl((x + tx) / 2, (y + 0.12 + ty - 0.17) / 2, (z + tz) / 2, 0.006, Math.hypot(dx, ty - 0.17 - y - 0.12, dz), 0xfffdf8, 3, Math.atan2(dz, ty - 0.17 - y - 0.12), -Math.atan2(dx, ty - 0.17 - y - 0.12));
-      b.ico(tx, ty, tz, 0.15, cols[(k * 2 + i) % cols.length], 1.2);
-    });
-  } },
+    if (!loose) for (let k = 0; k < 3; k++) balloon(b, x, y, z, i, k);
+  }, loose: { n: 3, at: () => [0, 0.12, 0], build: (b, k, i) => balloon(b, 0, -0.12, 0, i, k) } },
   // A music box is a little lacquered box, its lid ajar, with a gold crank on its side.
   musicBoxes: { size: [0.36, 0.28, 0.26], build: (b, x, y, z, i) => {
     const c = vpick([0xd83a9a, 0x2b3f8a, 0x1fb5b0, 0xff9a2e], i);
@@ -129,6 +141,159 @@ export const CARGO_MODELS: Record<string, CargoModel> = {
     b.boxR(x + 0.02, y + 0.21, z, 0.36, 0.03, 0.26, c, 0, 0, 0.3);
     b.box(x, y + 0.085, z + 0.134, 0.3, 0.02, 0.006, 0xd4af37);
     b.box(x - 0.12, y + 0.09, z - 0.145, 0.03, 0.03, 0.03, 0xd4af37); b.box(x - 0.12, y + 0.12, z - 0.155, 0.02, 0.06, 0.02, 0xd4af37);
+  } },
+  // A sack of gumdrops is a striped sack tied at the neck, a heap of gumdrops spilling over its top.
+  gumdrops: { size: [0.42, 0.56, 0.42], build: (b, x, y, z, i) => {
+    const [c0, c1] = vpick([[0xff7fb5, 0xfff3dc], [0x6fe0e8, 0xfff3dc], [0xf2c230, 0xff5a4e]], i);
+    b.lathe("sack", SACK, x, y, z, 0.21, 0.4, c0, 10, i);
+    for (const yy of [0.1, 0.24]) b.tubeSeg(x, y + yy, z, 0.212, 0.05, c1, 10);
+    b.cyl(x, y + 0.41, z, 0.11, 0.04, 0xa47a4a, 8);
+    const drops = [0xe8333a, 0x5fd3a0, 0xf2c230, 0x9a6cf0, 0xff9a2e];
+    [[0, 0.46, 0], [-0.08, 0.43, 0.05], [0.08, 0.43, -0.04], [0.02, 0.43, 0.09]].forEach(([dx, dy, dz], k) => b.lathe("gumdrop", [[0, 0], [1, 0.1], [0.8, 0.6], [0, 1]], x + dx, y + dy, z + dz, 0.06, 0.1, drops[(k + i) % drops.length], 7, k));
+  } },
+  // A crate of fizzy pop is a shallow crate of six bulbous bottles, each a colour under a red cap.
+  fizzPop: { size: [0.46, 0.42, 0.32], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.07, z, 0.46, 0.14, 0.32, vpick([0x1fb5b0, 0xff9a2e, 0xd83a9a], i));
+    for (let a = 0; a < 3; a++) for (let c = 0; c < 2; c++) {
+      const bx = x - 0.14 + a * 0.14, bz = z - 0.075 + c * 0.15, col = vpick([0xa6e05a, 0xff7fb5, 0x6fe0e8, 0xfbe58a], a + c * 3 + i);
+      b.lathe("fizzBottle", [[0, 0], [0.8, 0.12], [1, 0.4], [0.4, 0.75], [0.3, 1]], bx, y + 0.08, bz, 0.06, 0.28, col, 7, a);
+      b.cyl(bx, y + 0.37, bz, 0.025, 0.04, 0xe8333a, 6);
+    }
+  } },
+  // A basket of yarn is a round wicker basket heaped with balls of wool, a knitting needle stuck through.
+  yarnBalls: { size: [0.46, 0.4, 0.46], build: (b, x, y, z, i) => {
+    b.cyl(x, y + 0.1, z, 0.2, 0.2, 0xc8964a, 10); b.tubeSeg(x, y + 0.2, z, 0.21, 0.03, 0xa47a4a, 10);
+    const wool = [0xff5a4e, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0x5fd3a0, 0xff7fb5];
+    [[-0.08, 0.25, -0.06], [0.08, 0.25, 0.06], [0.07, 0.25, -0.08], [-0.06, 0.27, 0.08], [0, 0.33, 0]].forEach(([dx, dy, dz], k) => b.ico(x + dx, y + dy, z + dz, 0.085, wool[(k + i) % wool.length], 1, k));
+    b.boxR(x + 0.03, y + 0.38, z, 0.012, 0.012, 0.42, 0xfff3dc, 0.5, 0.3, 0);
+  } },
+  // A crate of springs is a slatted crate with fat coiled springs boinging out of its top.
+  springs: { size: [0.48, 0.48, 0.38], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.13, z, 0.48, 0.26, 0.38, 0xd6b07a);
+    for (const yy of [0.06, 0.2]) b.box(x, y + yy, z, 0.49, 0.04, 0.39, 0xb88e5a);
+    for (const [dx, dz] of [[-0.12, -0.08], [0.12, 0.08], [0.02, -0.02]]) for (let k = 0; k < 4; k++) b.tubeSeg(x + dx, y + 0.28 + k * 0.045, z + dz, 0.06, 0.02, vpick([0xc0c4c8, 0xd4af37], i + k), 8);
+  } },
+  // Snorkberry jam is a crate of four fat jars of purple jam, their lids tied in gingham.
+  jamJars: { size: [0.4, 0.34, 0.4], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.05, z, 0.4, 0.1, 0.4, 0xfff3dc);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const jx = x + sx * 0.095, jz = z + sz * 0.095;
+      b.cyl(jx, y + 0.18, jz, 0.08, 0.18, vpick([0x6a3a9a, 0xd83a9a, 0x9a3a6a], i + sx + sz), 9);
+      b.cyl(jx, y + 0.29, jz, 0.09, 0.04, vpick([0xff5a4e, 0x1fb5b0], i), 9);
+    }
+  } },
+  // A tray of buns is a stack of three trays of iced buns, each with a cherry on top.
+  buns: { size: [0.5, 0.3, 0.36], build: (b, x, y, z, i) => {
+    for (let t = 0; t < 2; t++) {
+      const ty = y + t * 0.14;
+      b.box(x, ty + 0.015, z, 0.5, 0.03, 0.36, 0xc0c4c8);
+      for (let a = 0; a < 3; a++) for (let c = 0; c < 2; c++) {
+        const bx = x - 0.15 + a * 0.15, bz = z - 0.08 + c * 0.16;
+        b.lathe("bun", SB_BUN, bx, ty + 0.03, bz, 0.065, 0.08, 0xe0a060, 7, a);
+        b.lathe("bun", SB_BUN, bx, ty + 0.07, bz, 0.055, 0.04, vpick([0xff7fb5, 0xfff3dc, 0x6fe0e8], a + c + i), 7, c);
+        if (t === 1) b.ico(bx, ty + 0.12, bz, 0.018, 0xe8333a);
+      }
+    }
+  } },
+  // A basket of snorkberries is a low basket heaped with big round berries, blue and violet, with a
+  // curly leaf.
+  snorkberries: { size: [0.46, 0.34, 0.36], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.08, z, 0.46, 0.16, 0.36, 0xc8964a); b.box(x, y + 0.165, z, 0.47, 0.02, 0.37, 0xa47a4a);
+    for (const [dx, dz] of [[-0.13, -0.08], [0, -0.09], [0.13, -0.07], [-0.12, 0.08], [0.01, 0.08], [0.13, 0.09], [0.05, 0]]) b.ico(x + dx, y + 0.21, z + dz, 0.07, vpick([0x4f9cf0, 0x9a6cf0, 0x2b3f8a], i + Math.round(dx * 40 + dz * 30)), 0.9);
+    b.boxR(x - 0.05, y + 0.3, z, 0.14, 0.01, 0.07, 0x5fd3a0, 0.3, 0, 0.4);
+  } },
+  // Trufflunk tufts are a bundle of three soft pom-poms of fluff, tied with a ribbon.
+  trufflunkTufts: { size: [0.62, 0.5, 0.5], build: (b, x, y, z, i) => {
+    const col = vpick([0xff7fb5, 0xff9a2e, 0xf2c230, 0x9a6cf0, 0x6fe0e8], i);
+    b.lathe("pomPom", SB_PUFF_P, x - 0.15, y, z, 0.17, 0.32, col, 8, i);
+    b.lathe("pomPom", SB_PUFF_P, x + 0.15, y, z, 0.16, 0.3, col, 8, i + 1);
+    b.lathe("pomPom", SB_PUFF_P, x, y + 0.18, z, 0.18, 0.32, col, 8, i + 2);
+    b.box(x, y + 0.2, z, 0.06, 0.06, 0.38, 0xfff3dc);
+  } },
+  // A barrel of bubbles is a striped barrel on its side, bubbles foaming out of its bung.
+  bubbleBarrels: { size: [0.56, 0.56, 0.66], round: true, build: (b, x, y, z, i) => {
+    const [c0, c1] = vpick([[0x6fe0e8, 0xfff3dc], [0xff7fb5, 0xfff3dc], [0x9a6cf0, 0xfbe58a]], i);
+    b.lathe("barrel", BARREL, x, y + 0.28, z - 0.33, 0.28, 0.66, c0, 12, 0, Math.PI / 2);
+    for (const [t, r] of [[0.15, 0.262], [0.5, 0.284], [0.85, 0.262]]) b.cyl(x, y + 0.28, z - 0.33 + t * 0.66, r + 0.006, 0.05, c1, 12, Math.PI / 2);
+    for (const s of [-1, 1]) b.cyl(x, y + 0.28, z + s * 0.326, 0.2, 0.008, c1, 12, Math.PI / 2);
+    for (const [dx, dy, dz, r] of [[0.04, 0.12, 0.33, 0.05], [0.1, 0.2, 0.35, 0.035], [0.03, 0.27, 0.37, 0.025]]) b.ico(x + dx, y + 0.28 + dy - 0.1, z + dz, r, 0xeaf8ff, 1, dx);
+  } },
+  // A hat stack is three tall striped hats, one on another, the top one tipped.
+  hatStacks: { size: [0.38, 0.9, 0.38], build: (b, x, y, z, i) => {
+    let yy = y;
+    for (let k = 0; k < 3; k++) {
+      const [c0, c1] = vpick([[0xe8333a, 0xfff3dc], [0x1fb5b0, 0xfff3dc], [0x9a6cf0, 0xf2c230], [0x2a2440, 0xff7fb5]], i + k);
+      b.cyl(x, yy + 0.015, z, 0.18 - k * 0.02, 0.03, c0, 10);
+      b.cyl(x, yy + 0.14, z, 0.12 - k * 0.015, 0.22, c1, 10);
+      b.cyl(x, yy + 0.08, z, 0.123 - k * 0.015, 0.05, c0, 10);
+      yy += 0.28;
+    }
+  } },
+  // A cuckoo clock is a little carved house of a clock, its face white, its pendulum and weights below.
+  cuckooClocks: { size: [0.3, 0.5, 0.22], build: (b, x, y, z, i) => {
+    const wood = vpick([0x8a5a32, 0xd83a9a, 0x1fb5b0], i);
+    b.box(x, y + 0.18, z, 0.22, 0.24, 0.16, wood);
+    b.prism(x, y + 0.35, z, 0.3, 0.1, 0.2, 0xe8333a);
+    b.cyl(x, y + 0.2, z + 0.082, 0.07, 0.01, 0xfff3dc, 10, Math.PI / 2);
+    b.box(x, y + 0.2, z + 0.088, 0.008, 0.06, 0.004, 0x2a2440);
+    b.box(x, y + 0.03, z, 0.02, 0.06, 0.02, 0xd4af37); b.ico(x, y + 0.01, z, 0.03, 0xd4af37);
+  } },
+  // A crate of doodads is a crate stencilled with a question mark, odd bits poking out of its top.
+  doodads: { size: [0.46, 0.44, 0.4], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.15, z, 0.46, 0.3, 0.4, vpick([0x9a6cf0, 0xff9a2e, 0x5fd3a0], i));
+    b.box(x, y + 0.31, z, 0.47, 0.02, 0.41, 0xfff3dc);
+    b.box(x, y + 0.17, z + 0.201, 0.12, 0.04, 0.004, 0xfff3dc); b.box(x + 0.05, y + 0.12, z + 0.201, 0.03, 0.1, 0.004, 0xfff3dc); b.box(x, y + 0.05, z + 0.201, 0.03, 0.03, 0.004, 0xfff3dc);
+    b.cyl(x - 0.1, y + 0.37, z, 0.04, 0.1, 0xd4af37, 6); b.ico(x + 0.1, y + 0.36, z + 0.05, 0.05, 0xe8333a); b.boxR(x + 0.02, y + 0.36, z - 0.08, 0.14, 0.03, 0.03, 0x4f9cf0, 0, 0.5, 0.4);
+  } },
+  // A kite is a diamond in two colours on its cross spars, with a bowed tail.
+  kites: { size: [0.08, 0.9, 0.6], build: (b, x, y, z, i) => {
+    const [c0, c1] = vpick([[0xe8333a, 0xf2c230], [0x1fb5b0, 0xff7fb5], [0x9a6cf0, 0xfbe58a]], i), cy = y + 0.52;
+    const pts: [number, number][] = [[0, 0.36], [0.28, 0], [0, -0.48], [-0.28, 0]];
+    for (let k = 0; k < 4; k++) {
+      const [a0, h0] = pts[k], [a1, h1] = pts[(k + 1) % 4], c = k % 2 ? c0 : c1;
+      for (const s of [-1, 1]) b.tri(x + s * 0.01, cy, z, x + s * 0.01, cy + h0, z + a0, x + s * 0.01, cy + h1, z + a1, c, [s, 0, 0]);
+    }
+    for (let k = 0; k < 3; k++) b.box(x, y + 0.02 + k * 0.012, z + (k - 1) * 0.06, 0.02, 0.02, 0.06, vpick([0xff7fb5, 0x6fe0e8, 0xf2c230], k + i));
+    b.box(x, y + 0.03 + 0.005, z, 0.012, 0.012, 0.012, 0x2a2440);
+  } },
+  // An upside-down cake stands on its point: a tiered cake, widest at the top, iced in stripes.
+  upsideCake: { size: [0.5, 0.6, 0.5], build: (b, x, y, z, i) => {
+    b.cyl(x, y + 0.02, z, 0.1, 0.04, 0xfff3dc, 10);
+    const ic = vpick([0xff7fb5, 0x6fe0e8, 0xfbe58a], i);
+    [[0.1, 0.12], [0.16, 0.14], [0.24, 0.16]].reduce((yy, [r, h], k) => { b.cyl(x, yy + h / 2, z, r, h, k % 2 ? 0xfff3dc : ic, 12); return yy + h; }, y + 0.04);
+    b.ico(x, y + 0.5, z, 0.05, 0xe8333a);
+  } },
+  // A very long scarf is a great rolled coil of striped knitting, its end trailing down.
+  longScarf: { size: [1.6, 0.5, 0.5], build: (b, x, y, z, i) => {
+    const [c0, c1] = vpick([[0xe8333a, 0xfff3dc], [0x1fb5b0, 0xf2c230], [0x9a6cf0, 0xff7fb5]], i);
+    for (let k = 0; k < 8; k++) b.cyl(x - 0.7 + k * 0.2, y + 0.25, z, 0.24, 0.2, k % 2 ? c1 : c0, 10, 0, Math.PI / 2, k * 0.4);
+    for (const s of [-1, 1]) b.ico(x + s * 0.82, y + 0.25, z, 0.08, c1);
+  } },
+  // A snoozing snuffleump is a round furry beast curled up asleep, its nightcap over one eye.
+  snuffleump: { size: [1.0, 0.8, 0.8], build: (b, x, y, z, i) => {
+    const fur = vpick([0xff9a2e, 0x9a6cf0, 0xff7fb5], i);
+    b.lathe("pomPom", SB_PUFF_P, x - 0.05, y, z, 0.42, 0.66, fur, 10, i);
+    b.ico(x + 0.36, y + 0.32, z, 0.2, fur, 0.9);
+    b.ico(x + 0.52, y + 0.3, z, 0.08, 0xfff3dc, 0.8);
+    for (const s of [-1, 1]) { b.box(x + 0.5, y + 0.38, z + s * 0.08, 0.02, 0.012, 0.06, 0x2a2440); b.ico(x + 0.3, y + 0.5, z + s * 0.12, 0.06, fur, 1.4); }
+    b.cone(x + 0.3, y + 0.56, z, 0.13, 0.32, 0x1fb5b0, 8, 0, 0, -0.7); b.ico(x + 0.47, y + 0.68, z, 0.04, 0xfff3dc);
+    b.cone(x - 0.48, y + 0.18, z, 0.08, 0.4, fur, 6, 0, 0, 1.2);
+  } },
+  // A sack of sugar is a plain white sack tied at the neck, its sugar-lump mark in blue.
+  sugarSacks: { size: [0.4, 0.46, 0.4], build: (b, x, y, z, i) => {
+    b.lathe("sack", SACK, x, y, z, 0.2, 0.4, vpick([0xf8f4ec, 0xeee8dc], i), 10, i);
+    b.lathe("sackLip", SACK_LIP, x, y + 0.38, z, 0.12, 0.06, vpick([0xf8f4ec, 0xeee8dc], i), 8);
+    b.box(x, y + 0.2, z + 0.196, 0.1, 0.1, 0.006, 0x2b3f8a);
+  } },
+  // A bale of wool is a square bale of cream fleece bound in two cords.
+  woolBales: { size: [0.6, 0.42, 0.44], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.21, z, 0.6, 0.42, 0.44, vpick([0xf4ecd8, 0xe8dcc0], i));
+    for (const dx of [-0.16, 0.16]) b.box(x + dx, y + 0.21, z, 0.03, 0.43, 0.45, 0x8a6a48);
+  } },
+  // A crate of empty jars is a crate of glassy jars in rows, their mouths open.
+  glassJars: { size: [0.46, 0.3, 0.36], build: (b, x, y, z, i) => {
+    b.box(x, y + 0.06, z, 0.46, 0.12, 0.36, vpick([0xd6b07a, 0xcda36a], i));
+    for (let a = 0; a < 3; a++) for (let c = 0; c < 2; c++) b.cyl(x - 0.14 + a * 0.14, y + 0.18, z - 0.08 + c * 0.16, 0.06, 0.2, 0xcfeef4, 8);
   } },
   // ---- the Victorian city's goods (cargo.ts VIC_CARGO) ----
   // A tea chest is a plywood cube edged in tin, stencilled with the merchant's red roundel and mark.

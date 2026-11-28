@@ -1,5 +1,6 @@
 // Ambient motion overhead: the elevated train in a metro city, and a blimp drifting over every
-// city with an ad on its side (it is always Frog Week next week).
+// city with an ad on its side (it is always Frog Week next week). Over a storybook city a patchwork
+// hot-air balloon drifts in the blimp's place (storybook-street.ts storyBalloon).
 import * as THREE from "three@0.187.0";
 import { Batch, quadGeometry } from "./geom.ts";
 import type { Quad } from "./geom.ts";
@@ -10,6 +11,7 @@ import { BLOCK } from "./grid.ts";
 import { signAtlas } from "./signs.ts";
 import { SIM_DT } from "./journey.ts";
 import { GLASS } from "./cars.ts";
+import { storyBalloon } from "./city-storybook/storybook-street.ts";
 
 type LineWay = { pts: [number, number][]; cum: number[]; w: number; e: number; mid: number };
 const TRAINS = 4, EL_CARS = 4, EL_CAR_PITCH = 14.4, EL_TURN = 7;   // EL_TURN: half the chord a car's heading follows through a bend
@@ -17,6 +19,7 @@ export class Ambient {
   private trains: THREE.Mesh[][] = [];
   readonly trainX: number[] = [];        // where each train's middle is (test renders follow one)   // each train's cars, placed one by one so they follow the ramps
   private blimp: THREE.Group;
+  private balloon: THREE.Mesh;
   private blimpX = NaN; private blimpZ = 0; private blimpPX = NaN;   // stepped with the journey (StreetLife)
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
@@ -37,6 +40,9 @@ export class Ambient {
     const quads: Quad[] = [{ x: 0, y: 0, z: 4.62, w: 14, h: 5.2, ...uv }, { x: 0, y: 0, z: -4.62, w: 14, h: 5.2, rotY: Math.PI, ...uv }];
     this.blimp.add(new THREE.Mesh(quadGeometry(quads), signAtlas.material));
     this.blimp.visible = false; scene.add(this.blimp);
+    const kb = new Batch(); storyBalloon(kb);
+    this.balloon = kb.build(material)!; this.balloon.scale.setScalar(9);
+    this.balloon.visible = false; scene.add(this.balloon);
   }
 
   // The blimp's drift, one journey step at a time: it drifts east high overhead and reappears
@@ -92,7 +98,8 @@ export class Ambient {
 
   // `time` is journey time, so the trains are where they would be after a scrub too.
   update(time: number, alpha: number, plan: CityPlan, focus: THREE.Vector3, active: boolean) {
-    this.blimp.visible = active && !Number.isNaN(this.blimpX);
+    const flies = active && !Number.isNaN(this.blimpX), story = !!plan.style.storybook;
+    this.blimp.visible = flies && !story; this.balloon.visible = flies && story;
     // Elevated trains on the line nearest the focus: TRAINS of them, evenly spaced round a loop
     // out along one track to the far end of the line (ElevatedReach, well out of sight) and back
     // along the other, so one comes through every few minutes each way.
@@ -118,6 +125,9 @@ export class Ambient {
     if (!active) return;
     this.blimp.position.set(this.blimpPX + (this.blimpX - this.blimpPX) * alpha, 62, this.blimpZ);
     this.blimp.rotation.set(0, 0, 0.04 * Math.sin(time * 0.4));
+    // (The balloon rides a little lower, bobbing, its basket swaying and the whole turning slowly.)
+    this.balloon.position.set(this.blimp.position.x, 52 + 1.5 * Math.sin(time * 0.3), this.blimpZ);
+    this.balloon.rotation.set(0.03 * Math.sin(time * 0.5), time * 0.05, 0.03 * Math.cos(time * 0.4));
   }
 }
 

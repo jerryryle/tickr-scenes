@@ -160,12 +160,38 @@ of the first two cities, and it never comes within `STORYBOOK_GAP` cities of the
 that, each city is one with `STORYBOOK_ODDS` (`isStorybookCity` in `src/styles.ts`). Its town is
 built in `src/city-storybook/storybook-buildings-town.ts` and its knitting works in `src/city-storybook/storybook-landmark-knitting-works.ts`.
 
-Its streets are purple-grey with polka-dot centre lines, checkered pavements, shepherd's-crook
-lamps and bunting, and the road in passes under a corkscrew arch. Its buildings are bent towers of
-round pods in hats, crooked shop rows and pod houses. Their walls are facade tiles (`facadePrism` in
-`src/facade.ts`), so a chunk costs about what other cities' chunks cost, and `test/chunkcost.ts`
-holds it to `BUDGET` times the dearest real style. Its trees are tufts, pancakes, droops and
-topiary, and its country rolls away in striped hills.
+Its roads are candy cobbles in herringbone with polka-dot centre lines and pink zebras, its
+pavements, plazas and paths are fish-scale tiles, and the street has shepherd's-crook lamps and bunting strung with festoon bulbs, and the road in passes under a
+corkscrew arch with the town's name hand-lettered on its board. Nothing modern stands in them. Its
+signals are candy poles with a lollipop of gumball lamps and a lettered board naming the cross
+street, and its pavement furniture, avenue medians and plaza are its own: a squirter in each
+hydrant's place, striped barrels, curl-backed benches, post pots, paper kiosks, candy posts,
+toadstool shelters and hoop racks, each on the footprint of the piece it replaces
+(`src/city-storybook/storybook-street.ts`). Now and then the Very Long Scarf hangs across a street
+in place of bunting, and a patchwork balloon drifts over the town in place of the blimp.
+
+The ground's shader draws the cobbles and tiles (`applyCandyPaving` in `storybook-street.ts`), as
+it draws the Victorian city's setts. In the rain the paving darkens and shines with the sky, and
+round puddles stand on it, each ringed in pink, mint or butter, with a faint rainbow in the water
+and raindrops ringing it.
+
+Its buildings are bent towers of
+round or square pods in hats, propped on crutches where they lean furthest, with a town clock facing
+the plaza and the Tippy Tower on its crutches. Its shops stand in crooked rows under bell-cast roofs,
+its houses are pods and crooked gables with dormers behind picket fences, its works are boarded
+sheds under striped barrel roofs with silos and yards of barrels, spools and crates, and its parks
+have carousel kiosks and toadstools. A building has two candy body colours, and the deeper accents go on its
+trims, roofs and hats, its awnings and the trees' crowns (`SB_BODY` and `SB_ACCENT` in
+`storybook-buildings-town.ts`). Their walls are facade tiles (`facadePrism` in `src/facade.ts`), so
+a chunk costs about what other cities' chunks cost, and `test/chunkcost.ts` holds it to `BUDGET`
+times the dearest real style. Its trees are tufts, pancakes, droops and topiary, and its country
+rolls away in striped hills.
+
+Its light is its own across the day. `Atmosphere.update` in `src/atmosphere.ts` blends in a
+storybook sky, hemisphere light, moonlight and night haze by the trucks' toon weight, so the night
+is indigo and lit from a lilac sky, dawn is salmon and golden hour apricot, and a big butter moon
+hangs low. Its lamps glow in their own glass colours (`SB_GLOW`), and its windows glow candle, rose
+and butter with its shops' always lit (`STORY_WINDOW_KINDS` in `src/facade.ts`).
 
 The drive to a storybook city changes the land slowly over its whole length, where other drives
 change it around their middle. The road's map holds how much of the storybook there is every 10 m
@@ -173,35 +199,72 @@ change it around their middle. The road's map holds how much of the storybook th
 candy-coloured crowns and the odd storybook tree turn up among its own trees (`storyLook` in
 `src/countryworld.ts`). Patches of storybook land grow more common and the hills and sky come round,
 until the arrival straight is all storybook. Leaving one, the drive runs the same way in reverse.
+Where the storybook passes half (`STORY_MODERN`), the road drops its modern dress as it does near
+the Victorian city: it turns plum with polka dots, its poles, pylons, turbines, silos and billboards
+go, its distance boards are the town's magenta, and what comes the other way is the town's
+contraptions.
 
 The trucks go cartoonish along with the land. `makeToon` in `src/truck.ts` builds the cartoon as
 morph targets the first time a truck needs it, using the rounding in `src/toontruck.ts`. The cab,
 hood, box or trailer is rounded off at the edges and puffed out, the cab is taller and the hood
 shorter, and big round headlamps stand on the nose. The tyres are fat on pink rims and the trim is
-plum and gold. The box's back, doors and floor and the wheels' places stay where they are, so
-docking and loading work the same. Parked fleets are baked the same way (`src/fleet.ts`), and
+plum and gold. A gold wind-up key grows on the roof and turns as the truck goes, and the body
+pitches through a spring, squats and dives with an overshoot, and squashes as it pulls away. The
+box's back, doors and floor and the wheels' places stay where they are, so docking and loading work
+the same. Parked fleets are baked the same way (`src/fleet.ts`), and
 `make tool SCENE=long-day TOOL=toons SECS=10` shows each model at none, half and all of it.
 
-Its people wear hats and scarves of their own (`FIG_STYLE` in `src/figure.ts`), and one vignette,
-a knitter, is found only there. Its traffic is its own contraptions and cartoon Ryder trucks. The
+Its people dress for it (`storyPerson` in `src/figure.ts`): accent-coloured clothes, striped
+stockings, smocks and bell skirts, long upturned shoes, round and lanky figures, and a hat or hairdo
+of their own. They walk a cartoon's springy walk and fidget while they wait, and their tassels,
+springs and scarves swing as they go (`walkSwing`, `standIdle`). Nobody jogs or carries coffee, the
+seller has a candy-floss cart and the busker a tuba, and children are about. The crew wear
+storybook dress there in the Ryder colours, the driver a tailed navy coat and a striped stovepipe,
+the mate a striped jumper and a tasselled cap (`STORY_DRIVER`, `STORY_MATE` in
+`src/character.ts`), and walk with a bigger bounce. The goods they carry settle a beat after their
+steps, and the lollipops, balloons, gumdrops and cloud cushions move in their hands (`src/loads.ts`).
+`make tool SCENE=long-day TOOL=storypeople SECS=18` shows the people and the crew, and
+`make stage STAGE="box16 lollipops drop story"` a storybook stop. Four vignettes are found only
+there: a knitter, a fluff-bird on a crook lamp, a pet on long legs and someone balancing a stack of
+hats. The vignettes that need a modern street's trades or kit are kept out (`STORY_OUT` in
+`src/vignettes.ts`). Its traffic is its own contraptions and cartoon Ryder trucks. The
 contraptions are a hamster wheel, a walking strider, a caterpillar bus, a pogo hopper, a unicycle
 tower, a balloon, a spinning teacup and a snail (`src/storyvehicles.ts`). Each is posed from how
-far it has come, so scrubbing replays them. `make tool SCENE=long-day TOOL=storyrides SECS=16`
+far it has come, so scrubbing replays them. The legged ones keep their feet planted on the road
+while the body goes over them (the strider's legs reach by two-bone IK), and each rig carries a lamp
+that lights after dark as a car's headlamp does. `make tool SCENE=long-day TOOL=storyrides SECS=16`
 shows them, and `DEBUG_VIEW=traffic` follows them in the scene.
 
 One block is the knitting works (`CityPlan.worksBlock`). It is a shallow van dock under a
 barrel-roofed spinning hall, with its process laid out in the yard beside it. The process runs from
-an orchard of white tufts to spools on the hall's front and a knitting head on its roof, and
-`KnittingWorksFx` turns its moving parts by scene time. The director holds a wide shot of the works
+an orchard of white tufts to spools on the hall's front and a knitting head on its roof.
+`KnittingWorksFx` poses its moving parts by scene time, all from one angle, as the steam brewery's
+are: a kettle engine at the hall's end drives the spools by a belt and gears, and the knitting head,
+its governor and its knitted tube turn by fixed ratios from them. The yard runs on a 12 s cycle in
+which the gantry's claw picks a tuft, drops it down a chute, and the next bucket of the elevator
+carries it up to the hopper. Its dock is a storybook one (`storyDock`), with lanterns between the
+bays, and its dye vats, sign and stacks glow after dark. The director holds a wide shot of the works
 as the truck pulls up.
 
+The town has trades of its own and none of any other city's. They are the sb facilities in
+`src/facilities.ts`, such as a gumdrop mill, a hat stacker, a cloud laundry, a trufflunk grove and
+pod houses, and a storybook city draws them by district where every other city draws the rest
+(`facilityAt`). Each trade has an emblem of what it makes over its front door, standing on a curly
+bracket out from the wall with a lantern under it, and a home has a striped letterbox beside its
+door (`src/city-storybook/storybook-trades.ts`). The emblems that move (the gadgetry's cogs, the
+pinwheel, the wind-up key and the cuckoo) are drawn by `TradeSpinners`, one instanced mesh for each
+kind of moving part across the loaded chunks. `make tool SCENE=long-day TOOL=storyfacilities SECS=42`
+shows every trade's frontage close up, each drawn by the function the town uses for its district. docs/long-day-cities.md, "The storybook city's trades", says
+how they were laid on the four towns.
+
+Every job in a storybook city goes between its trades and the works, with its own goods
+(`STORY_TOWN` in `src/cargo.ts`), carried by hand, on the hand truck, rolled or lifted between two.
 The works ships bolts of knitting and cloud cushions, and the city after a storybook one arrives
-with a load of one or the other (`freightFor` in `src/journey.ts`). The town's other trades make
-wonders of their own: bottled rainbows, giant lollipops, wind-up toys, balloon bunches and music
-boxes. They are listed in `STORY_CARGO` in `src/cargo.ts`, and their models are in
-`src/cargomodels.ts`. `pickCargo` draws them only when its caller asks for the storybook's, and only
-a storybook city's job picks ask. `test/storycargo.ts` plays journeys through one and checks every
-pickup, and `make tool SCENE=long-day TOOL=wonders SECS=8` shows the models.
+with a load of one or the other (`freightFor` in `src/journey.ts`). The city before one brings in
+sugar, wool or empty jars (`STORY_FREIGHT_IN`), picked up from facilities every other city has.
+`pickCargo` draws the storybook's goods only when its caller asks for them, and only a storybook
+city's job picks ask. `test/storycargo.ts` plays journeys through one and checks every pickup and
+drop, and `make tool SCENE=long-day TOOL=wonders SECS=27` shows the models.
 
 `test/storybook.ts` checks the frequency and the works; to look at it:
 

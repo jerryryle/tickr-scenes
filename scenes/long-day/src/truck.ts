@@ -371,6 +371,7 @@ export class Truck {
   private toonAnchors: [THREE.Object3D, THREE.Vector3, THREE.Vector3][] = [];
   private toonCol = new THREE.Color();
   private toonR: ToonRegion[];   // (the shells the cartoon rounds off: toonRegions)
+  private windKey: THREE.Object3D | null = null;   // (the cartoon's wind-up key on its roof: toonKey)
   // carriage is how much the truck is a horse-drawn carriage (0..1; see makeCarriage), and the scene
   // sets it each frame; carriageMeshes holds each mesh with a carriage to morph to and the index of
   // that morph target. `hitched`: a parked fleet's carriage stands without its team, its shafts down.
@@ -725,10 +726,20 @@ export class Truck {
       for (const [a, p0, p1] of this.toonAnchors) a.position.lerpVectors(p0, p1, K);
     }
 
-    // Suspension: a little bounce with speed, pitch with acceleration (nose dips when braking).
+    // Suspension: a little bounce with speed, pitch with acceleration (nose dips when braking). A cartoon
+    // pitches through the bobblehead's spring (below), so it squats and dives further and overshoots as it
+    // settles, and its body squashes as it pulls away and stretches as it stops.
     const moving = Math.min(Math.abs(this.speed) / 6, 1) * (1 + 2.5 * K);   // (a cartoon's ride is bouncier)
     this.body.position.y = 0.025 * moving * Math.sin(this.distance * 1.9) + 0.012 * moving * Math.sin(this.distance * 4.3);
-    this.body.rotation.z = THREE.MathUtils.clamp(this.accel * 0.0025, -0.012, 0.012);
+    const pitchMax = 0.012 * (1 + 4 * K);
+    this.body.rotation.z = THREE.MathUtils.clamp(THREE.MathUtils.lerp(this.accel * 0.0025, -this.bob.x * 0.06 * (1 + 2 * K), K), -pitchMax, pitchMax);
+    const squash = 1 - 0.05 * K * THREE.MathUtils.clamp(this.accel / 3, -1, 1);
+    this.body.scale.set(1 + (1 - squash) * 0.5, squash, 1);
+    if (this.windKey) {
+      // (It turns with the road gone by, and ticks round a step at a time while the truck stands.)
+      this.windKey.visible = K > 0.01 && KC < 0.99; this.windKey.scale.setScalar(Math.max(K, 0.01));
+      this.windKey.rotation.y = this.distance * 1.2 + Math.floor(this.time * 2) * 0.25;
+    }
     // Roll away from the turn (a left turn leans the body toward +z).
     this.body.rotation.x = THREE.MathUtils.clamp(this.speed * this.speed * Math.tan(this.steer) / s.frontAxle * 0.004, -0.02, 0.02);
 
@@ -911,8 +922,25 @@ export class Truck {
       const p0 = a.position.clone(), p1 = toon(a.position.clone(), bodyRegions, false);
       this.toonAnchors.push([a, p0, p1]);
     }
+    this.toonKey();   // (after the parts are morphed: the key keeps its own shape)
     this.wheels.setColorAt(0, this.toonCol.setHex(0xffffff));   // (the instance colours stay white until a cartoon)
     for (let j = 1; j < this.wheelSlots.length; j++) this.wheels.setColorAt(j, this.toonCol);
+  }
+  // toonKey builds the cartoon's wind-up key, a gold shaft and a two-lobed bow standing on the roof near
+  // its back (the box's, the trailer's, or the cab's on a flatbed), where the cartoon's rounded roof is
+  // (toonRound). It grows with `toon` and turns as the truck goes (update).
+  private toonKey() {
+    const s = this.spec, c = s.cargo, box = c && c.kind === "box", b = new PartBatch();
+    b.cyl(0, 0.3, 0, 0.09, 0.6, 0xffc94a, 8); b.cyl(0, 0.1, 0, 0.22, 0.16, 0x6a3a8a, 10);
+    for (const x of [-0.42, 0.42]) { b.cyl(x, 0.86, 0, 0.38, 0.1, 0xffc94a, 14, Math.PI / 2); b.cyl(x, 0.86, 0, 0.17, 0.12, 0x6a3a8a, 10, Math.PI / 2); }
+    b.box(0, 0.86, 0, 0.4, 0.18, 0.11, 0xffc94a);
+    const key = b.build(this.kit.paint)!, host = this.trailer ?? this.body;
+    const p = this.trailer ? new THREE.Vector3(TRAILER.rear + 1.4, TRAILER.top, 0) : box ? new THREE.Vector3(c!.x0 + 1.0, c!.top, 0) : new THREE.Vector3(s.cabBack + 0.5, s.cabTop, 0);
+    const R = regionAt(this.trailer ? TRAILER_REGION : this.toonR, p);
+    if (R) toonRound(R, p);
+    if (!this.trailer && !box) p.y = s.cabFloor + (p.y - s.cabFloor) * TOON_CAB;
+    key.position.set(p.x, p.y - 0.04, p.z); key.visible = false;
+    host.add(key); this.windKey = key;
   }
   // toonEyes builds the cartoon's big round headlamps, a gold rim round a lens either side of its
   // nose, whole, and then shrinks them to their middles: the cartoon grows them. The lenses are the

@@ -24,7 +24,7 @@ import type { Aboard, DwellNow, Stop } from "./journey.ts";
 import { swapClear, swapWalkPace, swapWalkPoint, swapWalkU } from "./director.ts";
 import { BedLoad, buildCarried, Herd } from "./loads.ts";
 import type { CarriedLoad } from "./loads.ts";
-import { ARM_F, ARM_U, blendPose, CARTER_DRIVER, CARTER_MATE, Character, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
+import { ARM_F, ARM_U, blendPose, CARTER_DRIVER, CARTER_MATE, Character, CREW_GAIT, STORY_DRIVER, STORY_MATE, walkDrop, CHARACTER_HIP_Y, DRIVER_LOOK, gesturePose, HIP_Y, idlePose, LEG_L, LEG_U, restPose, seatedPose, SHOULDER_Y, SIDE_STEP, sideStepPose, stoopFor, STRIDE, walkPose, WORKER_LOOK } from "./character.ts";
 import type { BodyPose } from "./character.ts";
 
 
@@ -75,8 +75,8 @@ export class Crew {
   private v3 = new THREE.Vector3(); private v4 = new THREE.Vector3(); private v5 = new THREE.Vector3(); private v6 = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, material: THREE.Material) {
-    this.driver = new Character(material, DRIVER_LOOK, false, CARTER_DRIVER);
-    this.helper = new Character(material, WORKER_LOOK, true, CARTER_MATE);
+    this.driver = new Character(material, DRIVER_LOOK, false, CARTER_DRIVER, STORY_DRIVER);
+    this.helper = new Character(material, WORKER_LOOK, true, CARTER_MATE, STORY_MATE);
     this.helper.root.visible = false;
     scene.add(this.driver.root, this.helper.root);
     this.scene = scene; this.material = material;
@@ -198,13 +198,16 @@ export class Crew {
     this.tools.handTruck.visible = this.tools.palletJack.visible = false;
     { const [modern, sack] = this.tools.handTruck.children, vic = !!j.plan?.style.victorian; modern.visible = !vic; sack.visible = vic; }
     this.forklift.visible = false; this.stackWorking = false;
-    this.forkDoor = 0; this.forkSpot = null; this.mateSpot = null;
+    this.forkDoor = 0; this.forkSpot = null; this.mateSpot = null; this.walkBob = this.headDrop = 0;
     this.gagPoint = null;
     d.root.visible = true;
     // In carter's dress in the Victorian city, and on the road while more than half of it has crept
-    // in (CountryRoad.periodAt), as the trucks turn toons by storyAt (main.ts setToon).
+    // in (CountryRoad.periodAt), as the trucks turn toons by storyAt (main.ts setToon); in
+    // storybook dress, walking its springy walk, in the storybook city and likewise on its road.
     const road0 = st.mode === "country" ? j.country : null;
+    const story = road0 ? road0.storyAt(j.countryS) > 0.5 : !!j.plan.style.storybook;
     d.period = this.helper.period = road0 ? road0.periodAt(j.countryS) > 0.5 : !!j.plan.style.victorian;
+    d.story = this.helper.story = CREW_GAIT.story = story && !d.period;
     d.vestOn = false;   // (on for a dock stop, below: set on every update, so a scrub back takes it off)
     // (A tractor-trailer's door dwell before or after a dock stop, journey.ts doorDwell: the driver
     // at its doors only, the stop's loads and the dock's worker not in it.)
@@ -899,6 +902,7 @@ export class Crew {
     const path = this.crewPath(truck, stop), ps = samplePath(path, path.starts[this.plan.indexOf(c)] + t, this.ps);
     let x = ps.x, z = ps.z, y = 0, yaw = ps.yaw, walking = ps.speed > 0.04, stepping = false;   // (any drift takes steps: planted feet would skate)
     this.walkPhase = (ps.gait ?? ps.steps) / STRIDE;
+    this.walkBob = this.headDrop = 0;
     idlePose(this.time, P);
     const doorChore = c.kind === "doorOpen" || c.kind === "doorClose";
     if (c.kind === "walk" || c.kind === "gateRide") {
@@ -954,7 +958,12 @@ export class Crew {
       // (Turning on the spot, pivot: short steps, the feet under the hips, the knees lifting them.)
       const ramp = c.kind === "rampOut" || c.kind === "rampIn", a = ramp ? 1 : ps.along, b = ramp ? 0 : ps.lat ?? 0, pv = ramp ? 0 : ps.pivot ?? 0;
       const cyc = a * STRIDE + (1 - a) * SIDE_STEP, across = Math.min(1, Math.abs(b));
-      walkPose(this.walkPhase, P, true, cyc * a / STRIDE * (1 - 0.8 * pv));
+      const stride = cyc * a / STRIDE * (1 - 0.8 * pv);
+      walkPose(this.walkPhase, P, true, stride);
+      // (The walk's bob, kept on top of a stoop to what's held; in the storybook city what's held
+      // bobs with it: putLoad.)
+      this.walkBob = walkDrop(this.walkPhase, stride) - 0.02;
+      this.headDrop = walkDrop(0.25, stride) - 0.02 - this.walkBob;
       const dirSign = ps.gait !== undefined && ps.gait < this.lastGait ? -1 : 1;
       sideStepPose(this.walkPhase, P, Math.atan2(cyc * across / 4, HIP_Y) * (1 - pv), Math.sign(b) * dirSign, Math.max(Math.min(1, across * 1.5) * (1 - pv), 0.7 * pv));
     }
@@ -1026,7 +1035,7 @@ export class Crew {
       }
       h /= n; ahead /= n;
       const S = stoopFor({ ...P }, h, ahead, { lean: this.pushLean });
-      P.bend += (S.bend - P.bend) * w; P.drop += (S.drop - P.drop) * w; P.headP += (S.headP - P.headP) * w;
+      P.bend += (S.bend - P.bend) * w; P.drop += (S.drop + this.walkBob - P.drop) * w; P.headP += (S.headP - P.headP) * w;
       // (Hunched behind a tall load: knees bent, shoulders rounded, head down.)
       const k = this.hunch * w;
       P.drop = Math.max(P.drop, HUNCH_DROP * k); P.bend -= HUNCH_BEND * k; P.headP += HUNCH_HEAD * k;
@@ -1040,7 +1049,9 @@ export class Crew {
     }
     d.apply(P);
     if (walking || stepping) this.feetOnKerb(d, truck, P);
-    // The head never in what's held: leaning in less, and the head up, until it's clear.
+    // The head never in what's held: leaning in less, and the head up, until it's clear. The test
+    // puts the head where the walk takes it lowest over what's held (headInLoad), so it gives the
+    // same answer all through a step and the head holds steady instead of ducking at each footfall.
     if (w > 0.001 && this.load?.group.visible && !this.onBack) {
       for (let i = 0; i < 8 && this.headInLoad(this.load); i++) { P.bend *= 0.7; P.headP = Math.min(P.headP, 0) * 0.5 - 0.06 * (i + 1); P.twist *= 0.7; d.apply(P); }
     }
@@ -1057,10 +1068,12 @@ export class Crew {
       if (this.load) this.load.group.visible = false;
     }
   }
-  // Whether the driver's head (points round it) is within the load's box, 2 cm in.
+  // Whether the driver's head (points round it) is within the load's box, 2 cm in, with the head
+  // as near the load as the walk's bob takes it (headDrop). The box of a load whose parts move is
+  // measured afresh each time, except one in the arms or a team's hands: once, at rest (putLoad).
   private loadBox = new WeakMap<object, THREE.Box3>();
-  private headInLoad(load: CarriedLoad) {
-    let box = load.animate ? undefined : this.loadBox.get(load);   // (an animated one: afresh each time)
+  private headInLoad(load: CarriedLoad, rest = false) {
+    let box = this.loadBox.get(load);
     if (!box) {
       box = new THREE.Box3();
       const g = load.group, m = new THREE.Matrix4();
@@ -1071,18 +1084,24 @@ export class Crew {
         box!.union(o.geometry.boundingBox.clone().applyMatrix4(m));
       });
       box.expandByScalar(-0.02);
-      if (!load.animate) this.loadBox.set(load, box);
+      if (!load.animate || rest) this.loadBox.set(load, box);
     }
+    if (rest) return false;
     load.group.updateMatrixWorld(true);
     const inv = this.m4.copy(load.group.matrixWorld).invert(), head = this.driver.headNode;
     head.updateMatrixWorld(true);
-    for (const [hx, hy] of HEAD_POINTS) if (box.containsPoint(this.v.set(hx, hy, 0).applyMatrix4(head.matrixWorld).applyMatrix4(inv))) return true;
+    for (const [hx, hy] of HEAD_POINTS) {
+      this.v.set(hx, hy, 0).applyMatrix4(head.matrixWorld).y -= this.headDrop;
+      if (box.containsPoint(this.v.applyMatrix4(inv))) return true;
+    }
     return false;
   }
   private lastGait = 0;   // (the walk cycle's phase last time: which way it runs)
   private pushLean = 0;   // props: lean into a push this frame (added to the stoop)
   private htLead = HT_LEAD;   // props: the hand truck's wheels this far ahead of the driver this frame
   private hunch = 0;      // props: how far hunched down behind a tall load this frame (0..1)
+  private walkBob = 0;    // work: how far the walk lowers the hips this frame, beyond standing
+  private headDrop = 0;   // work: how much nearer the step will take the head to what's held (headInLoad)
   private onBack = false; // props: a sack carried on the back this frame (carryLoad), stooped under it
 
   // The stop's planned path, worked out once per plan (crewpath.ts).
@@ -1985,7 +2004,11 @@ export class Crew {
   // A load set in the driver's frame (x ahead, its bottom y above the feet, z right), turned yaw.
   private putLoad(truck: Truck, load: CarriedLoad, x: number, y: number, z: number, yaw: number) {
     const [px, pz] = this.fromDriver(x, z);
-    this.setTF(load.group, truck, px, this.drv[1] + y, pz, this.drv[3] + yaw, 0);
+    // (In the storybook city it bobs with the walk, so the step never brings the head nearer it.)
+    this.setTF(load.group, truck, px, this.drv[1] + y - (CREW_GAIT.story ? this.walkBob : 0), pz, this.drv[3] + yaw, 0);
+    if (CREW_GAIT.story) this.headDrop = 0;
+    // (Its parts nodding in the hands are no reason to duck: the head clears the load at rest.)
+    if (load.animate && !this.loadBox.has(load)) this.headInLoad(load, true);
     load.animate?.(this.time);
   }
   // Grips on a load, in its own frame: at (x, y), `half` either side; wl, wr: which hands.
@@ -2393,7 +2416,7 @@ function crawlPose(P: BodyPose, phase: number, k: number) {
     hipL: 0.15 - s, knL: -1.55, hipR: 0.15 + s, knR: -1.55, sideL: 0, sideR: 0, drop: 0.45 };
   blendPose(P, crawl, k, P);
 }
-function crouchLegs(drop: number): [number, number] {
+export function crouchLegs(drop: number): [number, number] {
   const leg = (D: number): [number, number] => {
     const d = THREE.MathUtils.clamp(D, 0.3, LEG_U + LEG_L - 0.002);
     return [Math.acos(THREE.MathUtils.clamp((LEG_U * LEG_U + d * d - LEG_L * LEG_L) / (2 * LEG_U * d), -1, 1)),

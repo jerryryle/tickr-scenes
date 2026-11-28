@@ -7,7 +7,9 @@
 // snow, an open hydrant on a hot afternoon, and in the parks chess, tai chi, a frisbee dog and a
 // kite. The Victorian city keeps out those that read modern (MODERN) and has its own: a
 // lamplighter at dusk and dawn, a chimney sweep and his lad, a newsboy, an organ grinder and his
-// monkey, Punch and Judy in the park, a crossing sweeper, a flower seller and the muffin man.
+// monkey, Punch and Judy in the park, a crossing sweeper, a flower seller and the muffin man. The
+// storybook city keeps out those that need a modern street's trades or kit (STORY_OUT) and has its
+// own: a knitter, a fluff-bird on a crook lamp, a pet on long legs and a stack of hats balanced.
 // Each is anchored to a block side's frontage (a face of the street graph, citygraph.ts: `a`
 // along it, `n` across, 0 at the building line and -3 at the kerb face on a 3 m sidewalk), chosen
 // for its district, the hour, the weather and the season, and placed on the furniture it needs (decor.ts PK) or a free stretch of pavement.
@@ -15,7 +17,7 @@
 // so stepping only advances the clock and drawing is the pose at a moment: seeking replays them
 // exactly. People who are done walk off as ordinary pedestrians (Crowd.adopt).
 import { Rng, hash2, mulberry32 } from "./rng.ts";
-import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, VIC_UMBRELLAS, walkSwing } from "./figure.ts";
+import { Figures, HAIRS, PANTS, SHIRTS, SKINS, UMBRELLAS, VIC_UMBRELLAS, swingBody, walkSwing } from "./figure.ts";
 import type { Body, V3 } from "./figure.ts";
 import { CityPlan, kerbDoors, pavementObstacles, pick, shade } from "./city.ts";
 import type { District } from "./city.ts";
@@ -41,7 +43,8 @@ export const VIG_LOG: { out: ((line: string) => void) | null } = { out: null }; 
 export type VK = "peeSign" | "dogPack" | "wetPaint" | "pigeons" | "umbrella" | "iceCream" | "ticket" | "chalk" |
   "washers" | "foodTruck" | "courier" | "couch" | "hatch" | "guard" | "coffee" | "couple" | "falafel" | "bouncer" |
   "sled" | "shovel" | "snowman" | "hydrant" | "chess" | "taichi" | "frisbee" | "kite" | "knitter" |
-  "lamplighter" | "sweep" | "newsboy" | "organ" | "punch" | "crossingSweeper" | "flowers" | "muffin";
+  "lamplighter" | "sweep" | "newsboy" | "organ" | "punch" | "crossingSweeper" | "flowers" | "muffin" |
+  "fluffBird" | "stiltPet" | "hatStack";
 
 export interface Vig {
   k: VK; bx: number; bz: number; side: number; a: number; n: number;
@@ -235,6 +238,38 @@ function extra(v: Vig, i: number): Cast {
   return { shirt: SHIRTS[Math.floor(h(1) * SHIRTS.length)], pants: PANTS[Math.floor(h(2) * PANTS.length)], skin: SKINS[Math.floor(h(3) * SKINS.length)], hair: HAIRS[Math.floor(h(4) * HAIRS.length)] };
 }
 
+// A stroll along a block side and back (the storybook's pet walker and hat balancer): someone cast,
+// colours of their own after (four of `cols`), and in st[1] where along they are, st[0] which way.
+function strollPlace(v: Vig, c: Ctx, r: () => number, cols: number[]) {
+  if (!sideOk(c, v.bx, v.bz, v.side)) return false;
+  const sp = spanOf(v.bx, v.bz, v.side);
+  if (sp.a1 - sp.a0 < 16) return false;
+  v.a = sp.a0 + 4 + r() * (sp.a1 - sp.a0 - 8); v.n = -0.85; cast(r, v.c);
+  for (let i = 0; i < 6; i++) v.c.push(pick(r, cols));
+  v.st = [r() < 0.5 ? 1 : -1, v.a]; v.pst = v.st.slice();
+  return true;
+}
+function strollStep(v: Vig, speed: number) {
+  const sp = spanOf(v.bx, v.bz, v.side);
+  v.st[1] += v.st[0] * speed * SIM_DT;
+  if ((v.st[0] > 0 && v.st[1] > sp.a1 - 3) || (v.st[0] < 0 && v.st[1] < sp.a0 + 3)) v.st[0] = -v.st[0];
+}
+// The fluff-bird's size against a pigeon's.
+const BIRD_S = 1.7;
+// The pet stops to bounce on the spot for 3 s in every 11.
+const petPause = (t: number) => t % 11 > 8;
+// The pet walks as a quadruped does: each foot is planted for PET_DUTY of a stride of PET_STRIDE m
+// and swings forward the rest, and each leg reaches its foot by two-bone IK (thigh PET_L1, shin
+// PET_L2) with the knee bent up and out. Each leg is [fore (+1) or hind (-1), side, lag in strides],
+// and the lags make a walk's footfalls: hind, fore on one side, then hind, fore on the other. A fore
+// foot sweeps the half stride ahead of the body's middle and a hind foot the half behind, so the
+// legs on one side never cross.
+const PET_STRIDE = 0.7, PET_DUTY = 0.75, PET_L1 = 0.34, PET_L2 = 0.92;
+const PET_LEGS: [number, number, number][] = [[-1, -1, 0], [1, -1, 0.25], [-1, 1, 0.5], [1, 1, 0.75]];
+// A stroller's legs swing 0.8 of a stride's phase per metre, which keeps the planted foot within
+// 0.07 m of where it came down; walkSwing's own rate of 1 slides it back about 0.2 m a step.
+const STROLL_STEP = 0.8;
+
 // ---- kinds ------------------------------------------------------------------------------------
 interface Kind {
   // How likely here and now (0: not here, not now).
@@ -257,7 +292,11 @@ const city = (d: District, ...ok: District[]) => ok.includes(d);
 // modern (MODERN) do not.
 const vic = (c: Ctx) => !!c.plan.style.victorian;
 const MODERN = new Set<VK>(["peeSign", "dogPack", "wetPaint", "iceCream", "washers", "foodTruck", "courier", "couch", "hatch", "guard", "coffee", "falafel", "bouncer", "hydrant", "chess", "taichi", "frisbee", "ticket"]);
-const weightOf = (k: VK, d: District, c: Ctx) => (vic(c) && MODERN.has(k) ? 0 : K[k].w(d, c));
+// The storybook city keeps out the vignettes that need a modern street's trades or kit (STORY_OUT),
+// and has its own: the knitter, the fluff-bird, the long-legged pet and the stack of hats.
+const story = (c: Ctx) => !!c.plan.style.storybook;
+const STORY_OUT = new Set<VK>(["ticket", "washers", "coffee", "falafel", "bouncer", "hatch", "courier", "peeSign"]);
+const weightOf = (k: VK, d: District, c: Ctx) => ((vic(c) && MODERN.has(k)) || (story(c) && STORY_OUT.has(k)) ? 0 : K[k].w(d, c));
 
 // A free stretch of pavement on a block side: a in [a0, a1] (searched), the rect (len along,
 // n0..n1 across) clear of furniture, other vignettes, crowd fixtures and anything the site uses.
@@ -396,7 +435,7 @@ function reach(a0: number, y0: number, a1: number, y1: number, l1: number, l2: n
 }
 function walker(F: Figures, f: VFrame, a: number, n: number, yaw: number, phase: number, cs: Cast, moving: boolean, extraB: Partial<Body> = {}) {
   const [x, z] = P(f, a, n), w = walkSwing(phase);
-  F.person({ x, z, yaw, y: Y0 + (moving ? w.bob : 0), legs: moving ? w.legs : [0, 0], arms: moving ? w.arms : [0.05, -0.05], ...cs, ...extraB });
+  F.person({ x, z, yaw, y: Y0 + (moving ? w.bob : 0), ...(moving ? swingBody(w) : { legs: [0, 0], arms: [0.05, -0.05] }), ...cs, ...extraB });
 }
 function leash(F: Figures, h: V3, x: number, y: number, z: number) {
   const mx = (h[0] + x) / 2, mz = (h[2] + z) / 2, my = Math.min(h[1], y) - 0.12;
@@ -655,10 +694,16 @@ const K: Record<VK, Kind> = {
     },
     draw(v, F, t) {
       const f = frameOf(v.bx, v.bz, v.side, v.a), cs = castAt(v, 0), c1 = v.c[4], c2 = v.c[5], dir = v.c[6], len0 = v.c[7];
-      const [x, z] = P(f, v.a, v.n + 0.17), k = Math.sin(t * 9);
-      F.person({ x, z, yaw: toStreet(f), ...sitting(0.5), lean: 0.25, arms: [0.55, 0.55], fore: [1.35 + k * 0.12, 1.35 - k * 0.12], foreOut: [-0.45, 0.45], nod: 0.45, ...cs });
+      // A six-second phrase: knitting fast, nodding in time; the hands sinking to the lap; then
+      // the scarf held up to admire, the head cocked; and back to it.
+      const [x, z] = P(f, v.a, v.n + 0.17), ph = (t + v.c[7] * 1.3) % 6, knit = ph < 3.5 ? 1 : 1 - ramp(ph, 3.5, 3.8), k = Math.sin(t * 14) * knit;
+      const sink = ramp(ph, 3.5, 4.3) * (1 - ramp(ph, 4.3, 4.6)), up = vEase(ramp(ph, 4.3, 4.8)) * (1 - vEase(ramp(ph, 5.3, 6)));
+      const fore = 1.35 + sink * (1.0 - 1.35) + up * (1.9 - 1.35), arm = 0.55 + up * (1.1 - 0.55);
+      F.person({ x, z, yaw: toStreet(f), ...sitting(0.5), y: Y0 + 0.02 * Math.abs(k), lean: 0.25 - up * 0.2, arms: [arm, arm], fore: [fore + k * 0.2, fore - k * 0.2], foreOut: [-0.45, 0.45], nod: 0.45 + 0.05 * k - up * 0.45, turn: up * 0.3, ...cs });
       // the needles cross in their hands
       for (const [hd, s] of [[F.handL, 1], [F.handR, -1]] as const) F.box(hd[0], hd[1] + 0.08, hd[2], 0.02, 0.35, 0.02, f.h0, s * 0.6, 0xd4af37);
+      // held up, the scarf's end hangs from the hands
+      if (up > 0.05) for (let i = 0; i < 4; i++) { const hx = (F.handL[0] + F.handR[0]) / 2, hz = (F.handL[2] + F.handR[2]) / 2, hy = (F.handL[1] + F.handR[1]) / 2; F.box(hx, hy - 0.1 - i * 0.16 * up, hz, 0.3, 0.16 * up, 0.04, f.h0, 0, i % 2 ? c2 : c1); }
       // the scarf runs from the lap down over the bench's front and away along the pavement, wavering
       const L = Math.min(9, len0 + t * 0.04), seg = 0.22, n = Math.floor(L / seg);
       for (let i = 0; i < n; i++) {
@@ -669,6 +714,128 @@ const K: Record<VK, Kind> = {
       // the ball of yarn lies at their feet
       const roll = Math.max(0, Math.sin(t * 0.4)) ** 4 * 0.6, [bx, bz] = P(f, v.a - dir * (0.35 + roll), v.n - 0.35);
       F.box(bx, Y0 + 0.11, bz, 0.22, 0.22, 0.22, t * 0.8, roll * 3, c1);
+    },
+  },
+
+  // In the storybook city a round fluff-bird perches on top of a crook lamp, bobbing, its long tail
+  // drooping in a curl and swaying; when the truck comes by it hops off, flutters round in a loop
+  // and settles back on its lamp.
+  fluffBird: {
+    w: (d, c) => (story(c) && d !== "industrial" && !wet(c) && day(c, 7, 19) ? 1.6 : 0), trigger: 0,
+    place(v, c, r, V) {
+      const l = furniture(c, v.bx, v.bz, v.side, PK.lamp, V, 2);
+      if (!l.length) return false;
+      [v.a, v.n] = pick(r, l);
+      v.c.push(pick(r, [0xff7fb5, 0x6fe0e8, 0xf2c230, 0x9a6cf0, 0xff9a2e]), pick(r, [0xd83a9a, 0x1fb5b0, 0xe8333a, 0x2b3f8a]), r() * 10);
+      v.st = [0, -99]; v.pst = [0, -99];
+      return true;
+    },
+    step(v, c) {
+      // (Off when the truck comes within 9 m of the lamp; back on it 8 s later.)
+      if (v.st[0] === 0) {
+        const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = P(f, v.a, v.n);
+        if (c.truck.some((o) => Math.hypot(o.x - x, o.z - z) < o.r + 9)) { v.st[0] = 1; v.st[1] = v.t; }
+      } else if (v.t - v.st[1] > 8) v.st[0] = 0;
+    },
+    draw(v, F, t, D) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), body = v.c[0], tail = v.c[1], ph = v.c[2];
+      // (The crook's highest point: storybook-buildings-town.ts storyLamp, 0.92 m of its 1.5 m
+      // reach out over the street from the pole, 6.68 m up.)
+      let [x, z] = P(f, v.a, v.n - 0.92), y = 6.68 + 0.075, yaw = f.h0 + Math.sin(t * 0.4 + ph) * 0.8, flap: number | null = null;
+      const fl = D.st[0] === 1 ? (t - D.st[1]) / 8 : -1;
+      if (fl >= 0 && fl < 1) {
+        const k = Math.sin(fl * Math.PI), ang = fl * Math.PI * 2;
+        x += Math.cos(f.h0) * Math.sin(ang) * 5 * k - Math.sin(f.h0) * (1 - Math.cos(ang)) * 2.5; z += -Math.sin(f.h0) * Math.sin(ang) * 5 * k - Math.cos(f.h0) * (1 - Math.cos(ang)) * 2.5;
+        y += 2.5 * k; yaw = f.h0 + ang + Math.PI / 2; flap = t * 20;
+      }
+      // (Big for a bird, as the storybook's are: it has to read at the top of a lamp.)
+      const S = BIRD_S, hop = flap === null ? Math.max(0, Math.sin(t * 3 + ph)) ** 6 * 0.08 * S : 0;
+      const fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw), by = y + 0.2 * S + hop;
+      const at = (f: number, r: number): [number, number] => [x + (fx * f + rx * r) * S, z + (fz * f + rz * r) * S];
+      let q = at(0, 0); F.box(q[0], by, q[1], 0.34 * S, 0.3 * S, 0.3 * S, yaw, 0, body);                   // the fluffy body
+      q = at(0.16, 0); F.box(q[0], by + 0.14 * S, q[1], 0.18 * S, 0.18 * S, 0.18 * S, yaw, 0, body);     // the head, a beak and a crest
+      q = at(0.28, 0); F.box(q[0], by + 0.13 * S, q[1], 0.1 * S, 0.04 * S, 0.04 * S, yaw, 0, 0xf2c230);
+      q = at(0.14, 0); F.box(q[0], by + 0.28 * S, q[1], 0.03 * S, 0.12 * S, 0.03 * S, yaw, -0.4, tail);
+      for (const k of [-1, 1]) { q = at(0.22, k * 0.07); F.box(q[0], by + 0.17 * S, q[1], 0.03 * S, 0.04 * S, 0.03 * S, yaw, 0, 0x2a2440); }
+      if (flap === null) for (const k of [-1, 1]) { q = at(0, k * 0.06); F.box(q[0], y + 0.03 * S, q[1], 0.02 * S, 0.08 * S, 0.02 * S, yaw, 0, 0xf2c230); }
+      else for (const k of [-1, 1]) { q = at(0, k * 0.25); F.box(q[0], by + Math.sin(flap) * 0.1 * S, q[1], 0.18 * S, 0.03 * S, 0.3 * S, yaw, 0, body, k * Math.sin(flap) * 0.7); }
+      // The tail: back and down in a curl, swaying.
+      let tf = -0.15, tr = 0, ty = by;
+      for (let i = 0; i < 7; i++) {
+        const a = 0.3 + i * 0.42;
+        tf -= Math.cos(a) * 0.1; tr = Math.sin(t * 2 + ph - i * 0.5) * 0.012 * i; ty -= Math.sin(a) * 0.1 * S;
+        q = at(tf, tr); F.box(q[0], ty, q[1], 0.07 * S, 0.07 * S, 0.07 * S, yaw, 0, i % 2 ? tail : body);
+      }
+    },
+  },
+
+  // In the storybook city someone walks their pet along the pavement: a round ball of fur stepping
+  // high on four long jointed legs, on a leash. Now and then it stops to bounce on the spot, and
+  // the owner waits; at the end of the block side they turn back.
+  stiltPet: {
+    w: (d, c) => (story(c) && city(d, "residential", "park", "commercial", "downtown") && !wet(c) && day(c, 7, 19) ? 1.4 : 0), trigger: 0,
+    place(v, c, r) { return strollPlace(v, c, r, [0xff7fb5, 0x6fe0e8, 0xf2c230, 0xa6e05a, 0x9a6cf0, 0xfff3dc]); },
+    step(v) { strollStep(v, petPause(v.t) ? 0 : 1.0); },
+    draw(v, F, t, D) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), a = D.st[1], dir = v.st[0] >= 0 ? 1 : -1, still = petPause(t), cs = castAt(v, 0);
+      const yaw = along(f, dir), fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw), w = walkSwing(a * dir * STROLL_STEP);
+      const [x, z] = P(f, a, v.n);
+      F.person({ x, z, yaw, y: Y0 + (still ? 0 : w.bob), ...(still ? { legs: [0, 0], arms: [0.05, 0.5] } : { ...swingBody(w), arms: [w.arms[0], 0.5] }), ...cs });
+      const hand = F.handR, pa = a + dir * 1.7, [px, pz] = P(f, pa, v.n - 0.4);
+      // The pet: its body high on its legs, the knees high out to either side. A planted foot goes back
+      // under the body as fast as the body goes forward (the gait's phase is the distance walked), and a
+      // swinging one goes forward and up in an arc. Stopped, the feet stay where they are, a swinging one
+      // comes down over 0.2 s, and the body bounces on bending legs.
+      const m = t % 11, lift = still ? clamp01(1 - (m - 8) / 0.2) : clamp01(m / 0.2), f0 = a * dir / PET_STRIDE, h = PET_DUTY * PET_STRIDE / 2;
+      const bounce = still ? Math.abs(Math.sin(t * 7)) * 0.18 : 0.03 * (0.5 - 0.5 * Math.cos(f0 * 4 * Math.PI)), by = Y0 + 0.7 + bounce, col = v.c[4];
+      F.box(px, by, pz, 0.46, 0.42, 0.42, yaw, 0, col);
+      F.box(px + fx * 0.2, by + 0.12, pz + fz * 0.2, 0.08, 0.12, 0.26, yaw, 0, 0xffffff);
+      for (const k of [-1, 1]) F.box(px + fx * 0.235 + rx * k * 0.07, by + 0.13, pz + fz * 0.235 + rz * k * 0.07, 0.02, 0.05, 0.05, yaw, 0, 0x2a2440);
+      for (const k of [-1, 1]) F.box(px + rx * k * 0.15, by + 0.27, pz + rz * k * 0.15, 0.06, 0.14, 0.06, yaw, 0, col);   // ears
+      for (const [fa, sk, lag] of PET_LEGS) {
+        const u = ((f0 - lag) % 1 + 1) % 1, w = (u - PET_DUTY) / (1 - PET_DUTY);
+        const off = u < PET_DUTY ? h - 2 * h * u / PET_DUTY : -h + 2 * h * w * w * (3 - 2 * w), ey = Y0 + (u < PET_DUTY ? 0 : 0.14 * lift * Math.sin(Math.PI * w));
+        const hx = px + fx * fa * 0.12 + rx * sk * 0.2, hz = pz + fz * fa * 0.12 + rz * sk * 0.2, hy = by - 0.05;
+        const ex = px + fx * (fa * h + off) + rx * sk * 0.34, ez = pz + fz * (fa * h + off) + rz * sk * 0.34;
+        // (Two-bone IK: the knee sits on the hip-to-foot line where the thigh's and shin's circles meet,
+        // pushed off that line towards up-and-out.)
+        let dx = ex - hx, dy = ey - hy, dz = ez - hz;
+        const d = Math.min(Math.max(Math.hypot(dx, dy, dz), 1e-3), PET_L1 + PET_L2 - 1e-3);
+        dx /= d; dy /= d; dz /= d;
+        const s = (PET_L1 * PET_L1 + d * d - PET_L2 * PET_L2) / (2 * d), q = Math.sqrt(Math.max(0, PET_L1 * PET_L1 - s * s));
+        const pd = rx * sk * dx + dy + rz * sk * dz;
+        let ox = rx * sk - pd * dx, oy = 1 - pd * dy, oz = rz * sk - pd * dz;
+        const ol = Math.hypot(ox, oy, oz) || 1; ox /= ol; oy /= ol; oz /= ol;
+        const kx = hx + dx * s + ox * q, ky = hy + dy * s + oy * q, kz = hz + dz * s + oz * q;
+        F.seg(hx, hy, hz, kx, ky, kz, 0.04, col); F.seg(kx, ky, kz, ex, ey, ez, 0.035, 0x2a2440);
+        F.box(ex + fx * 0.04, ey + 0.02, ez + fz * 0.04, 0.12, 0.04, 0.07, yaw, 0, 0x2a2440);
+      }
+      leash(F, hand, px - fx * 0.2, by, pz - fz * 0.2);
+    },
+  },
+
+  // In the storybook city someone walks along with a stack of six hats on their head, swaying, their
+  // arms out to keep it up; at the end of the block side they turn back.
+  hatStack: {
+    w: (d, c) => (story(c) && city(d, "commercial", "downtown", "residential") && !wet(c) && c.w.storm < 0.5 && day(c, 8, 19) ? 1.2 : 0), trigger: 0,
+    place(v, c, r) { return strollPlace(v, c, r, [0xe8333a, 0xf2c230, 0x14a3a0, 0x7a4fd8, 0xd83a9a, 0xff8a1e]); },
+    step(v) { strollStep(v, 0.8); },
+    draw(v, F, t, D) {
+      const f = frameOf(v.bx, v.bz, v.side, v.a), a = D.st[1], dir = v.st[0] >= 0 ? 1 : -1, cs = castAt(v, 0);
+      const yaw = along(f, dir), fx = Math.cos(yaw), fz = -Math.sin(yaw), rx = Math.sin(yaw), rz = Math.cos(yaw), w = walkSwing(a * dir * STROLL_STEP);
+      const sway = Math.sin(t * 1.6) * 0.5 + Math.sin(t * 2.7) * 0.25, [x, z] = P(f, a, v.n);
+      // (Held up: no hat of the wardrobe's own, the stack in its place.)
+      F.person({ x, z, yaw, y: Y0 + w.bob, ...swingBody(w), arms: [0.2, 0.2], armOut: [1.2 - sway * 0.4, 1.2 + sway * 0.4], fore: undefined, tilt: sway * 0.08, hat: 0xfff3dc, hatH: 0.02, ...cs });
+      let hx = F.head[0], hy = F.head[1] + 0.14, hz = F.head[2];
+      for (let i = 0; i < 6; i++) {
+        const lean = sway * 0.05 * (i + 1), c = v.c[4 + (i % 6)];
+        hx += rx * lean * 0.12; hz += rz * lean * 0.12;
+        const tall = i % 3 === 1 ? 0.2 : 0.12;
+        F.box(hx, hy + 0.012, hz, 0.36 - i * 0.015, 0.025, 0.34 - i * 0.015, yaw, 0, c, lean);
+        F.box(hx, hy + 0.025 + tall / 2, hz, 0.22 - i * 0.01, tall, 0.21 - i * 0.01, yaw, 0, c, lean);
+        hy += 0.025 + tall;
+      }
+      void fx; void fz;
     },
   },
 
@@ -1161,7 +1328,7 @@ const K: Record<VK, Kind> = {
   coffee: {
     w: (d, c) => (city(d, "commercial", "downtown") && c.hour >= 6.5 && c.hour < 10 ? 3 : 0), trigger: 0,
     place(v, c, r, V) {
-      const door = nearFacility(c, v, ["cafe"], V, r);
+      const door = nearFacility(c, v, ["cafe", "sbTeaHouse"], V, r);   // (in the storybook city, its tea houses)
       if (!door) return false;
       v.a = door.a; v.n = doorN(v, door.n);
       v.c.push(4 + Math.floor(r() * 3), door.a < spanOf(v.bx, v.bz, v.side).mid ? 1 : -1, door.half, door.h);
@@ -1251,7 +1418,7 @@ const K: Record<VK, Kind> = {
   bouncer: {
     w: (d, c) => (city(d, "commercial", "downtown") && (c.hour >= 20.5 || c.hour < 3) ? 3 : 0), trigger: 0,
     place(v, c, r, V) {
-      const door = nearFacility(c, v, ["bar", "theater", "restaurant", "musicStore"], V, r);
+      const door = nearFacility(c, v, ["bar", "theater", "restaurant", "musicStore", "sbFizzParlour", "sbPlayhouse", "sbNoodlery", "sbTinklery"], V, r);   // (the storybook city's own at night)
       if (!door) return false;
       v.a = door.a; v.n = doorN(v, door.n); cast(r, v.c);
       v.c.push(3 + Math.floor(r() * 3), door.a < spanOf(v.bx, v.bz, v.side).mid ? 1 : -1, door.half, door.h, pick(r, [0xff3a8c, 0x7a3aff, 0x3af2ff]));
@@ -1936,7 +2103,7 @@ export class Vignettes {
       if (v.on) { v.t += SIM_DT; kd.step?.(v, c, this); }
     }
     // The truck parked at the kerb: a ticket, once a stop.
-    if (inp.parked && !vic(c)) {   // (no parking officers in the Victorian city)
+    if (inp.parked && !vic(c) && !story(c)) {   // (no parking officers in the Victorian city nor the storybook one)
       const key = `${Math.round(inp.parked.cabX)},${Math.round(inp.parked.cabZ)}`;
       if (key !== this.ticketed && !this.list.some((v) => v.k === "ticket") && (DEBUG_VIGNETTE === "ticket" || this.rnd() < SIM_DT / 9)) { this.ticketed = key; this.spawnTicket(c, inp.parked); }
     }
@@ -1959,7 +2126,7 @@ export class Vignettes {
   }
   private where(v: Vig): [number, number] {
     if (v.k === "courier") return [v.st[1], v.st[2]];
-    const a = v.k === "dogPack" || v.k === "sled" || v.k === "lamplighter" || v.k === "sweep" || v.k === "muffin" ? v.st[1] : v.k === "umbrella" ? v.a - 10 + umbU(v.t) : v.a;
+    const a = v.k === "dogPack" || v.k === "sled" || v.k === "lamplighter" || v.k === "sweep" || v.k === "muffin" || v.k === "stiltPet" || v.k === "hatStack" ? v.st[1] : v.k === "umbrella" ? v.a - 10 + umbU(v.t) : v.a;
     return P(frameOf(v.bx, v.bz, v.side, v.a), a, v.n);
   }
 
@@ -2052,7 +2219,7 @@ export class Vignettes {
     if (!v || !this.G) return null;
     VG = this.G;
     const f = frameOf(v.bx, v.bz, v.side, v.a), [x, z] = this.where(v);
-    const far: Partial<Record<VK, [number, number, number]>> = { punch: [9, 2.2, 1.4], lamplighter: [7, 2.6, 2.2], washers: [13, 4, 9], kite: [24, 3, 6], taichi: [16, 4, 1], frisbee: [18, 4, 1], foodTruck: [14, 3, 1.4], courier: [9, 2.5, 1], dogPack: [9, 2.5, 0.6] };
+    const far: Partial<Record<VK, [number, number, number]>> = { punch: [9, 2.2, 1.4], lamplighter: [7, 2.6, 2.2], washers: [13, 4, 9], kite: [24, 3, 6], taichi: [16, 4, 1], frisbee: [18, 4, 1], foodTruck: [14, 3, 1.4], courier: [9, 2.5, 1], dogPack: [9, 2.5, 0.6], fluffBird: [8, 4.5, 6], hatStack: [7, 2, 1.8], stiltPet: [7, 2, 0.8] };
     const [back, y, look] = far[v.k] ?? [5, 2.0, 0.8];
     if (v.k === "washers" && washPt[0] !== 0) { const [wx, wz] = washPt; return { x: wx, z: wz, fx: washF[0], fz: washF[1], ox: washF[2], oz: washF[3], back: back + washSeen[0], y, look: washSeen[1] }; }
     if (v.k === "ticket") return { x, z, fx: f.fx * v.c[4], fz: f.fz * v.c[4], ox: f.rx * 0.08, oz: f.rz * 0.08, back: 16, y: 2.2, look: 1.4 };   // (along the pavement, behind the officer)
