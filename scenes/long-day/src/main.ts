@@ -19,7 +19,7 @@ import { captureCanvasClass, uploadable } from "./canvas.ts";
 import { ChunkStreamer, disposeTree } from "./chunks.ts";
 import type { ChunkBuild } from "./chunks.ts";
 import { OCCLUSION } from "./occlusion.ts";
-import { applyCutaway, applyDriverSpot, cutUniforms, NO_CUT_BOXES, updateCutaway, updateDriverSpot } from "./cutaway.ts";
+import { applyCutaway, applyDriverSpot, NO_CUT_BOXES, updateCutaway, updateDriverSpot } from "./cutaway.ts";
 import { Engine } from "./engine.ts";
 import { applyLampGlow, applyLampLight, Atmosphere, HEAD_LIGHTS, HEAD_Y, INTERIOR_LIGHT, LAMPS_ON, updateLampLights } from "./atmosphere.ts";
 import { applyPaintTint } from "./cars.ts";
@@ -682,10 +682,6 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     const cam = engine.camera;
     truck.interiorView = director.interior;
     focus.copy(truck.root.position);
-    // Held shots at a stop: street trees, poles and the like within 7 m of the camera are left out,
-    // so nothing near the lens blocks the work at the truck (3 m otherwise).
-    const held = director.beat === "curb" || director.beat === "load" || director.beat === "swap";
-    cutUniforms.uNearClip.value = held && !director.interior ? 7 : 3;
     updateCutaway(cam, truck.cutBoxes, director.cutaway);   // (only what stands between the camera and the truck)
     // The driver spotlight (cutaway.ts): only while the truck's door is open at a stop (journey.driverSpotOn), and
     // the driver is out of the seat and the camera outside; never following them into a facility.
