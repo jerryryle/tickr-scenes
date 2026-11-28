@@ -37,7 +37,21 @@ make debug SCENE=long-day DEFINE="DEBUG_SCENARIO=mattress-drop DEBUG_VIEW=crewQ"
 ```
 
 A spec can also fix the visit's stops, freight, snow and hour, and a visit captured from any seed
-replays from its spec alone (docs/long-day-cities.md, "Visits"). A city file holds
+replays from its spec alone (docs/long-day-cities.md, "Visits").
+
+A board's run is reproduced from the one line the scene logs as it starts: its seed, the journey
+time it starts at, the board's local clock then with its UTC offset and time zone, and any setting
+off its default. The street life follows the clock's local hour, so the same seed started at
+another time of day plays differently. `make replay` takes that line and the board's local time of
+a moment, plays the run headless up to it (`tools/replay.ts`), and renders the visit the moment
+falls in from its spec, round the moment, with tickr-scene's `--clock`, `--tz` and `--env` set as
+the board had them:
+
+```bash
+make replay LINE='Long Day: seed 1003465371, starting at journey time 0.0s, clock 2026-11-27T19:00:00-08:00 America/Los_Angeles' AT=19:35   # -> build/long-day-replay/replay.mp4
+```
+
+A city file holds
 the city's streets, gates and blocks, and its contents file beside it lists everything that
 stands on them. `tools/draftcities.ts` drafts new city files with the
 generator, and `test/catalogue.ts` checks every city loads, reads back as written and is fit

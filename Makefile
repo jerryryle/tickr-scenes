@@ -23,6 +23,10 @@
 #   make stage [STAGE="reefer frozen drop door=0.2" VIEW=quarter FROM=0 SECS=12 SPEED=1]
 #                              one stop of Long Day's staged on its own, its crew filmed from a fixed
 #                              camera, to build/long-day-stage/stage.mp4 in seconds (tools/stage.ts)
+#   make replay LINE='<the board log's "Long Day: seed ..." line>' AT=19:40 [BEFORE=30 AFTER=60]
+#                              a moment a board showed, reproduced: the visit it falls in, found
+#                              headless, rendered round the moment to build/long-day-replay/replay.mp4
+#                              (tools/replay.ts)
 #   make citymap SCENE=long-day [SEED=1 CITIES=4 DEFINE=...]
 #                              draw the street graphs of a journey's first cities, top down, to
 #                              build/<scene>-citymap/city<N>.png (needs ffmpeg)
@@ -86,7 +90,7 @@ copy-assets = rm -rf $(2) && mkdir -p $(2) && \
   for f in $(1)/* $(1)-packed/*; do [ -f "$$f" ] || continue; n=$$(basename "$$f"); case "$$n" in *.tmp) continue;; esac; d="$(2)/$${n%.*}"; \
     if [ -e "$$d" ]; then echo "$(1): two assets named $${n%.*} (extensions are dropped)" >&2; exit 1; fi; cp "$$f" "$$d"; done
 
-.PHONY: all check clean distclean debug run test list tool citymap draft draftworld draftroads tractorturns clearstops vicjunctions relot maps FORCE $(SCENES) \
+.PHONY: all check clean distclean debug run test list tool replay citymapdraft draftworld draftroads tractorturns clearstops vicjunctions relot maps FORCE $(SCENES) \
         $(addprefix check-,$(SCENES)) $(addprefix test-,$(SCENES)) $(addprefix render-,$(SCENES)) \
         $(addprefix scrub-,$(SCENES)) $(addprefix scrub-if-,$(SCENES)) $(addprefix toolkit-check-,$(SCENES))
 .SECONDEXPANSION:
@@ -325,6 +329,27 @@ stage: | $(DEPS)
 	@ffmpeg -loglevel error -y -framerate 10 -i build/long-day-stage/dist/frames/frame-%03d.png -vf "scale=1152:384:flags=neighbor" -c:v libx264 -pix_fmt yuv420p -crf 18 build/long-day-stage/stage.mp4 2>/dev/null || \
 	  ffmpeg -loglevel error -y -framerate 10 -i build/long-day-stage/dist/frames/frame-%04d.png -vf "scale=1152:384:flags=neighbor" -c:v libx264 -pix_fmt yuv420p -crf 18 build/long-day-stage/stage.mp4
 	@echo "stage $(STAGE) -> build/long-day-stage/stage.mp4"
+
+# A moment a board showed, reproduced (scenes/long-day/tools/replay.ts): from the start line in the
+# board's log and the board's local time of the moment, the tool finds the visit it falls in,
+# playing the run headless, and the scene renders that visit from its spec round the moment, at 10
+# frames a second, to build/long-day-replay/replay.mp4.
+BEFORE ?= 30
+AFTER  ?= 60
+replay: | $(DEPS)
+	@test -n "$(LINE)" -a -n "$(AT)" || { echo "usage: make replay LINE='<the board log's start line>' AT=<HH:MM[:SS], 24-hour> [BEFORE=30 AFTER=60]" >&2; exit 2; }
+	@test -x "$(TICKR_BIN)" || { echo "no tickr-scene toolkit in $(TICKR_HOME); see README" >&2; exit 1; }
+	@rm -rf build/long-day-replay
+	@mkdir -p build/long-day-replay
+	@$(FLATTEN) scenes/long-day/tools/replay.ts --root scenes/long-day/src > build/long-day-replay/tool.ts
+	@$(call node-bundle,build/long-day-replay/tool.ts,build/long-day-replay/replay.mjs)
+	@node build/long-day-replay/replay.mjs '$(LINE)' '$(AT)' $(BEFORE) $(AFTER) build/long-day-replay
+	@$(FLATTEN) scenes/long-day/src/main.ts --root scenes/long-day/src --define-file build/long-day-replay/defines.txt > build/long-day-replay/scene.ts
+	@$(call scene-json,scenes/long-day,build/long-day-replay)
+	@$(call copy-assets,scenes/long-day/assets,build/long-day-replay/assets)
+	@$(TICKR) render build/long-day-replay --seconds $$(cat build/long-day-replay/secs.txt) --every 100 $$(cat build/long-day-replay/render-args.txt) | tail -1
+	@ffmpeg -loglevel error -y -framerate 10 -pattern_type glob -i 'build/long-day-replay/dist/frames/frame-*.png' -vf "scale=1152:384:flags=neighbor" -c:v libx264 -pix_fmt yuv420p -crf 18 build/long-day-replay/replay.mp4
+	@echo "replay -> build/long-day-replay/replay.mp4"
 
 # Top-down maps of a journey's cities (scenes/<scene>/tools/citymap.ts).
 SEED   ?= 1
