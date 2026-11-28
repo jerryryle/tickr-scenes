@@ -9,10 +9,12 @@
 // function of the journey seed and N, so a city is replayed from its start; the starts of the
 // cities played so far are kept (starts), and within a city keyframes every KEYFRAME_STEPS make
 // seeking (and scrubbing backwards) instant. A seek past what has been played plays on to it,
-// every city between included (slow, far ahead in the preview; a board never seeks). A journey started at time t (tests, test renders)
-// takes t's city at its nominal start (nominalStart: the periods before it, end to end); it gets there before street life is attached
-// (main.ts), so where that crosses a hand-over, the next city starts where a run without traffic
-// would put it, not where a board's continuous play does.
+// every city between included (slow, far ahead in the preview; a board never seeks). A journey
+// started at time t (tests, test renders) takes t's city at its nominal start (nominalStart: the
+// periods before it, end to end); it gets there before street life is attached (main.ts), so where
+// that crosses a hand-over, the next city starts where a run without traffic would put it, not
+// where a board's continuous play does. (A test render given visit specs starts at 0 and seeks
+// instead, so its skip stays in the first visit however long that ran: main.ts.)
 //
 // A job picks up one consignment at a source facility and delivers it in one to three drops;
 // every unit loaded is tagged with the drop it belongs to, so loads and unloads always balance
@@ -288,6 +290,13 @@ export class Journey {
   // and the city under journey time t: the last one started by then, of those played.
   private starts = new Map<number, number>();
   cityStart(N: number) { return this.starts.get(N) ?? this.nominalStart(N); }
+  // When the next city takes over, once the truck is out on the road to it (the step stepJourney
+  // hands over on); Infinity before. (cityAt knows a city's start only once it is reached.)
+  get handOverAt() {
+    const st = this.st;
+    if (st.mode !== "country") return Infinity;
+    return st.cityStart + Math.ceil((st.departAt + this.countryLength - 1e-6) / SIM_DT) * SIM_DT;
+  }
   cityAt(t: number) {
     if (!this.starts.size) return this.nominalAt(Math.max(0, t));
     let best = -1, bt = -Infinity;

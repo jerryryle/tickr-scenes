@@ -1,13 +1,14 @@
 // Test: a metro city's elevated lines out of town (elevated.ts) come down to the ground, and
-// cross every road the truck uses there at full height, never at grade. Every city of the journey
+// cross every road the truck uses there as high over the road as the town's deck is over a street,
+// even where the road is up on a hill. Every city of the journey
 // is treated as a metro city, with the roads main.ts keeps clear (the way in, the way out and the
 // last city's way out).
 // Args (all optional): minutes
 import * as THREE from "three@0.187.0";
 import { readConfig } from "../src/env.ts";
 import { Journey } from "../src/journey.ts";
-import { ElevatedReach, elevatedLift } from "../src/elevated.ts";
-import { elevatedLine, ELEVATED_REACH } from "../src/decor.ts";
+import { ElevatedReach, elevatedLift, elevatedTrackY } from "../src/elevated.ts";
+import { elevatedLine, ELEVATED_REACH, ELEVATED_Y } from "../src/decor.ts";
 import { CITY_HI, CITY_LO } from "../src/city.ts";
 import type { CityPlan } from "../src/city.ts";
 import type { CountryRoad } from "../src/country.ts";
@@ -44,7 +45,8 @@ import { BLOCK } from "../src/grid.ts";
       const z0 = cz * BLOCK;
       // Down on the ground somewhere on each side, well out of town.
       for (const x of [CITY_LO * BLOCK - 400, (CITY_HI + 1) * BLOCK + 400]) if (elevatedLift(cz, x) === 0) grounded++;
-      // Every road point over the line's deck or close beside it is under a full-height span.
+      // Every road point over the line's deck or close beside it is under a span as high over it as
+      // the town's deck is over a street.
       for (const { road, dx, dz } of rr) {
         let crossed = false;
         for (let s = 0; s <= road.length; s += 1) {
@@ -53,8 +55,8 @@ import { BLOCK } from "../src/grid.ts";
           if (x < W || x > E || Math.abs(z - (z0 + 9)) > 9) continue;
           if (x > CITY_LO * BLOCK && x < (CITY_HI + 1) * BLOCK) continue;
           crossed = true;
-          const f = elevatedLift(cz, x);
-          if (f < 0.999 && errs.length < 20) errs.push(`city ${j.st.city} line ${cz}: road ${road.inp.kind} of city ${road.inp.city} at x ${x.toFixed(0)} z ${z.toFixed(0)} under the line at ${(f * 100).toFixed(0)}% height`);
+          const over = elevatedTrackY(cz, x) - road.truckY(s);
+          if (over < ELEVATED_Y + 0.5 - 1e-3 && errs.length < 20) errs.push(`city ${j.st.city} line ${cz}: road ${road.inp.kind} of city ${road.inp.city} at x ${x.toFixed(0)} z ${z.toFixed(0)} under the line's track top by ${over.toFixed(2)} m`);
         }
         if (crossed) crossings++;
       }

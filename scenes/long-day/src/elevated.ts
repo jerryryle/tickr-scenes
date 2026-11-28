@@ -19,9 +19,11 @@ const EL_RAMP = 220;                              // a ramp's length (cosine-eas
 const RAMP_SEG = 10;                           // the ramps are built in straight pieces this long (1 cm off the curve at most)
 const EL_BENT_STEP = 20;
 
-// The parts of each line (by its row) at full height, as world-x ranges: the town and, out of town,
-// a bridge over each road. Between them the line eases down to the ground and back up.
-const EL_FLATS = new Map<number, [number, number][]>();
+// The parts of each line (by its row) at full height, as world-x ranges with the track's top there:
+// the town at EL_TOP and, out of town, a bridge over each road, raised by the height of the road
+// under it so it clears the road as the town's deck clears a street. Between them the line eases
+// down to the ground and back up.
+const EL_FLATS = new Map<number, [number, number, number][]>();
 const townFlat = (): [number, number] => [CITY_LO * BLOCK - 6, (CITY_HI + 1) * BLOCK + STREET + 6];
 function liftFrom(a: number, b: number, x: number) {
   const d = x < a ? a - x : x > b ? x - b : 0;
@@ -35,7 +37,12 @@ export function elevatedLift(cz: number, x: number) {
   return f;
 }
 // The height of line `cz`'s rail tops' seat (the deck's top, or the ballast's) at world x.
-export const elevatedTrackY = (cz: number, x: number) => EL_GRADE + (EL_TOP - EL_GRADE) * elevatedLift(cz, x);
+export function elevatedTrackY(cz: number, x: number) {
+  const [a, b] = townFlat();
+  let y = EL_GRADE + (EL_TOP - EL_GRADE) * liftFrom(a, b, x);
+  for (const r of EL_FLATS.get(cz) ?? []) y = Math.max(y, EL_GRADE + (r[2] - EL_GRADE) * liftFrom(r[0], r[1], x));
+  return y;
+}
 
 export class ElevatedReach {
   readonly group = new THREE.Group();
@@ -53,7 +60,7 @@ export class ElevatedReach {
     this.clear();
     EL_FLATS.clear();
     if (!lines.length) return;
-    // Where the roads are: their centre lines in 16 m cells.
+    // Where the roads are: their centre lines in 16 m cells, each point with the road's height there.
     const CELL = 16, cells = new Map<number, number[]>(), q = { x: 0, z: 0, h: 0, k: 0 };
     const zMin = CITY_LO * BLOCK - 40, zMax = (CITY_HI + 1) * BLOCK + 40;
     for (const { road, dx, dz } of roads) {
@@ -63,32 +70,36 @@ export class ElevatedReach {
         if (z < zMin || z > zMax) continue;
         const k = Math.floor(x / CELL) * 100003 + Math.floor(z / CELL);
         let a = cells.get(k); if (!a) cells.set(k, a = []);
-        a.push(x, z);
+        a.push(x, z, road.truckY(s));
       }
     }
-    // Whether no road's centre line is within r (at most CELL) of (x, z).
-    const clearOfRoads = (x: number, z: number, r: number) => {
+    // The highest road within r (at most CELL) of (x, z), or -Infinity where no road's centre line is.
+    const roadTop = (x: number, z: number, r: number) => {
       const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
+      let top = -Infinity;
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
         const a = cells.get((cx + i) * 100003 + cz + j);
-        if (a) for (let n = 0; n < a.length; n += 2) if (Math.hypot(a[n] - x, a[n + 1] - z) < r) return false;
+        if (a) for (let n = 0; n < a.length; n += 3) if (Math.hypot(a[n] - x, a[n + 1] - z) < r) top = Math.max(top, a[n + 2]);
       }
-      return true;
+      return top;
     };
+    const clearOfRoads = (x: number, z: number, r: number) => roadTop(x, z, r) === -Infinity;
     const blocks = Math.ceil(ELEVATED_REACH / BLOCK);
     const W = CITY_LO * BLOCK, E = (CITY_HI + 1) * BLOCK;
     for (const cz of lines) {
       const z0 = cz * BLOCK;
-      // A bridge over each road that crosses the line's path: full height over it and 8 m beyond.
-      const flats: [number, number][] = [];
+      // A bridge over each road that crosses the line's path: full height over it and 8 m beyond,
+      // raised by the highest road under it (a road up on a hill).
+      const flats: [number, number, number][] = [];
       for (const [x0, x1] of [[W - blocks * BLOCK, W], [E, E + blocks * BLOCK]]) {
-        let run: [number, number] | null = null;
+        let run: [number, number, number] | null = null;
         for (let x = x0; x <= x1; x += 2) {
-          if (clearOfRoads(x, z0 + 9, 15)) continue;
-          if (run && x - run[1] <= 6) run[1] = x;
-          else { if (run) flats.push([run[0] - 8, run[1] + 8]); run = [x, x]; }
+          const top = roadTop(x, z0 + 9, 15);
+          if (top === -Infinity) continue;
+          if (run && x - run[1] <= 6) { run[1] = x; run[2] = Math.max(run[2], top); }
+          else { if (run) flats.push([run[0] - 8, run[1] + 8, EL_TOP + Math.max(0, run[2])]); run = [x, x, top]; }
         }
-        if (run) flats.push([run[0] - 8, run[1] + 8]);
+        if (run) flats.push([run[0] - 8, run[1] + 8, EL_TOP + Math.max(0, run[2])]);
       }
       EL_FLATS.set(cz, flats);
       const y = (x: number) => elevatedTrackY(cz, x);

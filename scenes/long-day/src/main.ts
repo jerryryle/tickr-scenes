@@ -10,7 +10,7 @@ import { SEA_REACH } from "./outline.ts";
 import { hash2 } from "./rng.ts";
 import { drain } from "./slices.ts";
 import type { Steps } from "./slices.ts";
-import { readConfig } from "./env.ts";
+import { readConfig, settingsOff } from "./env.ts";
 import { DEBUG_VISIT } from "./debug.ts";
 import { parseVisitSpecs, visitOf } from "./visits.ts";
 import { DEBUG_AT, DEBUG_BLOCK, DEBUG_CAMLOG, DEBUG_EYE_SECS, DEBUG_EYES, DEBUG_JAM_SHOT, DEBUG_MEMLOG, DEBUG_SCENARIO, DEBUG_SCRUBTEST, DEBUG_SKIP_MINUTES, DEBUG_STOP, DEBUG_STOP_LEAD, DEBUG_VIEW } from "./debug.ts";
@@ -31,7 +31,7 @@ import { makeFacadeMaterial, setFacadeAtlas } from "./facade.ts";
 import { paintFacadeAtlas } from "./facadeart.ts";
 import { makeLampMaterial, setSignalPreempt, setSignalTime } from "./signals.ts";
 import { interchangeTrack } from "./interchange.ts";
-import { realSeason, weatherMix } from "./climate.ts";
+import { realSeason, startClock, weatherMix } from "./climate.ts";
 import { CITY_HI, CITY_LO, cityDistance, gateEnd, insideCity, kerbDoors, makeCityChunkBuilder, parkedObstacles, pavementObstacles } from "./city.ts";
 import { elevatedLine } from "./decor.ts";
 import { BLOCK, RING, STREET } from "./grid.ts";
@@ -210,6 +210,7 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
     prefetchKey.length = 0;
     cityShown = journey.st.city;
   }
+
 
   // The cells the truck will want next (ChunkStreamer.setPrefetch): along the rest of its route,
   // nearest the route first, then round its next stops. Worked out again when the route or the
@@ -1009,11 +1010,20 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       const stopAt = watch >= 0 ? Journey.stopTime(cfg, realSeason(), visits, watch, 0, lifeFor) : null;
       base = stopAt !== null ? Math.max(0, stopAt - DEBUG_STOP_LEAD) : DEBUG_SKIP_MINUTES * 60;
       if (DEBUG_CAMLOG) JOURNEY_LOG.out = (line) => sys.log(`J ${line}`);
-      journey = new Journey(cfg, base, realSeason(), visits);
+      // (Given visits, from the start: the first frame seeks to `base` and plays the first visit up
+      // to it with its street life, however long the visit ran past its planned slot (make replay
+      // renders one this way). Else at base's planned city, quick however far in.)
+      journey = new Journey(cfg, visits ? 0 : base, realSeason(), visits);
       journey.keyframing = journey.keepNeighbours = sys.isPreview || DEBUG_SCRUBTEST > 0;   // (only the preview scrubs)
-      // The one line logged (besides debug builds'), for reproducing what was seen: the journey and
-      // where it starts (journey time = this + scene time).
-      sys.log(`Long Day: seed ${cfg.seed}, starting at journey time ${base.toFixed(1)}s`);
+      // The one line logged (besides debug builds'), from which `make replay` reproduces any moment
+      // of the run: the journey, where it starts (journey time = this + scene time), the board's
+      // local clock it starts at with its UTC offset and time zone, whose hours the street life
+      // follows, and any setting off its default.
+      const c = startClock(), two = (n: number) => String(n).padStart(2, "0"), off = -c.getTimezoneOffset();
+      const clock = `${c.getFullYear()}-${two(c.getMonth() + 1)}-${two(c.getDate())}T${two(c.getHours())}:${two(c.getMinutes())}:${two(c.getSeconds())}` +
+        `${off < 0 ? "-" : "+"}${two(Math.floor(Math.abs(off) / 60))}:${two(Math.abs(off) % 60)} ${Intl.DateTimeFormat().resolvedOptions().timeZone}`;
+      const changed = settingsOff(cfg);
+      sys.log(`Long Day: seed ${cfg.seed}, starting at journey time ${base.toFixed(1)}s, clock ${clock}${Object.keys(changed).length ? `, settings ${JSON.stringify(changed)}` : ""}`);
       const [liveries, logoWhite, logoColor, batonWordmark] = await loading;
       const images = {} as Record<LiveryName, CanvasImageSource>;
       LIVERY_ASSETS.forEach((n, i) => { images[n] = uploadable(liveries[i]); });
@@ -1131,9 +1141,9 @@ export default function createScene({ sys, env, assets }: SceneInputs): Scene {
       }
       while (presK < K) tick();
       // This frame's moment, between two ticks: a part-tick on top of the last one, undone after
-      // drawing (never across a hand-over: that frame shows the tick).
+      // drawing (never across a hand-over: that frame shows the tick, and the next tick hands over).
       let held: PresSnap | null = null;
-      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity) { held = partSnap = presSave(partSnap); step(target, target - presK / TICK_HZ, false, true); }
+      if (target - presK / TICK_HZ > 1e-7 && journey.cityAt(target) === presCity && target < journey.handOverAt) { held = partSnap = presSave(partSnap); step(target, target - presK / TICK_HZ, false, true); }
       // The moment the frame shows: its own, or the last tick's when there was no part-tick (the
       // street life is drawn there too, so it stays with the truck).
       const shown = held ? target : presK / TICK_HZ;

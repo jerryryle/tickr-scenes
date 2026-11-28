@@ -13,7 +13,7 @@ import { hash2, mulberry32 } from "./rng.ts";
 import type { Config } from "./env.ts";
 import { DEBUG_HOUR } from "./debug.ts";
 import { Engine } from "./engine.ts";
-import { weatherMix } from "./climate.ts";
+import { startClock, weatherMix } from "./climate.ts";
 import type { WeatherMix } from "./climate.ts";
 import { Backdrop, hazeColor } from "./backdrop.ts";
 
@@ -203,8 +203,43 @@ const STORY_SKY_KEYS: [number, number][] = [
 ];
 const HAZE_DAY = new THREE.Color(0xa8c2ec);
 
+// Hours (0..24) at scene time t of a run whose clock started at wall0 (climate.ts startClock), as
+// its time-of-day setting gives them (tools/replay.ts works out a board's hours with it too).
+export function clockHour(timeOfDay: Config["timeOfDay"], wall0: number, t: number) {
+  switch (timeOfDay) {
+    case "day": return 12.5;
+    case "dusk": return sunTimes(wall0).set - 0.1;
+    case "night": return 23;
+  }
+  const d = new Date(wall0 + t * 1000);
+  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+}
+// Sunrise and sunset for the date at wall0 (a mid-latitude day: about 9.5 h in December, 14.5 h
+// in June), and the sun's highest elevation.
+function sunTimes(wall0: number) {
+  const now = new Date(wall0);
+  const doy = (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000;
+  const k = Math.cos(2 * Math.PI * (doy - 172) / 365);
+  const len = 12 + 2.5 * k, noon = 12.6 + (k > 0 ? 0.5 : 0);   // summer time pushes noon later
+  return { rise: noon - len / 2, set: noon + len / 2, max: 0.75 + 0.2 * k };
+}
+
+// The sun's elevation at hour h on the date at wall0, as a sine: up through the day, down through
+// the night.
+function elevationAt(wall0: number, h: number) {
+  const { rise, set, max } = sunTimes(wall0);
+  return h >= rise && h <= set ? Math.sin(Math.PI * (h - rise) / (set - rise)) * max
+    : -Math.sin(Math.PI * (((h - set + 24) % 24) / (24 - (set - rise)))) * 0.6;
+}
+// NIGHT_GLOW at hour h in `weather`: the night, or a dark day of rain or fog. (The vignettes ask
+// it of their own clock, vignettes.ts CLOCK, and so does tools/replay.ts.)
+export function glowAt(wall0: number, h: number, weather: WeatherMix) {
+  const e = elevationAt(wall0, h), dayK = THREE.MathUtils.smoothstep(e, -0.06, 0.2), night = 1 - THREE.MathUtils.smoothstep(e, -0.08, 0.06);
+  return Math.max(night, 0.5 * weather.cloud * (1 - dayK * 0.6) * (weather.rain + weather.fog > 0.5 ? 1 : 0));
+}
+
 export class Atmosphere {
-  private wall0 = Date.now();
+  private wall0 = startClock().getTime();
   // The hour at scene time t where the visit being played pins it (main.ts: its spec's), else null.
   hourPin: ((t: number) => number | null) | null = null;
   readonly sky = new THREE.Color(); readonly haze = new THREE.Color();
@@ -257,36 +292,11 @@ void main() { gl_FragColor = vec4(mix(uHorizon, uZenith, smoothstep(0.0, 0.32, m
     if (DEBUG_HOUR >= 0) return DEBUG_HOUR;
     const pinned = this.hourPin?.(t);
     if (pinned != null) return pinned;
-    switch (this.cfg.timeOfDay) {
-      case "day": return 12.5;
-      case "dusk": return this.sunTimes().set - 0.1;
-      case "night": return 23;
-    }
-    const d = new Date(this.wall0 + t * 1000);
-    return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+    return clockHour(this.cfg.timeOfDay, this.wall0, t);
   }
-  // Sunrise and sunset for the real date (a mid-latitude day: about 9.5 h in December, 14.5 h
-  // in June), and the sun's highest elevation.
-  private sunTimes() {
-    const now = new Date(this.wall0);
-    const doy = (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) / 86400000;
-    const k = Math.cos(2 * Math.PI * (doy - 172) / 365);
-    const len = 12 + 2.5 * k, noon = 12.6 + (k > 0 ? 0.5 : 0);   // summer time pushes noon later
-    return { rise: noon - len / 2, set: noon + len / 2, max: 0.75 + 0.2 * k };
-  }
-
-  // The sun's elevation at hour h, as a sine: up through the day, down through the night.
-  elevationAt(h: number) {
-    const { rise, set, max } = this.sunTimes();
-    return h >= rise && h <= set ? Math.sin(Math.PI * (h - rise) / (set - rise)) * max
-      : -Math.sin(Math.PI * (((h - set + 24) % 24) / (24 - (set - rise)))) * 0.6;
-  }
-  // NIGHT_GLOW at hour h in `weather`: the night, or a dark day of rain or fog. (The vignettes ask
-  // it of their own clock: vignettes.ts CLOCK.)
-  glowAt(h: number, weather: WeatherMix) {
-    const e = this.elevationAt(h), dayK = THREE.MathUtils.smoothstep(e, -0.06, 0.2), night = 1 - THREE.MathUtils.smoothstep(e, -0.08, 0.06);
-    return Math.max(night, 0.5 * weather.cloud * (1 - dayK * 0.6) * (weather.rain + weather.fog > 0.5 ? 1 : 0));
-  }
+  private sunTimes() { return sunTimes(this.wall0); }
+  elevationAt(h: number) { return elevationAt(this.wall0, h); }
+  glowAt(h: number, weather: WeatherMix) { return glowAt(this.wall0, h, weather); }
   // The sky colour at elevation e from keys, ending in the day sky.
   private keyed(out: THREE.Color, keys: [number, number][], e: number, daySky: number) {
     let i = 0;

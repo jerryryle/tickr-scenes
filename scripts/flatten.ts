@@ -1,6 +1,6 @@
 // Flatten a scene's ES modules into the single scene.ts that tickr runs, keeping it TypeScript.
 //
-//   node scripts/flatten.ts <entry.ts> [--root <dir>] [--define NAME=VALUE ...] > scene.ts
+//   node scripts/flatten.ts <entry.ts> [--root <dir>] [--define NAME=VALUE ...] [--define-file <file>] > scene.ts
 //
 // tickr stores a scene as one source file that may import only npm packages, and every standard
 // bundler emits JavaScript. This does the one thing they don't: starting at the entry, it
@@ -11,7 +11,8 @@
 // Because the modules end up in one scope, the rules are: no two modules declare the same
 // top-level name; local imports name things as declared (no `as`, `* as` or default imports);
 // only the entry has `export default`. --define replaces the value of a top-level
-// `const NAME = ...;` (for test builds). --root sets the directory banners are relative to. A scene
+// `const NAME = ...;` (for test builds); --define-file reads one NAME=VALUE a line from a file, for
+// values a shell would mangle (JSON). --root sets the directory banners are relative to. A scene
 // with a tools/pack.ts beside its src/ has it run first (it builds sources from others).
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -26,9 +27,10 @@ const fail = (msg: string): never => {
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
-  options: { root: { type: "string" }, define: { type: "string", multiple: true, default: [] } },
+  options: { root: { type: "string" }, define: { type: "string", multiple: true, default: [] }, "define-file": { type: "string" } },
 });
-if (positionals.length !== 1) fail("usage: node scripts/flatten.ts <entry.ts> [--root dir] [--define NAME=VALUE]");
+if (positionals.length !== 1) fail("usage: node scripts/flatten.ts <entry.ts> [--root dir] [--define NAME=VALUE] [--define-file file]");
+if (opts["define-file"]) opts.define.push(...fs.readFileSync(opts["define-file"], "utf8").split("\n").filter((l) => l.trim()));
 const entry = path.resolve(positionals[0]);
 const root = path.resolve(opts.root ?? path.dirname(entry));
 // A scene whose sources are built from others first (long-day's packed city contents) has a

@@ -15,10 +15,15 @@ export interface Climate { season: Season; weather: WeatherKind; snowCover: bool
 
 const SEASONS: Season[] = ["winter", "spring", "summer", "autumn"];
 
-export function realSeason(): Season {
-  const m = new Date().getMonth();   // the board's local month
-  return SEASONS[Math.floor(((m + 1) % 12) / 3)];
-}
+// The board's clock when the run started, to the second, as main.ts logs it (a render sets it with
+// tickr-scene's --clock and --tz). The street life follows the local hour it gives, so a run is
+// reproduced from its seed, its start, this clock and the board's time zone.
+const START_CLOCK = new Date(Math.floor(Date.now() / 1000) * 1000);
+export function startClock() { return new Date(START_CLOCK.getTime()); }
+
+export function realSeason(): Season { return seasonAt(START_CLOCK); }
+// The season at a date, by its local month (December to February winter, and so on).
+export function seasonAt(d: Date): Season { return SEASONS[Math.floor(((d.getMonth() + 1) % 12) / 3)]; }
 
 export function cityClimate(seed: number, N: number, style: CityStyle, start: Season): Climate {
   const season = SEASONS[(SEASONS.indexOf(start) + N) % 4];
