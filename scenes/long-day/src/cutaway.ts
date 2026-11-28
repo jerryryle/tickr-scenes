@@ -22,9 +22,6 @@ export const cutUniforms = {
   uCutH: { value: [new THREE.Vector3(), new THREE.Vector3()] },
   uCutN: { value: 0 },
   uCutOn: { value: 1.0 },
-  // Anything closer to the camera than this is not drawn, so a shot that ends up in a tree crown,
-  // against a wall or behind a pole still sees past it.
-  uNearClip: { value: 3.0 },
 };
 
 // Chains onto any onBeforeCompile / program key the material already has (e.g. the facade atlas).
@@ -41,7 +38,7 @@ export function applyCutaway(mat: THREE.Material) {
       .replace("#include <common>", `#include <common>
 varying vec3 vCutView;
 uniform vec3 uCutC[${CUT_BOXES}]; uniform vec3 uCutAx[${CUT_BOXES * 3}]; uniform vec3 uCutH[${CUT_BOXES}];
-uniform int uCutN; uniform float uCutOn; uniform float uNearClip;
+uniform int uCutN; uniform float uCutOn;
 // Whether the fragment at view position p hides box i: the ray from the camera (at s = 0) to p
 // (at s = 1) meets the box, and only beyond p.
 bool cutHides(vec3 p, int i) {
@@ -55,10 +52,6 @@ bool cutHides(vec3 p, int i) {
   return s1 >= s0 && s0 > 1.0;
 }`)
       .replace("void main() {", `void main() {
-  {
-    float dc = length(vCutView);
-    if (dc < uNearClip) discard;   // gone outright: a dithered pole would streak across the frame
-  }
   if (uCutOn > 0.5) {
     bool hides = false;
     for (int i = 0; i < ${CUT_BOXES}; i++) {
@@ -71,7 +64,7 @@ bool cutHides(vec3 p, int i) {
     }
   }`);
   };
-  mat.customProgramCacheKey = () => prevKey() + "|cutaway-v8";
+  mat.customProgramCacheKey = () => prevKey() + "|cutaway-v9";
   mat.needsUpdate = true;
 }
 

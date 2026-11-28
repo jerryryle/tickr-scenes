@@ -93,8 +93,8 @@ class OcclusionMap {
   }
 
   // Roughly how far `p` is from the nearest mapped tall thing (each sample a column from the
-  // ground to its height), up to `r`: a camera closer than the near clip (cutaway.ts uNearClip)
-  // to a wall sees a round hole cut in it.
+  // ground to its height), up to `r`: a camera kept this clear has no wall or tree crown against
+  // its lens.
   clearance(p: THREE.Vector3, r: number): number {
     let best = r;
     for (let x = Math.floor(p.x - r); x <= Math.ceil(p.x + r); x++) for (let z = Math.floor(p.z - r); z <= Math.ceil(p.z + r); z++) {

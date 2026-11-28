@@ -104,8 +104,8 @@ const LOAD_ALT_AFTER = 45;   // a load longer than this (s) gets one cut to a se
 // Other masters on the work, for when the usual ones look through too much (occlusion.ts), with how
 // much less they are liked: high over the street side, from ahead of the cab, the truck's other side.
 const LOAD_EXTRA: [string, number][] = [["high", 0.08], ["front", 0.1], ["right", 0.12]];
-// A load angle's camera keeps this far from anything mapped as tall (occlusion.ts): the near clip
-// (cutaway.ts, 3 m) and a margin.
+// A load angle's camera keeps this far from anything mapped as tall (occlusion.ts), so no wall,
+// tree or pole close to the lens fills the frame.
 const LOAD_CLEARANCE = 3.5;
 const ARRIVE_VARIANTS = ["dive", "passenger"] as const;
 const ARRIVE_SHARE = 1 / 2;
@@ -1198,8 +1198,7 @@ export class Director {
 
   // A load setup's camera and look (truck frame set). In a tight spot (a dock yard between
   // buildings, a canopy overhead) the camera moves, level, to the nearest place clear of anything
-  // tall and not too close to what it films: closer than the near clip (cutaway.ts) to a wall, it
-  // would see a round hole cut in it.
+  // tall (LOAD_CLEARANCE) and not too close to what it films.
   private loadCam(v: string, truck: Truck, pos: THREE.Vector3, look: THREE.Vector3) {
     this.truckFrame(truck);
     this.loadCamRaw(v, truck, pos, look);
@@ -1262,7 +1261,7 @@ export class Director {
       let sum = 0, wsum = 0;
       this.loadCam(v, truck, cam, look);
       pts.forEach((p, i) => { sum += OCCLUSION.blocked(cam, p, boxes) * wts[i]; wsum += wts[i]; });
-      // Too close to a building: the near clip would cut a hole in it.
+      // Too close to something tall: it would fill the frame.
       return sum / wsum + (OCCLUSION.clearance(cam, LOAD_CLEARANCE) < LOAD_CLEARANCE ? 1 : 0);
     };
     const usuals = (this.atDock ? [...DOCK_VARIANTS] : [...LOAD_VARIANTS]) as string[];
