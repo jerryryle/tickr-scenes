@@ -95,6 +95,9 @@ const CGREEN = new Set(["conifer", "cypress", "cactus"]);              // scener
 const LAND_N = [0, 6.8, 11, 14, 20, 28, 37, 47, -COAST_N, 66, -SEA_N, 88, 106, 128, 150, SIDE_W, 210, 260, 320];
 const LAND_ROW = 6;
 export const COUNTRY_CLEAR = 300;       // view distance in the country
+// A bridge's river runs this far out either side of the road (m): past the land's last column
+// (LAND_N) and the fog, so that no shot sees where it ends. It is drawn in lengths of RIVER_STEP.
+const RIVER_N = 420, RIVER_STEP = 30;
 
 interface BiomeLook {
   ground: number; ground2: number; trees: (TreeKind | "cactus" | "shrub" | "cypress")[]; greens: number[];
@@ -1621,8 +1624,13 @@ export class CountryWorld {
       case "bridge": {
         // A river across the land, and a red covered bridge over it.
         const [x, z, h] = this.L(S + 60, 0);
-        g.box(x, -0.065, z, 24, 0.1, 2 * SIDE_W + 39.98, CW.water, h);   // (its ends a cm short of the banks')
-        for (const k of [-13, 13]) g.box(x + Math.cos(h) * k, -0.085, z - Math.sin(h) * k, 4, 0.1, 2 * SIDE_W + 40, 0x6a5a3a, h);   // (a cm under the road's shoulders: shared planes flicker)
+        // (In lengths of RIVER_STEP: fog is computed per vertex, and one box's ends out past the
+        // fog fogged it all. The water's ends a cm short of the banks'.)
+        for (let n0 = -RIVER_N; n0 < RIVER_N - 1e-6; n0 += RIVER_STEP) {
+          const a = Math.max(n0, 0.01 - RIVER_N), b = Math.min(n0 + RIVER_STEP, RIVER_N - 0.01), nm = (n0 + RIVER_STEP / 2), wx = x + Math.sin(h) * nm, wz = z + Math.cos(h) * nm;
+          g.box(x + Math.sin(h) * (a + b) / 2, -0.065, z + Math.cos(h) * (a + b) / 2, 24, 0.1, b - a, CW.water, h);
+          for (const k of [-13, 13]) g.box(wx + Math.cos(h) * k, -0.085, wz - Math.sin(h) * k, 4, 0.1, RIVER_STEP, 0x6a5a3a, h);   // (a cm under the road's shoulders: shared planes flicker)
+        }
         for (let k = 0; k < 10; k++) { const n = (k - 4.5) * 30 + (hash2(k, S, 3) - 0.5) * 10; if (Math.abs(n) < 20) continue; const [tx, tz] = this.L(S + 60 + (k % 2 ? 16 : -16), n); this.tree(s, tx, tz, "broad", 0x3c7a46, rnd); }
         for (const n of [-4.8, 4.8]) this.rbox(s, S + 60, n, 2.4, 30, 4.8, 0.25, 0xa83a2a);
         this.rbox(s, S + 60, -2.5, 6.0, 30.8, 1.9, 5.6, 0x4a4f57, 0); this.rbox(s, S + 60, 2.5, 6.0, 30.8, 1.9, 5.6, 0x4a4f57, 0);
